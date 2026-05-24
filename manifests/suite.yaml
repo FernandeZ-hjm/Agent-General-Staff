@@ -1,0 +1,158 @@
+# Agent Suite Manifest
+# 机器可读的资产清单，定义安装目标、必选/可选分类和验证命令。
+# bootstrap.sh 读取此文件决定安装行为。
+
+suite:
+  name: agent-governance-suite
+  version: 1.0.0-draft
+  description: Codex/Cursor/Claude Code 三方 Agent 协作开发套件
+  generated: 2026-05-24
+
+# 安装路径前缀（相对于 $HOME）
+install_prefix: ""
+
+assets:
+
+  # --- Required Rules ---
+  required_rules:
+    - source: global-rules/SOUL.md
+      dest: .agents/rules/SOUL.md
+      description: AI 交互人格定义
+    - source: global-rules/core.md
+      dest: .agents/rules/core.md
+      description: 开发流程铁律、效价比原则
+    - source: global-rules/RTK.md
+      dest: .codex/RTK.md
+      description: RTK token 优化 CLI 代理规则
+
+  # --- Required Skills (核心开发技能 + bundled dependencies，21个) ---
+  required_skills:
+    - source: global-skills/auto-brainstorm
+      dest: .agents/skills/auto-brainstorm
+      description: 自动方案探索
+    - source: global-skills/auto-debug
+      dest: .agents/skills/auto-debug
+      description: 自动 debug
+    - source: global-skills/auto-verify
+      dest: .agents/skills/auto-verify
+      description: 自动验证
+    - source: global-skills/claude-execution-prompt-maker
+      dest: .agents/skills/claude-execution-prompt-maker
+      description: Claude Code 执行提示词生成
+    - source: global-skills/claude-delivery-report
+      dest: .agents/skills/claude-delivery-report
+      description: Claude Code 交付报告
+    - source: global-skills/tdd
+      dest: .agents/skills/tdd
+      description: 测试驱动开发
+    - source: global-skills/diagnose
+      dest: .agents/skills/diagnose
+      description: 诊断循环
+    - source: global-skills/zoom-out
+      dest: .agents/skills/zoom-out
+      description: 架构全局视角
+    - source: global-skills/caveman-commit
+      dest: .agents/skills/caveman-commit
+      description: 简洁提交信息生成
+    - source: global-skills/caveman-review
+      dest: .agents/skills/caveman-review
+      description: 简洁代码审查
+    - source: global-skills/finishing-a-development-branch
+      dest: .agents/skills/finishing-a-development-branch
+      description: 开发分支收尾
+    - source: global-skills/using-git-worktrees
+      dest: .agents/skills/using-git-worktrees
+      description: Git worktree 隔离工作
+    - source: global-skills/webapp-testing
+      dest: .agents/skills/webapp-testing
+      description: Web 应用测试
+    - source: global-skills/grill-with-docs
+      dest: .agents/skills/grill-with-docs
+      description: 需求对齐追问
+    - source: global-skills/improve-codebase-architecture
+      dest: .agents/skills/improve-codebase-architecture
+      description: 代码架构改进
+    - source: global-skills/prototype
+      dest: .agents/skills/prototype
+      description: 快速原型验证
+    - source: global-skills/database-migration
+      dest: .agents/skills/database-migration
+      description: 数据库迁移
+    - source: global-skills/supply-chain-risk-auditor
+      dest: .agents/skills/supply-chain-risk-auditor
+      description: 供应链风险审计
+    - source: global-skills/skill-creator
+      dest: .agents/skills/skill-creator
+      description: 技能创建器
+    - source: global-skills/graphify-project-map
+      dest: .agents/skills/graphify-project-map
+      description: 项目知识图谱
+    - source: global-skills/superpowers
+      dest: .agents/skills/superpowers
+      description: Bundled playbook dependency — required by auto-brainstorm, auto-debug, auto-verify, diagnose, grill-with-docs. Not a user-facing skill.
+
+  # --- Optional Skills (不默认安装，按需手动添加) ---
+  optional_skills:
+    - name: Lark 飞书技能包 (26个)
+      description: 飞书集成全套技能（审批、考勤、日历、文档、IM 等），需配合 lark-cli 使用
+      source_hint: ~/.agents/skills/lark-*/
+    - name: 本地自定义技能 (7个)
+      description: 产经破壁机、六爻、辐射塔罗牌、深度科技评论等强本地风格技能
+      source_hint: ~/.agents/skills/产经破壁机-*/ 六爻/ 辐射塔罗牌/ 深度科技评论/
+
+  # --- Optional Skill Packs (curated, not auto-installed by bootstrap) ---
+  optional_skill_packs:
+    description: 经过筛选的技能包，存放于 skill-packs/optional/，不随 bootstrap 安装
+    source: skill-packs/optional/
+
+  # --- Personal Skill Packs (user customization, never auto-installed) ---
+  personal_skill_packs:
+    description: 个人风格/快捷技能，存放于 skill-packs/personal/，不纳入 bootstrap
+    source: skill-packs/personal/
+
+  # --- Project Integration Templates ---
+  project_integration:
+    - source: project-integration/AGENTS.md.template
+      dest: <project>/AGENTS.md
+      description: 项目 Agent 入口模板
+    - source: project-integration/CLAUDE.md.template
+      dest: <project>/CLAUDE.md
+      description: 项目操作协议模板
+    - source: protocol/
+      dest: <project>/docs/agent-workflow/
+      description: 完整 agent-workflow 文档模板
+
+  # --- Governance Scripts ---
+  governance_scripts:
+    - source: scripts/bootstrap.sh
+      description: 套件安装脚本（默认 dry-run）
+    - source: scripts/verify.sh
+      description: 套件完整性验证
+    - source: scripts/diff-local.sh
+      description: 本地 vs 套件差异对比
+    - source: scripts/rollback.sh
+      description: 回滚脚本
+    - source: scripts/govern-new-skills.sh
+      description: 一键技能纳管入口（scan/adopt/ignore/list）
+
+# --- Verification Commands ---
+verification:
+  - bash -n scripts/bootstrap.sh
+  - bash -n scripts/verify.sh
+  - bash -n scripts/diff-local.sh
+  - bash -n scripts/rollback.sh
+  - bash -n scripts/govern-new-skills.sh
+  - scripts/bootstrap.sh --dry-run
+  - scripts/verify.sh
+
+# --- Forbidden Commands ---
+forbidden:
+  - scripts/bootstrap.sh --apply  # without prior --dry-run review
+  - rm -rf $HOME/.agents/skills/*
+  - cp -rf agent-governance/global-skills/* $HOME/.agents/skills/
+  - lark-cli update
+  - npx skills add
+  - npx skills remove
+  - npx skills update
+  - git push --force
+  - curl | bash  # piping installers

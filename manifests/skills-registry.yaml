@@ -1,0 +1,78 @@
+# Skills Registry (Public Edition)
+# Defines the schema for importable skills and serves as the source of truth
+# for verify.sh skill enumeration.
+#
+# This file contains NO private skill content — only the registry structure
+# and example entries showing how to register a skill.
+
+registry:
+  version: 1.0.0
+  description: >
+    Public skills registry for the Agent Governance Suite.
+    Lists skills that can be imported via scripts/import-skill.sh.
+    No skills are bundled — import them on demand.
+
+# --- Schema ---
+# Each skill entry:
+#   name:        Skill directory name (must match global-skills/<name>)
+#   description: One-line summary
+#   source:      Where to obtain the skill
+#     type:      git | local | archive
+#     url:       git URL, local path, or archive URL
+#   required_by: List of skills/features that depend on this one (optional)
+#   auto_trigger: true if this skill triggers automatically (optional)
+
+skills:
+  # === Example entries (uncomment and fill in to register a skill) ===
+
+  # - name: auto-brainstorm
+  #   description: Automatic solution exploration before implementation
+  #   source:
+  #     type: git
+  #     url: git@github.com:your-org/skills-auto-brainstorm.git
+  #   auto_trigger: true
+  #
+  # - name: auto-debug
+  #   description: Automatic debug loop for errors and failures
+  #   source:
+  #     type: git
+  #     url: git@github.com:your-org/skills-auto-debug.git
+  #   auto_trigger: true
+  #
+  # - name: auto-verify
+  #   description: Automatic verification before claiming completion
+  #   source:
+  #     type: git
+  #     url: git@github.com:your-org/skills-auto-verify.git
+  #   auto_trigger: true
+  #
+  # - name: tdd
+  #   description: Test-driven development (red-green-refactor)
+  #   source:
+  #     type: git
+  #     url: git@github.com:your-org/skills-tdd.git
+  #
+  # - name: diagnose
+  #   description: Disciplined diagnosis loop for hard bugs
+  #   source:
+  #     type: git
+  #     url: git@github.com:your-org/skills-diagnose.git
+  #
+  # - name: caveman-commit
+  #   description: Generate concise Conventional Commit messages
+  #   source:
+  #     type: git
+  #     url: git@github.com:your-org/skills-caveman-commit.git
+  #
+  # - name: caveman-review
+  #   description: Ultra-compressed code review comments
+  #   source:
+  #     type: git
+  #     url: git@github.com:your-org/skills-caveman-review.git
+
+  # === Local-only skills (no remote source) ===
+  # - name: my-custom-skill
+  #   description: Project-specific custom skill
+  #   source:
+  #     type: local
+  #     url: ~/dev/my-custom-skill

@@ -1,0 +1,45 @@
+# <Project Name>
+
+<Brief description of the project - 1-2 lines.>
+
+## 共享人格规则
+
+Cursor、Codex、Claude Code 在本仓库内响应或执行任务前，必须先读取并遵循全局规则 `$HOME/.agents/rules/SOUL.md`。
+
+## Agent 协作模式
+
+Cursor 是本项目的主开发代理，负责需求分诊、架构判断、任务拆解、实现、验证和交付报告。Claude Code CLI 可作为执行子代理使用。
+
+执行模式按风险分级：
+- `light`：小范围、低风险、验证明确；直接 read → execute → verify。
+- `medium`：跨文件、共享模块、配置、测试或行为边界变化；先给简短 root cause / 设计说明，再 execute → verify。
+- `heavy`：涉及历史数据、向量库、数据库、索引、迁移、不可逆操作或架构调整；先输出 root cause / 设计方案 / 实施计划 / 验证计划，等待确认后再修改。
+
+三方代理任务交接必须遵循 `docs/agent-workflow/agent-task-protocol.md`。
+
+## 技能标记协议
+
+任务提示词末尾可追加 `[skill: xxx]` 标记。收到标记后，先读取 `docs/agent-workflow/cursor-skill-index.md`。
+
+| 标记 | 技能 | 用途 |
+|---|---|---|
+| `[skill: tdd]` | tdd | 测试驱动开发 |
+| `[skill: commit]` | caveman-commit | 生成 Conventional Commits |
+| `[skill: review]` | caveman-review | 代码审查 |
+| `[skill: verify]` | verify | 深度验证 |
+
+以下技能自动触发，无需标记：`auto-debug`、`auto-verify`。
+
+## 启动/构建/测试命令
+
+```bash
+# <Add project-specific commands here>
+```
+
+## 关键目录说明
+
+```text
+├── docs/agent-workflow/          # Agent 协作协议和任务模板
+├── scripts/                      # 核心处理脚本
+└── config/                       # 配置中心
+```
