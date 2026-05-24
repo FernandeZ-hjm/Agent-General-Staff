@@ -269,7 +269,7 @@ $safety_output
 
 ## Recommended Next Command
 \`\`\`bash
-bash agent-governance/scripts/govern-new-skills.sh adopt --name $name --profile $profile --apply
+bash scripts/govern-new-skills.sh adopt --name $name --profile $profile --apply
 \`\`\`
 PROPOSAL
 

@@ -26,10 +26,10 @@ Agent 开发套件的技能/规则同步治理协议。
 
 ```bash
 # 1. 运行只读检查
-bash agent-governance/scripts/diff-local.sh
+bash scripts/diff-local.sh
 
 # 2. 预览 bootstrap 将要安装的内容
-bash agent-governance/scripts/bootstrap.sh --dry-run
+bash scripts/bootstrap.sh --dry-run
 
 # 3. 审阅 diff 输出
 # diff-local.sh 会列出: local-only, suite-only, content-diff 三类文件
@@ -39,24 +39,24 @@ bash agent-governance/scripts/bootstrap.sh --dry-run
 
 ```bash
 # 1. 备份当前状态
-bash agent-governance/scripts/rollback.sh --backup
+bash scripts/rollback.sh --backup
 
 # 2. 预览变更
-bash agent-governance/scripts/diff-local.sh
+bash scripts/diff-local.sh
 
 # 3. 确认后应用
-bash agent-governance/scripts/bootstrap.sh --apply
+bash scripts/bootstrap.sh --apply
 
 # 4. 验证
-bash agent-governance/scripts/verify.sh
+bash scripts/verify.sh
 
 # 5. 如果不满意，回滚
-bash agent-governance/scripts/rollback.sh --restore <backup_dir>
+bash scripts/rollback.sh --restore <backup_dir>
 ```
 
 ## Acceptance Log
 
-每次接受或拒绝套件更新后，在 `agent-governance/governance/acceptance-log.yaml` 中记录：
+每次接受或拒绝套件更新后，在 `governance/skill-adoption-log.yaml` 中记录：
 
 ```yaml
 - id: <decision_id>

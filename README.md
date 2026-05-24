@@ -1,48 +1,192 @@
-# Agent Governance Suite
+# Dongmenlaohu Multi-Agent Engineering Kit
 
-可迁移 Agent 开发套件。将 Codex/Cursor/Claude Code 三方协作机制、开发技能套件、治理工具链打包为一键分发的工程化结构。
+V1.0 public release.
 
-## 目录
+面向 Codex、Cursor 和 Claude Code 的可迁移多 Agent 工程化开发套件。它把角色分工、任务卡协议、开发技能、验证流程、交付报告和本地技能治理机制打包成一套可下载、可验证、可安装的工作流骨架。
 
-```
-agent-governance/
-├── README.md                        # 本文件
-├── AGENT_SUITE_PROTOCOL.md          # 套件级协议（角色、任务流、交付标准）
-├── manifests/
-│   ├── suite.yaml                   # 机器可读 manifest（required/optional/forbidden）
-│   └── skills.lock.example.yaml     # 技能锁文件样例
-├── protocol/                        # 项目接入协议模板
-├── governance/                      # 治理机制
-├── task-modules/                    # 专用任务卡填槽模块
-├── templates/fallback-task-cards/   # 全局 fallback 任务卡模板
-├── project-integration/             # 项目接入模板
-├── scripts/                         # bootstrap/verify/diff/rollback
-├── global-rules/                    # 全局 Agent 规则
-└── global-skills/                   # 核心开发技能
-```
+## What It Is
 
-## 安装
+This kit is for developers who want a more disciplined multi-agent workflow:
+
+- Codex / Cursor handle diagnosis, design, task routing, and review.
+- Claude Code executes bounded task cards and reports delivery status.
+- Skills enforce repeatable behavior for brainstorming, debugging, verification, review, commits, and project onboarding.
+- Governance scripts keep local skills and upstream changes under human-reviewed control.
+
+It is not tied to one application codebase. It is a portable workflow layer that can be installed into a local development environment and then integrated into individual projects.
+
+## Download
+
+Clone with SSH:
 
 ```bash
-# 默认 dry-run，预览将要安装的内容
-bash agent-governance/scripts/bootstrap.sh --dry-run
-
-# 确认后正式安装
-bash agent-governance/scripts/bootstrap.sh --apply
-
-# 验证安装完整性
-bash agent-governance/scripts/verify.sh
+git clone git@github.com:FernandeZ-hjm/Dongmenlaohu-multi-agent-engineering-kit.git
+cd Dongmenlaohu-multi-agent-engineering-kit
 ```
 
-## 角色
+Clone with HTTPS:
 
-- Codex / Cursor：负责设计、任务卡生成、复核
-- Claude Code：负责执行任务卡
-- 本项目只提供套件分发，不绑定任何具体项目的 agent 身份
+```bash
+git clone https://github.com/FernandeZ-hjm/Dongmenlaohu-multi-agent-engineering-kit.git
+cd Dongmenlaohu-multi-agent-engineering-kit
+```
 
-## 约束
+Download ZIP:
 
-- 默认 dry-run，不静默覆盖 `$HOME` 下任何文件
-- 安装前必须完成 backup
-- 不接受未经人工 diff 的上游更新
-- 不自动安装依赖
+```text
+https://github.com/FernandeZ-hjm/Dongmenlaohu-multi-agent-engineering-kit/archive/refs/heads/main.zip
+```
+
+V1.0 source ZIP:
+
+```text
+https://github.com/FernandeZ-hjm/Dongmenlaohu-multi-agent-engineering-kit/archive/refs/tags/V1.0.zip
+```
+
+V1.0 source TAR:
+
+```text
+https://github.com/FernandeZ-hjm/Dongmenlaohu-multi-agent-engineering-kit/archive/refs/tags/V1.0.tar.gz
+```
+
+## Quick Start
+
+Preview installation first. The installer defaults to dry-run and does not write files unless `--apply` is used.
+
+```bash
+bash scripts/bootstrap.sh --dry-run
+```
+
+Verify the suite:
+
+```bash
+bash scripts/verify.sh
+```
+
+Install only after reviewing the dry-run output:
+
+```bash
+bash scripts/bootstrap.sh --apply
+```
+
+## What Gets Installed
+
+Required global rules:
+
+- `global-rules/SOUL.md` -> `$HOME/.agents/rules/SOUL.md`
+- `global-rules/core.md` -> `$HOME/.agents/rules/core.md`
+- `global-rules/RTK.md` -> `$HOME/.codex/RTK.md`
+
+Required skills are installed under:
+
+```text
+$HOME/.agents/skills/
+```
+
+The required skill set includes:
+
+- `auto-brainstorm`
+- `auto-debug`
+- `auto-verify`
+- `claude-execution-prompt-maker`
+- `claude-delivery-report`
+- `tdd`
+- `diagnose`
+- `zoom-out`
+- `caveman-commit`
+- `caveman-review`
+- `finishing-a-development-branch`
+- `using-git-worktrees`
+- `webapp-testing`
+- `grill-with-docs`
+- `improve-codebase-architecture`
+- `prototype`
+- `database-migration`
+- `supply-chain-risk-auditor`
+- `skill-creator`
+- `graphify-project-map`
+- `superpowers`
+
+See `manifests/suite.yaml` for the machine-readable install manifest.
+
+## Repository Layout
+
+```text
+.
+├── README.md
+├── AGENT_SUITE_PROTOCOL.md
+├── manifests/
+│   ├── suite.yaml
+│   └── skills.lock.example.yaml
+├── protocol/
+├── governance/
+├── task-modules/
+├── templates/fallback-task-cards/
+├── project-integration/
+├── scripts/
+├── global-rules/
+└── global-skills/
+```
+
+Key files:
+
+- `AGENT_SUITE_PROTOCOL.md`: suite-level role model, task routing, safety rules, and delivery report contract.
+- `protocol/task-card-template.md`: project task-card skeleton.
+- `templates/fallback-task-cards/`: fallback task cards for projects without local protocol files.
+- `project-integration/`: templates for adding `AGENTS.md`, `CLAUDE.md`, and agent workflow docs to a project.
+- `governance/`: skill/plugin synchronization rules and adoption logs.
+- `scripts/bootstrap.sh`: dry-run first installer.
+- `scripts/verify.sh`: suite integrity verification.
+- `scripts/diff-local.sh`: compare installed local files with this suite.
+- `scripts/rollback.sh`: rollback helper.
+- `scripts/govern-new-skills.sh`: scan/adopt/ignore workflow for new skills.
+
+## Safety Model
+
+The kit is intentionally conservative:
+
+- `bootstrap.sh` defaults to dry-run.
+- `--apply` creates backups before writing.
+- No dependency installation is performed automatically.
+- Secrets, tokens, `.env` files, SSH private keys, and Keychain data are not copied.
+- Upstream skill changes are not auto-applied. They must go through check, diff, review, and explicit adoption.
+- Destructive commands such as force push, broad deletion, and blind overwrite are forbidden by the suite protocol.
+
+## Project Integration
+
+For a new project, start from:
+
+```text
+project-integration/AGENTS.md.template
+project-integration/CLAUDE.md.template
+protocol/
+```
+
+The intended pattern is:
+
+1. Put project-specific commands, paths, and safety constraints in the project repo.
+2. Keep reusable multi-agent workflow rules in this suite.
+3. Use task cards to hand execution work from Codex/Cursor to Claude Code.
+4. Require verification and a concise delivery report before treating work as complete.
+
+## Verification
+
+Run:
+
+```bash
+bash scripts/verify.sh
+```
+
+Expected result:
+
+```text
+Status  : PASSED
+Errors  : 0
+Warnings: 0
+```
+
+## Version
+
+Current release: `V1.0`
+
+See `CHANGELOG.md` for release notes.

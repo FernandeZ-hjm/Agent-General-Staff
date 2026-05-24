@@ -34,16 +34,16 @@ Agent 开发套件的回滚操作指引。
 
 ```bash
 # 列出所有可用备份
-bash agent-governance/scripts/rollback.sh --list
+bash scripts/rollback.sh --list
 
 # 检查特定备份的内容
-bash agent-governance/scripts/rollback.sh --inspect <backup_dir>
+bash scripts/rollback.sh --inspect <backup_dir>
 
 # 从备份恢复（默认 dry-run）
-bash agent-governance/scripts/rollback.sh --restore <backup_dir>
+bash scripts/rollback.sh --restore <backup_dir>
 
 # 从备份恢复（实际执行）
-bash agent-governance/scripts/rollback.sh --restore <backup_dir> --apply
+bash scripts/rollback.sh --restore <backup_dir> --apply
 ```
 
 ## 回滚验证
@@ -51,7 +51,7 @@ bash agent-governance/scripts/rollback.sh --restore <backup_dir> --apply
 回滚后必须运行：
 
 ```bash
-bash agent-governance/scripts/verify.sh
+bash scripts/verify.sh
 ```
 
 如果 verify 失败，检查 backup 完整性或回退到更早的 backup。

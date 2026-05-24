@@ -3,9 +3,9 @@
 # bootstrap.sh 读取此文件决定安装行为。
 
 suite:
-  name: agent-governance-suite
-  version: 1.0.0-draft
-  description: Codex/Cursor/Claude Code 三方 Agent 协作开发套件
+  name: dongmenlaohu-multi-agent-engineering-kit
+  version: 1.0.0
+  description: Codex/Cursor/Claude Code 三方 Agent 工程化开发套件
   generated: 2026-05-24
 
 # 安装路径前缀（相对于 $HOME）
