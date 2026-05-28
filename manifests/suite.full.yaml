@@ -3,15 +3,13 @@
 suite:
   name: dongmenlaohu-multi-agent-engineering-kit-full
   version: 1.0.0-public-full
-  description: DIY/Core plus curated development skills and optional capability packs.
+  description: DIY/Core plus required curated development skills.
 
 extends: manifests/suite.core.yaml
 
 includes:
   skills:
     - global-skills/
-  optional_skill_packs:
-    - skill-packs/optional/
   manifests:
     - manifests/skills-registry.yaml
     - manifests/skills.lock.example.yaml
@@ -41,11 +39,24 @@ capability_packs:
       - global-skills/grill-with-docs
       - global-skills/improve-codebase-architecture
       - global-skills/prototype
-  optional_office:
+  code_intelligence_mcp:
     required: false
-    paths:
-      - skill-packs/optional/lark-*
-  optional_notebook:
-    required: false
-    paths:
-      - skill-packs/optional/notebooklm
+    server: codegraph
+    command: codegraph
+    args:
+      - serve
+      - --mcp
+    install_preview:
+      - codegraph
+      - install
+      - --print-config
+      - codex
+    install_apply:
+      - codegraph
+      - install
+      - --target
+      - auto
+      - --location
+      - global
+      - --yes
+    docs: docs/mcp-servers.md

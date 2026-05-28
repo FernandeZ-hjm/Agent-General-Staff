@@ -8,8 +8,8 @@ This repository has two public profiles:
 - **DIY/Core**: the original governance framework, task-card protocol, runtime
   adapter rules, verification gates, project profile templates, and safe
   installer scaffolding.
-- **Full Installer**: the Core profile plus a curated skill suite and optional
-  capability packs that recreate the high-performance development workflow.
+- **Full Installer**: the Core profile plus the required curated skill suite
+  that recreates the high-performance development workflow.
 
 The public kit is profile-driven. It does not ship private project identities,
 private sync targets, or machine-specific release paths.
@@ -51,6 +51,18 @@ bash scripts/verify.sh
 bash scripts/security-doctor.sh
 ```
 
+Review third-party skill sources:
+
+```text
+docs/third-party-skills.md
+```
+
+Review supported MCP servers:
+
+```text
+docs/mcp-servers.md
+```
+
 ## Profiles
 
 ### DIY/Core
@@ -66,9 +78,16 @@ refer to capability slots and degrade when a slot is not installed.
 ### Full Installer
 
 Use this when you want a ready-to-run development environment. Full includes all
-Core assets, required global skills, optional curated skill packs, hook
-normalization for Claude Code and Codex, a project workflow installer,
-verification, and rollback receipts.
+Core assets, required global skills, hook normalization for Claude Code and
+Codex, a project workflow installer, verification, and rollback receipts.
+
+Optional third-party skill packs are not bundled by default. The
+`skill-packs/optional/` directory is kept as a reserved extension point. Current
+third-party upstreams and candidate skills are listed by GitHub author in
+`docs/third-party-skills.md`.
+
+CodeGraph MCP is documented as a supported installable MCP server in
+`docs/mcp-servers.md`. It is not installed silently by `bootstrap.sh`.
 
 Full Installer still avoids private project bindings. Target-project data is
 generated from CLI arguments and `config/agent-project-profile.yaml`.

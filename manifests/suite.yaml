@@ -15,7 +15,7 @@ profiles:
     description: Governance framework and workflow templates only.
   full:
     manifest: manifests/suite.full.yaml
-    description: Core governance plus curated skills and optional capability packs.
+    description: Core governance plus required curated skills.
 
 install_prefix: ""
 
@@ -98,10 +98,6 @@ assets:
       dest: .agents/skills/superpowers
       description: Bundled playbook dependency
 
-  optional_skill_packs:
-    description: Curated optional skills for the Full Installer profile.
-    source: skill-packs/optional/
-
   project_integration:
     - source: project-integration/AGENTS.md.template
       dest: <project>/AGENTS.md
@@ -145,6 +141,16 @@ assets:
       description: Read-only suite health check
     - source: scripts/security-doctor.sh
       description: Read-only boundary and security scan
+
+  mcp_servers:
+    - name: codegraph
+      description: Code intelligence MCP server.
+      docs: docs/mcp-servers.md
+      command: codegraph
+      args:
+        - serve
+        - --mcp
+      install_mode: explicit_only
 
 verification:
   - bash -n scripts/bootstrap.sh
