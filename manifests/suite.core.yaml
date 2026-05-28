@@ -1,0 +1,35 @@
+# DIY/Core Profile
+
+suite:
+  name: dongmenlaohu-multi-agent-engineering-kit-core
+  version: 1.0.0-public-core
+  description: Governance framework, task-card protocol, project templates, and verification tools.
+
+includes:
+  rules:
+    - global-rules/SOUL.md
+    - global-rules/core.md
+    - global-rules/RTK.md
+  protocols:
+    - AGENT_SUITE_PROTOCOL.md
+    - protocol/
+    - templates/fallback-task-cards/
+    - project-integration/
+  scripts:
+    - scripts/install-suite-to-project.sh
+    - scripts/verify.sh
+    - scripts/diff-local.sh
+    - scripts/rollback.sh
+    - scripts/run-task-card.sh
+    - scripts/context-memory.sh
+    - scripts/memory-start-context.sh
+    - scripts/suite-doctor.sh
+    - scripts/security-doctor.sh
+  manifests:
+    - manifests/capabilities.yaml
+
+excludes:
+  - skill-packs/optional/
+  - skill-packs/personal/
+  - private project registries
+  - machine-specific release topology

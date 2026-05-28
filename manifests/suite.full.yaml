@@ -1,0 +1,51 @@
+# Full Installer Profile
+
+suite:
+  name: dongmenlaohu-multi-agent-engineering-kit-full
+  version: 1.0.0-public-full
+  description: DIY/Core plus curated development skills and optional capability packs.
+
+extends: manifests/suite.core.yaml
+
+includes:
+  skills:
+    - global-skills/
+  optional_skill_packs:
+    - skill-packs/optional/
+  manifests:
+    - manifests/skills-registry.yaml
+    - manifests/skills.lock.example.yaml
+
+install_behavior:
+  default_mode: dry-run
+  backup_before_apply: true
+  write_receipt: true
+  verify_after_apply: true
+  rollback_supported: true
+
+capability_packs:
+  core_engineering:
+    required: true
+    paths:
+      - global-skills/auto-brainstorm
+      - global-skills/auto-debug
+      - global-skills/auto-verify
+      - global-skills/prompt-maker
+      - global-skills/claude-delivery-report
+  engineering_plus:
+    required: true
+    paths:
+      - global-skills/tdd
+      - global-skills/diagnose
+      - global-skills/zoom-out
+      - global-skills/grill-with-docs
+      - global-skills/improve-codebase-architecture
+      - global-skills/prototype
+  optional_office:
+    required: false
+    paths:
+      - skill-packs/optional/lark-*
+  optional_notebook:
+    required: false
+    paths:
+      - skill-packs/optional/notebooklm

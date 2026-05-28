@@ -1,0 +1,68 @@
+# Agent project profile
+# Copy to config/agent-project-profile.yaml and edit for the target project.
+# Keep this file concise. It fills task-card slots; it is not a task-card
+# template and should not duplicate docs/agent-workflow/*.md.
+
+schema_version: 1
+
+project:
+  name: "<project-name>"
+  slug: "<stable-ascii-project-slug>"
+  type: "<web-app | data-pipeline | library | agent-system | other>"
+  primary_languages: []
+  primary_runtime: ""
+
+defaults:
+  executor: "Codex"
+  runtime_adapter: "codex-local"
+  execution_surface: "local-workspace"
+  permission_mode_by_level:
+    light: "execute-and-verify"
+    medium: "edit-with-confirmation"
+    heavy: "plan-only"
+  parallelism: "none"
+
+verification:
+  default_commands:
+    - "<primary verification command>"
+  smoke_commands: []
+  expensive_commands: []
+  evidence_required:
+    - "command result"
+    - "diff summary"
+    - "delivery report"
+
+risk:
+  high_risk_paths: []
+  protected_paths: []
+  destructive_actions_require_confirmation: true
+  heavy_triggers:
+    - "database migration"
+    - "historical output mutation"
+    - "baseline or generated artifact rewrite"
+  stop_conditions:
+    - "missing verification command"
+    - "unclear target repository"
+    - "risk higher than task level"
+
+workflow:
+  governance_docs:
+    - "docs/agent-workflow/agent-task-protocol.md"
+    - "docs/agent-workflow/task-routing.md"
+    - "docs/agent-workflow/runtime-adapters.md"
+    - "docs/agent-workflow/context-memory.md"
+  context_memory_capsule: "$HOME/.agents/memory/projects/<project-slug>/context-capsule.md"
+  task_memory: "$HOME/.agents/memory/projects/<project-slug>/task-memory.md"
+  task_archive: "$HOME/.agents/memory/projects/<project-slug>/task-archive/"
+  default_review_policy: "Light self-check; Medium manual review; Heavy adversarial review"
+  delivery_report: "docs/agent-workflow/agent-task-protocol.md"
+
+user_preferences:
+  interaction_style: "frontstage natural language, backstage cache-stable task card"
+  ask_before:
+    - "destructive action"
+    - "dependency install"
+    - "external publish"
+    - "Heavy mutation"
+  do_not_do:
+    - "invent project defaults not present in this profile or repo evidence"

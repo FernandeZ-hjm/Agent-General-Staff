@@ -1,0 +1,93 @@
+# <Project Name>
+
+<Brief description of the project - 1-2 lines.>
+
+## 共享人格规则
+
+Cursor、Codex、Claude Code 在本仓库内响应或执行任务前，必须先读取并遵循全局规则 `$HOME/.agents/rules/SOUL.md`。
+
+## Agent 协作模式
+
+Cursor 是本项目的主开发代理，负责需求分诊、架构判断、任务拆解、实现、验证和交付报告。Codex 可作为诊断、方案收敛、任务卡生成和复核代理。Claude Code CLI 可作为执行子代理使用。
+
+执行模式按风险分级：
+- `light`：小范围、低风险、验证明确；直接 read → execute → verify。
+- `medium`：跨文件、共享模块、配置、测试或行为边界变化；先给简短 root cause / 设计说明，再 execute → verify。
+- `heavy`：涉及历史数据、向量库、数据库、索引、迁移、不可逆操作或架构调整；先输出 root cause / 设计方案 / 实施计划 / 验证计划，等待确认后再修改。
+
+三方代理任务交接必须遵循 `docs/agent-workflow/agent-task-protocol.md`。
+
+项目稳定上下文写入 `config/agent-project-profile.yaml`。该文件只用于填充任务卡
+slot，例如默认验证命令、高风险路径、保护目录和项目偏好；不得替代固定任务卡骨架，
+也不得把整份画像复制进任务卡。
+
+跨对话记忆存放在 `$HOME/.agents/memory/projects/<project-slug>/`。
+`context-capsule.md` 是人工维护的项目宪章，固定包含
+`## 项目设计目的`；runner / hook / capture 不得覆盖，自动总结不得改写，
+只能由用户明确要求时手动修改。每次任务开始前必须读取 `context-capsule.md`
+和同目录 `task-memory.md`；如果任务目标和项目设计目的冲突，停止并报告。
+自动记忆只能刷新 `task-memory.md` 并把完整收据复制到 `task-archive/`，
+不得覆盖 `context-capsule.md`。记忆提供连续性，但不是写入批准，不得覆盖
+当前任务卡、用户请求或 live repo 证据。任务卡只能通过 `记忆胶囊` slot 引用
+capsule，通过 `任务存档` slot 引用 `task-memory.md`，不复制长日志。
+
+任务卡必须显式声明：
+- `Executor`
+- `Runtime adapter`
+- `Execution surface`
+- `Permission mode`
+- `Parallelism`
+- `Review gate`
+- `Verification gate`
+
+这些字段按 `docs/agent-workflow/runtime-adapters.md` 解释；Review gate 的唯一规则表在 `docs/agent-workflow/agent-task-protocol.md`。未指定执行器时，默认由 Cursor / Codex 做任务 framing 与复核，Claude Code 可执行边界清晰的实现任务。
+
+## Review Target 规则
+
+如果 Executor 的启动目录不是实际修改的仓库根目录，或任务会跨仓库修改，开始执行前必须在启动目录重写 `.claude/review_targets.json`，声明本次任务的所有实际目标仓库：
+
+```json
+{
+  "task_level": "light / medium / heavy",
+  "targets": [
+    {
+      "name": "<repo-name>",
+      "path": "<absolute path to actual repo>",
+      "level": "light / medium / heavy"
+    }
+  ]
+}
+```
+
+需要显式 review 时，审查范围必须以 review targets 为准。`review_targets.json` 是单次任务状态，不得复用旧文件；无法确认实际目标仓库时，停止并报告。
+
+## Runtime Hook Policy
+
+Claude Code 保留 `UserPromptSubmit` skill alias 同步、`UserPromptSubmit` 记忆入口读取和 `PreToolUse(Bash)` 的 `rtk hook claude`。Codex 保留 `UserPromptSubmit` skill alias 同步和记忆入口读取。Stop review hook 已废弃，不再是最终执行点；需要 review 时，由任务卡 Review gate 或人工显式触发。
+
+## 技能标记协议
+
+任务提示词末尾可追加 `[skill: xxx]` 标记。收到标记后，先读取 `docs/agent-workflow/cursor-skill-index.md`。
+
+| 标记 | 技能 | 用途 |
+|---|---|---|
+| `[skill: tdd]` | tdd | 测试驱动开发 |
+| `[skill: commit]` | caveman-commit | 生成 Conventional Commits |
+| `[skill: review]` | caveman-review | 代码审查 |
+| `[skill: verify]` | verify | 深度验证 |
+
+以下技能自动触发，无需标记：`auto-debug`、`auto-verify`。
+
+## 启动/构建/测试命令
+
+```bash
+# <Add project-specific commands here>
+```
+
+## 关键目录说明
+
+```text
+├── docs/agent-workflow/          # Agent 协作协议和任务模板
+├── scripts/                      # 核心处理脚本
+└── config/agent-project-profile.yaml # Agent 项目画像
+```

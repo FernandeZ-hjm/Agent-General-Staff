@@ -1,0 +1,309 @@
+# Skills Registry (Public Full Edition)
+# Source-of-truth index for suite-managed skills and their upstream crawl seeds.
+#
+# Local suite files remain canonical. Upstreams are read-only comparison sources:
+# crawl remote -> generate diff proposal -> human accepts or rejects.
+
+registry:
+  version: 1.1.0
+  description: >
+    Public skills registry for the Agent Governance Suite. This indexes the
+    required global skills and records which existing skills should watch
+    mattpocock/skills for future upstream changes.
+  update_policy: read_only_crawl_then_diff_proposal
+  upstreams:
+    mattpocock_skills:
+      type: git
+      url: https://github.com/mattpocock/skills.git
+      web: https://github.com/mattpocock/skills
+      ref: main
+      crawl: true
+      notes: >
+        Crawl as an upstream comparison source only. Do not run npx skills,
+        auto-install, or overwrite local suite skills from this repository.
+    graphify:
+      type: git
+      url: https://github.com/safishamsi/graphify.git
+      web: https://github.com/safishamsi/graphify
+      package: graphifyy
+      cli: graphify
+      ref: v8
+      crawl: true
+      notes: >
+        Graphify is an upstream CLI/tool dependency. The local
+        graphify skill is a graph-intent wrapper and should be reviewed only
+        when the CLI contract, install flow, or output structure changes.
+
+skills:
+  - name: auto-brainstorm
+    profile: required
+    local_path: global-skills/auto-brainstorm
+    description: Automatic solution exploration before implementation
+    auto_trigger: true
+    source:
+      type: local
+      relationship: suite_overlay
+      update_policy: local_canonical_no_upstream
+
+  - name: auto-debug
+    profile: required
+    local_path: global-skills/auto-debug
+    description: Automatic debug loop for errors and failures
+    auto_trigger: true
+    source:
+      type: local
+      relationship: suite_overlay
+      update_policy: local_canonical_no_upstream
+
+  - name: auto-verify
+    profile: required
+    local_path: global-skills/auto-verify
+    description: Automatic verification before claiming completion
+    auto_trigger: true
+    source:
+      type: local
+      relationship: suite_overlay
+      update_policy: local_canonical_no_upstream
+
+  - name: prompt-maker
+    profile: required
+    local_path: global-skills/prompt-maker
+    description: Execution task-card and agent handoff prompt generator
+    source:
+      type: local
+      relationship: suite_local
+      update_policy: local_canonical_no_upstream
+
+  - name: claude-delivery-report
+    profile: required
+    local_path: global-skills/claude-delivery-report
+    description: Claude Code delivery report template
+    source:
+      type: local
+      relationship: suite_local
+      update_policy: local_canonical_no_upstream
+
+  - name: tdd
+    profile: required
+    local_path: global-skills/tdd
+    description: Test-driven development with red-green-refactor
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/engineering/tdd
+      relationship: upstream_aligned
+      update_policy: crawl_then_diff_proposal
+
+  - name: diagnose
+    profile: required
+    local_path: global-skills/diagnose
+    description: Disciplined diagnosis loop for hard bugs
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/engineering/diagnose
+      relationship: local_enriched_from_upstream
+      update_policy: crawl_then_diff_proposal
+
+  - name: zoom-out
+    profile: required
+    local_path: global-skills/zoom-out
+    description: Higher-level codebase and architecture context
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/engineering/zoom-out
+      relationship: local_enriched_from_upstream
+      update_policy: crawl_then_diff_proposal
+
+  - name: caveman-commit
+    profile: required
+    local_path: global-skills/caveman-commit
+    description: Concise Conventional Commit message generator
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/productivity/caveman
+      relationship: local_split_from_upstream_concept
+      update_policy: crawl_then_manual_review
+
+  - name: caveman-review
+    profile: required
+    local_path: global-skills/caveman-review
+    description: Ultra-compressed actionable code review comments
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/productivity/caveman
+      relationship: local_split_from_upstream_concept
+      update_policy: crawl_then_manual_review
+
+  - name: finishing-a-development-branch
+    profile: required
+    local_path: global-skills/finishing-a-development-branch
+    description: Development branch finishing workflow
+    source:
+      type: local
+      relationship: suite_local
+      update_policy: local_canonical_no_upstream
+
+  - name: using-git-worktrees
+    profile: required
+    local_path: global-skills/using-git-worktrees
+    description: Git worktree isolation workflow
+    source:
+      type: local
+      relationship: suite_local
+      update_policy: local_canonical_no_upstream
+
+  - name: webapp-testing
+    profile: required
+    local_path: global-skills/webapp-testing
+    description: Browser testing for local web applications
+    source:
+      type: local
+      relationship: suite_local
+      update_policy: local_canonical_no_upstream
+
+  - name: grill-with-docs
+    profile: required
+    local_path: global-skills/grill-with-docs
+    description: Requirements alignment interview grounded in project docs
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/engineering/grill-with-docs
+      relationship: local_enriched_from_upstream
+      update_policy: crawl_then_diff_proposal
+
+  - name: improve-codebase-architecture
+    profile: required
+    local_path: global-skills/improve-codebase-architecture
+    description: Architecture improvement for tangled or hard-to-test code
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/engineering/improve-codebase-architecture
+      relationship: local_enriched_from_upstream
+      update_policy: crawl_then_diff_proposal
+
+  - name: prototype
+    profile: required
+    local_path: global-skills/prototype
+    description: Throwaway prototype workflow for uncertain designs
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/engineering/prototype
+      relationship: local_enriched_from_upstream
+      update_policy: crawl_then_diff_proposal
+
+  - name: database-migration
+    profile: required
+    local_path: global-skills/database-migration
+    description: Database migration execution and review
+    source:
+      type: local
+      relationship: suite_local
+      update_policy: local_canonical_no_upstream
+
+  - name: supply-chain-risk-auditor
+    profile: required
+    local_path: global-skills/supply-chain-risk-auditor
+    description: Dependency and package supply-chain risk assessment
+    source:
+      type: local
+      relationship: suite_local
+      update_policy: local_canonical_no_upstream
+
+  - name: skill-creator
+    profile: required
+    local_path: global-skills/skill-creator
+    description: Create, edit, and evaluate skills
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/productivity/write-a-skill
+      relationship: conceptually_related
+      update_policy: crawl_then_manual_review
+
+  - name: graphify
+    profile: required
+    local_path: global-skills/graphify
+    description: Project knowledge graph generation
+    trigger: graph_intent
+    source:
+      type: local_wrapper
+      upstream: graphify
+      relationship: wrapper_around_upstream_tool
+      update_policy: monitor_tool_release_and_wrapper_contract
+
+  - name: superpowers
+    profile: required
+    local_path: global-skills/superpowers
+    description: Bundled playbook dependency for automatic engineering skills
+    source:
+      type: local
+      relationship: bundled_dependency
+      update_policy: local_canonical_no_upstream
+
+candidate_skills:
+  - name: git-guardrails-claude-code
+    profile: candidate
+    adoption_priority: high
+    adoption_mode: evaluate_only
+    rationale: Complements existing review gates with hard Git safety guardrails.
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/misc/git-guardrails-claude-code
+
+  - name: to-prd
+    profile: candidate
+    adoption_priority: medium
+    adoption_mode: optional_task_card_module
+    rationale: Useful for PRD shaping, but should not replace the task-card contract.
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/engineering/to-prd
+
+  - name: to-issues
+    profile: candidate
+    adoption_priority: medium
+    adoption_mode: optional_task_card_module
+    rationale: Useful for GitHub issue breakdown when a project is issue-first.
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/engineering/to-issues
+
+  - name: triage
+    profile: candidate
+    adoption_priority: medium
+    adoption_mode: optional_task_card_module
+    rationale: Useful for backlog and issue triage, not required for local task cards.
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/engineering/triage
+
+  - name: grill-me
+    profile: candidate
+    adoption_priority: low
+    adoption_mode: evaluate_only
+    rationale: Overlaps with grill-with-docs and should be compared before adoption.
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/productivity/grill-me
+
+  - name: ubiquitous-language
+    profile: candidate
+    adoption_priority: low
+    adoption_mode: evaluate_only
+    rationale: Deprecated upstream; keep as concept reference only.
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/deprecated/ubiquitous-language

@@ -1,0 +1,32 @@
+# Skills Lock File (Example)
+# 记录实际安装时的技能版本和哈希基线。
+# 本文件为样例；实际 lock 文件由 bootstrap.sh --apply 时自动生成。
+#
+# 生成命令：
+#   find ~/.agents/skills ~/.agents/rules ~/.codex/RTK.md \
+#     -type f -not -path '*/node_modules/*' \
+#     -exec shasum -a 256 {} \; | sort > skills.lock.yaml
+
+lock:
+  generated: ~
+  full_toolchain_hash: ~
+
+  rules:
+    SOUL.md:
+      path: .agents/rules/SOUL.md
+      sha256: ~
+    core.md:
+      path: .agents/rules/core.md
+      sha256: ~
+    RTK.md:
+      path: .codex/RTK.md
+      sha256: ~
+
+  skills: {}
+  # 格式:
+  #   skill-name:
+  #     path: .agents/skills/<name>
+  #     sha256: <hash of all files in skill dir>
+  #     files:
+  #       - path: SKILL.md
+  #         sha256: ~

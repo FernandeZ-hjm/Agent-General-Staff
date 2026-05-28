@@ -1,0 +1,13 @@
+# Project Workflow Sync Registry
+#
+# Public default: no registered projects.
+# Add local projects after installation if you want sync-project-workflow.sh to
+# compare and optionally update their docs/agent-workflow files.
+
+projects: []
+
+# Example:
+# projects:
+#   - name: my-project
+#     path: /absolute/path/to/my-project
+#     policy: report-only

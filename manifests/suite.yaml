@@ -1,0 +1,176 @@
+# Agent Suite Manifest
+# Public default manifest. It points at the Full Installer profile while keeping
+# DIY/Core as an explicit supported profile.
+
+suite:
+  name: dongmenlaohu-multi-agent-engineering-kit
+  version: 1.0.0-public-full
+  description: Public multi-agent governance kit with DIY/Core and Full Installer profiles
+  generated: 2026-05-28
+  default_profile: full
+
+profiles:
+  diy:
+    manifest: manifests/suite.core.yaml
+    description: Governance framework and workflow templates only.
+  full:
+    manifest: manifests/suite.full.yaml
+    description: Core governance plus curated skills and optional capability packs.
+
+install_prefix: ""
+
+assets:
+  required_rules:
+    - source: global-rules/SOUL.md
+      dest: .agents/rules/SOUL.md
+      description: Public neutral persona template
+    - source: global-rules/core.md
+      dest: .agents/rules/core.md
+      description: Core agent workflow rules
+    - source: global-rules/RTK.md
+      dest: .codex/RTK.md
+      description: Codex token-optimized shell policy
+
+  required_hooks: []
+
+  required_skills:
+    - source: global-skills/auto-brainstorm
+      dest: .agents/skills/auto-brainstorm
+      description: Automatic solution exploration
+    - source: global-skills/auto-debug
+      dest: .agents/skills/auto-debug
+      description: Automatic debug loop
+    - source: global-skills/auto-verify
+      dest: .agents/skills/auto-verify
+      description: Completion verification gate
+    - source: global-skills/prompt-maker
+      dest: .agents/skills/prompt-maker
+      description: Task-card and agent handoff prompt generator
+    - source: global-skills/claude-delivery-report
+      dest: .agents/skills/claude-delivery-report
+      description: Claude Code delivery report
+    - source: global-skills/tdd
+      dest: .agents/skills/tdd
+      description: Test-driven development workflow
+    - source: global-skills/diagnose
+      dest: .agents/skills/diagnose
+      description: Diagnosis workflow
+    - source: global-skills/zoom-out
+      dest: .agents/skills/zoom-out
+      description: Architecture context workflow
+    - source: global-skills/caveman-commit
+      dest: .agents/skills/caveman-commit
+      description: Concise commit message generator
+    - source: global-skills/caveman-review
+      dest: .agents/skills/caveman-review
+      description: Concise code review comments
+    - source: global-skills/finishing-a-development-branch
+      dest: .agents/skills/finishing-a-development-branch
+      description: Development branch finishing workflow
+    - source: global-skills/using-git-worktrees
+      dest: .agents/skills/using-git-worktrees
+      description: Git worktree isolation workflow
+    - source: global-skills/webapp-testing
+      dest: .agents/skills/webapp-testing
+      description: Local web app testing workflow
+    - source: global-skills/grill-with-docs
+      dest: .agents/skills/grill-with-docs
+      description: Requirements alignment workflow
+    - source: global-skills/improve-codebase-architecture
+      dest: .agents/skills/improve-codebase-architecture
+      description: Architecture improvement workflow
+    - source: global-skills/prototype
+      dest: .agents/skills/prototype
+      description: Throwaway prototype workflow
+    - source: global-skills/database-migration
+      dest: .agents/skills/database-migration
+      description: Database migration workflow
+    - source: global-skills/supply-chain-risk-auditor
+      dest: .agents/skills/supply-chain-risk-auditor
+      description: Dependency risk audit workflow
+    - source: global-skills/skill-creator
+      dest: .agents/skills/skill-creator
+      description: Skill creation and evaluation workflow
+    - source: global-skills/graphify
+      dest: .agents/skills/graphify
+      description: Project knowledge graph wrapper
+    - source: global-skills/superpowers
+      dest: .agents/skills/superpowers
+      description: Bundled playbook dependency
+
+  optional_skill_packs:
+    description: Curated optional skills for the Full Installer profile.
+    source: skill-packs/optional/
+
+  project_integration:
+    - source: project-integration/AGENTS.md.template
+      dest: <project>/AGENTS.md
+      description: Project agent entrypoint
+    - source: project-integration/CLAUDE.md.template
+      dest: <project>/CLAUDE.md
+      description: Project operating protocol
+    - source: protocol/
+      dest: <project>/docs/agent-workflow/
+      description: Agent workflow protocol docs
+    - source: project-integration/config/agent-project-profile.yaml.template
+      dest: <project>/config/agent-project-profile.yaml
+      description: Project profile template
+
+  governance_scripts:
+    - source: scripts/bootstrap.sh
+      description: Runtime installer
+    - source: scripts/install-suite-to-project.sh
+      description: Project workflow installer
+    - source: scripts/verify.sh
+      description: Suite integrity verification
+    - source: scripts/diff-local.sh
+      description: Local runtime drift check
+    - source: scripts/rollback.sh
+      description: Runtime rollback
+    - source: scripts/govern-new-skills.sh
+      description: Skill governance scanner
+    - source: scripts/sync-project-workflow.sh
+      description: Registered project workflow sync
+    - source: scripts/configure-review-hooks.mjs
+      description: Claude/Codex runtime hook normalization
+    - source: scripts/sync-skill-aliases.py
+      description: Claude Code skill alias sync
+    - source: scripts/run-task-card.sh
+      description: Task-card runner and receipt generator
+    - source: scripts/context-memory.sh
+      description: Local project memory capture
+    - source: scripts/memory-start-context.sh
+      description: Read-only task-start memory entry
+    - source: scripts/suite-doctor.sh
+      description: Read-only suite health check
+    - source: scripts/security-doctor.sh
+      description: Read-only boundary and security scan
+
+verification:
+  - bash -n scripts/bootstrap.sh
+  - bash -n scripts/install-suite-to-project.sh
+  - bash -n scripts/verify.sh
+  - bash -n scripts/diff-local.sh
+  - bash -n scripts/rollback.sh
+  - bash -n scripts/govern-new-skills.sh
+  - bash -n scripts/sync-project-workflow.sh
+  - bash -n scripts/run-task-card.sh
+  - bash -n scripts/context-memory.sh
+  - bash -n scripts/memory-start-context.sh
+  - bash -n scripts/suite-doctor.sh
+  - bash -n scripts/security-doctor.sh
+  - node --check scripts/configure-review-hooks.mjs
+  - python3 -m py_compile scripts/sync-skill-aliases.py
+  - scripts/bootstrap.sh --dry-run
+  - scripts/verify.sh
+
+forbidden:
+  - scripts/bootstrap.sh --apply without prior dry-run review
+  - rm -rf $HOME/.agents/skills/*
+  - cp -rf global-skills/* $HOME/.agents/skills/
+  - lark-cli update
+  - npx skills add
+  - npx skills remove
+  - npx skills update
+  - git push --force
+  - curl | bash

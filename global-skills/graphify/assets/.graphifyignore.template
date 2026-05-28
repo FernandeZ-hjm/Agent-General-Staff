@@ -1,0 +1,41 @@
+# Graphify 忽略文件模板
+# 由 graphify-project-map skill 自动生成
+# 请根据项目实际情况调整
+
+# VCS
+.git/
+
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+build/
+.next/
+.nuxt/
+.turbo/
+
+# 测试产物
+coverage/
+
+# 缓存
+.cache/
+
+# 敏感配置
+.env
+.env.*
+secrets/
+credentials/
+
+# 证书和密钥
+*.pem
+*.key
+*.p12
+*.crt
+
+# 数据库文件
+*.sqlite
+*.db
+
+# 日志
+*.log

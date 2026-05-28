@@ -1,0 +1,8 @@
+# AGENTS.md
+
+Before responding or executing tasks in this repository, read and follow:
+
+- `$HOME/.agents/rules/SOUL.md` — global interaction persona and response style.
+- `CLAUDE.md` — project operating protocol.
+
+@CLAUDE.md

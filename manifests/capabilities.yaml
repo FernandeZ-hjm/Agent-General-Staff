@@ -1,0 +1,48 @@
+# Capability Registry
+#
+# Rules should depend on these capability slots instead of hard-coding one
+# particular skill implementation. DIY/Core can leave slots unimplemented;
+# Full Installer supplies the default implementations below.
+
+version: 1
+
+capabilities:
+  brainstorm:
+    default_skill: auto-brainstorm
+    required_for: ["feature design", "architecture planning"]
+    diy_behavior: "ask clarifying questions and produce a concise design note"
+
+  debug:
+    default_skill: auto-debug
+    required_for: ["errors", "test failures", "unexpected behavior"]
+    diy_behavior: "use a manual diagnosis loop"
+
+  verify:
+    default_skill: auto-verify
+    required_for: ["completion claims", "pre-commit", "pre-release"]
+    diy_behavior: "run declared verification commands and report gaps"
+
+  task_card:
+    default_skill: prompt-maker
+    required_for: ["agent handoff", "Claude Code execution prompt"]
+    diy_behavior: "use templates/fallback-task-cards"
+
+  delivery_report:
+    default_skill: claude-delivery-report
+    required_for: ["Claude Code completion reports"]
+    diy_behavior: "summarize changes, verification, and residual risk"
+
+  review:
+    default_skill: caveman-review
+    required_for: ["manual code review", "review gate"]
+    diy_behavior: "review for correctness, risk, and missing tests"
+
+  browser_test:
+    default_skill: webapp-testing
+    required_for: ["local webapp verification"]
+    diy_behavior: "run project-provided browser or smoke tests"
+
+  project_graph:
+    default_skill: graphify
+    required_for: ["project knowledge graph", "architecture graph"]
+    diy_behavior: "fall back to file tree and dependency notes"
