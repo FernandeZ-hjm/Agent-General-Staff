@@ -168,7 +168,7 @@ suggest_profile() {
     case "$name" in
         lark-*|feishu-*)
             echo "optional" ;;
-        产经破壁机-*|六爻|辐射塔罗牌|深度科技评论|设计助手|开发助手|优化助手|a)
+        产经破壁机-*|六爻|辐射塔罗牌|深度科技评论|a)
             echo "personal" ;;
         auto-brainstorm|auto-debug|auto-verify|tdd|diagnose|zoom-out|caveman-commit|caveman-review|finishing-a-development-branch|using-git-worktrees|webapp-testing|grill-with-docs|improve-codebase-architecture|prototype|database-migration|supply-chain-risk-auditor|skill-creator|graphify|prompt-maker|claude-delivery-report|superpowers)
             echo "required" ;;
