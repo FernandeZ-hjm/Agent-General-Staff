@@ -113,6 +113,10 @@ assets:
       description: Project profile template
 
   governance_scripts:
+    - source: scripts/kit-install.sh
+      description: Public one-click profile installer
+    - source: scripts/kit-doctor.sh
+      description: Public environment checker and update gate
     - source: scripts/bootstrap.sh
       description: Runtime installer
     - source: scripts/install-suite-to-project.sh
@@ -153,6 +157,8 @@ assets:
       install_mode: explicit_only
 
 verification:
+  - bash -n scripts/kit-install.sh
+  - bash -n scripts/kit-doctor.sh
   - bash -n scripts/bootstrap.sh
   - bash -n scripts/install-suite-to-project.sh
   - bash -n scripts/verify.sh
@@ -166,7 +172,7 @@ verification:
   - bash -n scripts/suite-doctor.sh
   - bash -n scripts/security-doctor.sh
   - node --check scripts/configure-review-hooks.mjs
-  - python3 -m py_compile scripts/sync-skill-aliases.py
+  - python3 -c 'from pathlib import Path; compile(Path("scripts/sync-skill-aliases.py").read_text(), "scripts/sync-skill-aliases.py", "exec")'
   - scripts/bootstrap.sh --dry-run
   - scripts/verify.sh
 

@@ -6,15 +6,15 @@ following generic release flow.
 ## Local Runtime
 
 ```bash
-bash scripts/bootstrap.sh --dry-run
-bash scripts/bootstrap.sh --apply
+bash scripts/kit-install.sh --profile full --scope runtime --dry-run
+bash scripts/kit-install.sh --profile full --scope runtime --apply
 bash scripts/diff-local.sh
 ```
 
 ## Target Project
 
 ```bash
-bash scripts/install-suite-to-project.sh \
+bash scripts/kit-install.sh \
   --profile full \
   --target-project /path/to/project \
   --project-name "My Project" \
@@ -23,6 +23,18 @@ bash scripts/install-suite-to-project.sh \
 ```
 
 Apply only after reviewing the dry-run.
+
+## Public Update Gate
+
+```bash
+bash scripts/kit-doctor.sh update --check
+bash scripts/kit-doctor.sh update --diff
+bash scripts/kit-doctor.sh update --apply
+```
+
+`update --check` is read-only. `update --diff` fetches the remote branch into
+`FETCH_HEAD` for review. `update --apply` refuses dirty suite worktrees and uses
+fast-forward only.
 
 ## Public Release
 

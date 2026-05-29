@@ -16,17 +16,23 @@ private sync targets, or machine-specific release paths.
 
 ## Quick Start
 
-Preview a full local runtime install:
+Preview a full one-click install into a target project and local runtime:
 
 ```bash
-bash scripts/bootstrap.sh --dry-run
+bash scripts/kit-install.sh \
+  --profile full \
+  --target-project /path/to/project \
+  --project-name "My Project" \
+  --project-slug my-project \
+  --dry-run
 ```
 
-Preview installing the workflow into a target project:
+DIY/Core installs only the governance framework and project workflow by
+default:
 
 ```bash
-bash scripts/install-suite-to-project.sh \
-  --profile full \
+bash scripts/kit-install.sh \
+  --profile diy \
   --target-project /path/to/project \
   --project-name "My Project" \
   --project-slug my-project \
@@ -36,7 +42,7 @@ bash scripts/install-suite-to-project.sh \
 Apply only after reviewing the dry-run:
 
 ```bash
-bash scripts/install-suite-to-project.sh \
+bash scripts/kit-install.sh \
   --profile full \
   --target-project /path/to/project \
   --project-name "My Project" \
@@ -44,11 +50,12 @@ bash scripts/install-suite-to-project.sh \
   --apply
 ```
 
-Verify the suite:
+Check local conflicts, installed runtime drift, target project state, and
+available public updates:
 
 ```bash
-bash scripts/verify.sh
-bash scripts/security-doctor.sh
+bash scripts/kit-doctor.sh doctor --target-project /path/to/project
+bash scripts/kit-doctor.sh update --check
 ```
 
 Review third-party skill sources:
@@ -111,8 +118,10 @@ generated from CLI arguments and `config/agent-project-profile.yaml`.
 
 ## Project Install
 
-`scripts/install-suite-to-project.sh` installs project-level workflow files. It
-does not overwrite silently.
+`scripts/kit-install.sh` is the public installer entrypoint. It delegates
+project-level workflow writes to `scripts/install-suite-to-project.sh` and, for
+the Full profile, runtime writes to `scripts/bootstrap.sh`. It does not
+overwrite silently.
 
 It writes or updates:
 
@@ -126,14 +135,34 @@ rollback location.
 
 ## Runtime Install
 
-`scripts/bootstrap.sh` installs global rules and skills into a target home.
+Full profile runtime install places global rules and skills into a target home.
 Default mode is dry-run.
 
 ```bash
-bash scripts/bootstrap.sh --dry-run
-bash scripts/bootstrap.sh --apply
+bash scripts/kit-install.sh --profile full --scope runtime --dry-run
+bash scripts/kit-install.sh --profile full --scope runtime --apply
 bash scripts/diff-local.sh
 ```
+
+DIY/Core intentionally skips bundled global skill runtime installation unless a
+downstream user supplies their own capability implementations.
+
+## Environment Doctor
+
+`scripts/kit-doctor.sh` is the public environment checker. It runs the suite
+doctor, security doctor, optional target-project conflict checks, and the update
+gate.
+
+```bash
+bash scripts/kit-doctor.sh doctor --profile full --target-project /path/to/project
+bash scripts/kit-doctor.sh update --check
+bash scripts/kit-doctor.sh update --diff
+bash scripts/kit-doctor.sh update --apply
+```
+
+`update --check` is read-only. `update --diff` fetches into `FETCH_HEAD` and
+prints the diff summary. `update --apply` requires a clean suite worktree, uses
+fast-forward only, then runs verification and the security doctor.
 
 The installer backs up replaced files under:
 

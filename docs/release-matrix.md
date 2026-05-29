@@ -11,7 +11,8 @@ Includes:
 - fallback task-card templates
 - project integration templates
 - neutral global rules
-- verification, diff, rollback, doctor, and task runner scripts
+- one-click install, verification, diff, rollback, doctor/update, and task
+  runner scripts
 - capability registry
 
 Excludes:
@@ -33,6 +34,7 @@ Includes:
 - hook normalization
 - project workflow installer
 - runtime installer
+- update gate for public full-installer refreshes
 
 Optional third-party skill packs are not bundled in the public Full Installer by
 default. The optional pack directory is reserved for downstream or future use.

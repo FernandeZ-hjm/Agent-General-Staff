@@ -87,6 +87,8 @@ for path in \
     protocol/task-card-template.md \
     protocol/project-profile.md \
     protocol/context-memory.md \
+    scripts/kit-install.sh \
+    scripts/kit-doctor.sh \
     scripts/bootstrap.sh \
     scripts/verify.sh \
     scripts/run-task-card.sh \

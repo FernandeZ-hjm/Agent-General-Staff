@@ -6,15 +6,15 @@ top of the DIY/Core governance framework.
 ## Runtime Install
 
 ```bash
-bash scripts/bootstrap.sh --dry-run
-bash scripts/bootstrap.sh --apply
+bash scripts/kit-install.sh --profile full --scope runtime --dry-run
+bash scripts/kit-install.sh --profile full --scope runtime --apply
 bash scripts/diff-local.sh
 ```
 
 ## Project Install
 
 ```bash
-bash scripts/install-suite-to-project.sh \
+bash scripts/kit-install.sh \
   --profile full \
   --target-project /path/to/project \
   --project-name "My Project" \
@@ -25,7 +25,7 @@ bash scripts/install-suite-to-project.sh \
 After reviewing the planned writes:
 
 ```bash
-bash scripts/install-suite-to-project.sh \
+bash scripts/kit-install.sh \
   --profile full \
   --target-project /path/to/project \
   --project-name "My Project" \
@@ -63,5 +63,8 @@ overwrite sources.
 - Apply creates `.agent-suite-backups/<timestamp>/` in the target project.
 - The installer writes only project workflow files.
 - Global runtime install is separate from target-project workflow install.
+- `kit-doctor.sh update --check` is read-only.
+- `kit-doctor.sh update --apply` requires a clean worktree and fast-forwards
+  only before running verification.
 - Optional third-party skill packs are not bundled by default.
 - `skill-packs/optional/` is reserved as an extension point for future packs.
