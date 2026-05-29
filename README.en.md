@@ -2,7 +2,7 @@
 
 [中文版](README.md)
 
-An open, source-available development kit for multi-agent engineering collaboration. It helps build an AI coding environment that is governable, reproducible, verifiable, and rollback-ready.
+An open, source-available development kit for multi-agent engineering collaboration. It helps build a governable, reproducible, verifiable, and rollback-ready vibe-coding environment that can deliver roughly 70-80% of top-tier model-plus-agent development results at a fraction of the cost.
 
 ## Personal Background
 
@@ -22,9 +22,17 @@ I was facing a fast-growing hard-tech business. The team was small. The workload
 
 So, about a month ago, I installed Claude Code plus DeepSeek. About half a month ago, I added Codex and Cursor to develop my own projects.
 
-A new problem appeared quickly: each agent can be strong on its own, but how do several agents collaborate stably inside the same engineering system? How can human intent stay intact across multiple agent tools instead of drifting or being distorted?
+A new problem appeared quickly:
 
-I did not come from a large tech company. I also do not have an AI lab's resource pool behind me. My budget is limited. I cannot run Opus or GPT with unlimited usage forever.
+Each agent can be strong on its own, but how do several agents collaborate stably inside the same engineering system?
+
+How can human intent stay intact across multiple agent tools instead of drifting or being distorted? How can the workflow hit cache repeatedly enough to keep token consumption under control?
+
+Third-party skills are useful. The harder question is what happens after local wrapping: how do you trace their source, govern them, and update them to the right place?
+
+I did not come from a large tech company. I also do not have an AI lab's resource pool behind me. My budget is limited. I cannot run Opus or GPT with unlimited usage forever. Using domestic models like DeepSeek as the main development model is almost inevitable for me.
+
+If I want several agents to work together and approach top-tier model results at a fraction of the cost, I need a very strict engineering environment. Different models have different strengths. The system has to make those strengths show up in the right place.
 
 So I had to choose a more cost-effective path: let DeepSeek perform at its best inside clear coding conventions, behavioral boundaries, and workflow rules.
 
