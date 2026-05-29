@@ -1,0 +1,70 @@
+Dongmenlaohu Multi-Agent Engineering Kit Source-Available License
+Version 1.0
+
+Copyright (c) 2026 Hu Jiaming.
+All rights reserved except as expressly granted below.
+
+1. Scope
+
+This license applies to the original contents of the Dongmenlaohu
+Multi-Agent Engineering Kit repository, including but not limited to:
+
+- agent governance rules and protocols;
+- task-card templates and workflow contracts;
+- runtime adapter rules;
+- verification, rollback, doctor, installer, and update mechanisms;
+- capability registry and release profile definitions;
+- original skills, documentation, scripts, and project integration templates.
+
+Third-party components, upstream-derived materials, and separately licensed
+files remain governed by their own licenses. Nothing in this license changes
+those third-party license terms.
+
+2. Permitted Use
+
+You may legally access, read, run, copy, and modify this software for:
+
+- personal use;
+- internal use within your own organization;
+- evaluation, learning, research, and local development;
+- adapting the kit for your own private projects.
+
+You may create private modifications for the permitted uses above.
+
+3. Redistribution Requires Authorization
+
+You may not redistribute, republish, sublicense, sell, package, host as a
+public competing distribution, or otherwise make available to third parties
+any substantial part of the original governance framework or workflow system
+without prior written authorization from the copyright holder.
+
+This restriction includes, without limitation, redistribution of:
+
+- the original agent governance framework;
+- the workflow and task-card protocol system;
+- the DIY/Core profile as a public derivative distribution;
+- the Full Installer profile or any packaged full-development-environment
+  distribution;
+- modified versions that preserve the substantial structure, naming,
+  workflow design, or release-profile model of this kit.
+
+4. Attribution
+
+Any authorized redistribution or public derivative work must preserve copyright
+notices, this license notice, and clear attribution to the original project,
+unless the copyright holder grants a different written permission.
+
+5. No Warranty
+
+This software is provided "as is", without warranty of any kind, express or
+implied, including but not limited to warranties of merchantability, fitness
+for a particular purpose, and noninfringement.
+
+In no event shall the copyright holder be liable for any claim, damages, or
+other liability arising from the use of this software.
+
+6. Additional Permission
+
+Additional permissions, commercial licenses, redistribution rights, or
+project-specific authorizations may be granted separately in writing by the
+copyright holder.
