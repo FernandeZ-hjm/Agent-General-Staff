@@ -1,5 +1,7 @@
 # Dongmenlaohu Multi-Agent Engineering Kit
 
+[English version](README.en.md)
+
 一个面向多 Agent 工程协作的开源可见开发套件，用来搭建可治理、可复现、可验证、可回滚的 AI coding 环境。
 
 ## 个人介绍与项目背景
