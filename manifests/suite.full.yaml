@@ -2,7 +2,7 @@
 
 suite:
   name: dongmenlaohu-multi-agent-engineering-kit-full
-  version: 1.0.0-public-full
+  version: 1.5.0-public-full
   description: DIY/Core plus required curated development skills.
 
 extends: manifests/suite.core.yaml

@@ -1,231 +1,284 @@
-# Dongmenlaohu Multi-Agent Engineering Kit
+# Dongmenlaohu Multi-Agent Governance Suite
 
 [中文版](README.md)
 
-An open, source-available development kit for multi-agent engineering collaboration. It helps build a governable, reproducible, verifiable, and rollback-ready vibe-coding environment that can deliver roughly 70-80% of top-tier model-plus-agent development results at a fraction of the cost.
+This repository is a governance suite for multi-agent Vibe-coding.
 
-## Personal Background
+It is not a magic prompt pack. It is a set of rules, task-card contracts, runtime adapters, verification gates, rollback paths, and public-boundary checks for people who want Claude Code, Codex, Cursor, DeepSeek, and other Agent tools to work inside the same project without drifting all over the place.
 
-Hi, I am Dongmen Laohu.
+The goal is simple: make Vibe-coding more stable for individual developers and small teams.
 
-I used to work as an auditor. Later, I became a tech media writer out of personal interest. I now lead public relations at a hard-tech company. As this project becomes public, I have one more identity: a vibe-coding architect, beginner edition.
+Release notes are available in [CHANGELOG.md](CHANGELOG.md).
 
-I did not arrive here by accident.
+## What It Solves
 
-In the second half of 2025, I was still writing as a tech media columnist. Several friends in the AI industry repeatedly recommended Gemini 3.0 Pro to me. Their reason was simple: at that time, its text generation quality was clearly ahead of other top models. Within a quarter, I had become a heavy Gemini user. I also started using Gem, Gemini's built-in skill mechanism, to rebuild my writing and research workflow.
+One Agent can be useful.
 
-By early 2026, that methodology had already helped me earn my first real return from AI-assisted work.
+Several Agents working on the same repository can become messy very quickly.
 
-After joining a company, the problem became more concrete.
+Human intent drifts. Task boundaries expand. Verification gets skipped. Third-party skills pile up. Eventually, the work stops feeling like product development and starts feeling like toolchain management.
 
-I was facing a fast-growing hard-tech business. The team was small. The workload was not. Marketing, public relations, external announcements, and internal strategy support all required higher-frequency and more stable output. Without AI to multiply my productivity, I could not realistically carry that workload alone.
+This governance suite tries to put order around that.
 
-So, about a month ago, I installed Claude Code plus DeepSeek. About half a month ago, I added Codex and Cursor to develop my own projects.
+Before a task starts, it should have a clear goal. During execution, it should respect boundaries. Before anyone claims completion, verification should run. When different tools collaborate, they should share a stable task-card format instead of improvising their own prompt shape every time.
 
-A new problem appeared quickly:
+## Public Profiles
 
-Each agent can be strong on its own, but how do several agents collaborate stably inside the same engineering system?
-
-How can human intent stay intact across multiple agent tools instead of drifting or being distorted? How can the workflow hit cache repeatedly enough to keep token consumption under control?
-
-Third-party skills are useful. The harder question is what happens after local wrapping: how do you trace their source, govern them, and update them to the right place?
-
-I did not come from a large tech company. I also do not have an AI lab's resource pool behind me. My budget is limited. I cannot run Opus or GPT with unlimited usage forever. Using domestic models like DeepSeek as the main development model is almost inevitable for me.
-
-If I want several agents to work together and approach top-tier model results at a fraction of the cost, I need a very strict engineering environment. Different models have different strengths. The system has to make those strengths show up in the right place.
-
-So I had to choose a more cost-effective path: let DeepSeek perform at its best inside clear coding conventions, behavioral boundaries, and workflow rules.
-
-Only then can my projects become truly engineered products, not just toys.
-
-I also went through a stage many vibe-coding beginners know well: installing all kinds of skills, hooks, and MCP servers without much restraint.
-
-But I soon found that more tools also meant more problems. Some had messy versions. Some conflicted with each other. Some triggered at the wrong time. Some had unclear update paths. They were supposed to improve productivity. Instead, they could drag attention away from development and back into tool management.
-
-So I started doing something else: putting these capabilities into a governable order. Things that should trigger automatically should do so. Things that require human confirmation should stop and ask. Things that should update must have an update path. Things that can go wrong must have a rollback path.
-
-This project borrows experience from several directions.
-
-One part comes from popular open-source projects on GitHub, including many agent skills. They strengthen the Claude Code framework and help DeepSeek work inside clearer boundaries.
-
-Another part comes from the latest Claude Code workflow practices. Their real value is not a beautiful prompt. Their value is strong boundaries, traceability, and explicit delivery scope. How a task starts, who executes it, who reviews it, what counts as done, and how to roll back after failure all need rules.
-
-After a month, this engineering kit is finally ready to be shown publicly.
-
-I have to be honest: many capabilities inside it were not originally invented by me. What I did was assemble scattered skills, rules, task cards, hooks, and verification gates into an engineering kit that can support individual developers and small teams.
-
-For vibe-coding beginners, this kit does not let you skip engineering. It does the opposite. It moves the engineering order you will eventually need into your AI coding environment earlier.
-
-Once installed, it should make two things easier for small and medium projects: higher development efficiency and more stable delivery boundaries.
-
-## Project Versions
-
-This repository has two public versions:
-
-- **DIY version**: for mature AI practitioners. It keeps only my governance framework, task-card protocol, runtime adapter rules, verification gates, project templates, and installation validators.
-- **Full version**: for beginners. A single command can reproduce my complete development workflow.
-
-## Quick Start
-
-Preview first. Do not write into your environment too early.
-
-Full Installer installs the complete development kit into a target project and connects it to the local agent runtime. For the first run, read the dry-run output only:
-
-```bash
-bash scripts/kit-install.sh \
-  --profile full \
-  --target-project /path/to/project \
-  --project-name "My Project" \
-  --project-slug my-project \
-  --dry-run
-```
-
-If you only want the governance framework and project workflow, without installing the full skill stack by default, use DIY/Core:
-
-```bash
-bash scripts/kit-install.sh \
-  --profile diy \
-  --target-project /path/to/project \
-  --project-name "My Project" \
-  --project-slug my-project \
-  --dry-run
-```
-
-After reviewing the dry-run output, apply only when the result matches your expectation:
-
-```bash
-bash scripts/kit-install.sh \
-  --profile full \
-  --target-project /path/to/project \
-  --project-name "My Project" \
-  --project-slug my-project \
-  --apply
-```
-
-Check local conflicts, installed runtime drift, target project state, and available public updates:
-
-```bash
-bash scripts/kit-doctor.sh doctor --target-project /path/to/project
-bash scripts/kit-doctor.sh update --check
-```
-
-Third-party skill sources are listed here:
-
-```text
-docs/third-party-skills.md
-```
-
-Supported MCP servers are listed here:
-
-```text
-docs/mcp-servers.md
-```
-
-## Version Details
+This repository has two public profiles.
 
 ### DIY/Core
 
 DIY/Core is for people who already have their own toolchain.
 
-It does not decide which third-party skills you should use. It provides engineering order: cache-stable task cards, light/medium/heavy routing, review and verification gates, project profiles, runtime adapter conventions, local memory capsules, dry-run, rollback, diff, and doctor tools.
+It provides the governance framework only. You get the task-card protocol, runtime adapter rules, verification gates, project templates, doctor checks, local diff checks, rollback support, and local memory entrypoints.
 
-Core does not assume any third-party skill implementation exists. The rule layer refers only to capability slots. If a capability is not installed, the system should degrade instead of breaking.
+It does not decide which third-party skills you should use.
 
 ### Full Installer
 
-Full Installer is for people who want to quickly reproduce a complete development environment.
+Full Installer is for people who want to reproduce the complete workflow quickly.
 
-It includes everything in Core, plus required global skills, hook normalization for Claude Code and Codex, a project workflow installer, verification flow, and rollback receipts.
+It includes everything in DIY/Core, plus suite-managed global rules and skills, hook normalization for Claude Code and Codex, the project workflow installer, verification flow, and rollback receipts.
 
-Optional third-party skill packs are not bundled by default. `skill-packs/optional/` is only a reserved extension point. Current third-party upstreams and candidate skills are listed by GitHub author in `docs/third-party-skills.md`.
+If you are setting up a Vibe-coding environment for the first time, start with Full Installer. Get it running first, then inspect each layer.
 
-CodeGraph MCP is documented as an installable MCP server in `docs/mcp-servers.md`. `bootstrap.sh` does not install it silently.
+## Step-by-Step Install
 
-Full Installer also avoids private project bindings. Target-project data comes from CLI arguments and `config/agent-project-profile.yaml`.
+The most important rule is this:
 
-## Repository Layout
+Do not apply on the first run.
+
+Use dry-run first.
+
+Dry-run previews what the installer would do without writing files. Review that output before applying anything.
+
+### 1. Prepare A Target Project
+
+Assume your project lives here:
+
+```bash
+/Users/you/projects/my-project
+```
+
+If it does not exist yet:
+
+```bash
+mkdir -p /Users/you/projects/my-project
+```
+
+If it is a git repository, check its status first:
+
+```bash
+cd /Users/you/projects/my-project
+git status
+```
+
+If the project already has many uncommitted changes, handle those first. The installer can still run, but it becomes harder to tell which files were changed by you and which files were written by the installer.
+
+### 2. Enter This Governance Suite
+
+If you already have the repository:
+
+```bash
+cd /path/to/Dongmenlaohu-multi-agent-engineering-kit
+```
+
+If not, clone it:
+
+```bash
+git clone https://github.com/FernandeZ-hjm/Dongmenlaohu-multi-agent-engineering-kit.git
+cd Dongmenlaohu-multi-agent-engineering-kit
+```
+
+### 3. Check The Suite Itself
+
+```bash
+bash scripts/verify.sh
+bash scripts/security-doctor.sh
+```
+
+This checks suite integrity and public-boundary safety. If these fail, do not install the suite into another project yet.
+
+### 4. Choose A Profile
+
+For the complete workflow, use Full Installer:
+
+```bash
+bash scripts/kit-install.sh \
+  --profile full \
+  --target-project /Users/you/projects/my-project \
+  --project-name "My Project" \
+  --project-slug my-project \
+  --dry-run
+```
+
+For the governance framework only, use DIY/Core:
+
+```bash
+bash scripts/kit-install.sh \
+  --profile diy \
+  --target-project /Users/you/projects/my-project \
+  --project-name "My Project" \
+  --project-slug my-project \
+  --dry-run
+```
+
+Parameter notes:
+
+`--target-project` is the target project path.
+
+`--project-name` is the human-readable project name.
+
+`--project-slug` is the stable project identifier. Use lowercase ASCII letters, numbers, and hyphens.
+
+### 5. Review Dry-Run Output
+
+Dry-run usually previews writes like these:
 
 ```text
-├── AGENT_SUITE_PROTOCOL.md
-├── README.md
-├── docs/
-├── global-rules/
-├── global-skills/
-├── governance/
-├── manifests/
-├── project-integration/
-├── protocol/
-├── scripts/
-├── skill-packs/
-└── templates/
+Project Agent entrypoint, AGENTS.md
+Claude Code project protocol, CLAUDE.md
+Agent workflow docs, docs/agent-workflow/
+Project profile config, config/agent-project-profile.yaml
 ```
 
-## Project Integration
+Full Installer may also touch local runtime rules, skills, and hooks.
 
-`scripts/kit-install.sh` is the public installation entrypoint.
+If the dry-run output plans to overwrite something important, stop and inspect it first.
 
-It coordinates two layers. Project-level workflow writes are handled by `scripts/install-suite-to-project.sh`. Runtime writes for the Full profile are handled by `scripts/bootstrap.sh`. It does not overwrite files silently.
+### 6. Apply After Review
 
-It writes or updates:
-
-- `AGENTS.md`
-- `CLAUDE.md`
-- `docs/agent-workflow/`
-- `config/agent-project-profile.yaml`
-
-Before `--apply`, it creates a timestamped backup and prints a receipt containing the rollback location.
-
-## Runtime Install
-
-The Full profile runtime install places global rules and skills into the target home. The default mode is still dry-run.
+Apply Full Installer:
 
 ```bash
-bash scripts/kit-install.sh --profile full --scope runtime --dry-run
-bash scripts/kit-install.sh --profile full --scope runtime --apply
-bash scripts/diff-local.sh
+bash scripts/kit-install.sh \
+  --profile full \
+  --target-project /Users/you/projects/my-project \
+  --project-name "My Project" \
+  --project-slug my-project \
+  --apply
 ```
 
-DIY/Core intentionally skips bundled global skill runtime installation. Unless downstream users provide their own capability implementations, it only provides the governance framework.
-
-## Environment Doctor
-
-`scripts/kit-doctor.sh` is the public environment checker.
-
-It runs the suite doctor, security doctor, optional target-project conflict checks, and the update gate.
+Apply DIY/Core:
 
 ```bash
-bash scripts/kit-doctor.sh doctor --profile full --target-project /path/to/project
-bash scripts/kit-doctor.sh update --check
-bash scripts/kit-doctor.sh update --diff
-bash scripts/kit-doctor.sh update --apply
+bash scripts/kit-install.sh \
+  --profile diy \
+  --target-project /Users/you/projects/my-project \
+  --project-name "My Project" \
+  --project-slug my-project \
+  --apply
 ```
 
-`update --check` is read-only. `update --diff` fetches into `FETCH_HEAD` and prints a diff summary. `update --apply` requires a clean suite worktree, uses fast-forward only, then runs verification and the security doctor.
-
-The installer backs up replaced files under:
+Before writing, the installer creates backups under:
 
 ```text
 $HOME/.agents/backups/
 ```
 
-## Safety Model
+After installation, it prints a receipt with the written files and rollback location.
 
-Automation must not run destructive commands or external dependency installation commands without explicit approval.
+### 7. Run Post-Install Doctor
 
-The manifest forbids these behaviors by default:
+For Full Installer:
 
-- `git push --force`
-- `curl | bash`
-- `npx skills add/remove/update`
-- unreviewed dependency installation
-- deleting the user's global skill directory
+```bash
+bash scripts/kit-doctor.sh doctor \
+  --profile full \
+  --target-project /Users/you/projects/my-project
+```
 
-## Public Boundary
+For DIY/Core:
+
+```bash
+bash scripts/kit-doctor.sh doctor \
+  --profile diy \
+  --target-project /Users/you/projects/my-project
+```
+
+### 8. Runtime-Only Install
+
+If the project workflow is already installed and you only want to update local runtime files, preview first:
+
+```bash
+bash scripts/kit-install.sh \
+  --profile full \
+  --scope runtime \
+  --dry-run
+```
+
+Then apply:
+
+```bash
+bash scripts/kit-install.sh \
+  --profile full \
+  --scope runtime \
+  --apply
+```
+
+DIY/Core intentionally does not install the bundled full skill runtime. It provides the governance framework and leaves the toolchain to you.
+
+### 9. Check Local Drift
+
+```bash
+bash scripts/diff-local.sh
+```
+
+### 10. Check For Updates
+
+Check only:
+
+```bash
+bash scripts/kit-doctor.sh update --check
+```
+
+Inspect diff:
+
+```bash
+bash scripts/kit-doctor.sh update --diff
+```
+
+Apply after review:
+
+```bash
+bash scripts/kit-doctor.sh update --apply
+```
+
+`update --apply` requires a clean suite worktree, uses fast-forward only, then runs verification and the security doctor.
+
+## Important Files
+
+File paths stay in English for command-line, git, Claude Code, Codex, and runtime compatibility.
+
+```text
+Install entrypoint, scripts/kit-install.sh
+Environment doctor, scripts/kit-doctor.sh
+Suite verification, scripts/verify.sh
+Public-boundary scanner, scripts/security-doctor.sh
+Task-card validator, scripts/validate-task-card.sh
+Agent workflow protocol, protocol/
+Project templates, project-integration/
+Global rules, global-rules/
+Global skills, global-skills/
+Task-card templates, templates/
+Third-party skill notes, docs/third-party-skills.md
+MCP server notes, docs/mcp-servers.md
+```
+
+## Safety Boundary
 
 This public repository must not include private project names, private release topology, personal persona profiles, private sync registries, real secrets, tokens, or API keys.
 
-Run the boundary scan before publishing:
+It also does not silently:
 
-```bash
-bash scripts/security-doctor.sh
-```
+- force-push git branches
+- run `curl | bash`
+- install third-party dependencies
+- delete your global skills directory
+- install optional skill packs
+
+CodeGraph MCP is documented, but `bootstrap.sh` does not install it silently.
+
+The point is not to make Vibe-coding look cooler.
+
+The point is to make it less mystical and more governable inside real projects.

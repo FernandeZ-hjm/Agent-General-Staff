@@ -1,0 +1,36 @@
+name: Docs or install question
+description: Ask about installation, setup docs, or release guidance.
+title: "[Docs]: "
+labels:
+  - documentation
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What are you trying to install or understand?
+    validations:
+      required: true
+  - type: dropdown
+    id: profile
+    attributes:
+      label: Profile
+      options:
+        - Full Installer
+        - DIY/Core
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Include your OS, shell, target project type, and the command you ran.
+      render: shell
+  - type: checkboxes
+    id: boundary
+    attributes:
+      label: Public boundary check
+      options:
+        - label: I removed secrets, tokens, private project names, and local-only paths from this report.
+          required: true

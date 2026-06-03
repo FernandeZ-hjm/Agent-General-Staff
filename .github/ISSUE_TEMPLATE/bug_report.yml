@@ -1,0 +1,46 @@
+name: Bug report
+description: Report a reproducible problem in the governance suite.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What went wrong, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Include the exact command, profile, target path shape, and relevant output.
+      placeholder: |
+        1. Run ...
+        2. See ...
+    validations:
+      required: true
+  - type: dropdown
+    id: profile
+    attributes:
+      label: Profile
+      options:
+        - Full Installer
+        - DIY/Core
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification output
+      description: Paste relevant output from verify, security doctor, or environment doctor.
+      render: shell
+  - type: checkboxes
+    id: boundary
+    attributes:
+      label: Public boundary check
+      options:
+        - label: I removed secrets, tokens, private project names, and local-only paths from this report.
+          required: true

@@ -1,5 +1,12 @@
 # Public Release Matrix
 
+Current public release: V1.5.
+
+V1.5 promotes task cards from prompt conventions into validated execution
+contracts. The public release includes `scripts/validate-task-card.sh` in both
+DIY/Core and Full Installer so generated task cards can be checked before a
+runner or human treats them as executable.
+
 ## DIY/Core
 
 Audience: users who want the governance framework and task-card workflow but
@@ -13,6 +20,7 @@ Includes:
 - neutral global rules
 - one-click install, verification, diff, rollback, doctor/update, and task
   runner scripts
+- task-card format validator
 - capability registry
 
 Excludes:
@@ -34,6 +42,7 @@ Includes:
 - hook normalization
 - project workflow installer
 - runtime installer
+- task-card validation before runner execution
 - update gate for public full-installer refreshes
 
 Optional third-party skill packs are not bundled in the public Full Installer by

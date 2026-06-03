@@ -4,9 +4,9 @@
 
 suite:
   name: dongmenlaohu-multi-agent-engineering-kit
-  version: 1.0.0-public-full
-  description: Public multi-agent governance kit with DIY/Core and Full Installer profiles
-  generated: 2026-05-28
+  version: 1.5.0-public-full
+  description: Public multi-agent governance suite with DIY/Core and Full Installer profiles
+  generated: 2026-06-03
   default_profile: full
 
 profiles:
