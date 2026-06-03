@@ -23,6 +23,7 @@ includes:
     - scripts/diff-local.sh
     - scripts/rollback.sh
     - scripts/run-task-card.sh
+    - scripts/validate-task-card.sh
     - scripts/context-memory.sh
     - scripts/memory-start-context.sh
     - scripts/suite-doctor.sh

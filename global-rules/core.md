@@ -64,6 +64,15 @@
 6. 对涉及数据、向量库、数据库、迁移、baseline、删除、覆盖、不可逆操作的任务，默认使用 heavy 模板，并要求 Executor 先给 root cause / 设计方案 / 实施计划，等待确认后再改代码。
 7. 生成提示词时必须要求 Executor 完成后读取 `claude-delivery-report` skill 或项目交付报告协议，并按模板输出交付报告。
 
+**前台输出硬门禁：**
+
+- 最终回复只要包含 `Executor: Claude Code`，就必须交付一个可执行任务卡块，且任务卡内容第一条非空行必须是 `## 任务卡`。
+- 如果生成结果不是 `## 任务卡` 开头的项目任务卡或全局 fallback 任务卡，必须丢弃并重写；不得把自由 runbook、`text` fence 或 prose-first prompt 交给用户粘贴。
+- 如果生成结果是 `目标：` / `背景：` / `硬性要求：` 开头，并继续包含 `建议验证命令：`、`停止条件：`、`交付格式：` 或 `[skill: ...]`，也必须丢弃并重写为规范任务卡；这种项目任务简报不是可执行 task card。
+- `[skill: xxx]` 是规范任务卡的末尾元数据，不得附在自由文本 prompt 或 `text` fence 后面。
+- 任务卡包含内嵌代码块时，外层必须用 `~~~~markdown`，不得用 ` ```text ` 或外层三反引号。
+- 如需校验复制块或文件，使用 `scripts/validate-task-card.sh <task-card>` 或 `scripts/validate-task-card.sh -`。
+
 ## 简洁优先
 
 最小代码解决问题，不写用不到的东西。

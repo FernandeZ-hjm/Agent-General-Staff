@@ -54,7 +54,7 @@ workflow:
   context_memory_capsule: "$HOME/.agents/memory/projects/<project-slug>/context-capsule.md"
   task_memory: "$HOME/.agents/memory/projects/<project-slug>/task-memory.md"
   task_archive: "$HOME/.agents/memory/projects/<project-slug>/task-archive/"
-  default_review_policy: "Light self-check; Medium manual review; Heavy adversarial review"
+  default_review_policy: "Light caveman-review; Medium Codex review; Heavy adversarial review"
   delivery_report: "docs/agent-workflow/agent-task-protocol.md"
 
 user_preferences:

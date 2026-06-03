@@ -27,8 +27,8 @@ Parallelism: none
 Heavy 默认 `Permission mode: plan-only`。只有当前任务获得明确人工确认后，才可进入 `edit-with-confirmation` 或 `execute-and-verify`；"继续"、上下文压缩恢复或 task-notification 接续不算 Heavy 写入批准。
 
 Review gate:
-- Light：完成前自查 diff；提交前建议运行 `caveman-review`。
-- Medium：人工 Review gate；Executor 完成验证后将任务状态标为“部分完成 / 等待人工 review”，并提醒操作者手动运行 `/codex:review` 后再放行。
+- Light：完成验证后运行 `caveman-review` 或等价轻量 diff review；如发现风险高于 Light，升级 Medium。
+- Medium：Codex 最终 Review gate；Executor 完成验证后将任务状态标为“部分完成 / 等待 Codex review”，由 Codex 审查通过后再放行。
 - Heavy：先计划后执行；人工 Adversarial Review gate；Executor 完成验证后将任务状态标为“部分完成 / 等待人工 adversarial review”，并提醒操作者手动运行 `/codex:adversarial-review` 后再放行。
 
 任务：

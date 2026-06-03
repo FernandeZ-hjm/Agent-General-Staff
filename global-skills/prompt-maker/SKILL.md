@@ -40,6 +40,7 @@ This skill is for prompt or task-card handoff. Codex still owns diagnosis, archi
    - stop conditions.
 4. Choose the output format in this order:
    - If the current project has `docs/agent-workflow/task-card-template.md`, prefer the project task-card format.
+   - If the current project is the suite source tree and has `protocol/task-card-template.md`, read that source template and prefer the project task-card format.
    - Use the global full templates only when the project has no task-card protocol, the task is cross-repo, an external agent will execute it, or the executor cannot read the project files.
 5. Read project routing docs when present, otherwise read `references/task-routing.md`.
 6. Read project runtime adapter docs when present, otherwise use the runtime defaults in this skill.
@@ -48,7 +49,9 @@ This skill is for prompt or task-card handoff. Codex still owns diagnosis, archi
 9. Fill the selected project task card or global template with concrete project facts.
 10. Ensure the prompt requires the executor to use `claude-delivery-report` or the project's delivery-report protocol before its final response.
 11. Add only directly relevant skill tags.
-12. Output a Claude Code executable compact task card by default, unless the
+12. For Claude Code handoffs, route execution through the Learning Runner by
+    default when execution is requested.
+13. Output a Claude Code executable compact task card by default, unless the
     user explicitly asks for a human-only preview.
 
 ## Classification Standard
@@ -95,6 +98,10 @@ Default `Parallelism` is `none`. Use `subagent`, `worktree`, `multi-session`, or
 When a project contains its own agent workflow docs, treat them as project-specific overrides. Common locations:
 
 - `config/agent-project-profile.yaml`
+- `protocol/agent-task-protocol.md`
+- `protocol/task-routing.md`
+- `protocol/runtime-adapters.md`
+- `protocol/task-card-template.md`
 - `docs/agent-workflow/agent-task-protocol.md`
 - `docs/agent-workflow/task-routing.md`
 - `docs/agent-workflow/runtime-adapters.md`
@@ -164,11 +171,46 @@ Task-archive rules:
 - Do not paste archived logs into new task cards; cite the archive path and
   summarize only the task-relevant fact.
 
+## Learning Runner
+
+Claude Code task cards are learning-enabled by default.
+
+Prompt Maker is the entrypoint; runner owns transient compilation and learning
+capture:
+
+- Prompt Maker generates the canonical task card.
+- `scripts/run-task-card.sh` validates the card, compiles a transient Task IR /
+  compiled brief, and injects that brief into Claude Code execution.
+- Task IR and compiled brief are short-lived execution aids. They are not a
+  third task-card format, and they are not retained by default.
+- Runner keeps full transient artifacts only when explicitly launched with
+  `--keep-ir` for debugging.
+- Long-term retention is limited to reusable learning gaps under local project
+  memory, such as compiler misses, weak verification gates, underestimated task
+  level, or executor delivery problems.
+- Learning gaps are proposals for periodic human review. They must not directly
+  rewrite `context-capsule.md`, task-card templates, protocol files, or project
+  profile data.
+
+When the user asks to execute through Claude Code, prefer:
+
+```bash
+scripts/run-task-card.sh <task-card> --auto
+```
+
+Use `--no-learning` only when the user explicitly wants no compile/learning
+pipeline for that run. Use `--keep-ir` only for debugging the compiler layer.
+
+When the user only asks for a task card to copy, output the task card normally
+and mention that execution should go through `scripts/run-task-card.sh <task-card>
+--auto` when they want the Learning Runner to launch Claude Code. Do not include
+the transient compiled brief or Task IR in the task card.
+
 ## Template Selection
 
 The output must always be one of exactly two task-card formats. Never create a third format.
 
-1. **Project task card** — use the fixed skeleton from `docs/agent-workflow/task-card-template.md` when it exists.
+1. **Project task card** — use the fixed skeleton from `docs/agent-workflow/task-card-template.md` when it exists, or `protocol/task-card-template.md` when working in the suite source tree.
 2. **Global fallback task card** — use `templates/fallback-task-cards/{light,medium,heavy}.md` when no project protocol exists, the task is cross-repo, or the executor cannot access project files.
 
 Prohibited: free-form runbooks, machine-specific full templates, phase-specific templates, tool-specific formats, or any format that is neither a project task card nor a global fallback task card.
@@ -223,7 +265,9 @@ The suite's design goal is **frontstage natural language, backstage
 cache-stable task card**.
 
 Default to a **compact executable Claude Code task card** when the user asks for
-"任务卡", "Claude Code 任务卡", "给 CC 确认", "确认一下这个任务卡", or equivalent.
+"任务卡", "Claude Code 任务卡", "给 CC 确认", "确认一下这个任务卡",
+"给 Claude Code 提示词", "可复制给 Claude Code", "直接发给 CC 执行",
+or equivalent.
 The user usually intends to paste this into Claude Code so Claude can confirm
 or execute. It must be executable by Claude Code, not a human-only preview.
 
@@ -231,8 +275,9 @@ Compact executable card rules:
 
 - It is still a real task card for Claude Code.
 - Keep it short enough for frontstage review, usually 20-40 lines.
-- Start with the fixed cache anchor exactly as shown. Do not put path, date,
-  user request, or other dynamic content before it.
+- Start with the fixed heading `## 任务卡`, then put the compact cache anchor
+  on the next non-empty line exactly as shown. Do not put path, date, user
+  request, or other dynamic content before them.
 - Use the compact skeleton below exactly: keep headings, field order, and
   baseline wording stable; fill only the dynamic slots.
 - Preserve the required executable fields: execution path, Executor,
@@ -242,10 +287,25 @@ Compact executable card rules:
   runtime explanations, long JSON examples, or repeated policy paragraphs.
 - Use concise bullets and path references. Do not expand the entire fixed
   skeleton unless needed.
+- Runtime field fragments are not task cards. If the source text starts with
+  `Executor:`, `Runtime adapter:`, `Execution surface:`, `Permission mode:`, or
+  `Task level:`, treat it as raw task intent and compile it into the skeleton
+  below. Never pass that fragment through as the final Claude Code handoff.
+- Task-brief fragments are not task cards. If the source text starts with
+  `目标：`, `背景：`, `硬性要求：`, `建议验证命令：`, `停止条件：`, or
+  `交付格式：` and is meant to be pasted to Claude Code/Cursor/Codex, compile it
+  into the skeleton below instead of preserving the source section order.
+- Manual skill tags such as `[skill: verify]` are executable task-card metadata.
+  If a handoff contains `[skill:` it must be inside the canonical task-card
+  block, not appended to a free-form `text` prompt.
+- Use `任务级别：` in generated cards. `Task level:` is an input smell from raw
+  notes or runtime docs, not a canonical task-card field.
 
 Compact skeleton:
 
 ```markdown
+## 任务卡
+
 AGENT_SUITE_COMPACT_TASK_CARD_V1
 遵循固定字段顺序，只填动态 slot。
 
@@ -288,14 +348,16 @@ Parallelism: none
 [skill: verify]
 ```
 
-For `Medium` add `[skill: review]` only when the project explicitly routes
-manual review through that tag. For `Heavy`, keep `Permission mode: plan-only`
-unless the current user request explicitly approves mutation.
+For `Light`, add `[skill: review]` when the generated task asks the executor to
+run the lightweight `caveman-review` gate. For `Medium`, do not push final
+review onto the executor; mark delivery as waiting for Codex review unless the
+project explicitly says otherwise. For `Heavy`, keep `Permission mode:
+plan-only` unless the current user request explicitly approves mutation.
 
 Generate the long/full fixed skeleton only when one of these is true:
 
-- the user explicitly asks for a "完整任务卡", "可复制给 Claude Code", "直接发给 CC 执行",
-  "完整骨架", "full prompt", or equivalent;
+- the user explicitly asks for a "完整任务卡", "完整骨架", "full prompt",
+  "self-contained prompt", or equivalent;
 - a runner or file artifact needs the full skeleton;
 - the executor cannot access project protocol files and needs a self-contained
   fallback card.
@@ -326,6 +388,25 @@ Dialogue delivery is the default. Do not create a task-card `.md` file unless
 the user explicitly asks for a file artifact. When generating a compact or full
 execution card, keep it contiguous and free of explanatory text inside the
 fenced block.
+
+Conversation-output hard gate:
+
+- If the final answer contains `Executor: Claude Code`, it must contain exactly
+  one executable task-card block whose first non-empty line is `## 任务卡`.
+- If a generated Claude Code handoff does not start with `## 任务卡`, discard it
+  and regenerate before replying. Do not explain the malformed version.
+- Do not output free-form runbooks, `text` fences, or prose-first Claude Code
+  prompts as the final handoff.
+- Do not output a header-only runtime block such as `Executor: Claude Code` /
+  `Runtime adapter: claude-code` / `Task level: Heavy`. That shape is only a
+  slot source for the compiler and must be rewritten into a project or fallback
+  task card before delivery.
+- Do not output a target-first task brief such as `目标：...` followed by
+  `建议验证命令：`, `停止条件：`, `交付格式：`, or `[skill: ...]`. That shape is also
+  raw task intent and must be rewritten into the canonical skeleton.
+- If validating an artifact or copied block, use
+  `scripts/validate-task-card.sh <task-card>` or pipe the block to
+  `scripts/validate-task-card.sh -`.
 
 When the task card contains any inner fenced code block such as ` ```json ` for `.claude/review_targets.json` or ` ```bash ` for command examples, wrap the whole task card with `~~~~markdown` and closing `~~~~`. Do not use outer triple backticks for these task cards, because the first inner triple-backtick block will prematurely close the outer block.
 
@@ -368,7 +449,7 @@ Before returning a compact executable task card, check:
 - It is executable by Claude Code.
 - It names the execution path, executor/runtime/permission/task level, goal,
   non-goals, key paths, and verification evidence.
-- It starts with the exact compact cache anchor.
+- It starts with `## 任务卡`, followed by the exact compact cache anchor.
 - It follows the compact skeleton heading order exactly.
 - It is short enough for a human to approve without reading boilerplate.
 - It references protocol files instead of pasting long fixed rules.
@@ -382,6 +463,8 @@ Before returning a human-only preview, check:
 Before returning the full final prompt, check:
 
 - The output is exactly one of the two allowed task-card formats (project or global fallback). If it matches neither, redo from Template Selection.
+- If the output contains `Executor: Claude Code`, the task-card content starts
+  with `## 任务卡`; otherwise discard and regenerate.
 - The task card includes `Executor`, `Runtime adapter`, `Execution surface`, `Permission mode`, `Parallelism`, `Review gate`, and `Verification gate`.
 - The task card includes `项目画像`, with `无` or `config/agent-project-profile.yaml`.
 - The task card includes `记忆胶囊`, with `无` or a local capsule path.

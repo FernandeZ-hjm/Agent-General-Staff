@@ -228,7 +228,7 @@ fi
 
 # 8. Script syntax check
 echo "--- Script Syntax ---"
-for script in kit-install.sh kit-doctor.sh bootstrap.sh install-suite-to-project.sh verify.sh diff-local.sh rollback.sh govern-new-skills.sh sync-project-workflow.sh run-task-card.sh context-memory.sh memory-start-context.sh suite-doctor.sh security-doctor.sh; do
+for script in kit-install.sh kit-doctor.sh bootstrap.sh install-suite-to-project.sh verify.sh diff-local.sh rollback.sh govern-new-skills.sh sync-project-workflow.sh run-task-card.sh validate-task-card.sh context-memory.sh memory-start-context.sh suite-doctor.sh security-doctor.sh; do
     if bash -n "$SUITE_ROOT/scripts/$script" 2>/dev/null; then
         green "  [OK] bash -n scripts/$script"
     else

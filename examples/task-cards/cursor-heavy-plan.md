@@ -1,6 +1,3 @@
-# Example Task Card: Cursor Heavy Plan
-
-```markdown
 ## 任务卡
 
 读取并遵守：
@@ -35,6 +32,16 @@ Review gate:
 
 背景：
 这是一个 Cursor IDE workflow 样例。任务涉及历史产物和潜在基线变更，因此只能先计划，不得直接修改。
+
+项目画像：
+- 无 / `config/agent-project-profile.yaml`
+
+记忆胶囊：
+- 无 / `$HOME/.agents/memory/projects/<project-slug>/context-capsule.md`
+- 若存在，同步读取同目录 `task-memory.md`；不得覆盖 `context-capsule.md`
+
+任务存档：
+- 无 / `$HOME/.agents/memory/projects/<project-slug>/task-memory.md`
 
 相关路径：
 - `scripts/example-pipeline.py`
@@ -100,4 +107,3 @@ Verification gate:
 [skill: diagnose]
 [skill: zoom-out]
 [skill: verify]
-```

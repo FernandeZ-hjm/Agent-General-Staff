@@ -68,8 +68,8 @@ Task cards may also include a fixed `任务存档` slot:
 - 无 / `$HOME/.agents/memory/projects/<project-slug>/task-memory.md`
 ```
 
-Before any memory exists this can be `无`. After runner execution with memory
-capture, `task-memory.md` becomes the single automatically refreshed task
+Before any memory exists this can be `无`. Runner execution refreshes
+`task-memory.md` by default, making it the single automatically refreshed task
 continuity entrypoint. Full evidence remains under `task-archive/<run-id>/`.
 
 ## Capture Policy
@@ -78,7 +78,11 @@ Memory capture is append-only and conservative:
 
 - Archive each runner receipt under `task-archive/` when memory capture is
   enabled.
-- Refresh `task-memory.md` from recent local task archives.
+- Refresh `task-memory.md` from recent local task archives, including a compact
+  excerpt of the latest delivery report.
+- Store Learning Runner coverage gaps under `learning-gaps/` when runner
+  detects reusable misses; do not store transient Task IR or compiled briefs
+  there.
 - Prefer references to receipt files over copying logs.
 - Do not overwrite `context-capsule.md`.
 - Do not automatically update project design purpose, long-term boundaries,
@@ -101,13 +105,23 @@ Task-start hook:
 
 Task-end capture:
 
-- `scripts/run-task-card.sh --memory` copies the receipt package into
-  `task-archive/` and refreshes `task-memory.md` after the receipt and delivery
-  report are written.
-- It does not overwrite `context-capsule.md`.
+- `scripts/run-task-card.sh` copies the receipt package into `task-archive/`
+  and refreshes `task-memory.md` after the receipt and delivery report are
+  written.
+- `scripts/run-task-card.sh` also runs a transient compile/learning pipeline by
+  default. It may write small `learning-gaps/` proposals, but it must not
+  promote those proposals into rules without human review.
+- `scripts/claude-stop-memory-capture.py` covers the paste-to-Claude workflow:
+  when a Claude Code `Stop` hook sees both a task card and a delivery report in
+  the transcript, it builds a local receipt and delegates to
+  `scripts/context-memory.sh capture`.
+- The runner prints the final `delivery-report.md` to the foreground only after
+  memory capture succeeds, so the displayed report is already represented in
+  local task memory.
+- Neither capture path overwrites `context-capsule.md`.
 
-Default runner behavior does not write memory. This keeps the memory layer
-explicit while the protocol is still maturing.
+Use `--no-memory` only when a task run should intentionally skip local memory
+capture.
 
 ## Resume Behavior
 

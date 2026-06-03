@@ -98,7 +98,7 @@ Verification gate:
 - 是否触碰基线数据
 - 风险提示
 - 下一步建议
-Review gate 状态按 docs/agent-workflow/agent-task-protocol.md 报告。
+人工 adversarial review 完成前，交付报告必须标为“部分完成 / 等待人工 adversarial review”。
 
 [skill: diagnose]
 [skill: zoom-out]

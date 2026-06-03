@@ -144,8 +144,8 @@ task-notification follow-up, or says "继续":
 Always include `Verification gate` with commands, expected evidence, and stop condition.
 Always include `Review gate` with the fixed Light / Medium / Heavy mapping:
 
-- `Light`: 完成前自查 diff；提交前建议运行 `caveman-review`。
-- `Medium`: 人工 Review gate；Executor 完成验证后将任务状态标为“部分完成 / 等待人工 review”，并提醒操作者手动运行 `/codex:review` 后再放行。
+- `Light`: 完成验证后运行 `caveman-review` 或等价轻量 diff review；如发现风险高于 Light，升级 Medium。
+- `Medium`: Codex 最终 Review gate；Executor 完成验证后将任务状态标为“部分完成 / 等待 Codex review”，由 Codex 审查通过后再放行。
 - `Heavy`: 先计划后执行；人工 Adversarial Review gate；Executor 完成验证后将任务状态标为“部分完成 / 等待人工 adversarial review”，并提醒操作者手动运行 `/codex:adversarial-review` 后再放行。
 
 ## Tag Rules

@@ -70,6 +70,6 @@ Verification gate:
 
 交付：
 按 docs/agent-workflow/agent-task-protocol.md 输出 delivery report。
-如执行中发现任务应升级为 Medium 或 Heavy，交付报告必须提醒操作者手动触发对应 `/codex:review` 或 `/codex:adversarial-review` 后再放行。
+如执行中发现任务应升级为 Medium 或 Heavy，交付报告必须提醒操作者等待 Codex review 或手动触发 `/codex:adversarial-review` 后再放行。
 
 [skill: verify]

@@ -138,6 +138,9 @@ echo "--- Skills ---"
 obsolete_skills=(
     graphify-project-map
     claude-execution-prompt-maker
+    开发助手
+    设计助手
+    优化助手
 )
 for skill_dir in "$SUITE_ROOT/global-skills/"*; do
     skill_name="$(basename "$skill_dir")"

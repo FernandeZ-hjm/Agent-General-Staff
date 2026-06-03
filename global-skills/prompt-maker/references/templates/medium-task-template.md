@@ -25,8 +25,8 @@ Parallelism: none
 任务级别：Medium
 
 Review gate:
-- Light：完成前自查 diff；提交前建议运行 `caveman-review`。
-- Medium：人工 Review gate；Executor 完成验证后将任务状态标为“部分完成 / 等待人工 review”，并提醒操作者手动运行 `/codex:review` 后再放行。
+- Light：完成验证后运行 `caveman-review` 或等价轻量 diff review；如发现风险高于 Light，升级 Medium。
+- Medium：Codex 最终 Review gate；Executor 完成验证后将任务状态标为“部分完成 / 等待 Codex review”，由 Codex 审查通过后再放行。
 - Heavy：先计划后执行；人工 Adversarial Review gate；Executor 完成验证后将任务状态标为“部分完成 / 等待人工 adversarial review”，并提醒操作者手动运行 `/codex:adversarial-review` 后再放行。
 
 任务：
@@ -88,7 +88,7 @@ Verification gate:
 
 交付：
 完成后必须先读取并使用 `claude-delivery-report` skill 或项目交付报告协议，按其模板输出简洁交付报告。
-Medium 任务在人工 review 完成前，交付报告必须标为“部分完成”，并提醒操作者手动运行 `/codex:review` 后再放行。
+Medium 任务在 Codex review 完成前，交付报告必须标为“部分完成”，并提醒操作者等待 Codex review 后再放行。
 
 {skill_tags}
 ~~~~

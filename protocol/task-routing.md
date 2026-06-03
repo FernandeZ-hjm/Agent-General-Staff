@@ -187,6 +187,10 @@ When in doubt, choose the heavier template if any of these risks exist:
 - Data loss.
 - Irreversible write.
 - Baseline mutation.
+- Cross-file protocol or task-card skeleton change.
+- Runtime adapter, hook, permission, or review gate behavior change.
+- Path migration, generated artifact synchronization, or cross-repository target mapping.
+- Data writes, ledger writes, vector store writes, or persistent output changes.
 - Ambiguous domain rules.
 - Multiple plausible designs.
 - Weak test coverage around the affected behavior.

@@ -277,6 +277,33 @@ task-notification, or a background-agent handoff:
 | `remote-control` | GUI or browser automation is required | the task can be handled by file or CLI APIs |
 | `background-agent` | detached long-running agent work | user needs immediate interactive confirmation |
 
+## Receipt-First Execution
+
+Receipt-first execution is a logging and foreground-interaction policy, not a
+new workflow family and not a permission mode.
+
+Use it when the executor should keep detailed process evidence in the runner
+receipt package while keeping the foreground context limited to:
+
+- phase summaries,
+- explicit approval prompts,
+- stop conditions,
+- final delivery report pointers.
+
+Receipt-first execution must not replace the task card, Review gate,
+Verification gate, or Heavy confirmation rules. A user clicking approval
+prompts is approval only for the specific action described in that prompt, not
+a standing approval for unrelated writes, destructive commands, or scope
+expansion.
+
+Recommended receipt artifacts:
+
+- `process-summary.md` for phase summaries, notable decisions, and approval
+  points,
+- `claude-output.log` for headless Claude Code output,
+- `verification.log` for runner Verification gate command output,
+- `delivery-report.md` for the final acceptance record.
+
 ## Parallelism Rules
 
 Default to `none`.
@@ -338,9 +365,10 @@ Execution notes:
 - Check `git status --short` before editing.
 - Do not revert unrelated dirty changes.
 - Run the narrowest meaningful verification before claiming completion.
-- Stop review hooks are deprecated. Codex keeps only the `UserPromptSubmit`
-  skill-alias sync hook, while Claude Code keeps skill-alias sync plus the
-  `PreToolUse(Bash)` RTK hook. Reviews are explicit task-card or human gates.
+- Stop review hooks are deprecated. Codex keeps `UserPromptSubmit` skill-alias
+  sync and memory-context hooks, while Claude Code keeps those hooks plus the
+  `PreToolUse(Bash)` RTK hook and the non-blocking Stop memory-capture hook.
+  Reviews are explicit task-card or human gates.
 - Optional hard blocking is a future stage. If enabled later, it must be an
   explicit option such as `scripts/configure-review-hooks.mjs
   --enable-stop-review-gate` or a suite-owned runner gate that checks an
@@ -381,6 +409,9 @@ Execution notes:
 - On Heavy resume, reread the task card, `git status --short`, and
   `review_targets`; if mutation approval is not explicit in the current
   context, stop in plan mode.
+- When launched with runner receipt-first mode, keep verbose process logs in
+  the receipt package and keep foreground output to phase summaries, approval
+  prompts, stop conditions, and delivery-report pointers.
 
 Parallelism mapping:
 
@@ -450,3 +481,28 @@ task-card fields and resolves runner flags without changing the task card:
 
 Auto mode never upgrades `Permission mode`; Heavy tasks still default to
 `plan-only` and require explicit current-task approval before mutation.
+Receipt-first execution remains an explicit runner flag; auto mode does not
+enable it implicitly.
+
+## Learning Runner
+
+`scripts/run-task-card.sh` is learning-enabled by default. Before launching
+Claude Code, the runner validates the canonical task card, compiles a transient
+Task IR / compiled brief, and injects the brief as an execution guardrail.
+
+Rules:
+
+- Task IR and compiled brief are not task-card formats.
+- They must not be pasted into, appended to, or required as part of the
+  canonical task-card skeleton.
+- They are temporary by default and are deleted after the run.
+- `--keep-ir` may retain them in the receipt package for compiler debugging.
+- `--no-learning` disables the transient compile and learning-gap extraction
+  for a run.
+- Long-term retention is limited to `learning-gaps/` entries under local
+  project memory when the runner detects reusable misses such as weak
+  verification, executor delivery failure, nonzero execution, or compiler
+  coverage gaps.
+- Learning gaps are review proposals. They do not automatically update
+  `context-capsule.md`, task-card templates, protocol files, validator rules, or
+  project profiles.

@@ -137,6 +137,8 @@ assets:
       description: Claude Code skill alias sync
     - source: scripts/run-task-card.sh
       description: Task-card runner and receipt generator
+    - source: scripts/validate-task-card.sh
+      description: Read-only task-card format validator
     - source: scripts/context-memory.sh
       description: Local project memory capture
     - source: scripts/memory-start-context.sh
@@ -167,6 +169,7 @@ verification:
   - bash -n scripts/govern-new-skills.sh
   - bash -n scripts/sync-project-workflow.sh
   - bash -n scripts/run-task-card.sh
+  - bash -n scripts/validate-task-card.sh
   - bash -n scripts/context-memory.sh
   - bash -n scripts/memory-start-context.sh
   - bash -n scripts/suite-doctor.sh

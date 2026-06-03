@@ -1,6 +1,3 @@
-# Example Task Card: Claude Code Medium
-
-```markdown
 ## 任务卡
 
 读取并遵守：
@@ -23,11 +20,24 @@ Parallelism: none
 
 任务级别：Medium
 
+Review gate:
+- 按 docs/agent-workflow/agent-task-protocol.md 的 Review Gate 规则执行当前任务级别。
+
 任务：
 为一个已有脚本增加只读 `--dry-run` 输出摘要，并补充对应验证命令。
 
 背景：
 这是一个 Claude Code handoff 样例。任务跨脚本和测试说明，要求先说明设计，再在范围内实现。
+
+项目画像：
+- 无 / `config/agent-project-profile.yaml`
+
+记忆胶囊：
+- 无 / `$HOME/.agents/memory/projects/<project-slug>/context-capsule.md`
+- 若存在，同步读取同目录 `task-memory.md`；不得覆盖 `context-capsule.md`
+
+任务存档：
+- 无 / `$HOME/.agents/memory/projects/<project-slug>/task-memory.md`
 
 相关路径：
 - `scripts/example-tool.sh`
@@ -72,4 +82,3 @@ Verification gate:
 
 [skill: diagnose]
 [skill: verify]
-```

@@ -6,3 +6,7 @@
 #   - skill: "<name>"
 #     reason: "<why>"
 #     timestamp: "<ISO8601>"
+
+- skill: notebooklm
+  reason: "External official NotebookLM CLI/skill; user-managed output-layer tool, not adopted or updated by this suite."
+  timestamp: "2026-05-29T03:09:53Z"

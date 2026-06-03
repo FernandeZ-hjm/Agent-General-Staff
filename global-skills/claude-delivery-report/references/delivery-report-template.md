@@ -77,4 +77,6 @@
 - `下一步建议` 只写最值得做的 1-3 项。
 - 不要粘贴长日志；只摘取证明成功或失败的关键结果。
 - 如果工作区有非本任务改动，必须在 `风险提示` 或 `下一步建议` 中说明。
-- Medium / Heavy review gate 是人工 gate；人工 review 完成前，必须把 `任务状态` 写为“部分完成”，并在 `下一步建议` 提醒手动运行对应 `/codex:review` 或 `/codex:adversarial-review` 后再放行。
+- Light review gate 默认使用 `caveman-review` 或等价轻量 diff review；若发现跨文件协议、权限、hook、数据写入、路径迁移或生成物同步风险，必须在 `下一步建议` 标记升级 Medium。
+- Medium review gate 是 Codex 最终 review；Codex review 完成前，必须把 `任务状态` 写为“部分完成”，并在 `下一步建议` 写明等待 Codex review 后再放行。
+- Heavy review gate 是人工 adversarial gate；人工 adversarial review 完成前，必须把 `任务状态` 写为“部分完成”，并在 `下一步建议` 提醒手动运行 `/codex:adversarial-review` 后再放行。

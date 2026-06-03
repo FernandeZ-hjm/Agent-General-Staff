@@ -75,6 +75,6 @@ Verification gate:
 
 交付：
 按 docs/agent-workflow/agent-task-protocol.md 输出 delivery report。
-Review gate 状态按 docs/agent-workflow/agent-task-protocol.md 报告。
+Codex review 完成前，交付报告必须标为“部分完成 / 等待 Codex review”。
 
 [skill: verify]

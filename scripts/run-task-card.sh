@@ -9,7 +9,7 @@ SUITE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
     cat <<EOF
-Usage: run-task-card.sh TASK_CARD [--auto] [--claude] [--headless] [--worktree] [--parallel] [--memory] [--receipt-root PATH] [--label NAME]
+Usage: run-task-card.sh TASK_CARD [--auto] [--claude] [--headless] [--receipt-first] [--worktree] [--parallel] [--no-learning] [--keep-ir] [--no-memory] [--receipt-root PATH] [--label NAME]
 
 Default behavior:
   Creates a receipt directory with task-card, git status snapshots, hook/skill
@@ -26,6 +26,10 @@ Options:
   --headless           Launch Claude Code in non-interactive print mode.
                        Implies --claude. Claude output is captured in the
                        receipt package as claude-output.log.
+  --receipt-first      Ask the executor to keep detailed process logs in the
+                       receipt package and keep foreground output limited to
+                       phase summaries, approval prompts, stop conditions, and
+                       the final delivery report. Does not change permissions.
   --worktree           Create an isolated git worktree for the Claude run and
                        execute task-card Verification gate commands there.
                        Implies --claude.
@@ -33,10 +37,16 @@ Options:
                        Parallelism mode. Implies --claude and requires
                        Parallelism to be subagent, worktree, multi-session,
                        or agent-team.
+  --learning           Enable the transient Task IR / compiled brief learning
+                       pipeline. This is the default.
+  --no-learning        Disable transient compile and learning-gap extraction.
+  --keep-ir            Debug only. Keep the transient Task IR and compiled
+                       brief in the receipt package. By default they are
+                       deleted and only learning gaps may be retained.
   --memory             Archive the receipt under local context memory and
-                       refresh the capsule after the receipt and delivery report
-                       are written. Uses
-                       scripts/context-memory.sh.
+                       refresh task-memory.md after the receipt and delivery
+                       report are written. This is the default.
+  --no-memory          Skip local context-memory capture for this run.
   --memory-root PATH   Directory where project memory is written.
                        Default: \$HOME/.agents/memory/projects
   --receipt-root PATH  Directory where receipt packages are written.
@@ -111,6 +121,57 @@ extract_task_field() {
     ' "$file"
 }
 
+extract_task_level() {
+    local file="$1"
+    awk '
+        /^任务级别[：:]/ {
+            sub(/^[^：:]*[：:]/, "", $0)
+            gsub(/\r/, "", $0)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+            print
+            exit
+        }
+    ' "$file"
+}
+
+extract_task_summary() {
+    local file="$1"
+    awk '
+        /^任务[：:]/ {
+            in_task = 1
+            next
+        }
+        in_task && NF {
+            gsub(/\r/, "", $0)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+            print
+            exit
+        }
+    ' "$file"
+}
+
+extract_task_section() {
+    local heading="$1"
+    local file="$2"
+    awk -v heading="$heading" '
+        $0 ~ "^" heading "[：:]" {
+            in_section = 1
+            next
+        }
+        in_section && $0 ~ "^[^[:space:]-].*[：:][[:space:]]*$" {
+            exit
+        }
+        in_section {
+            line = $0
+            gsub(/\r/, "", line)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+            if (line != "") {
+                print line
+            }
+        }
+    ' "$file"
+}
+
 extract_verification_commands() {
     local file="$1"
     awk '
@@ -143,6 +204,86 @@ extract_verification_commands() {
     ' "$file"
 }
 
+compile_learning_artifacts() {
+    local tmp_dir="$1"
+    local brief="$tmp_dir/compiled-brief.md"
+    local ir="$tmp_dir/task-ir.txt"
+    local executor
+    local runtime
+    local surface
+    local permission
+    local parallelism
+    local task_level
+    local task_summary
+    local verification_count
+    local key_paths
+    local related_paths
+
+    executor="$(extract_task_field "executor" "$TASK_CARD_ABS")"
+    runtime="$(extract_task_field "runtime adapter" "$TASK_CARD_ABS")"
+    surface="$(extract_task_field "execution surface" "$TASK_CARD_ABS")"
+    permission="$(extract_task_field "permission mode" "$TASK_CARD_ABS")"
+    parallelism="$(extract_task_field "parallelism" "$TASK_CARD_ABS")"
+    task_level="$(extract_task_level "$TASK_CARD_ABS")"
+    task_summary="$(extract_task_summary "$TASK_CARD_ABS")"
+    verification_count="$(extract_verification_commands "$TASK_CARD_ABS" | awk 'END { print NR + 0 }')"
+    key_paths="$(extract_task_section "关键路径" "$TASK_CARD_ABS")"
+    related_paths="$(extract_task_section "相关路径" "$TASK_CARD_ABS")"
+
+    {
+        echo "schema=AGENT_SUITE_TASK_IR_V1"
+        echo "source_task_card=$TASK_CARD_ABS"
+        echo "executor=${executor:-unknown}"
+        echo "runtime_adapter=${runtime:-unknown}"
+        echo "execution_surface=${surface:-unknown}"
+        echo "permission_mode=${permission:-unknown}"
+        echo "parallelism=${parallelism:-unknown}"
+        echo "task_level=${task_level:-unknown}"
+        echo "verification_command_count=${verification_count:-0}"
+    } >"$ir"
+
+    {
+        echo "# Compiled Execution Brief"
+        echo ""
+        echo "This brief is generated by the runner from the task card. It is an execution constraint, not a new task-card format."
+        echo ""
+        echo "## Runtime Contract"
+        echo ""
+        echo "- Executor: ${executor:-unknown}"
+        echo "- Runtime adapter: ${runtime:-unknown}"
+        echo "- Execution surface: ${surface:-unknown}"
+        echo "- Permission mode: ${permission:-unknown}"
+        echo "- Parallelism: ${parallelism:-unknown}"
+        echo "- Task level: ${task_level:-unknown}"
+        echo "- Verification command count: ${verification_count:-0}"
+        echo ""
+        echo "## Task"
+        echo ""
+        echo "${task_summary:-See the task card.}"
+        echo ""
+        echo "## Scope Signals"
+        echo ""
+        if [[ -n "$key_paths" ]]; then
+            printf "%s\n" "$key_paths"
+        elif [[ -n "$related_paths" ]]; then
+            printf "%s\n" "$related_paths"
+        else
+            echo "- No explicit key paths were extracted; use the task card and stop if write scope is unclear."
+        fi
+        echo ""
+        echo "## Executor Rules"
+        echo ""
+        echo "- Treat the task card as the source of truth."
+        echo "- Treat this brief as a guardrail for scope, permission, stop conditions, and delivery evidence."
+        echo "- Do not rewrite or reinterpret this brief. If it conflicts with the task card or repository evidence, stop and report."
+        echo "- If the task is riskier than declared, stop instead of escalating permissions."
+        echo "- Record any point this brief failed to cover in the final delivery report under risk or next steps."
+    } >"$brief"
+
+    TASK_IR_PATH="$ir"
+    COMPILED_BRIEF_PATH="$brief"
+}
+
 append_verification_gate_report() {
     local gate_status="$1"
     local command_summary="$2"
@@ -163,6 +304,68 @@ append_verification_gate_report() {
         echo ""
         echo "详细日志：\`$RECEIPT_DIR/verification.log\`"
     } >>"$RECEIPT_DIR/delivery-report.md"
+}
+
+write_learning_gap_if_needed() {
+    $LEARNING_ENABLED || return 0
+    $UPDATE_MEMORY || return 0
+
+    local issues=()
+    local task_level
+    local task_summary
+    local verification_count
+    local learning_root
+    local learning_file
+    local issue
+
+    task_level="$(extract_task_level "$TASK_CARD_ABS")"
+    task_summary="$(extract_task_summary "$TASK_CARD_ABS")"
+    verification_count="$(extract_verification_commands "$TASK_CARD_ABS" | awk 'END { print NR + 0 }')"
+
+    if [[ "$verification_count" -eq 0 ]]; then
+        issues+=("verification_gate_missing_commands")
+    fi
+    if [[ -n "${CLAUDE_EXIT_STATUS:-}" && "$CLAUDE_EXIT_STATUS" != "0" ]]; then
+        issues+=("executor_or_verification_nonzero_exit")
+    fi
+    if grep -Fq "<!-- runner-placeholder -->" "$RECEIPT_DIR/delivery-report.md" 2>/dev/null; then
+        issues+=("executor_did_not_replace_runner_placeholder_report")
+    fi
+    if grep -Fq "状态：失败" "$RECEIPT_DIR/delivery-report.md" 2>/dev/null; then
+        issues+=("runner_verification_gate_failed")
+    fi
+
+    [[ ${#issues[@]} -gt 0 ]] || return 0
+
+    learning_root="${MEMORY_ROOT:-$HOME/.agents/memory/projects}/$REPO_SLUG/learning-gaps"
+    mkdir -p "$learning_root"
+    learning_file="$learning_root/$RUN_ID.yaml"
+
+    {
+        echo "schema_version: 1"
+        echo "type: task_ir_coverage_gap"
+        echo "status: pending_review"
+        echo "run_id: \"$RUN_ID\""
+        echo "repo: \"$REPO_NAME\""
+        echo "receipt_dir: \"$RECEIPT_DIR\""
+        echo "task_card: \"$RECEIPT_DIR/task-card.md\""
+        echo "delivery_report: \"$RECEIPT_DIR/delivery-report.md\""
+        echo "task_level_declared: \"${task_level:-unknown}\""
+        echo "task_summary: \"${task_summary:-See task card}\""
+        echo "compiler_artifacts_retained: $KEEP_IR"
+        echo "missed_by_compiler:"
+        for issue in "${issues[@]}"; do
+            echo "  - $issue"
+        done
+        echo "evidence:"
+        echo "  verification_log: \"$RECEIPT_DIR/verification.log\""
+        echo "  diff_stat: \"$RECEIPT_DIR/diff-stat.txt\""
+        echo "suggested_upgrade:"
+        echo "  target: \"prompt-maker / runner compiler / validator rules\""
+        echo "  proposal: \"Review this gap during periodic Task IR Coverage Loop tuning; promote only the reusable rule, not the full prompt or transient IR.\""
+    } >"$learning_file"
+
+    echo "Learning gap: $learning_file" >>"$ORCHESTRATOR_LOG"
 }
 
 run_verification_gate() {
@@ -300,9 +503,22 @@ RUN_CLAUDE=false
 HEADLESS=false
 USE_WORKTREE=false
 ALLOW_PARALLEL=false
-UPDATE_MEMORY=false
+UPDATE_MEMORY=true
 MEMORY_ROOT=""
 AUTO_MODE=false
+RECEIPT_FIRST=false
+LEARNING_ENABLED=true
+KEEP_IR=false
+COMPILE_TEMP_DIR=""
+TASK_IR_PATH=""
+COMPILED_BRIEF_PATH=""
+
+cleanup() {
+    if [[ -n "$COMPILE_TEMP_DIR" && -d "$COMPILE_TEMP_DIR" ]]; then
+        rm -rf "$COMPILE_TEMP_DIR"
+    fi
+}
+trap cleanup EXIT
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -326,6 +542,9 @@ while [[ $# -gt 0 ]]; do
             RUN_CLAUDE=true
             HEADLESS=true
             ;;
+        --receipt-first)
+            RECEIPT_FIRST=true
+            ;;
         --worktree)
             RUN_CLAUDE=true
             USE_WORKTREE=true
@@ -334,8 +553,20 @@ while [[ $# -gt 0 ]]; do
             RUN_CLAUDE=true
             ALLOW_PARALLEL=true
             ;;
+        --learning)
+            LEARNING_ENABLED=true
+            ;;
+        --no-learning)
+            LEARNING_ENABLED=false
+            ;;
+        --keep-ir)
+            KEEP_IR=true
+            ;;
         --memory)
             UPDATE_MEMORY=true
+            ;;
+        --no-memory)
+            UPDATE_MEMORY=false
             ;;
         --memory-root)
             [[ $# -ge 2 ]] || die "--memory-root requires a path"
@@ -363,6 +594,7 @@ done
 [[ -f "$TASK_CARD" ]] || die "Task card not found: $TASK_CARD"
 
 TASK_CARD_ABS="$(abs_path "$TASK_CARD")"
+"$SCRIPT_DIR/validate-task-card.sh" "$TASK_CARD_ABS" >/dev/null
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
 ORIGINAL_REPO_ROOT="$REPO_ROOT"
 REPO_NAME="$(basename "$REPO_ROOT")"
@@ -428,6 +660,27 @@ mkdir -p "$RECEIPT_DIR"
 
 cp "$TASK_CARD_ABS" "$RECEIPT_DIR/task-card.md"
 
+if $LEARNING_ENABLED; then
+    COMPILE_TEMP_DIR="$(mktemp -d)"
+    compile_learning_artifacts "$COMPILE_TEMP_DIR"
+    if $KEEP_IR; then
+        cp "$TASK_IR_PATH" "$RECEIPT_DIR/task-ir.txt"
+        cp "$COMPILED_BRIEF_PATH" "$RECEIPT_DIR/compiled-brief.md"
+    fi
+fi
+
+if $RECEIPT_FIRST; then
+    {
+        echo "# Process Summary"
+        echo ""
+        echo "Receipt-first mode is enabled."
+        echo ""
+        echo "The executor should keep detailed process evidence in this receipt package"
+        echo "and keep foreground output limited to phase summaries, approval prompts,"
+        echo "stop conditions, and delivery-report pointers."
+    } >"$RECEIPT_DIR/process-summary.md"
+fi
+
 ORCHESTRATOR_LOG="$RECEIPT_DIR/orchestrator-info.txt"
 {
     echo "Orchestrator mode"
@@ -441,11 +694,21 @@ ORCHESTRATOR_LOG="$RECEIPT_DIR/orchestrator-info.txt"
     fi
     echo "Resolved --claude  : $RUN_CLAUDE"
     echo "Resolved --headless: $HEADLESS"
+    echo "Resolved receipt-first: $RECEIPT_FIRST"
     echo "Resolved --worktree: $USE_WORKTREE"
     echo "Resolved --parallel: $ALLOW_PARALLEL"
-    echo "Resolved --memory  : $UPDATE_MEMORY"
+    echo "Resolved learning  : $LEARNING_ENABLED"
+    echo "Resolved keep-ir   : $KEEP_IR"
+    echo "Resolved memory    : $UPDATE_MEMORY"
+    if $LEARNING_ENABLED; then
+        echo "Learning behavior  : transient compile, Claude brief injection, retain only learning gaps by default"
+        if $KEEP_IR; then
+            echo "Debug artifacts    : $RECEIPT_DIR/task-ir.txt"
+            echo "Debug brief        : $RECEIPT_DIR/compiled-brief.md"
+        fi
+    fi
     if $UPDATE_MEMORY; then
-        echo "Memory behavior    : archive receipt, refresh task-memory.md"
+        echo "Memory behavior    : archive receipt, refresh task-memory.md before foreground report"
     fi
     echo "Note: --auto never escalates task-card Permission mode."
 } >"$ORCHESTRATOR_LOG"
@@ -698,6 +961,9 @@ VERIFY_LOG="$RECEIPT_DIR/verification.log"
         if $HEADLESS; then
             echo "[INFO] Claude Code will run in headless print mode; output is captured in claude-output.log."
         fi
+        if $RECEIPT_FIRST; then
+            echo "[INFO] Receipt-first mode is enabled; detailed process notes should stay in the receipt package."
+        fi
         if $ALLOW_PARALLEL; then
             echo "[INFO] Parallel mode is enabled from task-card Parallelism: ${PARALLELISM_RAW:-<missing>}."
         fi
@@ -776,6 +1042,36 @@ EOF
 )"
         fi
 
+        RECEIPT_FIRST_PROMPT_BLOCK=""
+        if $RECEIPT_FIRST; then
+            RECEIPT_FIRST_PROMPT_BLOCK="$(cat <<EOF
+
+Receipt-first execution mode:
+- Treat the runner receipt directory as the source of process evidence.
+- Keep foreground output concise: phase summary, explicit approval prompt, stop condition, or final delivery-report pointer.
+- Write process summaries and notable decisions to: $RECEIPT_DIR/process-summary.md
+- Keep verbose command/tool details in receipt logs or the final delivery report; do not stream long process logs into the foreground unless a stop condition needs user attention.
+- This mode does not grant extra permission. Obey the task-card Permission mode, Review gate, Verification gate, and Heavy confirmation rules.
+EOF
+)"
+        fi
+
+        COMPILED_BRIEF_PROMPT_BLOCK=""
+        if $LEARNING_ENABLED && [[ -n "$COMPILED_BRIEF_PATH" && -f "$COMPILED_BRIEF_PATH" ]]; then
+            COMPILED_BRIEF_PROMPT_BLOCK="$(cat <<EOF
+
+Compiled execution brief:
+- The runner generated this brief from the task card before launch.
+- Read it before the task card as a guardrail, not as a replacement task card.
+- Do not rewrite it. If it conflicts with the task card, repo evidence, or protocol, stop and report.
+
+--- COMPILED BRIEF START ---
+$(cat "$COMPILED_BRIEF_PATH")
+--- COMPILED BRIEF END ---
+EOF
+)"
+        fi
+
         CLAUDE_PROMPT="$(cat <<EOF
 请读取并执行下面的任务卡。
 
@@ -786,8 +1082,11 @@ Delivery report requirement:
 - 完成时必须把最终交付报告写入：$RECEIPT_DIR/delivery-report.md
 - 交付报告按任务卡和协议要求填写。
 - Runner 会在你退出后自动执行任务卡 Verification gate commands，并把结果追加到 delivery-report.md。
+- Runner 会先把最终 delivery-report.md 归档进项目 task-memory / task-archive，再在前台打印交付报告。
 - 你仍应按任务卡自行验证并在报告中记录你的验证结果。
+$RECEIPT_FIRST_PROMPT_BLOCK
 $PARALLEL_PROMPT_BLOCK
+$COMPILED_BRIEF_PROMPT_BLOCK
 
 Task card source path:
 $TASK_CARD_ABS
@@ -811,6 +1110,7 @@ EOF
             echo "Permission mode    : ${PERMISSION_MODE:-<missing>}"
             echo "Claude mode        : $CLAUDE_PERMISSION_LABEL"
             echo "Headless mode      : $HEADLESS"
+            echo "Receipt-first mode : $RECEIPT_FIRST"
             echo "Parallel mode      : $ALLOW_PARALLEL"
             if $ALLOW_PARALLEL; then
                 echo "Parallelism        : ${PARALLELISM_RAW:-<missing>}"
@@ -898,6 +1198,8 @@ if ! $RUN_CLAUDE; then
         "- 收据包是本地证据，不等于任务已执行完成。\n- hook 和 skill 检查只记录存在性和基础语法，不替代完整套件验证。"
 fi
 
+write_learning_gap_if_needed
+
 if $UPDATE_MEMORY; then
     MEMORY_ARGS=(capture "$RECEIPT_DIR" --repo "$REPO_ROOT")
     if [[ -n "$MEMORY_ROOT" ]]; then
@@ -907,6 +1209,10 @@ if $UPDATE_MEMORY; then
 fi
 
 echo "Receipt created: $RECEIPT_DIR"
+echo "Delivery report: $RECEIPT_DIR/delivery-report.md"
+echo ""
+echo "=== Delivery Report ==="
+sed -n '1,220p' "$RECEIPT_DIR/delivery-report.md"
 if $RUN_CLAUDE; then
     echo "Runner exit status: $CLAUDE_EXIT_STATUS"
     exit "$CLAUDE_EXIT_STATUS"

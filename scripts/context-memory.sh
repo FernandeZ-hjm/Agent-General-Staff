@@ -323,10 +323,10 @@ refresh_task_memory() {
         echo "the task-continuity entrypoint for agents; the manual project charter"
         echo "remains in \`context-capsule.md\`."
         echo ""
-        echo "## Current Status"
-        echo ""
         local latest_archive
         latest_archive="$(find "$TASK_ARCHIVE_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -r | head -n 1 || true)"
+        echo "## Current Status"
+        echo ""
         if [[ -n "$latest_archive" && -f "$latest_archive/delivery-report.md" ]]; then
             local latest_task
             local latest_status
@@ -343,6 +343,16 @@ refresh_task_memory() {
             echo "- Archive: \`$latest_archive\`"
         else
             echo "- No task archives recorded yet."
+        fi
+        echo ""
+        echo "## Latest Delivery Report"
+        echo ""
+        if [[ -n "$latest_archive" && -f "$latest_archive/delivery-report.md" ]]; then
+            echo "- Source: \`$latest_archive/delivery-report.md\`"
+            echo ""
+            sed -n '1,80p' "$latest_archive/delivery-report.md"
+        else
+            echo "- No delivery report recorded yet."
         fi
         echo ""
         echo "## Recent Tasks"

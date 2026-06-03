@@ -1,3 +1,11 @@
+# Local agent/runtime workspaces
+.claude/
 .codegraph/
 __pycache__/
 *.pyc
+
+# Graphify local analysis outputs
+.graphifyignore
+.graphify-runs/
+graphify-out/
+**/graphify-out/

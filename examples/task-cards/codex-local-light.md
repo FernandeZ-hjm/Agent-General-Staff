@@ -1,6 +1,3 @@
-# Example Task Card: Codex Local Light
-
-```markdown
 ## 任务卡
 
 读取并遵守：
@@ -23,11 +20,24 @@ Parallelism: none
 
 任务级别：Light
 
+Review gate:
+- 按 docs/agent-workflow/agent-task-protocol.md 的 Review Gate 规则执行当前任务级别。
+
 任务：
 修正文档中的一个错别字，并验证 diff 只包含该文档改动。
 
 背景：
 这是一个低风险本地执行样例，用于展示用户说“你直接做”时的 Codex-local 路由。
+
+项目画像：
+- 无 / `config/agent-project-profile.yaml`
+
+记忆胶囊：
+- 无 / `$HOME/.agents/memory/projects/<project-slug>/context-capsule.md`
+- 若存在，同步读取同目录 `task-memory.md`；不得覆盖 `context-capsule.md`
+
+任务存档：
+- 无 / `$HOME/.agents/memory/projects/<project-slug>/task-memory.md`
 
 相关路径：
 - `docs/example.md`
@@ -67,4 +77,3 @@ Verification gate:
 按 docs/agent-workflow/agent-task-protocol.md 输出 delivery report。
 
 [skill: verify]
-```
