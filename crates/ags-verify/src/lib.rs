@@ -14,7 +14,7 @@
 //!
 //! Checks in `local` scope run entirely within the current repository.
 //! `full` adds drift checks against stable and public targets.
-//! `release` focuses on public/core-only boundary checks.
+//! `release` focuses on public-full sanitized boundary checks.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -30,7 +30,7 @@ pub enum Scope {
     Local,
     /// Local + drift checks against stable and public targets.
     Full,
-    /// Release-focused: public/core-only boundary checks.
+    /// Release-focused: public-full sanitized boundary checks.
     Release,
 }
 
@@ -536,6 +536,14 @@ fn check_session_preflight(repo_root: &Path) -> CheckItem {
 }
 
 fn check_private_vs_stable_drift(repo_root: &Path) -> CheckItem {
+    if is_public_distributable_workspace(repo_root) {
+        return CheckItem::skip(
+            "drift-private-vs-stable",
+            "full",
+            "Current repository is a public-full sanitized workspace; private/stable drift checks must be run from the private or stable source workspace.",
+        );
+    }
+
     // In public version, stable target must be configured via env var
     let stable_root = std::env::var("AGS_STABLE_ROOT").unwrap_or_default();
     if stable_root.is_empty() || !Path::new(&stable_root).exists() {
@@ -611,6 +619,21 @@ fn check_private_vs_stable_drift(repo_root: &Path) -> CheckItem {
     }
 }
 
+fn is_public_distributable_workspace(repo_root: &Path) -> bool {
+    for rel in ["WORKSPACE.md", "CLAUDE.md", "README.md"] {
+        let Ok(content) = std::fs::read_to_string(repo_root.join(rel)) else {
+            continue;
+        };
+        if content.contains("public distributable edition")
+            || content.contains("Public Edition")
+            || content.contains("public-full sanitized")
+        {
+            return true;
+        }
+    }
+    false
+}
+
 fn check_private_vs_public_boundary(repo_root: &Path) -> CheckItem {
     // In public version, public target must be configured via env var
     let public_root = std::env::var("AGS_PUBLIC_ROOT").unwrap_or_default();
@@ -638,7 +661,7 @@ fn check_private_vs_public_boundary(repo_root: &Path) -> CheckItem {
             "--target",
             &public_root,
             "--target-name",
-            "public-core-only",
+            "public-full-sanitized",
             "--format",
             "json",
         ],
@@ -656,21 +679,21 @@ fn check_private_vs_public_boundary(repo_root: &Path) -> CheckItem {
         CheckItem::pass(
             "drift-private-vs-public",
             "full",
-            "No public/core-only boundary violations detected.",
+            "No public-full sanitized boundary violations detected.",
         )
     } else if has_violation {
         CheckItem::fail(
             "drift-private-vs-public",
             "full",
             &format!(
-                "Public/core-only boundary violation detected (exit {}): {}",
+                "Public-full sanitized boundary violation detected (exit {}): {}",
                 code,
                 truncate(&output, 500)
             ),
-            "Review public/core-only boundary: INVARIANT or PUBLIC_FORBIDDEN_PAYLOAD violation.",
+            "Review public-full sanitized boundary: INVARIANT or PUBLIC_FORBIDDEN_PAYLOAD violation.",
         )
         .with_command(&format!(
-            "ags sync check --source {} --target {} --target-name public-core-only",
+            "ags sync check --source {} --target {} --target-name public-full-sanitized",
             repo_root.display(),
             public_root
         ))
@@ -681,17 +704,98 @@ fn check_private_vs_public_boundary(repo_root: &Path) -> CheckItem {
             "drift-private-vs-public",
             "full",
             &format!(
-                "Public/core-only allowlist gap (exit {}): content drift within PUBLIC_MANIFEST files.",
+                "Public-full sanitized allowlist gap (exit {}): content drift within PUBLIC_MANIFEST files.",
                 code
             ),
             "Review public promotion allowlist and update public manifest.",
         )
         .with_command(&format!(
-            "ags sync check --source {} --target {} --target-name public-core-only",
+            "ags sync check --source {} --target {} --target-name public-full-sanitized",
             repo_root.display(),
             public_root
         ))
         .with_exit_code(code)
+    }
+}
+
+fn check_public_full_sanitized_tracked(repo_root: &Path) -> CheckItem {
+    let (code, stdout, stderr) = run_command(repo_root, "git", &["ls-files"], &[]);
+    if code != 0 {
+        return CheckItem::warn(
+            "release-sanitize-tracked",
+            "release",
+            &format!(
+                "git ls-files unavailable (exit {}): {}",
+                code,
+                truncate(&stderr, 200)
+            ),
+            "Run release sanitize checks from a git worktree.",
+        );
+    }
+
+    let forbidden_paths = [
+        "target/",
+        "global-skills/",
+        "skill-packs/",
+        ".agents/",
+        ".codex/",
+        ".claude/local/",
+    ];
+    let private_patterns = [
+        concat!("huji", "aming"),
+        concat!("/Users/", "huji", "aming"),
+        concat!("/Volumes/AI Project/", "agent-governance-suite-", "private"),
+        concat!("agent-governance-suite-", "private"),
+        concat!("agent-governance-suite-", "stable"),
+        concat!("git-remotes/", "agent-governance-suite"),
+        concat!("My ", "Passport"),
+        concat!("Tempoflow ", "spy"),
+    ];
+
+    let mut violations: Vec<String> = Vec::new();
+    for rel in stdout.lines().filter(|l| !l.trim().is_empty()) {
+        if forbidden_paths
+            .iter()
+            .any(|prefix| rel == prefix.trim_end_matches('/') || rel.starts_with(prefix))
+        {
+            violations.push(format!("forbidden tracked path: {}", rel));
+            continue;
+        }
+
+        let path = repo_root.join(rel);
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for pattern in private_patterns {
+            if content.contains(pattern) {
+                violations.push(format!("private pattern `{}` in {}", pattern, rel));
+            }
+        }
+
+        if rel == "governance/skill-adoption-log.yaml" || rel == "governance/skill-ignore-list.yaml"
+        {
+            if !content.contains("entries: []") {
+                violations.push(format!("public audit skeleton is not empty: {}", rel));
+            }
+        }
+    }
+
+    if violations.is_empty() {
+        CheckItem::pass(
+            "release-sanitize-tracked",
+            "release",
+            "Tracked public-full files are sanitized: no private identity markers, preinstalled skill packs, or non-empty audit logs found.",
+        )
+    } else {
+        CheckItem::fail(
+            "release-sanitize-tracked",
+            "release",
+            &format!(
+                "Sanitize violations: {}",
+                truncate(&violations.join("; "), 800)
+            ),
+            "Remove private paths/data and ship only empty public templates or skeleton logs.",
+        )
     }
 }
 
@@ -700,70 +804,71 @@ fn check_release_boundary(repo_root: &Path) -> Vec<CheckItem> {
     let public_root = std::env::var("AGS_PUBLIC_ROOT").unwrap_or_default();
     let mut items = Vec::new();
 
+    items.push(check_public_full_sanitized_tracked(repo_root));
+
     if public_root.is_empty() || !Path::new(&public_root).exists() {
         items.push(CheckItem::skip(
             "release-public-root",
             "release",
             "Public root not configured. Set AGS_PUBLIC_ROOT env var to enable release boundary checks.",
         ));
-        return items;
-    }
-
-    // Check 1: Run sync check with public target
-    let (code, stdout, stderr) = run_command(
-        repo_root,
-        "cargo",
-        &[
-            "run",
-            "-q",
-            "-p",
-            "ags-cli",
-            "--",
-            "sync",
-            "check",
-            "--source",
-            &repo_root.to_string_lossy(),
-            "--target",
-            &public_root,
-            "--target-name",
-            "public-core-only",
-            "--format",
-            "json",
-        ],
-        &[],
-    );
-
-    let output = format!("{}\n{}", stdout, stderr);
-    let has_violation = output.contains("INVARIANT_MISSING")
-        || output.contains("INVARIANT_CONTRADICTED")
-        || output.contains("PUBLIC_FORBIDDEN_PAYLOAD");
-
-    if code == 0 {
-        items.push(CheckItem::pass(
-            "release-boundary-sync",
-            "release",
-            "Public/core-only sync check passed — no boundary violations.",
-        ));
-    } else if has_violation {
-        items.push(CheckItem::fail(
-            "release-boundary-sync",
-            "release",
-            &format!(
-                "Public/core-only boundary violation: {}",
-                truncate(&output, 500)
-            ),
-            "Fix boundary violations before release. Check INVARIANT and PUBLIC_FORBIDDEN_PAYLOAD.",
-        ));
     } else {
-        items.push(CheckItem::warn(
-            "release-boundary-sync",
-            "release",
-            "Public/core-only allowlist gap — review before release.",
-            "Update public promotion allowlist.",
-        ));
+        // Check 1: Run sync check with public target
+        let (code, stdout, stderr) = run_command(
+            repo_root,
+            "cargo",
+            &[
+                "run",
+                "-q",
+                "-p",
+                "ags-cli",
+                "--",
+                "sync",
+                "check",
+                "--source",
+                &repo_root.to_string_lossy(),
+                "--target",
+                &public_root,
+                "--target-name",
+                "public-full-sanitized",
+                "--format",
+                "json",
+            ],
+            &[],
+        );
+
+        let output = format!("{}\n{}", stdout, stderr);
+        let has_violation = output.contains("INVARIANT_MISSING")
+            || output.contains("INVARIANT_CONTRADICTED")
+            || output.contains("PUBLIC_FORBIDDEN_PAYLOAD");
+
+        if code == 0 {
+            items.push(CheckItem::pass(
+                "release-boundary-sync",
+                "release",
+                "Public-full sanitized sync check passed — no boundary violations.",
+            ));
+        } else if has_violation {
+            items.push(CheckItem::fail(
+                "release-boundary-sync",
+                "release",
+                &format!(
+                    "Public-full sanitized boundary violation: {}",
+                    truncate(&output, 500)
+                ),
+                "Fix boundary violations before release. Check INVARIANT and PUBLIC_FORBIDDEN_PAYLOAD.",
+            ));
+        } else {
+            items.push(CheckItem::warn(
+                "release-boundary-sync",
+                "release",
+                "Public-full sanitized allowlist gap — review before release.",
+                "Update public promotion allowlist.",
+            ));
+        }
     }
 
-    // Check 2: Verify bootstrap --apply produces correct public-only payload
+    // Check 2: Verify bootstrap --apply produces a sanitized public payload
     let tmpdir = std::env::temp_dir().join(format!("ags-verify-release-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&tmpdir);
 
@@ -785,8 +890,17 @@ fn check_release_boundary(repo_root: &Path) -> Vec<CheckItem> {
     );
 
     if bootstrap_code == 0 {
-        // Check that private toolchain is NOT in the payload
-        let forbidden = ["Cargo.toml", "Cargo.lock", "crates/"];
+        // Check that generated build output and private runtime state are NOT in the payload.
+        let forbidden = [
+            "target",
+            "ags",
+            "ags.exe",
+            "global-skills",
+            "skill-packs",
+            ".agents",
+            ".codex",
+            "task-archive",
+        ];
         let mut leaked = Vec::new();
         for item in &forbidden {
             if tmpdir.join(item).exists() {
@@ -797,14 +911,14 @@ fn check_release_boundary(repo_root: &Path) -> Vec<CheckItem> {
             items.push(CheckItem::pass(
                 "release-forbidden-payload",
                 "release",
-                "No private Rust toolchain leaked into bootstrap payload.",
+                "No build output, preinstalled skill packs, or private runtime state leaked into bootstrap payload.",
             ));
         } else {
             items.push(CheckItem::fail(
                 "release-forbidden-payload",
                 "release",
                 &format!(
-                    "Forbidden payload leaked into bootstrap: {}",
+                    "Forbidden public-full sanitized payload leaked into bootstrap: {}",
                     leaked.join(", ")
                 ),
                 "Check bootstrap --apply payload allowlist.",
@@ -1257,6 +1371,22 @@ mod tests {
 
         assert_eq!(code, 0, "stderr={stderr}");
         assert_eq!(stdout.trim(), expected);
+    }
+
+    #[test]
+    fn test_public_workspace_detection() {
+        let root =
+            std::env::temp_dir().join(format!("ags-verify-public-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("WORKSPACE.md"),
+            "# Agent Governance Suite — Public Edition Workspace\n\nThis is the public distributable edition.\n",
+        )
+        .unwrap();
+
+        assert!(is_public_distributable_workspace(&root));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -1517,14 +1517,14 @@ mod tests {
     fn gate_check_failed_produces_structured_stop_json() {
         let output = gate_check_failed(
             "protected_path_violation",
-            vec!["Cannot modify agent-governance-suite-stable".to_string()],
+            vec!["Cannot modify my-stable-suite".to_string()],
         );
         assert_eq!(output.decision, GateDecision::Stop);
         assert_eq!(output.error_kind, "protected_path_violation");
         let json = serde_json::to_string(&output).unwrap();
         assert!(json.contains("\"decision\":\"stop\""));
         assert!(json.contains("\"error_kind\":\"protected_path_violation\""));
-        assert!(json.contains("agent-governance-suite-stable"));
+        assert!(json.contains("my-stable-suite"));
     }
 
     #[test]

@@ -26,7 +26,7 @@ skills:
     manual_steps:
       - "mkdir -p ~/.agents/skills/superpowers"
       - "Copy SKILL.md and playbooks/ into the directory"
-    source: GitHub (community-maintained)
+    source: 需用户自行选择可信来源（community-maintained）
 
   - id: diagnose
     name: Systematic Debugging
@@ -38,7 +38,7 @@ skills:
     manual_steps:
       - "mkdir -p ~/.agents/skills/diagnose"
       - "Copy SKILL.md, scripts/, references/ into the directory"
-    source: GitHub (community-maintained)
+    source: 需用户自行选择可信来源（community-maintained）
 
   - id: tdd
     name: Test-Driven Development
@@ -50,7 +50,7 @@ skills:
     manual_steps:
       - "mkdir -p ~/.agents/skills/tdd"
       - "Copy SKILL.md and reference .md files"
-    source: GitHub (community-maintained)
+    source: 需用户自行选择可信来源（community-maintained）
 
   - id: code-review
     name: Code Review
@@ -62,7 +62,7 @@ skills:
     manual_steps:
       - "mkdir -p ~/.agents/skills/code-review"
       - "Copy SKILL.md and references/"
-    source: GitHub (community-maintained)
+    source: 需用户自行选择可信来源（community-maintained）
 
   - id: using-git-worktrees
     name: Git Worktrees
@@ -74,7 +74,7 @@ skills:
     manual_steps:
       - "mkdir -p ~/.agents/skills/using-git-worktrees"
       - "Copy SKILL.md"
-    source: GitHub (community-maintained)
+    source: 需用户自行选择可信来源（community-maintained）
 
   # ── Quality & Verification ──────────────────────────────────────────
   - id: auto-verify
@@ -87,7 +87,7 @@ skills:
     manual_steps:
       - "mkdir -p ~/.agents/skills/auto-verify"
       - "Copy SKILL.md"
-    source: GitHub (community-maintained)
+    source: 需用户自行选择可信来源（community-maintained）
 
   - id: caveman-commit
     name: Conventional Commits
@@ -99,7 +99,7 @@ skills:
     manual_steps:
       - "mkdir -p ~/.agents/skills/caveman-commit"
       - "Copy SKILL.md and README.md"
-    source: GitHub (community-maintained)
+    source: 需用户自行选择可信来源（community-maintained）
 
   - id: caveman-review
     name: Code Review Lite
@@ -111,7 +111,7 @@ skills:
     manual_steps:
       - "mkdir -p ~/.agents/skills/caveman-review"
       - "Copy SKILL.md and README.md"
-    source: GitHub (community-maintained)
+    source: 需用户自行选择可信来源（community-maintained）
 
   # ── Architecture & Planning ─────────────────────────────────────────
   - id: zoom-out
@@ -124,7 +124,7 @@ skills:
     manual_steps:
       - "mkdir -p ~/.agents/skills/zoom-out"
       - "Copy SKILL.md"
-    source: GitHub (community-maintained)
+    source: 需用户自行选择可信来源（community-maintained）
 
   - id: improve-codebase-architecture
     name: Improve Codebase Architecture
@@ -136,7 +136,7 @@ skills:
     manual_steps:
       - "mkdir -p ~/.agents/skills/improve-codebase-architecture"
       - "Copy SKILL.md, DEEPENING.md, INTERFACE-DESIGN.md, LANGUAGE.md"
-    source: GitHub (community-maintained)
+    source: 需用户自行选择可信来源（community-maintained）
 
   - id: grill-with-docs
     name: Requirements Clarification
@@ -148,7 +148,7 @@ skills:
     manual_steps:
       - "mkdir -p ~/.agents/skills/grill-with-docs"
       - "Copy SKILL.md and reference .md files"
-    source: GitHub (community-maintained)
+    source: 需用户自行选择可信来源（community-maintained）
 
   # ── Security ────────────────────────────────────────────────────────
   - id: supply-chain-risk-auditor
@@ -161,4 +161,4 @@ skills:
     manual_steps:
       - "mkdir -p ~/.agents/skills/supply-chain-risk-auditor"
       - "Copy SKILL.md and resources/"
-    source: GitHub (community-maintained)
+    source: 需用户自行选择可信来源（community-maintained）

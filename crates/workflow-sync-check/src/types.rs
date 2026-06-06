@@ -47,7 +47,7 @@ pub enum ProjectKind {
     Private,
     /// The stable runtime baseline.
     Stable,
-    /// Public distribution with legal redactions permitted.
+    /// Public-full sanitized distribution with legal redactions permitted.
     PublicCoreOnly,
     /// User-specified custom target.
     Custom(String),
@@ -58,7 +58,7 @@ impl fmt::Display for ProjectKind {
         match self {
             ProjectKind::Private => write!(f, "private"),
             ProjectKind::Stable => write!(f, "stable"),
-            ProjectKind::PublicCoreOnly => write!(f, "public-core-only"),
+            ProjectKind::PublicCoreOnly => write!(f, "public-full-sanitized"),
             ProjectKind::Custom(label) => write!(f, "custom:{label}"),
         }
     }
@@ -304,7 +304,10 @@ impl CheckOptions {
                 name: target_name.clone(),
                 kind: if target_name == "stable" {
                     ProjectKind::Stable
-                } else if target_name == "public" || target_name == "public-core-only" {
+                } else if matches!(
+                    target_name.as_str(),
+                    "public" | "public-core-only" | "public-full" | "public-full-sanitized"
+                ) {
                     ProjectKind::PublicCoreOnly
                 } else {
                     ProjectKind::Custom(target_name)

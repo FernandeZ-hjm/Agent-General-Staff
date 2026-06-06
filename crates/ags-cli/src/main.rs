@@ -1,20 +1,53 @@
-//! Agent Governance Suite — Public CLI binary entry point.
+//! Agent Governance Suite — Public CLI binary entry point (full-blood edition).
 //!
-//! ## Commands
+//! ## M1 Object Commands
 //!
 //! - `ags task validate`          Validate task cards
+//! - `ags task compile`           Compile execution intent into canonical task card
+//! - `ags task new`               Generate an empty task card template
 //! - `ags policy resolve`         Resolve execution policy
 //! - `ags policy explain`         Explain policy decisions
 //! - `ags policy check`           Validate + resolve, exit with decision
+//! - `ags gate check`             Runner-facing gate check (M3)
 //! - `ags sync check`             Multi-project protocol drift checker
 //! - `ags doctor`                 Suite health diagnostics
 //! - `ags bootstrap --dry-run`    Bootstrap dry-run simulation
 //! - `ags bootstrap --apply`      Bootstrap a target directory
+//! - `ags init`                   Initialize AGS integration in a project
+//!
+//! ## M2 Agent Awareness Commands
+//!
 //! - `ags project detect`         Detect project identity and AGS integration
 //! - `ags protocol status`        Check protocol file status
 //! - `ags agent instructions`     Export agent-specific project instructions
 //! - `ags session preflight`      Aggregated agent wake-up check (kernel activation)
+//!
+//! ## Execution & Verification
+//!
+//! - `ags run`                    Gate-first task card execution pipeline
 //! - `ags verify`                 Scoped verification checks
+//!
+//! ## Receipt / Compliance (M6)
+//!
+//! - `ags receipt generate`       Generate a task run receipt
+//! - `ags receipt verify`         Verify receipt integrity
+//! - `ags compliance check`       Check receipt compliance with policy gates
+//!
+//! ## Skill Governance
+//!
+//! - `ags skill scan`             Discover skill status from suite manifest
+//! - `ags skill check`            Validate governance YAML consistency
+//! - `ags skill propose`          Dry-run proposal for skill changes
+//! - `ags skill install`          Install a recommended skill (requires confirmation)
+//!
+//! ## Capability Registry (M5)
+//!
+//! - `ags capability list`        List all discovered capabilities
+//! - `ags capability show`        Show a specific capability by ID
+//!
+//! ## Operations
+//!
+//! - `ags archive`                Archive delivery report to memory directory
 //!
 //! ## M0 Flat Commands (hidden backward-compatible aliases)
 //!
@@ -48,6 +81,37 @@ enum TaskAction {
     Validate {
         /// Task card files to validate (use "-" for stdin)
         paths: Vec<String>,
+    },
+    /// Compile an execution intent into a canonical task card (M4).
+    ///
+    /// Reads a flexible intent file (or stdin with "-") and deterministically
+    /// compiles it into the canonical compact task-card skeleton. This is a
+    /// rule engine only — no AI calls, no free-form prompt generation.
+    Compile {
+        /// Intent file (use "-" for stdin)
+        path: String,
+        /// Output format: text (human-readable) or json (machine-readable)
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+        /// Output mode: `card` prints only the compiled task card (pipeable);
+        /// `report` prints the full compile report. Default: `report`.
+        #[arg(long, default_value = "report", value_parser = ["card", "report"])]
+        output: String,
+        /// Check only: report if compilation is possible without producing card.
+        #[arg(long, default_value_t = false)]
+        check_only: bool,
+        /// Task card explicitly requested by the user (hard gate).
+        #[arg(long, default_value_t = false)]
+        task_card_requested: bool,
+    },
+    /// Generate an empty task card template (compact or full).
+    New {
+        /// Card type: compact or full
+        #[arg(long, default_value = "compact", value_parser = ["compact", "full"])]
+        card_type: String,
+        /// Write to file instead of stdout
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
 }
 
@@ -115,6 +179,246 @@ enum SyncAction {
         allowlist: Option<PathBuf>,
 
         /// Output format: text (default) or json.
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+}
+
+/// Runner-facing gate operations (M3).
+#[derive(Subcommand)]
+enum GateAction {
+    /// Run the gate check and output a runner-level decision.
+    ///
+    /// Outputs decision: allow|confirm|stop with embedded resolved policy.
+    Check {
+        /// Task card file (use "-" for stdin)
+        path: String,
+        /// Output format: text (human-readable) or json (machine-readable)
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+        /// Explicit approval for Heavy task writes (CLI flag).
+        #[arg(long, default_value_t = false)]
+        approve_writes: bool,
+    },
+}
+
+/// Capability registry operations (M5).
+#[derive(Subcommand)]
+enum CapabilityAction {
+    /// List all discovered capabilities.
+    List {
+        /// Project root path (default: current directory)
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Show details for a specific capability by ID.
+    Show {
+        /// Capability ID (e.g. "rust:task-card-validator", "policy:agent-task-protocol")
+        name: String,
+        /// Project root path (default: current directory)
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+}
+
+/// Receipt operations (M6).
+#[derive(Subcommand)]
+enum ReceiptAction {
+    /// Generate a receipt from a task card.
+    Generate {
+        /// Task card file (use "-" for stdin)
+        #[arg(long = "task-card")]
+        task_card: String,
+        /// Gate decision: allow, confirm, or stop
+        #[arg(long, default_value = "allow", value_parser = ["allow", "confirm", "stop"])]
+        gate_result: String,
+        /// Optional gate reason
+        #[arg(long)]
+        gate_reason: Option<String>,
+        /// Verification results in "command:exit_code" format (repeatable)
+        #[arg(long = "verification", value_name = "CMD:EXIT_CODE")]
+        verifications: Vec<String>,
+        /// Delivery report file path (optional)
+        #[arg(long)]
+        delivery_report: Option<String>,
+        /// Review gate status (Light/Medium/Heavy completion state)
+        #[arg(long)]
+        review_gate_status: Option<String>,
+        /// Metadata key=value pairs for extensibility (repeatable)
+        #[arg(long = "metadata", value_name = "KEY=VALUE")]
+        metadata: Vec<String>,
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Verify a receipt's integrity.
+    Verify {
+        /// Receipt file path
+        path: String,
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+}
+
+/// Compliance check operations (M6).
+#[derive(Subcommand)]
+enum ComplianceAction {
+    /// Check a receipt for compliance with policy gates.
+    Check {
+        /// Receipt file path
+        path: String,
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+}
+
+/// Hook management — install, check, uninstall stop-archive hook.
+///
+/// Never auto-modifies user config files. Install writes a hook config
+/// snippet for manual review and application.
+#[derive(Subcommand)]
+enum HookAction {
+    /// Install a hook — shows plan (dry-run) or writes config snippet.
+    Install {
+        /// Hook name (currently: stop-archive)
+        #[arg(long = "hook", default_value = "stop-archive")]
+        hook_name: String,
+        /// Dry-run: show plan without writing
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+        /// Confirm — write the hook config snippet
+        #[arg(long, default_value_t = false)]
+        confirm: bool,
+        /// Target directory for hook snippet (default: .claude/)
+        #[arg(long)]
+        target: Option<PathBuf>,
+        /// Output format
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Check whether a hook is installed.
+    Check {
+        /// Hook name (currently: stop-archive)
+        #[arg(long = "hook", default_value = "stop-archive")]
+        hook_name: String,
+        /// Output format
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Uninstall a hook — removes the generated snippet file.
+    Uninstall {
+        /// Hook name (currently: stop-archive)
+        #[arg(long = "hook", default_value = "stop-archive")]
+        hook_name: String,
+        /// Confirm uninstall
+        #[arg(long, default_value_t = false)]
+        confirm: bool,
+        /// Target directory (default: .claude/)
+        #[arg(long)]
+        target: Option<PathBuf>,
+        /// Output format
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+}
+
+/// Skill governance operations — read-only inventory, dry-run proposal,
+/// and confirmed install.
+#[derive(Subcommand)]
+enum SkillAction {
+    /// Scan the suite manifest and governance files for skill status.
+    Scan {
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Validate governance YAML files for schema compliance.
+    Check {
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Propose skill changes — dry-run ONLY, no files modified.
+    Propose {
+        /// Action: adopt, enable, or disable
+        #[arg(long, value_parser = ["adopt", "enable", "disable"])]
+        action: String,
+        /// Skill name to act on
+        #[arg(long)]
+        skill: String,
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Install a recommended skill (requires explicit --confirm).
+    ///
+    /// First run without --confirm to see the installation plan (what skills,
+    /// source, target directory, risk summary). Then re-run with --confirm to
+    /// actually install.
+    ///
+    /// Install mode:
+    /// - `template` (default): generates a SKILL.md template with frontmatter and
+    ///   stub directories. Clearly labeled as TEMPLATE INSTALL — user must copy
+    ///   the real SKILL.md and other files from the source repository.
+    /// - `full`: copies a complete skill package from --source-dir. Requires
+    ///   --source-dir pointing to a local directory containing SKILL.md.
+    Install {
+        /// Skill name to install, or "recommended" for all recommended skills
+        #[arg(long)]
+        skill: String,
+        /// Confirm installation — required to actually write to skills directory
+        #[arg(long, default_value_t = false)]
+        confirm: bool,
+        /// Dry-run: show what would be installed without installing
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+        /// Target skills directory (default: $HOME/.agents/skills)
+        #[arg(long)]
+        target: Option<PathBuf>,
+        /// Install mode: template (generates skeleton) or full (copies from source-dir)
+        #[arg(long, default_value = "template", value_parser = ["template", "full"])]
+        mode: String,
+        /// Source directory for full install mode — must contain SKILL.md
+        #[arg(long)]
+        source_dir: Option<PathBuf>,
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Adopt a skill — mark it as adopted in governance log.
+    /// Requires --apply to write the adoption log.
+    Adopt {
+        /// Skill name
+        #[arg(long)]
+        skill: String,
+        /// Apply the adoption (write to governance log)
+        #[arg(long, default_value_t = false)]
+        apply: bool,
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Ignore a skill — add it to the ignore list.
+    /// Requires --apply to write the ignore list.
+    Ignore {
+        /// Skill name
+        #[arg(long)]
+        skill: String,
+        /// Reason for ignoring
+        #[arg(long)]
+        reason: Option<String>,
+        /// Apply the ignore (write to ignore list)
+        #[arg(long, default_value_t = false)]
+        apply: bool,
+        /// Output format: text (default) or json
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
     },
@@ -287,6 +591,110 @@ enum Commands {
         target: PathBuf,
         #[command(subcommand)]
         action: Option<VerifyAction>,
+    },
+
+    // ── M3 Gate operations ────────────────────────────────────────────
+    /// Gate check — runner-facing gate decision (M3)
+    Gate {
+        #[command(subcommand)]
+        action: GateAction,
+    },
+
+    // ── M5 Capability Registry ────────────────────────────────────────
+    /// Capability discovery and registry operations (M5)
+    Capability {
+        #[command(subcommand)]
+        action: CapabilityAction,
+    },
+
+    // ── M6 Receipt / Compliance ──────────────────────────────────────
+    /// Receipt generation and verification operations (M6)
+    Receipt {
+        #[command(subcommand)]
+        action: ReceiptAction,
+    },
+    /// Compliance checking against policy gates (M6)
+    Compliance {
+        #[command(subcommand)]
+        action: ComplianceAction,
+    },
+
+    // ── Hook management ──────────────────────────────────────────────
+    /// Stop-archive hook: install, check, uninstall.
+    /// Never auto-modifies user config files.
+    Hook {
+        #[command(subcommand)]
+        action: HookAction,
+    },
+
+    // ── Skill governance ─────────────────────────────────────────────
+    /// Skill governance — scan, check, propose, and confirmed install
+    Skill {
+        #[command(subcommand)]
+        action: SkillAction,
+    },
+
+    // ── Runner ───────────────────────────────────────────────────────
+    /// Run a task card through the gate-first execution pipeline.
+    ///
+    /// Flow: validate → gate → policy → adapter resolve → launch plan.
+    /// --check-only stops after gate check. --dry-run outputs the full plan.
+    Run {
+        /// Task card file (use "-" for stdin)
+        path: String,
+        /// Stop after gate check
+        #[arg(long, default_value_t = false)]
+        check_only: bool,
+        /// Full pipeline, output launch plan, do not execute
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+        /// Pass write approval to the policy resolver
+        #[arg(long, default_value_t = false)]
+        approve_writes: bool,
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+
+    // ── Init ─────────────────────────────────────────────────────────
+    /// Initialize AGS integration in a project directory.
+    ///
+    /// Creates AGENTS.md, CLAUDE.md, protocol/, manifests/, templates/,
+    /// and memory capsule files. --dry-run (default) shows the plan only;
+    /// --apply writes files to the target directory.
+    Init {
+        /// Target directory (default: current directory)
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+        /// Apply — actually write files (default: dry-run)
+        #[arg(long, default_value_t = false)]
+        apply: bool,
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+
+    // ── Archive ──────────────────────────────────────────────────────
+    /// Archive a delivery report and task summary to the memory directory.
+    Archive {
+        /// Delivery report file path
+        #[arg(long = "delivery-report")]
+        delivery_report: Option<PathBuf>,
+        /// Task card file (for hash recording)
+        #[arg(long = "task-card")]
+        task_card: Option<PathBuf>,
+        /// Verification results JSON file
+        #[arg(long)]
+        verification_results: Option<PathBuf>,
+        /// Receipt JSON file (optional)
+        #[arg(long)]
+        receipt: Option<PathBuf>,
+        /// Task summary (one-line)
+        #[arg(long)]
+        summary: Option<String>,
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
     },
 
     // ── M0 backward-compatible aliases (hidden from help) ──────────────
@@ -762,7 +1170,9 @@ fn cmd_sync_check(
         .map(|(name, root)| {
             let kind = match name.as_str() {
                 "stable" => workflow_sync_check::ProjectKind::Stable,
-                "public" | "public-core-only" => workflow_sync_check::ProjectKind::PublicCoreOnly,
+                "public" | "public-core-only" | "public-full" | "public-full-sanitized" => {
+                    workflow_sync_check::ProjectKind::PublicCoreOnly
+                }
                 _ => workflow_sync_check::ProjectKind::Custom(name.clone()),
             };
             workflow_sync_check::TargetConfig { root, name, kind }
@@ -989,6 +1399,1101 @@ fn cmd_verify_run(scope: &str, format: &str, target: &Path) {
     std::process::exit(report.exit_code());
 }
 
+// ── New dispatch functions (M3-M6) ────────────────────────────────────────
+
+/// Dispatch: `task compile` (M4)
+fn cmd_task_compile(
+    path: &str,
+    format: &str,
+    output: &str,
+    check_only: bool,
+    task_card_requested: bool,
+) {
+    use std::io::Read;
+
+    if check_only && output == "card" {
+        eprintln!("task compile: --check-only cannot be combined with --output card");
+        std::process::exit(2);
+    }
+    if !task_card_requested && output == "card" {
+        eprintln!("task compile: --task-card-requested is required for --output card");
+        eprintln!("  The user must explicitly issue a task-card instruction before an executable card can be generated.");
+        std::process::exit(1);
+    }
+
+    let display_path = if path == "-" {
+        "(stdin)".to_string()
+    } else {
+        path.to_string()
+    };
+    let content = if path == "-" {
+        let mut buf = String::new();
+        if let Err(e) = std::io::stdin().read_to_string(&mut buf) {
+            eprintln!("{}: read failed: {}", display_path, e);
+            std::process::exit(1);
+        }
+        buf
+    } else {
+        match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("{}: read failed: {}", display_path, e);
+                std::process::exit(1);
+            }
+        }
+    };
+
+    let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let (compiled_card, report) =
+        task_compiler::compile(&content, &project_root, check_only, task_card_requested);
+
+    let (vp, ve) = if !report.missing_slots.is_empty() {
+        (
+            false,
+            vec![format!(
+                "Missing required slots: {}",
+                report.missing_slots.join(", ")
+            )],
+        )
+    } else {
+        let errors = task_card_validator::validate(&compiled_card);
+        (errors.is_empty(), errors)
+    };
+
+    let final_report = task_compiler::CompileReport {
+        schema_version: report.schema_version,
+        compiled_task_card: report.compiled_task_card,
+        slot_sources: report.slot_sources,
+        missing_slots: report.missing_slots,
+        assumptions: report.assumptions,
+        validation_passed: if report.executable_allowed {
+            vp
+        } else {
+            report.validation_passed
+        },
+        validation_errors: if report.executable_allowed {
+            ve
+        } else {
+            report.validation_errors
+        },
+        check_only,
+        task_card_requested: report.task_card_requested,
+        executable_allowed: report.executable_allowed,
+        block_reason: report.block_reason,
+    };
+
+    match format {
+        "json" => println!("{}", task_compiler::render_report_json(&final_report)),
+        _ => {
+            if output == "card" && final_report.executable_allowed {
+                println!("{}", task_compiler::render_card_text(&final_report));
+            } else {
+                println!("{}", task_compiler::render_report_text(&final_report));
+            }
+        }
+    }
+
+    let success = if final_report.check_only {
+        final_report.missing_slots.is_empty()
+    } else {
+        final_report.executable_allowed && final_report.validation_passed
+    };
+    if !success {
+        std::process::exit(1);
+    }
+}
+
+/// Dispatch: `task new`
+fn cmd_task_new(card_type: &str, output: Option<&PathBuf>) {
+    let template = if card_type == "full" {
+        "## 任务卡\n读取并遵守：\n- AGENTS.md\n- CLAUDE.md\n- protocol/agent-task-protocol.md\nExecutor: Claude Code\nRuntime adapter: claude-code\nExecution surface: cli\nPermission mode: edit-with-confirmation\nParallelism: none\n任务级别：Medium\nReview gate:\n- Medium Codex review\n任务：\n背景：\n项目画像：\n记忆胶囊：\n任务存档：\n相关路径：\n- .\n本次任务相关文件：\n目标：\n非目标：\n验证：\nVerification gate:\n- commands:\n  - echo done\n- expected evidence:\n  - test passes\n- stop condition:\n  - any failure\n交付：\n按协议输出交付报告\n"
+    } else {
+        "## 任务卡\n路径：\n- .\nExecutor: Claude Code\nRuntime adapter: claude-code\nExecution surface: cli\nPermission mode: edit-with-confirmation\nParallelism: none\n任务级别：Medium\n读取：\n- .\n任务：\n目标：\n非目标：\n关键路径：\n- .\n验证：\n停止条件：\n交付：\n"
+    };
+
+    match output {
+        Some(p) => {
+            if let Err(e) = std::fs::write(p, template) {
+                eprintln!("task new: write failed: {}", e);
+                std::process::exit(1);
+            }
+            eprintln!(
+                "task new: wrote {} task card template to {}",
+                card_type,
+                p.display()
+            );
+        }
+        None => print!("{}", template),
+    }
+}
+
+/// Dispatch: `gate check`
+fn cmd_gate_check(path: &str, format: &str, approve_writes: bool) {
+    let (_, card, _display_path) = read_and_validate_task_card(path);
+    let input = build_policy_input(&card.fields, approve_writes);
+    let output = execution_policy::gate_check(&input);
+
+    match format {
+        "json" => {
+            let json = serde_json::to_string_pretty(&output)
+                .unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e));
+            println!("{}", json);
+        }
+        _ => {
+            println!("Gate Decision: {}", output.decision);
+            println!("{}", format_policy_text(&output.resolved_policy));
+        }
+    }
+    if output.decision == execution_policy::GateDecision::Stop {
+        std::process::exit(1);
+    }
+}
+
+/// Dispatch: `run`
+fn cmd_run(path: &str, check_only: bool, dry_run: bool, approve_writes: bool, format: &str) {
+    let _mode = if check_only {
+        "check-only"
+    } else if dry_run {
+        "dry-run"
+    } else {
+        "dry-run"
+    };
+    let plan = runner::run_task_card(path, check_only, dry_run || !check_only, approve_writes);
+
+    match format {
+        "json" => println!("{}", runner::render_json(&plan)),
+        _ => println!("{}", runner::render_text(&plan)),
+    }
+
+    if !plan.validation_passed || plan.gate_decision == "stop" {
+        std::process::exit(1);
+    }
+}
+
+/// Dispatch: `receipt generate`
+fn cmd_receipt_generate(
+    task_card: &str,
+    gate_result: &str,
+    gate_reason: Option<&str>,
+    verifications: &[String],
+    delivery_report: Option<&str>,
+    review_gate_status: Option<&str>,
+    metadata_pairs: &[String],
+    format: &str,
+) {
+    let task_path = if task_card == "-" {
+        eprintln!("receipt generate: stdin not supported for --task-card; use a file path");
+        std::process::exit(2);
+    } else {
+        Path::new(task_card)
+    };
+
+    let vrs: Vec<receipt::VerificationResult> = verifications
+        .iter()
+        .filter_map(|v| {
+            let parts: Vec<&str> = v.splitn(2, ':').collect();
+            if parts.len() == 2 {
+                let exit_code: i32 = parts[1].parse().unwrap_or(-1);
+                Some(receipt::VerificationResult {
+                    command: parts[0].to_string(),
+                    exit_code,
+                    output_hash: receipt::sha256_hex(parts[1].as_bytes()),
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Parse metadata key=value pairs
+    let metadata: Option<std::collections::HashMap<String, String>> = if metadata_pairs.is_empty() {
+        None
+    } else {
+        let mut map = std::collections::HashMap::new();
+        for pair in metadata_pairs {
+            if let Some((k, v)) = pair.split_once('=') {
+                map.insert(k.to_string(), v.to_string());
+            }
+        }
+        Some(map)
+    };
+
+    let delivery_path = delivery_report.map(|s| Path::new(s));
+    match receipt::generate_receipt(
+        task_path,
+        gate_result,
+        gate_reason,
+        vrs,
+        delivery_path,
+        review_gate_status,
+        metadata,
+    ) {
+        Ok(r) => match format {
+            "json" => println!("{}", receipt::render_receipt_json(&r)),
+            _ => println!(
+                "Receipt generated: {}\n  Task card hash: {}\n  Gate: {}",
+                r.receipt_id, r.task_card_hash, r.gate_result.decision
+            ),
+        },
+        Err(e) => {
+            eprintln!("receipt generate: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Dispatch: `receipt verify`
+fn cmd_receipt_verify(path: &str, format: &str) {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("receipt verify: {}", e);
+            std::process::exit(1);
+        }
+    };
+    let receipt: receipt::Receipt = match serde_json::from_str(&content) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("receipt verify: invalid JSON: {}", e);
+            std::process::exit(1);
+        }
+    };
+    let result = receipt::verify_receipt(&receipt);
+    match format {
+        "json" => println!("{}", receipt::render_verify_json(&result)),
+        _ => println!("{}", receipt::render_verify_text(&result)),
+    }
+    if !result.valid {
+        std::process::exit(1);
+    }
+}
+
+/// Dispatch: `compliance check`
+fn cmd_compliance_check(path: &str, format: &str) {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("compliance check: {}", e);
+            std::process::exit(1);
+        }
+    };
+    let receipt: receipt::Receipt = match serde_json::from_str(&content) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("compliance check: invalid JSON: {}", e);
+            std::process::exit(1);
+        }
+    };
+    let result = receipt::check_compliance(&receipt);
+    match format {
+        "json" => println!("{}", receipt::render_compliance_json(&result)),
+        _ => println!("{}", receipt::render_compliance_text(&result)),
+    }
+    if !result.compliant {
+        std::process::exit(1);
+    }
+}
+
+/// Dispatch: `skill scan`
+fn cmd_skill_scan(format: &str) {
+    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let result = skill_governance::scan_skills(&root);
+    match format {
+        "json" => println!("{}", skill_governance::render_scan_json(&result)),
+        _ => println!("{}", skill_governance::render_scan_text(&result)),
+    }
+}
+
+/// Dispatch: `skill check`
+fn cmd_skill_check(format: &str) {
+    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let result = skill_governance::check_skills(&root);
+    match format {
+        "json" => println!("{}", skill_governance::render_check_json(&result)),
+        _ => println!("{}", skill_governance::render_check_text(&result)),
+    }
+    if !result.passed {
+        std::process::exit(1);
+    }
+}
+
+/// Dispatch: `skill propose`
+fn cmd_skill_propose(action: &str, skill: &str, format: &str) {
+    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let result = skill_governance::propose_skills(&root, action, skill);
+    match format {
+        "json" => println!("{}", skill_governance::render_proposal_json(&result)),
+        _ => println!("{}", skill_governance::render_proposal_text(&result)),
+    }
+}
+
+/// Dispatch: `skill install`
+///
+/// Delegates to `skill_governance::install_skills` for real skill installation
+/// with directory structure and SKILL.md frontmatter.
+fn cmd_skill_install(
+    skill: &str,
+    confirm: bool,
+    dry_run: bool,
+    target: Option<&PathBuf>,
+    mode: &str,
+    source_dir: Option<&PathBuf>,
+    format: &str,
+) {
+    let skills_dir = target.cloned().unwrap_or_else(|| {
+        let home = std::env::var("HOME").unwrap_or_default();
+        PathBuf::from(home).join(".agents/skills")
+    });
+
+    let install_mode = match mode {
+        "full" => skill_governance::InstallMode::Full,
+        _ => skill_governance::InstallMode::Template,
+    };
+
+    // Show plan before installing (text format)
+    if format != "json" && !confirm {
+        let (defs, warnings, target_str) = skill_governance::install_plan(skill, &skills_dir);
+        let mode_banner = match install_mode {
+            skill_governance::InstallMode::Template => {
+                "TEMPLATE INSTALL — generates SKILL.md skeleton with frontmatter"
+            }
+            skill_governance::InstallMode::Full => "FULL INSTALL — copies complete skill package",
+        };
+        println!("Skill Install Plan [{}]", mode_banner);
+        println!("==================");
+        println!("Target directory: {}", target_str);
+        println!("Skills to install:");
+        for def in &defs {
+            let cat = match def.category {
+                skill_governance::SkillCategory::Auto => "auto-trigger",
+                skill_governance::SkillCategory::Manual => "manual",
+            };
+            println!("  - {}  (source: {}, type: {})", def.name, def.source, cat);
+        }
+        if defs.is_empty() {
+            for w in &warnings {
+                println!("  ! {}", w);
+            }
+        }
+        println!();
+        println!("Risk summary:");
+        println!("  - Skills will be installed to: {}", target_str);
+        if install_mode == skill_governance::InstallMode::Template {
+            println!("  - MODE: TEMPLATE — only a skeleton is created");
+            println!("  - You MUST copy real content from the source repository");
+            println!("  - Template files are clearly marked");
+        }
+        println!("  - Existing installs may be overwritten");
+        println!();
+    }
+
+    // Delegate to the library
+    let source = source_dir.map(|p| p.as_path());
+    let result = skill_governance::install_skills(
+        skill,
+        &skills_dir,
+        confirm,
+        dry_run,
+        install_mode,
+        source,
+    );
+
+    match format {
+        "json" => println!("{}", skill_governance::render_install_json(&result)),
+        _ => println!("{}", skill_governance::render_install_text(&result)),
+    }
+
+    match result.status {
+        skill_governance::InstallStatus::Blocked => {
+            if !confirm {
+                std::process::exit(1);
+            }
+        }
+        skill_governance::InstallStatus::PartialFailure => {
+            std::process::exit(1);
+        }
+        _ => {}
+    }
+}
+
+/// Dispatch: `skill adopt`
+fn cmd_skill_adopt(skill: &str, apply: bool, format: &str) {
+    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let governance_dir = root.join("governance");
+    if !apply {
+        let result = skill_governance::propose_skills(&root, "adopt", skill);
+        match format {
+            "json" => println!("{}", skill_governance::render_proposal_json(&result)),
+            _ => {
+                println!("{}", skill_governance::render_proposal_text(&result));
+                println!("DRY-RUN ONLY. Use --apply to adopt the skill.");
+            }
+        }
+        return;
+    }
+    // Apply: append to adoption log
+    if let Err(e) = std::fs::create_dir_all(&governance_dir) {
+        eprintln!("skill adopt: {}", e);
+        std::process::exit(1);
+    }
+    let log_path = governance_dir.join("skill-adoption-log.yaml");
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let entry = format!("\n- id: adopt-{timestamp}\n  skill_name: {skill}\n  decision: adopted\n  timestamp: \"{timestamp}\"\n");
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .unwrap_or_else(|e| {
+            eprintln!("skill adopt: cannot open adoption log: {}", e);
+            std::process::exit(1);
+        });
+    use std::io::Write;
+    if file.write_all(entry.as_bytes()).is_err() {
+        eprintln!("skill adopt: write failed");
+        std::process::exit(1);
+    }
+    if format != "json" {
+        println!(
+            "Skill '{}' adopted. Log updated: {}",
+            skill,
+            log_path.display()
+        );
+    }
+}
+
+/// Dispatch: `skill ignore`
+fn cmd_skill_ignore(skill: &str, reason: Option<&str>, apply: bool, format: &str) {
+    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let governance_dir = root.join("governance");
+    if !apply {
+        let result = skill_governance::propose_skills(&root, "disable", skill);
+        match format {
+            "json" => println!("{}", skill_governance::render_proposal_json(&result)),
+            _ => {
+                println!("{}", skill_governance::render_proposal_text(&result));
+                println!("DRY-RUN ONLY. Use --apply to ignore the skill.");
+            }
+        }
+        return;
+    }
+    if let Err(e) = std::fs::create_dir_all(&governance_dir) {
+        eprintln!("skill ignore: {}", e);
+        std::process::exit(1);
+    }
+    let log_path = governance_dir.join("skill-ignore-list.yaml");
+    let reason_str = reason.unwrap_or("manually ignored");
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let entry = format!("\n- id: ignore-{timestamp}\n  skill_name: {skill}\n  reason: \"{reason_str}\"\n  status: active\n  timestamp: \"{timestamp}\"\n");
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .unwrap_or_else(|e| {
+            eprintln!("skill ignore: cannot open ignore list: {}", e);
+            std::process::exit(1);
+        });
+    use std::io::Write;
+    if file.write_all(entry.as_bytes()).is_err() {
+        eprintln!("skill ignore: write failed");
+        std::process::exit(1);
+    }
+    if format != "json" {
+        println!(
+            "Skill '{}' ignored. Log updated: {}",
+            skill,
+            log_path.display()
+        );
+    }
+}
+
+/// Dispatch: `capability list`
+fn cmd_capability_list(target: &Path, format: &str) {
+    let registry = capability_registry::discover_all(target);
+    match format {
+        "json" => println!("{}", capability_registry::render_json(&registry)),
+        _ => println!("{}", capability_registry::render_text(&registry)),
+    }
+}
+
+/// Dispatch: `capability show`
+fn cmd_capability_show(name: &str, target: &Path, format: &str) {
+    let registry = capability_registry::discover_all(target);
+    match capability_registry::find_by_id(&registry, name) {
+        Some(cap) => match format {
+            "json" => println!("{}", capability_registry::render_one_json(cap)),
+            _ => println!("{}", capability_registry::render_one_text(cap)),
+        },
+        None => {
+            eprintln!("capability show: not found: {}", name);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn render_context_capsule_template(slug: &str, project_path: &Path) -> String {
+    format!(
+        "# Context Capsule: {slug}\n\
+\n\
+Manual-maintained stable project memory.\n\
+\n\
+## 项目设计目的\n\
+\n\
+(TODO: describe this project's purpose in one or two concrete paragraphs.)\n\
+\n\
+Rules:\n\
+- Runner, hook, capture, or automated summarization must not overwrite this section.\n\
+- Automated summaries must not rewrite this section.\n\
+- Modify this section only when the project owner explicitly asks.\n\
+- Agents must read this file before task execution.\n\
+- If a task conflicts with this section, stop and report before changing files.\n\
+\n\
+## Stable Facts\n\
+\n\
+- Project path: `{}`\n\
+- Memory dir: `$HOME/.agents/memory/projects/{slug}`\n\
+\n\
+## 项目长期边界\n\
+\n\
+- (TODO: define non-negotiable project boundaries.)\n\
+\n\
+## 核心业务定位\n\
+\n\
+- (TODO: define what this project is for and what it is not for.)\n\
+\n\
+## 原则性决策\n\
+\n\
+- (TODO: record durable decisions that should survive context compaction.)\n\
+\n\
+## 自动记忆入口\n\
+\n\
+- Progress log: `$HOME/.agents/memory/projects/{slug}/progress-log.md`\n\
+- Archive index: `$HOME/.agents/memory/projects/{slug}/archive-index.md`\n\
+- Sessions: `$HOME/.agents/memory/projects/{slug}/sessions`\n\
+- Task archive: `$HOME/.agents/memory/projects/{slug}/task-archive`\n",
+        project_path.display()
+    )
+}
+
+fn render_task_memory_template(slug: &str) -> String {
+    format!(
+        "# Task Memory: {slug}\n\
+\n\
+Updated: initialized\n\
+\n\
+This file is automatically refreshed from local task archives. The manual\n\
+project charter remains in `context-capsule.md`.\n\
+\n\
+## Current Status\n\
+\n\
+- Latest task: none\n\
+- Status: initialized\n\
+- Conclusion: no completed tasks archived yet\n\
+- Archive: none\n\
+\n\
+## Latest Delivery Report\n\
+\n\
+- Source: none\n\
+\n\
+## Recent Task Archive Index\n\
+\n\
+- Task archive root: `$HOME/.agents/memory/projects/{slug}/task-archive`\n"
+    )
+}
+
+fn render_archive_index_template(slug: &str) -> String {
+    format!(
+        "# Archive Index: {slug}\n\
+\n\
+This index is append-only operational memory for task archives.\n\
+\n\
+## Rules\n\
+\n\
+- Keep this file free of secrets, tokens, and private machine-specific paths.\n\
+- Store full task evidence under `task-archive/`.\n\
+- Keep `context-capsule.md` as the manual project charter; do not auto-rewrite it.\n\
+\n\
+## Entries\n\
+\n\
+(none yet)\n"
+    )
+}
+
+/// Dispatch: `init`
+fn cmd_init(target: &Path, apply: bool, format: &str) {
+    let plan = vec![
+        ("AGENTS.md", "# AGENTS.md\n\n@CLAUDE.md\n\n## Project Identity\n\nThis project uses Agent Governance Suite (AGS).\n\nRun `ags session preflight --for claude-code` before executing tasks.\n"),
+        ("CLAUDE.md", "# CLAUDE.md\n\nThis project is governed by AGS. Read `protocol/agent-task-protocol.md` for the canonical agent task protocol.\n\n## Commands\n\nVerify: `ags verify --scope local`\n"),
+        ("WORKSPACE.md", "# Workspace\n\n| Code | Role | Path |\n|---|---|---|\n| P | Public project | . |\n"),
+        ("AGENT_SUITE_PROTOCOL.md", "# Agent Suite Protocol\n\nSee `protocol/agent-task-protocol.md` for the canonical protocol.\n"),
+        ("protocol/agent-task-protocol.md", "# Agent Task Protocol\n\n(Replace this with the canonical protocol file from the AGS distribution.)\n"),
+        ("protocol/task-card-template.md", "## 任务卡\n\n(Task card template — replace with canonical version.)\n"),
+        ("protocol/runtime-adapters.md", "# Runtime Adapters\n\nExecutor adapter configuration for Codex, Claude Code, and Cursor.\n"),
+        ("protocol/task-routing.md", "# Task Routing\n\nLight / Medium / Heavy task classification rules.\n"),
+        ("manifests/suite.yaml", "schema_version: \"1.0-public\"\nsuite:\n  name: \"my-project\"\n  version: \"0.1.0\"\n  description: \"AGS-governed project\"\n  required: []\n  optional: []\n  personal: {}\n"),
+        ("templates/task-card-template.md", "## 任务卡\n\n(Copy and fill this template for new task cards.)\n"),
+        ("templates/memory/context-capsule.md", include_str!("../../../templates/memory/context-capsule.md")),
+        ("templates/memory/task-memory.md", include_str!("../../../templates/memory/task-memory.md")),
+        ("templates/memory/archive-index.md", include_str!("../../../templates/memory/archive-index.md")),
+        ("templates/memory/task-archive/README.md", include_str!("../../../templates/memory/task-archive/README.md")),
+        ("scripts/context-memory.sh", include_str!("../../../scripts/context-memory.sh")),
+    ];
+
+    if !apply {
+        println!("AGS Init — Dry Run");
+        println!("===================");
+        println!("Target: {}", target.display());
+        println!();
+        for (path, _) in &plan {
+            println!("  would create: {}", path);
+        }
+        println!();
+        println!("Run with --apply to create these files.");
+        if format == "json" {
+            let output = serde_json::json!({
+                "status": "dry-run",
+                "target": target.display().to_string(),
+                "files": plan.iter().map(|(p, _)| p).collect::<Vec<_>>(),
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&output).unwrap_or_default()
+            );
+        }
+        return;
+    }
+
+    for (path, content) in &plan {
+        let full = target.join(path);
+        if let Some(parent) = full.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                eprintln!("init: cannot create directory {}: {}", parent.display(), e);
+                std::process::exit(1);
+            }
+        }
+        if let Err(e) = std::fs::write(&full, content) {
+            eprintln!("init: cannot write {}: {}", full.display(), e);
+            std::process::exit(1);
+        }
+        if format != "json" {
+            println!("  created: {}", path);
+        }
+    }
+
+    // Init memory capsule
+    let memory_base = if let Ok(dir) = std::env::var("AGS_MEMORY_DIR") {
+        PathBuf::from(dir)
+    } else {
+        let home = std::env::var("HOME").unwrap_or_default();
+        PathBuf::from(home).join(".agents/memory/projects")
+    };
+    let slug = target
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("project");
+    let memory_dir = memory_base.join(slug);
+    if let Err(e) = std::fs::create_dir_all(&memory_dir) {
+        eprintln!("init: cannot create memory directory: {}", e);
+    } else {
+        let capsule = memory_dir.join("context-capsule.md");
+        let task_memory = memory_dir.join("task-memory.md");
+        let archive_index = memory_dir.join("archive-index.md");
+        let archive = memory_dir.join("task-archive");
+        let _ = std::fs::create_dir_all(&archive);
+        let _ = std::fs::create_dir_all(memory_dir.join("sessions"));
+        if !capsule.exists() {
+            let _ = std::fs::write(&capsule, render_context_capsule_template(slug, target));
+        }
+        if !task_memory.exists() {
+            let _ = std::fs::write(&task_memory, render_task_memory_template(slug));
+        }
+        if !archive_index.exists() {
+            let _ = std::fs::write(&archive_index, render_archive_index_template(slug));
+        }
+        if format != "json" {
+            println!("  memory capsule: {}", capsule.display());
+            println!("  task memory: {}", task_memory.display());
+            println!("  archive index: {}", archive_index.display());
+            println!("  task archive: {}", archive.display());
+        }
+    }
+
+    if format == "json" {
+        let output = serde_json::json!({
+            "status": "applied",
+            "target": target.display().to_string(),
+            "files": plan.iter().map(|(p, _)| p).collect::<Vec<_>>(),
+            "memory_dir": memory_dir.display().to_string(),
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&output).unwrap_or_default()
+        );
+    } else {
+        println!("\nAGS initialization complete.");
+        println!("Run `ags doctor` to verify the setup.");
+        println!("Run `ags session preflight --for claude-code` to test kernel activation.");
+    }
+}
+
+/// Dispatch: `archive`
+fn cmd_archive(
+    delivery_report: Option<&PathBuf>,
+    task_card: Option<&PathBuf>,
+    verification_results: Option<&PathBuf>,
+    receipt: Option<&PathBuf>,
+    summary: Option<&str>,
+    format: &str,
+) {
+    let memory_base = if let Ok(dir) = std::env::var("AGS_MEMORY_DIR") {
+        PathBuf::from(dir)
+    } else {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let slug = std::env::current_dir()
+            .ok()
+            .and_then(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str().map(|s| s.to_string()))
+            })
+            .unwrap_or_else(|| "project".to_string());
+        PathBuf::from(home)
+            .join(".agents/memory/projects")
+            .join(slug)
+    };
+
+    let archive_dir = memory_base.join("task-archive");
+    if let Err(e) = std::fs::create_dir_all(&archive_dir) {
+        eprintln!("archive: cannot create archive directory: {}", e);
+        std::process::exit(1);
+    }
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let archive_file = archive_dir.join(format!("{}-archive.md", timestamp));
+
+    let mut content = format!("# Task Archive\n\nTimestamp: {}\n", timestamp);
+
+    // Include task card hash if provided
+    if let Some(tc) = task_card {
+        if let Ok(tc_content) = std::fs::read_to_string(tc) {
+            let tc_hash = receipt::sha256_hex(tc_content.as_bytes());
+            content.push_str(&format!("Task card hash: {}\n", tc_hash));
+        }
+    }
+
+    if let Some(s) = summary {
+        content.push_str(&format!("Summary: {}\n", s));
+    }
+    content.push('\n');
+
+    if let Some(dr) = delivery_report {
+        if let Ok(body) = std::fs::read_to_string(dr) {
+            content.push_str("## Delivery Report\n\n");
+            content.push_str(&body);
+            content.push('\n');
+        }
+    }
+    if let Some(vr) = verification_results {
+        if let Ok(body) = std::fs::read_to_string(vr) {
+            content.push_str("## Verification Results\n\n");
+            content.push_str(&body);
+            content.push('\n');
+        }
+    }
+    if let Some(rc) = receipt {
+        if let Ok(body) = std::fs::read_to_string(rc) {
+            content.push_str("## Receipt\n\n");
+            content.push_str(&body);
+            content.push('\n');
+        }
+    }
+
+    if let Err(e) = std::fs::write(&archive_file, &content) {
+        eprintln!("archive: write failed: {}", e);
+        std::process::exit(1);
+    }
+
+    // Update task-memory.md
+    let task_memory_file = memory_base.join("task-memory.md");
+    let update = format!(
+        "\n## Latest Task\n\n- Timestamp: {}\n- Summary: {}\n- Archive: {}\n",
+        timestamp,
+        summary.unwrap_or("(no summary)"),
+        archive_file.display()
+    );
+    let mut tm = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&task_memory_file)
+        .unwrap_or_else(|_| {
+            // Fallback: create new
+            std::fs::File::create(&task_memory_file).unwrap_or_else(|e| {
+                eprintln!("archive: cannot create task-memory.md: {}", e);
+                std::process::exit(1);
+            })
+        });
+    use std::io::Write;
+    let _ = tm.write_all(update.as_bytes());
+
+    match format {
+        "json" => {
+            let output = serde_json::json!({
+                "status": "archived",
+                "archive_file": archive_file.display().to_string(),
+                "task_memory": task_memory_file.display().to_string(),
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&output).unwrap_or_default()
+            );
+        }
+        _ => {
+            println!("Archive complete:");
+            println!("  archive: {}", archive_file.display());
+            println!("  task memory: {}", task_memory_file.display());
+        }
+    }
+}
+
+// ── Hook dispatch ───────────────────────────────────────────────────────
+
+const STOP_ARCHIVE_HOOK_SNIPPET: &str = r#"{
+  "hooks": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "bash /path/to/ags/scripts/stop-archive-hook.sh"
+      }
+    ]
+  }
+}"#;
+
+fn cmd_hook_install(
+    hook_name: &str,
+    dry_run: bool,
+    confirm: bool,
+    target: Option<&PathBuf>,
+    format: &str,
+) {
+    let hook_dir = target.cloned().unwrap_or_else(|| PathBuf::from(".claude"));
+    let snippet_file = hook_dir.join(format!("{}-hook-snippet.json", hook_name));
+
+    // Show plan
+    if format != "json" && !confirm {
+        println!("Hook Install Plan");
+        println!("=================");
+        println!("Hook: {}", hook_name);
+        println!("Hook script: scripts/stop-archive-hook.sh");
+        println!();
+        println!("What this hook does:");
+        println!("  On each Claude Code Stop event, archives the delivery report,");
+        println!("  verification results, and receipt to the local memory directory.");
+        println!();
+        println!("Install behavior:");
+        println!("  --confirm writes a hook config snippet to:");
+        println!("    {}", snippet_file.display());
+        println!();
+        println!("You must then manually add the snippet to your ~/.claude/settings.json");
+        println!("or equivalent Claude Code configuration.");
+        println!();
+        println!("The hook will NEVER auto-modify your settings file.");
+        println!();
+    }
+
+    if dry_run || !confirm {
+        if format == "json" {
+            let output = serde_json::json!({
+                "hook": hook_name,
+                "status": if dry_run { "dry-run" } else { "blocked" },
+                "snippet_file": snippet_file.display().to_string(),
+                "note": "Use --confirm to write the hook snippet file."
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&output).unwrap_or_default()
+            );
+        } else {
+            println!(
+                "STATUS: {} — use --confirm to write the hook snippet file",
+                if dry_run { "dry-run" } else { "blocked" }
+            );
+        }
+        if !confirm {
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    // Confirm: write snippet
+    if let Err(e) = std::fs::create_dir_all(&hook_dir) {
+        eprintln!("hook install: cannot create {}: {}", hook_dir.display(), e);
+        std::process::exit(1);
+    }
+
+    // Customize snippet with actual AGS script path
+    let ags_script_path = std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("scripts/stop-archive-hook.sh");
+    let snippet = STOP_ARCHIVE_HOOK_SNIPPET.replace(
+        "/path/to/ags/scripts/stop-archive-hook.sh",
+        &ags_script_path.display().to_string(),
+    );
+
+    match std::fs::write(&snippet_file, &snippet) {
+        Ok(_) => {
+            if format == "json" {
+                let output = serde_json::json!({
+                    "hook": hook_name,
+                    "status": "installed",
+                    "snippet_file": snippet_file.display().to_string(),
+                    "next_step": "Manually add the snippet to ~/.claude/settings.json"
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&output).unwrap_or_default()
+                );
+            } else {
+                println!("Hook snippet written to: {}", snippet_file.display());
+                println!();
+                println!("Next step: manually add this to your ~/.claude/settings.json");
+                println!("or equivalent Claude Code configuration file.");
+                println!();
+                println!("Snippet content:");
+                println!("{}", snippet);
+            }
+        }
+        Err(e) => {
+            eprintln!("hook install: cannot write snippet: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_hook_check(hook_name: &str, format: &str) {
+    let hook_dir = PathBuf::from(".claude");
+    let snippet_file = hook_dir.join(format!("{}-hook-snippet.json", hook_name));
+
+    let snippet_exists = snippet_file.exists();
+    let hook_script_exists = PathBuf::from("scripts/stop-archive-hook.sh").exists();
+
+    if format == "json" {
+        let output = serde_json::json!({
+            "hook": hook_name,
+            "snippet_file": snippet_file.display().to_string(),
+            "snippet_exists": snippet_exists,
+            "hook_script_exists": hook_script_exists,
+            "status": if snippet_exists && hook_script_exists { "ready" } else { "missing" }
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&output).unwrap_or_default()
+        );
+    } else {
+        println!("Hook Status: {}", hook_name);
+        println!("=========================");
+        println!("Hook script: scripts/stop-archive-hook.sh");
+        println!(
+            "  {}",
+            if hook_script_exists {
+                "PRESENT"
+            } else {
+                "MISSING — run `cargo build` first"
+            }
+        );
+        println!("Snippet file: {}", snippet_file.display());
+        println!(
+            "  {}",
+            if snippet_exists {
+                "PRESENT"
+            } else {
+                "MISSING — run `ags hook install --confirm` first"
+            }
+        );
+        println!();
+        if snippet_exists && hook_script_exists {
+            println!("Status: READY — snippet file generated, awaiting manual application to settings.json");
+        } else {
+            println!("Status: NOT INSTALLED");
+        }
+    }
+
+    if !snippet_exists {
+        std::process::exit(1);
+    }
+}
+
+fn cmd_hook_uninstall(hook_name: &str, confirm: bool, target: Option<&PathBuf>, format: &str) {
+    let hook_dir = target.cloned().unwrap_or_else(|| PathBuf::from(".claude"));
+    let snippet_file = hook_dir.join(format!("{}-hook-snippet.json", hook_name));
+
+    if !confirm {
+        if format == "json" {
+            let output = serde_json::json!({
+                "hook": hook_name,
+                "status": "blocked",
+                "snippet_file": snippet_file.display().to_string(),
+                "note": "Use --confirm to remove the snippet file."
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&output).unwrap_or_default()
+            );
+        } else {
+            println!("Hook Uninstall Plan");
+            println!("===================");
+            println!("Will remove: {}", snippet_file.display());
+            println!("STATUS: blocked — use --confirm to proceed");
+            println!();
+            println!("Note: this only removes the generated snippet file.");
+            println!("You must manually remove the hook from ~/.claude/settings.json");
+        }
+        std::process::exit(1);
+    }
+
+    if snippet_file.exists() {
+        match std::fs::remove_file(&snippet_file) {
+            Ok(_) => {
+                if format != "json" {
+                    println!("Removed: {}", snippet_file.display());
+                    println!("Note: manually remove the hook entry from ~/.claude/settings.json");
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "hook uninstall: cannot remove {}: {}",
+                    snippet_file.display(),
+                    e
+                );
+                std::process::exit(1);
+            }
+        }
+    } else {
+        if format != "json" {
+            println!("Snippet file not found: {}", snippet_file.display());
+            println!("Nothing to uninstall.");
+        }
+    }
+
+    if format == "json" {
+        let output = serde_json::json!({
+            "hook": hook_name,
+            "status": "uninstalled",
+            "snippet_file": snippet_file.display().to_string(),
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&output).unwrap_or_default()
+        );
+    }
+}
+
 // ── main ──────────────────────────────────────────────────────────────────
 
 fn main() {
@@ -998,6 +2503,14 @@ fn main() {
         // ── M1 object commands ──
         Commands::Task { action } => match action {
             TaskAction::Validate { paths } => cmd_task_validate(&paths),
+            TaskAction::Compile {
+                path,
+                format,
+                output,
+                check_only,
+                task_card_requested,
+            } => cmd_task_compile(&path, &format, &output, check_only, task_card_requested),
+            TaskAction::New { card_type, output } => cmd_task_new(&card_type, output.as_ref()),
         },
         Commands::Policy { action } => match action {
             PolicyAction::Resolve {
@@ -1104,6 +2617,142 @@ fn main() {
             }) => cmd_verify_run(&scope, &format, &target),
             None => cmd_verify_run(&scope, &format, &target),
         },
+
+        // ── M3 Gate ──
+        Commands::Gate { action } => match action {
+            GateAction::Check {
+                path,
+                format,
+                approve_writes,
+            } => cmd_gate_check(&path, &format, approve_writes),
+        },
+
+        // ── M5 Capability ──
+        Commands::Capability { action } => match action {
+            CapabilityAction::List { target, format } => cmd_capability_list(&target, &format),
+            CapabilityAction::Show {
+                name,
+                target,
+                format,
+            } => cmd_capability_show(&name, &target, &format),
+        },
+
+        // ── M6 Receipt / Compliance ──
+        Commands::Receipt { action } => match action {
+            ReceiptAction::Generate {
+                task_card,
+                gate_result,
+                gate_reason,
+                verifications,
+                delivery_report,
+                review_gate_status,
+                metadata,
+                format,
+            } => cmd_receipt_generate(
+                &task_card,
+                &gate_result,
+                gate_reason.as_deref(),
+                &verifications,
+                delivery_report.as_deref(),
+                review_gate_status.as_deref(),
+                &metadata,
+                &format,
+            ),
+            ReceiptAction::Verify { path, format } => cmd_receipt_verify(&path, &format),
+        },
+        Commands::Compliance { action } => match action {
+            ComplianceAction::Check { path, format } => cmd_compliance_check(&path, &format),
+        },
+
+        // ── Hook ──
+        Commands::Hook { action } => match action {
+            HookAction::Install {
+                hook_name,
+                dry_run,
+                confirm,
+                target,
+                format,
+            } => cmd_hook_install(&hook_name, dry_run, confirm, target.as_ref(), &format),
+            HookAction::Check { hook_name, format } => cmd_hook_check(&hook_name, &format),
+            HookAction::Uninstall {
+                hook_name,
+                confirm,
+                target,
+                format,
+            } => cmd_hook_uninstall(&hook_name, confirm, target.as_ref(), &format),
+        },
+
+        // ── Skill ──
+        Commands::Skill { action } => match action {
+            SkillAction::Scan { format } => cmd_skill_scan(&format),
+            SkillAction::Check { format } => cmd_skill_check(&format),
+            SkillAction::Propose {
+                action,
+                skill,
+                format,
+            } => cmd_skill_propose(&action, &skill, &format),
+            SkillAction::Install {
+                skill,
+                confirm,
+                dry_run,
+                target,
+                mode,
+                source_dir,
+                format,
+            } => cmd_skill_install(
+                &skill,
+                confirm,
+                dry_run,
+                target.as_ref(),
+                &mode,
+                source_dir.as_ref(),
+                &format,
+            ),
+            SkillAction::Adopt {
+                skill,
+                apply,
+                format,
+            } => cmd_skill_adopt(&skill, apply, &format),
+            SkillAction::Ignore {
+                skill,
+                reason,
+                apply,
+                format,
+            } => cmd_skill_ignore(&skill, reason.as_deref(), apply, &format),
+        },
+
+        // ── Runner ──
+        Commands::Run {
+            path,
+            check_only,
+            dry_run,
+            approve_writes,
+            format,
+        } => cmd_run(&path, check_only, dry_run, approve_writes, &format),
+
+        // ── Init ──
+        Commands::Init {
+            target,
+            apply,
+            format,
+        } => cmd_init(&target, apply, &format),
+
+        // ── Archive ──
+        Commands::Archive {
+            delivery_report,
+            task_card,
+            verification_results,
+            receipt,
+            summary,
+            format,
+        } => cmd_archive(
+            delivery_report.as_ref(),
+            task_card.as_ref(),
+            verification_results.as_ref(),
+            receipt.as_ref(),
+            summary.as_deref(),
+            &format,
+        ),
 
         // ── M0 backward-compatible aliases (hidden from help) ──
         Commands::TaskCardValidator { paths } => cmd_task_validate(&paths),

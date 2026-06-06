@@ -194,8 +194,12 @@ mod tests {
             Runners must consume allowed_launch_args and effective_permission_mode.\n";
         let default_fmt = |rel: &str| format!("{rel}\n# Test\n\ncontent\n");
 
-        for relative in manifest::FULL_MANIFEST.required_files {
-            if *relative == "protocol/runtime-adapters.md" {
+        let mut files: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        files.extend(manifest::FULL_MANIFEST.required_files.iter().copied());
+        files.extend(manifest::PUBLIC_MANIFEST.required_files.iter().copied());
+
+        for relative in files {
+            if relative == "protocol/runtime-adapters.md" {
                 write_file(root, relative, safety);
             } else {
                 let content = default_fmt(relative);

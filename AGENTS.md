@@ -1,11 +1,8 @@
 # AGENTS.md
 
-@/Users/hujiaming/.agents/rules/core.md
-@/Users/hujiaming/.codex/RTK.md
-
 Before responding or executing tasks in this repository, also read and follow:
 
-- `CLAUDE.md` — Rust core suite candidate workspace protocol.
+- `CLAUDE.md` — Rust core suite protocol.
 
 @CLAUDE.md
 
@@ -14,11 +11,11 @@ Before responding or executing tasks in this repository, also read and follow:
 Agent Governance Suite (AGS) is a standing engineering hub for development work,
 not a CLI toolbox you invoke separately. When a development request arrives, AGS
 governance engages automatically: ambient preflight → solution formation → user
-confirmation (\"方案 OK\") → user task-card instruction (\"生成任务卡\") → execution
+confirmation ("方案 OK") → user task-card instruction ("生成任务卡") → execution
 contract → task routing → gate / execution / receipt.
 
 Do not jump to Light / Medium / Heavy classification from raw user requests.
-Always complete preflight and solution formation first. \"方案 OK\" only ends the
+Always complete preflight and solution formation first. "方案 OK" only ends the
 solution phase — a separate user task-card instruction is required before routing
 and task card generation. The task card template (`protocol/task-card-template.md`)
 takes a confirmed execution contract as input, not raw chat messages. The
@@ -27,24 +24,17 @@ an executable task card.
 
 ## Protocol Authority
 
-This repository is the **Rust core suite candidate** for Agent Governance Suite.
-Canonical protocol files and workspace entry points live in the development
-private suite at:
-
-```
-/Volumes/AI Project/agent-governance-suite-private
-```
-
-The protocol files under `protocol/` in this repository are reference copies for
-standalone Rust core execution. When the development private suite is available,
-its `protocol/`, `AGENTS.md`, `CLAUDE.md`, and `WORKSPACE.md` are the authority.
+This repository is the **public distributable edition** of the Agent Governance
+Suite. Canonical protocol files live under `protocol/` and are self-contained
+within this repository. No private infrastructure or private repositories are
+required to build, run, or use AGS.
 
 ## Kernel Activation — Session Preflight
 
 `ags session preflight` is the default kernel activation wake-up entry point.
 `ags verify --scope local|full|release` is the structured verification entry point
 with stable `CheckItem` model and machine-readable JSON output. `scripts/verify.sh`
-is now a compatibility wrapper that delegates to `ags verify --scope full`.
+is a compatibility wrapper that delegates to `ags verify --scope full`.
 
 Before executing any task, agents should run:
 

@@ -1,7 +1,7 @@
 ## 任务卡
 
 路径：
-- /Volumes/AI Project/agent-governance-suite-private-rust
+- /Volumes/Projects/my-protected-suite-rust
 
 Executor: Claude Code
 

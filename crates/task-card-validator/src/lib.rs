@@ -132,12 +132,12 @@ fn expected_adapter(executor: &str) -> Option<&'static str> {
 
 /// Full absolute paths that indicate protected assets.
 /// Matched with trailing-boundary check to avoid prefix confusion
-/// (e.g. `agent-governance-suite-private` does NOT match
-/// `agent-governance-suite-private-rust`).
+/// (e.g. `my-protected-suite` does NOT match
+/// `my-protected-suite-rust`).
 const PROTECTED_PATHS: &[&str] = &[
-    "/Volumes/AI Project/agent-governance-suite-private",
-    "/Volumes/AI Project/agent-governance-suite-stable",
-    "/Users/hujiaming/.agents/memory/projects/agent-governance-suite-private/context-capsule.md",
+    "/Volumes/Projects/my-protected-suite",
+    "/Volumes/Projects/my-stable-suite",
+    "/Users/user/.agents/memory/projects/my-project/context-capsule.md",
 ];
 
 /// Standalone boundary terms that identify protected assets.
@@ -145,8 +145,8 @@ const PROTECTED_PATHS: &[&str] = &[
 /// `hook` don't match `hooks` (which has its own entry) or `shook`.
 const PROTECTED_BOUNDARY_TERMS: &[&str] = &[
     // Short-form repo names (without /Volumes/AI Project/ prefix)
-    "agent-governance-suite-private",
-    "agent-governance-suite-stable",
+    "my-protected-suite",
+    "my-stable-suite",
     // Governance files
     "AGENTS.md",
     "CLAUDE.md",
@@ -1493,8 +1493,8 @@ fn check_contradictions(fields: &HashMap<String, String>, errors: &mut Vec<Strin
         || non_goal.contains("不触碰 stable")
         || non_goal.contains("不修改 private")
         || non_goal.contains("不修改 stable")
-        || non_goal.contains("不修改 /Volumes/AI Project/agent-governance-suite-private")
-        || non_goal.contains("不修改 /Volumes/AI Project/agent-governance-suite-stable");
+        || non_goal.contains("不修改 /Volumes/Projects/my-protected-suite")
+        || non_goal.contains("不修改 /Volumes/Projects/my-stable-suite");
 
     if claims_no_touch {
         let action = action_context(fields);
@@ -2564,7 +2564,7 @@ mod tests {
     fn light_task_with_protected_path_modification_fails() {
         // Light task mentioning protected path + modification keyword
         let input = compact_body(
-            "路径：\n- /Volumes/AI Project/agent-governance-suite-private\n\
+            "路径：\n- /Volumes/Projects/my-protected-suite\n\
              Executor: Codex\n\
              Runtime adapter: codex-local\n\
              Execution surface: local-workspace\n\
@@ -2598,7 +2598,7 @@ mod tests {
         // But the protected path check only fires when Light OR plan-only/read-only.
         // Medium + execute-and-verify = OK.
         let input = compact_body(
-            "路径：\n- /Volumes/AI Project/agent-governance-suite-private\n\
+            "路径：\n- /Volumes/Projects/my-protected-suite\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -2631,18 +2631,18 @@ mod tests {
     #[test]
     fn reading_context_capsule_and_declaring_no_private_edits_passes() {
         let input = compact_body(
-            "路径：\n- /Volumes/AI Project/agent-governance-suite-private-rust\n\
+            "路径：\n- /Volumes/Projects/my-protected-suite-rust\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
              Permission mode: execute-and-verify\n\
              Parallelism: none\n\
              任务级别：Medium\n\
-             读取：\n- /Users/hujiaming/.agents/memory/projects/agent-governance-suite-private/context-capsule.md\n\
+             读取：\n- /Users/user/.agents/memory/projects/my-project/context-capsule.md\n\
              任务：升级 Rust 实验舱 task-card-validator 规则能力\n\
              目标：在 Rust 实验舱内增加字段值、组合、质量和风险检查\n\
-             非目标：不修改 /Volumes/AI Project/agent-governance-suite-private，不修改 /Volumes/AI Project/agent-governance-suite-stable，不提交，不推送\n\
-             关键路径：\n- /Volumes/AI Project/agent-governance-suite-private-rust/crates/task-card-validator/src/lib.rs\n\
+             非目标：不修改 /Volumes/Projects/my-protected-suite，不修改 /Volumes/Projects/my-stable-suite，不提交，不推送\n\
+             关键路径：\n- /Volumes/Projects/my-protected-suite-rust/crates/task-card-validator/src/lib.rs\n\
              验证：\ncargo fmt --check\ncargo test\n\
              停止条件：\n如果测试失败或发现需要修改 private/stable，停止并报告\n\
              交付：\n返回验证结果和修改摘要\n",
@@ -2975,7 +2975,7 @@ mod tests {
     fn ultracode_with_none_authority_and_normal_task_passes() {
         // Execution effort: ultracode enhances thinking, doesn't grant authority.
         let input = compact_body(
-            "路径：\n- /Volumes/AI Project/agent-governance-suite-private-rust\n\
+            "路径：\n- /Volumes/Projects/my-protected-suite-rust\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -3129,7 +3129,7 @@ mod tests {
     #[test]
     fn allowed_authority_with_protected_boundary_fails() {
         let input = compact_body(
-            "路径：\n- /Volumes/AI Project/agent-governance-suite-private\n\
+            "路径：\n- /Volumes/Projects/my-protected-suite\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -3142,7 +3142,7 @@ mod tests {
              任务：修改 AGENTS.md 文件内容\n\
              目标：同步协议文件到多个位置\n\
              非目标：不修改 rust 实验舱\n\
-             关键路径：\n- /Volumes/AI Project/agent-governance-suite-private\n\
+             关键路径：\n- /Volumes/Projects/my-protected-suite\n\
              验证：\ncargo test\n\
              停止条件：\ntest 失败时停止\n\
              交付：\n返回结果\n",
@@ -3280,10 +3280,10 @@ mod tests {
 
     #[test]
     fn private_rust_path_not_confused_with_private() {
-        // agent-governance-suite-private-rust must not be false-positived
-        // as agent-governance-suite-private
+        // my-protected-suite-rust must not be false-positived
+        // as my-protected-suite
         let input = compact_body(
-            "路径：\n- /Volumes/AI Project/agent-governance-suite-private-rust\n\
+            "路径：\n- /Volumes/Projects/my-protected-suite-rust\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -3295,14 +3295,14 @@ mod tests {
              读取：\n- context-capsule.md\n\
              任务：修改 crates/task-card-validator/src/lib.rs\n\
              目标：升级校验器功能\n\
-             非目标：不修改 agent-governance-suite-private\n\
+             非目标：不修改 my-protected-suite\n\
              关键路径：\n- crates/\n\
              验证：\ncargo test --workspace\n\
              停止条件：\ntest 失败时停止\n\
              交付：\n返回测试通过结果\n",
         );
         let e = validate(&input);
-        // Must not fail on protected-path for agent-governance-suite-private-rust
+        // Must not fail on protected-path for my-protected-suite-rust
         let has_protected_false = e.iter().any(|m| {
             (m.contains(error_code::RISK_LEVEL_MISMATCH)
                 || m.contains(error_code::PROTECTED_PATH_VIOLATION))
@@ -3325,7 +3325,7 @@ mod tests {
     fn read_only_ultracode_observe_task_passes() {
         // ultra code + read-only observe task: thinking intensity ≠ authority
         let input = compact_body(
-            "路径：\n- /Volumes/AI Project/agent-governance-suite-private-rust\n\
+            "路径：\n- /Volumes/Projects/my-protected-suite-rust\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -3550,7 +3550,7 @@ mod tests {
     fn within_card_with_protected_stable_modification_fails() {
         // Workflow authority: within-card + modify stable boundary → fail
         let input = compact_body(
-            "路径：\n- /Volumes/AI Project/agent-governance-suite-stable\n\
+            "路径：\n- /Volumes/Projects/my-stable-suite\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -3563,7 +3563,7 @@ mod tests {
              任务：修改 stable 仓库中的文件\n\
              目标：同步协议到 stable\n\
              非目标：不修改 rust 实验舱\n\
-             关键路径：\n- /Volumes/AI Project/agent-governance-suite-stable\n\
+             关键路径：\n- /Volumes/Projects/my-stable-suite\n\
              验证：\ncargo test\n\
              停止条件：\ntest 失败时停止\n\
              交付：\n返回结果\n",
@@ -3673,7 +3673,7 @@ mod tests {
     #[test]
     fn read_only_review_card_with_crate_paths_and_patch_stop_language_passes() {
         let input = compact_body(
-            "路径：\n- /Volumes/AI Project/agent-governance-suite-private\n\
+            "路径：\n- /Volumes/Projects/my-protected-suite\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -3919,7 +3919,7 @@ mod tests {
     fn ultracode_none_authority_normal_rust_task_passes() {
         // Execution effort: ultracode + Workflow authority: none + normal task → passes
         let input = compact_body(
-            "路径：\n- /Volumes/AI Project/agent-governance-suite-private-rust\n\
+            "路径：\n- /Volumes/Projects/my-protected-suite-rust\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -3947,10 +3947,10 @@ mod tests {
 
     #[test]
     fn private_rust_path_not_false_positive_v3() {
-        // agent-governance-suite-private-rust must never be confused with
-        // agent-governance-suite-private
+        // my-protected-suite-rust must never be confused with
+        // my-protected-suite
         let input = compact_body(
-            "路径：\n- /Volumes/AI Project/agent-governance-suite-private-rust\n\
+            "路径：\n- /Volumes/Projects/my-protected-suite-rust\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -3962,7 +3962,7 @@ mod tests {
              读取：\n- context-capsule.md\n\
              任务：修改 crates/task-card-validator/src/lib.rs\n\
              目标：升级校验器功能\n\
-             非目标：不修改 agent-governance-suite-private，不修改 stable\n\
+             非目标：不修改 my-protected-suite，不修改 stable\n\
              关键路径：\n- crates/\n\
              验证：\ncargo test --workspace\n\
              停止条件：\ntest 失败时停止\n\
@@ -3980,7 +3980,7 @@ mod tests {
     fn read_context_capsule_no_modify_passes_v3() {
         // Reading context-capsule + non-goal no-touch private/stable → passes
         let input = compact_body(
-            "路径：\n- /Volumes/AI Project/agent-governance-suite-private-rust\n\
+            "路径：\n- /Volumes/Projects/my-protected-suite-rust\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -3989,10 +3989,10 @@ mod tests {
              Execution effort: normal\n\
              Workflow authority: none\n\
              任务级别：Medium\n\
-             读取：\n- /Users/hujiaming/.agents/memory/projects/agent-governance-suite-private/context-capsule.md\n\
+             读取：\n- /Users/user/.agents/memory/projects/my-project/context-capsule.md\n\
              任务：升级 Rust 实验舱校验器规则\n\
              目标：增加字段组合和保护边界检查\n\
-             非目标：不修改 /Volumes/AI Project/agent-governance-suite-private，不修改 /Volumes/AI Project/agent-governance-suite-stable\n\
+             非目标：不修改 /Volumes/Projects/my-protected-suite，不修改 /Volumes/Projects/my-stable-suite\n\
              关键路径：\n- crates/\n\
              验证：\ncargo test --workspace\n\
              停止条件：\ntest 失败时停止\n\
@@ -4120,7 +4120,7 @@ mod tests {
     fn allowed_with_stable_path_and_uppercase_update_fails() {
         // Case-insensitive bypass: "Update" (uppercase) + stable path must fail
         let input = compact_body(
-            "路径：\n- /Volumes/AI Project/agent-governance-suite-stable\n\
+            "路径：\n- /Volumes/Projects/my-stable-suite\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -4133,7 +4133,7 @@ mod tests {
              任务：Update stable config\n\
              目标：Change stable bootstrap settings\n\
              非目标：不修改 rust 实验舱\n\
-             关键路径：\n- /Volumes/AI Project/agent-governance-suite-stable\n\
+             关键路径：\n- /Volumes/Projects/my-stable-suite\n\
              验证：\ncargo test\n\
              停止条件：\ntest 失败时停止\n\
              交付：\n返回结果\n",
@@ -4285,7 +4285,7 @@ mod tests {
     fn uppercase_update_with_stable_path_and_allowed_fails_direct() {
         // "Update" (uppercase) with stable path + allowed → fail (protected boundary)
         let input = compact_body(
-            "路径：\n- /Volumes/AI Project/agent-governance-suite-stable\n\
+            "路径：\n- /Volumes/Projects/my-stable-suite\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -4298,7 +4298,7 @@ mod tests {
              任务：Update stable configuration files\n\
              目标：Change settings in stable boundary\n\
              非目标：不修改 rust 实验舱\n\
-             关键路径：\n- /Volumes/AI Project/agent-governance-suite-stable\n\
+             关键路径：\n- /Volumes/Projects/my-stable-suite\n\
              验证：\ncargo test\n\
              停止条件：\ntest 失败时停止\n\
              交付：\n返回结果\n",
@@ -4340,7 +4340,7 @@ mod tests {
     fn plan_only_with_compound_chinese_negation_passes() {
         // plan-only + 不执行修改 + 需要修改文件时停止 → no false positive
         let input = compact_body(
-            "路径：\n- /Volumes/AI Project/agent-governance-suite-private-rust\n\
+            "路径：\n- /Volumes/Projects/my-protected-suite-rust\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -4530,7 +4530,7 @@ mod tests {
     #[test]
     fn plan_only_with_developer_stop_and_confirmation_phrases_passes() {
         let input = compact_body(
-            "路径：\n- /Volumes/AI Project/agent-governance-suite-private-rust\n\
+            "路径：\n- /Volumes/Projects/my-protected-suite-rust\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -4559,7 +4559,7 @@ mod tests {
     #[test]
     fn plan_only_with_read_only_audit_phrases_passes() {
         let input = compact_body(
-            "路径：\n- /Volumes/AI Project/agent-governance-suite-private-rust\n\
+            "路径：\n- /Volumes/Projects/my-protected-suite-rust\n\
              Executor: Codex\n\
              Runtime adapter: codex-local\n\
              Execution surface: local-workspace\n\
@@ -4588,7 +4588,7 @@ mod tests {
     #[test]
     fn positive_modify_after_confirmation_language_still_fails() {
         let input = compact_body(
-            "路径：\n- /Volumes/AI Project/agent-governance-suite-private-rust\n\
+            "路径：\n- /Volumes/Projects/my-protected-suite-rust\n\
              Executor: Codex\n\
              Runtime adapter: codex-local\n\
              Execution surface: local-workspace\n\
@@ -4690,7 +4690,7 @@ Review gate:\n- 按协议执行\n\n\
     #[test]
     fn agent_workflow_doc_paths_do_not_request_workflow_authority() {
         let input = compact_body(
-            "路径：\n- /Volumes/AI Project/agent-governance-suite-private-rust\n\
+            "路径：\n- /Volumes/Projects/my-protected-suite-rust\n\
              Executor: Codex\n\
              Runtime adapter: codex-local\n\
              Execution surface: local-workspace\n\
@@ -4818,7 +4818,7 @@ Review gate:\n- Heavy review\n\n\
     fn ultracode_normal_thinking_no_abuse_passes() {
         // M1: ultracode as pure thinking intensity passes (regression)
         let input = compact_body(
-            "路径：\n- /Volumes/AI Project/agent-governance-suite-private-rust\n\
+            "路径：\n- /Volumes/Projects/my-protected-suite-rust\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\

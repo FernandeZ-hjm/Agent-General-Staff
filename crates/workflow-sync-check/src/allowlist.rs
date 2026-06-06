@@ -1,7 +1,7 @@
-//! Legal-difference allowlist for public/core-only and other target types.
+//! Legal-difference allowlist for public-full sanitized and other target types.
 //!
 //! An allowlist declares which differences between source and target are legally
-//! permissible (not drift). This supports the public/core-only use case where
+//! permissible (not drift). This supports the public-full sanitized use case where
 //! internal paths, collaboration notes, and machine-specific details are
 //! intentionally removed from the public distribution.
 
@@ -53,7 +53,7 @@ pub struct FileAllowlistEntry {
 
 // ── Built-in allowlists ────────────────────────────────────────────────
 
-/// Return the built-in public/core-only allowlist.
+/// Return the built-in public-full sanitized allowlist.
 ///
 /// This encodes the known legal differences between the private suite and
 /// a public distribution:
@@ -62,7 +62,7 @@ pub struct FileAllowlistEntry {
 /// - Internal workflow sections are removed
 pub fn default_public_allowlist() -> Allowlist {
     Allowlist {
-        description: "Default allowlist for public/core-only distribution".into(),
+        description: "Default allowlist for public-full sanitized distribution".into(),
         files: vec![
             FileAllowlistEntry {
                 file: "AGENTS.md".to_string(),

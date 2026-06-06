@@ -8,6 +8,11 @@ members = [
     "crates/execution-policy",
     "crates/project-discovery",
     "crates/ags-verify",
+    "crates/task-compiler",
+    "crates/runner",
+    "crates/receipt",
+    "crates/skill-governance",
+    "crates/capability-registry",
 ]
 resolver = "2"
 

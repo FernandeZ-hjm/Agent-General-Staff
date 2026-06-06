@@ -1,6 +1,6 @@
 # Skill Governance Protocol
 
-Agent Governance Suite 技能治理总协议。定义本地 Agent 技能的 source of truth、候选来源层级、
+Agent Governance Suite 技能治理协议。定义本地 Agent 技能的 source of truth、候选来源层级、
 治理生命周期和写入规则。本文件是技能同步、adoption log、ignore list 和 suite manifest 的
 协议权威源。
 
@@ -10,8 +10,6 @@ Agent Governance Suite 技能治理总协议。定义本地 Agent 技能的 sour
 
 本地仓内套件资产是技能治理的 **唯一 source of truth**：
 
-- `governance/skill-adoption-log.yaml` — 已接纳技能的 append-only 审计日志
-- `governance/skill-ignore-list.yaml` — 已拒绝/忽略技能的审计日志
 - `manifests/suite.yaml` — 套件 manifest，声明 required/optional/personal 技能
 
 以下来源仅作为 **候选来源**，不得直接作为 source of truth：
@@ -77,7 +75,7 @@ Dry-run 不得产生任何文件系统副作用。只有 dry-run 通过且人工
 
 1. Backup：如目标路径已有同名技能，先备份到 `governance/backups/`
 2. Write：将技能文件写入目标路径
-3. Log：在 `governance/skill-adoption-log.yaml` 追加 adoption entry
+3. Log：在 adoption log 追加 adoption entry
 4. Manifest：更新 `manifests/suite.yaml` 的 required/optional 列表
 
 写入阶段不得：
@@ -128,25 +126,20 @@ Dry-run 不得产生任何文件系统副作用。只有 dry-run 通过且人工
 - **输出层业务技能**：Hermes 输出层技能、TempoFlow 输出层业务契约为业务运行时契约，不得改写为开发套件任务卡或技能治理对象
 - **项目自管输出层技能**：项目内 `output/`、`dist/` 等自管输出目录下的技能，治理权归项目自身
 
-套件分发的 public-safe 技能清单由 `manifests/suite.yaml` 的 allowlist 规则（见
-`AGENT_SUITE_PROTOCOL.md` public/core-only 发布边界）和 `governance/skill-ignore-list.yaml`
-共同决定。
+## 当前公开版实现状态
 
-## 当前实现状态
+公开版提供技能治理的**协议规范、推荐/说明和只读边界**。以下内容不在公开版范围内：
 
-当前 2.0 私有主库已从旧套件备份迁入技能治理分类账，并提供 Rust
-read-only inventory / consistency / proposal 入口：
+- 私有技能审计日志（`governance/skill-adoption-log.yaml`、`governance/skill-ignore-list.yaml`）
+- 写入型技能 CLI 命令（`ags skill scan|check|propose|adopt|apply|rollback`）
+- 预打包技能目录（`global-skills/`、`skill-packs/`）
 
-- **已落地**：本协议、`governance/skill-sync.md`、`governance/skill-adoption-log.yaml`、`governance/skill-ignore-list.yaml`、`manifests/suite.yaml`、`manifests/skills-registry.yaml`、`global-skills/`、`skill-packs/optional/`、`skill-packs/personal/`
-- **已实现 Rust 只读入口**：`ags skill scan`、`ags skill check`、`ags skill propose`
-- **已迁移分类**：required 核心开发技能、optional 集成/第三方技能包、personal 用户风格技能、ignored 外部/不纳管技能
-- **仍不实现自动写入**：`adopt/apply/rollback` 写入流程仍必须遵守 scan → proposal → dry-run → human confirm → apply → verify 链路；当前 Rust CLI 不自动修改用户目录或外部技能缓存
+公开版用户如需安装第三方开发技能，请参考 `docs/skill-recommendations.md`
+中的推荐列表和手动安装说明。所有第三方技能必须由用户自行选择可信来源并手动安装。
+AGS 公开版默认安装不会 clone、下载、curl 或写入任何用户技能目录。
 
 ## 协议引用
 
-- 同步阶段边界：`governance/skill-sync.md`
-- 采纳日志 schema：`governance/skill-adoption-log.yaml`
-- 忽略列表 schema：`governance/skill-ignore-list.yaml`
 - 套件 manifest schema：`manifests/suite.yaml`
 - 任务卡模板（技能治理补充）：`protocol/task-card-template.md`
-- 套件级协议概述（public/core-only 边界）：`AGENT_SUITE_PROTOCOL.md`
+- 套件级协议概述：`AGENT_SUITE_PROTOCOL.md`

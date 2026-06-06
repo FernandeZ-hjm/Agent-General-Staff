@@ -15,7 +15,7 @@ each must be manually installed by the user.
 
 ### Engineering Workflow (brainstorm/superpowers)
 - **Purpose**: Structured engineering workflow — brainstorm → plan → execute → review → verify → worktree isolation → parallel execution
-- **Source**: GitHub (repository varies by user; check community forks)
+- **Source**: 需用户自行选择可信来源（community-maintained copies available on GitHub; verify before use）
 - **Risk**: Low (read-only orchestration, no production writes)
 - **Install Location**: `$HOME/.agents/skills/superpowers/`
 - **Manual Install**:
@@ -28,7 +28,7 @@ each must be manually installed by the user.
 
 ### Systematic Debugging (diagnose)
 - **Purpose**: HITL debugging loop with evidence-chain tracing, root-cause isolation, reproduction-first discipline
-- **Source**: GitHub (community-maintained)
+- **Source**: 需用户自行选择可信来源（community-maintained）
 - **Risk**: Low (read-only diagnosis; no production writes)
 - **Install Location**: `$HOME/.agents/skills/diagnose/`
 - **Manual Install**:
@@ -39,7 +39,7 @@ each must be manually installed by the user.
 
 ### Test-Driven Development (tdd)
 - **Purpose**: Red-green-refactor cycle, mocking patterns, interface design from tests
-- **Source**: GitHub (community-maintained)
+- **Source**: 需用户自行选择可信来源（community-maintained）
 - **Risk**: Low (local development only)
 - **Install Location**: `$HOME/.agents/skills/tdd/`
 - **Manual Install**:
@@ -50,7 +50,7 @@ each must be manually installed by the user.
 
 ### Code Review (code-review)
 - **Purpose**: Code review across correctness bugs, simplification, efficiency cleanups
-- **Source**: GitHub (community-maintained)
+- **Source**: 需用户自行选择可信来源（community-maintained）
 - **Risk**: Low (read-only review; posts comments only when explicitly requested)
 - **Install Location**: `$HOME/.agents/skills/code-review/`
 - **Manual Install**:
@@ -61,7 +61,7 @@ each must be manually installed by the user.
 
 ### Git Worktrees (using-git-worktrees)
 - **Purpose**: Isolated git worktree management for parallel feature branches
-- **Source**: GitHub (community-maintained)
+- **Source**: 需用户自行选择可信来源（community-maintained）
 - **Risk**: Low (local git operations only)
 - **Install Location**: `$HOME/.agents/skills/using-git-worktrees/`
 - **Manual Install**:
@@ -74,7 +74,7 @@ each must be manually installed by the user.
 
 ### Auto-Verify
 - **Purpose**: Automatic behavior verification on task completion; confirms changes work before declaring done
-- **Source**: GitHub (community-maintained)
+- **Source**: 需用户自行选择可信来源（community-maintained）
 - **Risk**: Low (read-only verification)
 - **Install Location**: `$HOME/.agents/skills/auto-verify/`
 - **Manual Install**:
@@ -85,7 +85,7 @@ each must be manually installed by the user.
 
 ### Conventional Commits (caveman-commit)
 - **Purpose**: Generate concise Conventional Commit messages from diff analysis
-- **Source**: GitHub (community-maintained)
+- **Source**: 需用户自行选择可信来源（community-maintained）
 - **Risk**: Low (generates commit messages; does not commit without confirmation)
 - **Install Location**: `$HOME/.agents/skills/caveman-commit/`
 - **Manual Install**:
@@ -96,7 +96,7 @@ each must be manually installed by the user.
 
 ### Code Review Lite (caveman-review)
 - **Purpose**: Short, actionable code review feedback — correctness and simplification
-- **Source**: GitHub (community-maintained)
+- **Source**: 需用户自行选择可信来源（community-maintained）
 - **Risk**: Low (read-only review output)
 - **Install Location**: `$HOME/.agents/skills/caveman-review/`
 - **Manual Install**:
@@ -109,7 +109,7 @@ each must be manually installed by the user.
 
 ### Zoom Out
 - **Purpose**: High-level architecture context, risk assessment before changes, module-in-system view
-- **Source**: GitHub (community-maintained)
+- **Source**: 需用户自行选择可信来源（community-maintained）
 - **Risk**: Low (read-only architecture analysis)
 - **Install Location**: `$HOME/.agents/skills/zoom-out/`
 - **Manual Install**:
@@ -120,7 +120,7 @@ each must be manually installed by the user.
 
 ### Improve Codebase Architecture
 - **Purpose**: Architecture improvement patterns — boundary hardening, testability, dep cleanup
-- **Source**: GitHub (community-maintained)
+- **Source**: 需用户自行选择可信来源（community-maintained）
 - **Risk**: Medium (may propose structural refactors; always requires human approval)
 - **Install Location**: `$HOME/.agents/skills/improve-codebase-architecture/`
 - **Manual Install**:
@@ -131,7 +131,7 @@ each must be manually installed by the user.
 
 ### Requirements Clarification (grill-with-docs)
 - **Purpose**: Align requirements with project docs before implementation; ask clarifying questions
-- **Source**: GitHub (community-maintained)
+- **Source**: 需用户自行选择可信来源（community-maintained）
 - **Risk**: Low (read-only alignment check)
 - **Install Location**: `$HOME/.agents/skills/grill-with-docs/`
 - **Manual Install**:
@@ -144,7 +144,7 @@ each must be manually installed by the user.
 
 ### Supply Chain Risk Auditor
 - **Purpose**: Dependency supply chain risk audit — license compliance, maintainer health, vulnerability scanning
-- **Source**: GitHub (community-maintained)
+- **Source**: 需用户自行选择可信来源（community-maintained）
 - **Risk**: Low (read-only audit report)
 - **Install Location**: `$HOME/.agents/skills/supply-chain-risk-auditor/`
 - **Manual Install**:

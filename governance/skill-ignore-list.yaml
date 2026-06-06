@@ -1,0 +1,11 @@
+# Skill Ignore List — AGS public edition
+#
+# Append-only audit log recording skills that have been explicitly
+# disabled or ignored. Each entry records a pattern/skill_name, reason,
+# and status.
+#
+# Schema version: 2.0-skill
+# Never delete or reorder entries — this is an audit trail.
+
+schema_version: "2.0-skill"
+entries: []

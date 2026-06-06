@@ -1,0 +1,9 @@
+[package]
+name = "task-compiler"
+version.workspace = true
+edition.workspace = true
+description = "M4 Task Compiler — rule-based intent-to-task-card compiler"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

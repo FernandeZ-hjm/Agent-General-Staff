@@ -1,35 +1,21 @@
 # Skill Sync Governance
 
 本地 Agent 技能同步的阶段边界定义。本文件是 `protocol/skill-governance.md` 的
-配套实现阶段文档，定义 scan、candidate check、proposal、adopt、ignore、manifest、
-backup、rollback 各阶段的输入、输出、门禁和 Phase 1 范围。
+配套阶段文档，定义 scan、candidate check、proposal、adopt、ignore、manifest、
+backup、rollback 各阶段的输入、输出、门禁和范围。
 
 ## 当前范围声明
 
-本文件定义技能同步的完整阶段边界。当前 2.0 私有主库已经迁入旧套件的
-技能分类账，并实现 Rust 只读 inventory / check / proposal CLI；写入型 adopt /
-ignore / rollback 仍保持协议门禁，不自动执行。
+本文件定义技能同步的完整阶段边界。公开版是 public-full-sanitized：包含确认式
+技能治理 CLI 和空白审计骨架，但不包含预打包技能目录（`global-skills/`、
+`skill-packs/`）、已安装第三方技能、用户本地技能或带真实历史的私有技能审计日志。
+`governance/skill-adoption-log.yaml` 和 `governance/skill-ignore-list.yaml` 在公开版中
+只能作为 `entries: []` 的空白骨架出现，用户运行一段时间后会沉淀自己的审计记录。
 
-当前已落地产物：
-
-- `protocol/skill-governance.md` — 技能治理总协议
-- `governance/skill-sync.md`（本文件）— 同步阶段边界
-- `governance/skill-adoption-log.yaml` — migrated adoption log
-- `governance/skill-ignore-list.yaml` — migrated ignore list
-- `manifests/suite.yaml` — migrated required / optional / personal manifest
-- `manifests/skills-registry.yaml` — legacy registry and upstream watch policy
-- `global-skills/` — required suite-managed skills
-- `skill-packs/optional/` — curated optional skill packs
-- `skill-packs/personal/` — user-profile skills excluded from public/core-only
-
-Rust CLI 当前支持：
-
-- `ags skill scan`
-- `ags skill check`
-- `ags skill propose`
-
-写入型 `adopt/apply/rollback` 后续若实现，仍必须先 dry-run、展示 diff、等待人工确认，
-并遵守 `protocol/skill-governance.md` 的硬门禁。
+公开版用户如需安装第三方开发技能，可使用 `ags skill install --skill <name> --confirm`
+或参考 `docs/skill-recommendations.md` 中的推荐列表和手动安装说明。所有技能治理的写入操作必须遵守
+`protocol/skill-governance.md` 的硬门禁（dry-run 先行、diff before apply、
+人工确认、禁止静默覆盖用户目录、不得接管外部 CLI）。
 
 ## 阶段概览
 
@@ -91,8 +77,8 @@ Rust CLI 当前支持：
 **输入**：
 - 目标扫描目录（默认 `$HOME/.agents/skills/`，可覆盖）
 - 候选来源列表（URL、路径、技能名）
-- 已有 adoption log（`governance/skill-adoption-log.yaml`）
-- 已有 ignore list（`governance/skill-ignore-list.yaml`）
+- 已有 adoption log（`governance/skill-adoption-log.yaml`，如存在）
+- 已有 ignore list（`governance/skill-ignore-list.yaml`，如存在）
 - 已有 suite manifest（`manifests/suite.yaml`）
 
 **处理**：
@@ -103,8 +89,6 @@ Rust CLI 当前支持：
 **输出**：结构化 inventory list（技能名、路径/来源、hash、状态标记）
 
 **门禁**：只读，不修改任何文件，不下载外部内容。
-
-**Phase 2 CLI 对应**：`ags skill scan [--source <path|url>] --format json`
 
 ### 2. Candidate Check — 交叉比对
 
@@ -129,8 +113,6 @@ Rust CLI 当前支持：
 
 **门禁**：只读。如果发现高危冲突（如同名不同源的 required 技能），停止并报告，不等 proposal 阶段。
 
-**Phase 2 CLI 对应**：`ags skill check [<skill-name>...] --format json`
-
 ### 3. Proposal — 采纳提案生成
 
 **触发条件**：candidate check 完成后，用户请求生成 proposal。
@@ -138,7 +120,7 @@ Rust CLI 当前支持：
 **输入**：
 - candidate list（来自 candidate check）
 - 项目 profile（`config/agent-project-profile.yaml`，如存在）
-- 已知风险模式库（来自 `governance/skill-ignore-list.yaml` 的 risk_category 字段）
+- 已知风险模式库
 
 **处理**：
 1. 对每个 candidate 执行安全扫描（结构完整性、已知风险模式）
@@ -153,8 +135,6 @@ Rust CLI 当前支持：
 
 **门禁**：只读，不执行 adopt/ignore。Proposal 必须等待人工确认。
 
-**Phase 2 CLI 对应**：`ags skill propose [<skill-name>...] [--auto-scan] --format json`
-
 ### 4. Adopt — 采纳写入
 
 **前置条件**：人工已确认 proposal 中的 adopt 决定。
@@ -166,10 +146,10 @@ Rust CLI 当前支持：
 3. **Dry-run**：展示将要写入的文件列表、路径、diff（新增/修改/覆盖）；如涉及用户目录，显式标红
 4. **二次确认**：人工必须确认 dry-run 结果
 5. **Write**：将技能文件写入目标路径
-6. **Log**：在 `governance/skill-adoption-log.yaml` 追加 adoption entry（含 backup_ref）
+6. **Log**：在 adoption log 追加 adoption entry（含 backup_ref）
 7. **Manifest**：更新 `manifests/suite.yaml`
 
-**adoption log entry 字段**（由 `governance/skill-adoption-log.yaml` schema 定义）：
+**adoption log entry 字段**：
 - `id`：唯一 entry ID
 - `skill_name`：技能名
 - `profile`：来源 profile（user / project / suite）
@@ -188,8 +168,6 @@ Rust CLI 当前支持：
 - 涉及用户目录但未独立确认 → 停止
 - 备份失败 → 停止
 
-**Phase 2 CLI 对应**：`ags skill adopt <skill-name> --dry-run` / `ags skill adopt <skill-name> --apply`
-
 ### 5. Ignore — 忽略/拒绝写入
 
 **前置条件**：人工已确认 proposal 中的 ignore 决定。
@@ -198,10 +176,10 @@ Rust CLI 当前支持：
 
 1. **Dry-run**：展示将要追加到 ignore list 的 entry
 2. **确认**：人工确认 ignore 决定和 risk category
-3. **Write**：在 `governance/skill-ignore-list.yaml` 追加 ignore entry
+3. **Write**：在 ignore list 追加 ignore entry
 4. **不修改已有 entry**：即使新 entry supersedes 旧 entry，旧 entry 保留（状态改为 superseded）
 
-**ignore list entry 字段**（由 `governance/skill-ignore-list.yaml` schema 定义）：
+**ignore list entry 字段**：
 - `pattern`：技能名或来源 pattern（glob 兼容）
 - `reason`：忽略原因
 - `risk_category`：security / stability / license / compatibility / policy / other
@@ -216,8 +194,6 @@ Rust CLI 当前支持：
 - 不允许静默删除历史 entry
 - 状态变更必须通过新增 entry + `supersedes` 字段
 - 过期 entry 保留原记录，状态变为 expired
-
-**Phase 2 CLI 对应**：`ags skill ignore <skill-name> --reason "..." --risk-category "..." --dry-run` / `--apply`
 
 ### 6. Manifest — 套件清单更新
 
@@ -237,9 +213,7 @@ Rust CLI 当前支持：
 
 **门禁**：
 - required 技能只有在人工确认后才能进入 manifest
-- personal profile 技能不得同步到 public/core-only
-
-**Phase 2 CLI 对应**：`ags skill manifest --add <skill-name> --profile required|optional|personal`
+- personal profile 技能不得同步到 public 发行版
 
 ### 7. Backup — 写入前备份
 
@@ -253,8 +227,6 @@ Rust CLI 当前支持：
 **门禁**：
 - 备份失败 → 停止 adopt
 - 备份路径冲突 → 停止并报告
-
-**Phase 2 CLI 对应**：`ags skill backup <skill-name>`（也由 `ags skill adopt` 内部调用）
 
 ### 8. Rollback — 回滚
 
@@ -273,55 +245,7 @@ Rust CLI 当前支持：
 - 备份路径不可读 → 停止
 - Dry-run 未确认 → 停止
 
-**Phase 2 CLI 对应**：`ags skill rollback <skill-name> --dry-run` / `ags skill rollback <skill-name> --apply`
-
-## Phase 2 Rust Read-Only Inventory 字段契约
-
-Phase 2 实现 `ags skill scan` 和 `ags skill check`（只读）时，依赖以下 YAML 字段。
-这些字段已在 Phase 1 的 schema 中定义，Phase 2 实现需以只读方式消费：
-
-### skill-adoption-log.yaml 消费字段
-
-| 字段 | 类型 | Phase 2 用途 |
-|---|---|---|
-| `schema_version` | string | 版本兼容性检查 |
-| `entries[]` | array | 遍历所有 adoption entry |
-| `entries[].id` | string | 唯一标识 |
-| `entries[].skill_name` | string | 与 inventory 交叉比对 |
-| `entries[].profile` | string | 区分 user/project/suite 来源 |
-| `entries[].source` | string | 来源追溯 |
-| `entries[].source_hash` | string | 完整性校验 |
-| `entries[].decision` | string | 筛选 adopted/rollback 状态 |
-| `entries[].backup_ref` | string | rollback 路径 |
-
-### skill-ignore-list.yaml 消费字段
-
-| 字段 | 类型 | Phase 2 用途 |
-|---|---|---|
-| `schema_version` | string | 版本兼容性检查 |
-| `entries[]` | array | 遍历所有 ignore entry |
-| `entries[].id` | string | 唯一标识；supersedes 引用目标 |
-| `entries[].pattern` | string | 与 inventory glob 匹配 |
-| `entries[].risk_category` | string | 按风险分类统计 |
-| `entries[].status` | string | 仅 active entry 参与匹配 |
-| `entries[].expires` | string | 过期 entry 提示复审 |
-| `entries[].supersedes` | string | 状态变更链追溯；Phase 2 需校验引用完整性 |
-
-### suite.yaml 消费字段
-
-| 字段 | 类型 | Phase 2 用途 |
-|---|---|---|
-| `schema_version` | string | 版本兼容性检查 |
-| `suite.required[]` | array | 必需技能清单 |
-| `suite.optional[]` | array | 可选技能清单 |
-| `suite.personal{}` | object | 个人技能（不同步到公开版） |
-
-Phase 2 不得写入以上任何文件，直到 proposal/adopt/ignore CLI 命令通过完整的
-dry-run → diff → confirm → apply 链路实现。
-
 ## 协议引用
 
 - 技能治理总协议：`protocol/skill-governance.md`
-- 采纳日志 schema：`governance/skill-adoption-log.yaml`
-- 忽略列表 schema：`governance/skill-ignore-list.yaml`
 - 套件 manifest schema：`manifests/suite.yaml`

@@ -590,13 +590,13 @@ pub fn check_protocol_status(target: &Path) -> ProtocolStatus {
             "Data migration or historical output mutation".to_string(),
             "Baseline deletion or overwrite".to_string(),
             "Hook installation or production wiring".to_string(),
-            "Public/core-only payload boundary change".to_string(),
+            "Public-full sanitized payload boundary change".to_string(),
             "Canonical task-card skeleton modification".to_string(),
             "Execution-policy M1-M10 rule change".to_string(),
             "Stable (S) direct modification from A".to_string(),
         ],
         destructive_actions_require_confirmation: true,
-        public_payload_boundary: "Rust ags toolchain, crates/, target/, Cargo.toml, Cargo.lock, and private diagnostic/sync implementations are NOT part of the public payload. Public promotion goes through allowlist-only release checklist and boundary review.".to_string(),
+        public_payload_boundary: "Public-full sanitized ships the Rust ags workspace and governance framework, but excludes target/, binaries, preinstalled skills, local agent config, private memory, private task archives, secrets, and machine-specific private paths.".to_string(),
     };
 
     // ── Review requirements ────────────────────────────────────────────
@@ -812,7 +812,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
                         .to_string(),
                     "Do not modify S (stable) directly without explicit task-card authorization."
                         .to_string(),
-                    "Do not change public/core-only payload boundary, canonical task-card skeleton, or execution-policy M1-M10 rules without explicit approval."
+                    "Do not change public-full sanitized payload boundary, canonical task-card skeleton, or execution-policy M1-M10 rules without explicit approval."
                         .to_string(),
                     "Do not generate executable task cards or call `ags task compile --task-card-requested` until the user explicitly issues a task-card instruction. \"方案 OK\" only ends the solution phase — a separate user task-card instruction is required before routing and task card generation."
                         .to_string(),
@@ -1050,13 +1050,13 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
         high_risk_indicators: vec![
             "Protocol boundary changes".to_string(),
             "Hook installation or production wiring".to_string(),
-            "Public/core-only payload boundary change".to_string(),
+            "Public-full sanitized payload boundary change".to_string(),
             "Canonical task-card skeleton modification".to_string(),
             "Execution-policy M1-M10 rule change".to_string(),
             "Stable (S) direct modification from A".to_string(),
         ],
         destructive_actions_require_confirmation: true,
-        public_payload_boundary: "Rust ags toolchain, crates/, target/, Cargo.toml, Cargo.lock, and private diagnostic/sync implementations are NOT part of the public payload.".to_string(),
+        public_payload_boundary: "Public-full sanitized ships the Rust ags workspace and governance framework, but excludes target/, binaries, preinstalled skills, local agent config, private memory, private task archives, secrets, and machine-specific private paths.".to_string(),
     };
 
     let instructions_text = build_instructions_text(
@@ -1920,20 +1920,17 @@ mod tests {
         let content = "\
 | Code | Role | Path |
 |---|---|
-| A | Development private suite | /Volumes/AI Project/agent-governance-suite-private |
-| A1 | Private bare repo | /Users/hujiaming/git-remotes/agent-governance-suite-private.git |
-| S | Stable private suite | /Volumes/AI Project/agent-governance-suite-stable |
-| B | Public worktree | /Volumes/AI Project/ai-dev-env-bootstrap |
-| B1 | Public bare repo | /Users/hujiaming/git-remotes/ai-dev-env-bootstrap.git |
+| A | Development private suite | /Volumes/Projects/my-protected-suite |
+| A1 | Private bare repo | /Users/user/git-remotes/my-protected-suite.git |
+| S | Stable private suite | /Volumes/Projects/my-stable-suite |
+| B | Public worktree | /Volumes/Projects/my-public-suite |
+| B1 | Public bare repo | /Users/user/git-remotes/my-public-suite.git |
 ";
         let identities = parse_workspace_table(content);
         assert_eq!(identities.len(), 5);
         assert_eq!(identities[0].code, "A");
         assert_eq!(identities[0].role, "Development private suite");
-        assert_eq!(
-            identities[0].path,
-            "/Volumes/AI Project/agent-governance-suite-private"
-        );
+        assert_eq!(identities[0].path, "/Volumes/Projects/my-protected-suite");
         assert_eq!(identities[4].code, "B1");
     }
 
@@ -2332,19 +2329,13 @@ Some other text here.
         let content = "\
 | Code | Role | Path |
 |---|---|
-| A | Dev suite | `/Volumes/AI Project/agent-governance-suite-private` |
-| S | Stable | `/Volumes/AI Project/agent-governance-suite-stable` |
+| A | Dev suite | `/Volumes/Projects/my-protected-suite` |
+| S | Stable | `/Volumes/Projects/my-stable-suite` |
 ";
         let identities = parse_workspace_table(content);
         assert_eq!(identities.len(), 2);
-        assert_eq!(
-            identities[0].path,
-            "/Volumes/AI Project/agent-governance-suite-private"
-        );
-        assert_eq!(
-            identities[1].path,
-            "/Volumes/AI Project/agent-governance-suite-stable"
-        );
+        assert_eq!(identities[0].path, "/Volumes/Projects/my-protected-suite");
+        assert_eq!(identities[1].path, "/Volumes/Projects/my-stable-suite");
         // Verify no backticks remain
         assert!(!identities[0].path.contains('`'));
         assert!(!identities[1].path.contains('`'));

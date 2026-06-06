@@ -26,8 +26,8 @@ pub fn check_target(
     let mut drifts: Vec<Drift> = Vec::new();
 
     // Check only the files required by this target's manifest.
-    // Public-core-only targets use PUBLIC_MANIFEST (4 protocol files),
-    // which excludes internal files like AGENTS.md and CLAUDE.md.
+    // Public-full sanitized targets use PUBLIC_MANIFEST: the full public AGS
+    // runtime, templates, and sanitized skeletons.
     for relative in manifest.required_files {
         check_file(source_root, target_root, relative, allowlist, &mut drifts);
     }
@@ -48,9 +48,8 @@ pub fn check_target(
         }
     }
 
-    // Public/core-only is a distribution target, not a Rust governance
-    // workspace. The private Rust toolchain may check public, but must not be
-    // shipped inside public.
+    // Public-full sanitized ships the Rust AGS workspace, but must not ship
+    // build output, preinstalled skills, local agent config, or private memory.
     if matches!(target_kind, ProjectKind::PublicCoreOnly) {
         check_public_forbidden_payload(target_root, &mut drifts);
     }
@@ -367,18 +366,34 @@ fn extra_protocol_files(source_root: &Path, target_root: &Path) -> Vec<String> {
 fn check_public_forbidden_payload(target_root: &Path, drifts: &mut Vec<Drift>) {
     for forbidden in manifest::PUBLIC_FORBIDDEN_PAYLOAD {
         let candidate = target_root.join(forbidden.trim_end_matches('/'));
-        if candidate.exists() {
+        if candidate.exists() && !is_git_ignored(target_root, &candidate) {
             drifts.push(Drift::new(
                 error_code::PUBLIC_FORBIDDEN_PAYLOAD,
                 DriftKind::PublicForbiddenPayload,
                 Severity::Fail,
                 forbidden,
                 vec![],
-                format!("private-only Rust governance payload present in public/core-only target: {forbidden}"),
-                "remove this artifact from the public release; stable -> public promotion may publish only public protocols, templates, install scripts, and basic validation assets",
+                format!("private runtime or build payload present in public-full sanitized target: {forbidden}"),
+                "remove this artifact from the public release; public-full may publish the Rust workspace and governance framework, but not build output, local agent state, preinstalled skills, or private memory",
             ));
         }
     }
+}
+
+fn is_git_ignored(root: &Path, candidate: &Path) -> bool {
+    if !root.join(".git").exists() {
+        return false;
+    }
+
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("check-ignore")
+        .arg("-q")
+        .arg(candidate)
+        .status();
+
+    matches!(output, Ok(status) if status.success())
 }
 
 #[cfg(test)]
@@ -609,14 +624,20 @@ mod tests {
     }
 
     #[test]
-    fn public_target_with_rust_workspace_payload_fails() {
-        let (source, target) = temp_dir("public_forbidden_rust_payload");
+    fn public_target_with_forbidden_payload_fails() {
+        // In 2.0, Cargo.toml + crates/ are public-safe.
+        // Only build artifacts (target/) and private audit logs are forbidden.
+        let (source, target) = temp_dir("public_forbidden_payload");
         for relative in crate::manifest::PUBLIC_MANIFEST.required_files {
             write_file(&source, relative, "same\n# Test\n\ncontent\n");
             write_file(&target, relative, "same\n# Test\n\ncontent\n");
         }
-        write_file(&target, "Cargo.toml", "[workspace]\n");
-        write_file(&target, "crates/ags-cli/src/main.rs", "fn main() {}\n");
+        write_file(&target, "target/release/ags", "binary\n");
+        write_file(
+            &target,
+            "governance/skill-adoption-log.yaml",
+            "entries: []\n",
+        );
 
         let result = check_target(
             &source,
@@ -633,9 +654,44 @@ mod tests {
             .collect();
         assert!(
             !forbidden.is_empty(),
-            "public target must fail when Rust workspace payload is present: {result:?}"
+            "public target must fail when forbidden payload is present: {result:?}"
         );
         assert!(forbidden.iter().all(|d| d.severity == Severity::Fail));
+        cleanup(&source, &target);
+    }
+
+    #[test]
+    fn public_target_ignores_gitignored_build_output() {
+        let (source, target) = temp_dir("public_ignored_target");
+        for relative in crate::manifest::PUBLIC_MANIFEST.required_files {
+            write_file(&source, relative, "same\n# Test\n\ncontent\n");
+            write_file(&target, relative, "same\n# Test\n\ncontent\n");
+        }
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&target)
+            .arg("init")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        write_file(&target, ".gitignore", "/target/\n");
+        write_file(&target, "target/release/ags", "binary\n");
+
+        let result = check_target(
+            &source,
+            &target,
+            "public",
+            &ProjectKind::PublicCoreOnly,
+            &allowlist::default_public_allowlist(),
+        );
+
+        assert!(
+            result
+                .drifts
+                .iter()
+                .all(|d| d.kind != DriftKind::PublicForbiddenPayload),
+            "gitignored build output should not count as public payload: {result:?}"
+        );
         cleanup(&source, &target);
     }
 

@@ -165,12 +165,15 @@ pub struct BootstrapPlan {
 pub fn plan(source_repo: &Path, target: &Path) -> BootstrapPlan {
     let mut actions: Vec<BootstrapAction> = Vec::new();
 
-    // ── Public-safe protocol files ──────────────────────────────────────
+    // ── Public-full sanitized protocol files ────────────────────────────
     let protocol_files = [
         "agent-task-protocol.md",
         "task-card-template.md",
         "runtime-adapters.md",
         "task-routing.md",
+        "skill-governance.md",
+        "2.0-baseline.md",
+        "2.0-roadmap.md",
     ];
 
     for name in &protocol_files {
@@ -185,15 +188,17 @@ pub fn plan(source_repo: &Path, target: &Path) -> BootstrapPlan {
         }
     }
 
-    // ── Private suite scripts (NOT public-safe) ─────────────────────────
-    // validate.sh and run-task-card.sh require Cargo.toml + ags-cli
-    // (they invoke `cargo run -q -p ags-cli -- ...`).
-    // They are private suite payload only — not suitable for non-Rust
-    // bootstrap targets.  For public-safe targets, these scripts need
-    // standalone wrapper equivalents that do not depend on Cargo.
-    // verify.sh is excluded entirely (references private A paths and
-    // cargo build commands).
-    let scripts = ["validate.sh", "run-task-card.sh"];
+    // ── Public-safe scripts ─────────────────────────────────────────────
+    // Public-full sanitized targets include the Rust workspace and can carry
+    // cargo-backed wrappers. They must still exclude generated build output
+    // and private user memory.
+    let scripts = [
+        "validate.sh",
+        "run-task-card.sh",
+        "verify.sh",
+        "context-memory.sh",
+        "stop-archive-hook.sh",
+    ];
 
     for name in &scripts {
         let src = source_repo.join("scripts").join(name);
@@ -203,6 +208,24 @@ pub fn plan(source_repo: &Path, target: &Path) -> BootstrapPlan {
                 action: "copy".into(),
                 path: dst.display().to_string(),
                 description: format!("copy scripts/{}", name),
+            });
+        }
+    }
+
+    // ── Memory templates (blank, user-owned after init) ─────────────────
+    for name in [
+        "context-capsule.md",
+        "task-memory.md",
+        "archive-index.md",
+        "task-archive/README.md",
+    ] {
+        let src = source_repo.join("templates").join("memory").join(name);
+        let dst = target.join("templates").join("memory").join(name);
+        if src.exists() {
+            actions.push(BootstrapAction {
+                action: "copy".into(),
+                path: dst.display().to_string(),
+                description: format!("copy templates/memory/{}", name),
             });
         }
     }
@@ -585,20 +608,23 @@ mod tests {
             "should include protocol files"
         );
 
-        // Must include scripts (but NOT verify.sh)
+        // Must include public-full scripts, including verification and memory capture.
         let script_actions: Vec<_> = plan
             .actions
             .iter()
             .filter(|a| a.path.contains("scripts/"))
             .collect();
         assert!(!script_actions.is_empty(), "should include script files");
-        for a in &script_actions {
-            assert!(
-                !a.path.contains("verify.sh"),
-                "verify.sh must not be in bootstrap payload: {}",
-                a.path
-            );
-        }
+        assert!(
+            script_actions.iter().any(|a| a.path.contains("verify.sh")),
+            "verify.sh should be in public-full bootstrap payload"
+        );
+        assert!(
+            script_actions
+                .iter()
+                .any(|a| a.path.contains("context-memory.sh")),
+            "context-memory.sh should be in public-full bootstrap payload"
+        );
 
         // Must include bootstrap log action
         assert!(
@@ -637,10 +663,10 @@ mod tests {
             target.join(".ags-bootstrap.log").exists(),
             "bootstrap log should exist"
         );
-        // verify.sh excluded
+        // public-full sanitized bootstrap includes verification wrapper.
         assert!(
-            !target.join("scripts").join("verify.sh").exists(),
-            "verify.sh must not be in bootstrap payload"
+            target.join("scripts").join("verify.sh").exists(),
+            "verify.sh should be in public-full bootstrap payload"
         );
     }
 

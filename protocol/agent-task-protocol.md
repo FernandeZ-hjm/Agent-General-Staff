@@ -87,7 +87,7 @@ Executor 收到任务卡后，必须先读取以下文件再开始工作：
 7. 当前任务涉及目录下的 `CLAUDE.md`（如 `scripts/CLAUDE.md`、`tests/CLAUDE.md`、`config/CLAUDE.md`）
 8. 运行 `git status --short`，记录当前已有改动
 
-本私有主库的 canonical 协议入口是 `protocol/`。如果任务卡或复制材料仍
+本仓库的 canonical 协议入口是 `protocol/`。如果任务卡或复制材料仍
 引用旧 `docs/agent-workflow/...` 路径，Executor 必须映射到同名
 `protocol/...` 文件并报告文档漂移；不得自行创建 `docs/agent-workflow/`
 目录来满足旧引用。
@@ -160,7 +160,7 @@ Executor 执行期间必须遵守：
 
 本地 Agent 技能同步机制纳入同一个三方协议。技能治理的 canonical 协议文件为
 `protocol/skill-governance.md`（总协议）和 `governance/skill-sync.md`（同步阶段边界）。
-套件级脚本入口（`scripts/govern-new-skills.sh`）将在 Phase 2 实现。
+公开版包含确认式技能治理 CLI，但不包含预打包技能目录或用户已安装技能。技能安装必须由用户自行选择可信来源，并通过 dry-run / confirm 门禁显式执行。
 
 Cursor / Codex 处理技能新增、下载、拖拽导入、proposal、adoption log 或 ignore list 相关任务时，必须：
 
@@ -173,7 +173,7 @@ Cursor / Codex 处理技能新增、下载、拖拽导入、proposal、adoption 
 Executor 执行这类任务时，除入口规则外还必须遵守：
 
 - 默认只能执行只读 scan/check 操作或 dry-run 命令
-- 只有任务卡明确授权时，才允许写入 `governance/skill-adoption-log.yaml`、`governance/skill-ignore-list.yaml`、`manifests/suite.yaml` 或 `governance/backups/`
+- 只有任务卡明确授权时，才允许写入 `governance/skill-adoption-log.yaml`、`governance/skill-ignore-list.yaml`、`manifests/suite.yaml` 或 `governance/backups/`（这些治理文件由用户自行创建和维护）
 - 不得直接写 `$HOME/.agents/skills`、`$HOME/.codex/skills`、`$HOME/.codex/plugins/cache`
 - 不得自动运行 `lark-cli update`、`npx skills add/remove/update` 或插件安装/更新命令
 - 不得自动安装未审查技能；真正接纳必须由人工确认
