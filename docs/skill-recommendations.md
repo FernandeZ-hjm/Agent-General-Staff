@@ -15,13 +15,14 @@ each must be manually installed by the user.
 
 ### Engineering Workflow (brainstorm/superpowers)
 - **Purpose**: Structured engineering workflow — brainstorm → plan → execute → review → verify → worktree isolation → parallel execution
-- **Source**: 需用户自行选择可信来源（community-maintained copies available on GitHub; verify before use）
+- **Source**: `obra/superpowers` — https://github.com/obra/superpowers
+- **License**: MIT; retain upstream copyright and license notice when copying or adapting Superpowers material
 - **Risk**: Low (read-only orchestration, no production writes)
 - **Install Location**: `$HOME/.agents/skills/superpowers/`
 - **Manual Install**:
   ```bash
-  # Step 1: Find a community-maintained copy of the superpowers skill pack
-  # Step 2: Clone or copy to your skills directory
+  # Step 1: Review https://github.com/obra/superpowers and its MIT license
+  # Step 2: Clone or copy the relevant skill pack to your skills directory
   mkdir -p ~/.agents/skills/superpowers
   # Step 3: Copy SKILL.md and playbooks/ into ~/.agents/skills/superpowers/
   ```

@@ -1,6 +1,6 @@
-# Agent Governance Suite — Public Edition
+# Agent Governance Suite 2.0 — Public Edition
 
-This is the **public distributable edition** of the Agent Governance Suite (`ags`).
+This is the **2.0 public distributable edition** of the Agent Governance Suite (`ags`).
 It provides a Rust-native CLI toolchain for task-card validation, execution policy
 resolution, protocol drift checking, suite health diagnostics, bootstrap simulation,
 project discovery, agent instructions, session preflight, and scoped verification.
@@ -9,8 +9,8 @@ project discovery, agent instructions, session preflight, and scoped verificatio
 
 ```bash
 # Install from source
-git clone <repo-url>
-cd <repo-dir>
+git clone https://github.com/FernandeZ-hjm/agent-governance-suite.git
+cd agent-governance-suite
 bash scripts/install.sh
 
 # Or DIY: build and add to PATH
@@ -55,6 +55,8 @@ protocol/               # Canonical protocol files
   runtime-adapters.md
   task-routing.md
   skill-governance.md
+  project-profile.md
+  context-memory.md
   2.0-baseline.md
   2.0-roadmap.md
 
@@ -84,6 +86,12 @@ docs/                   # Documentation
 templates/              # Task card templates
 tests/                  # Test fixtures
 ```
+
+## Memory Capsule Protocol
+
+`protocol/project-profile.md` and `protocol/context-memory.md` are public-safe
+protocol skeletons. Real project profiles, task archives, receipts, and memory
+capsules are user-grown state and must not be bundled into the public suite.
 
 ## Default: DIY Installation
 
@@ -118,4 +126,5 @@ ags verify --scope release
 
 ## License
 
-MIT
+Agent Governance Suite Public License 2.0. See `LICENSE`, `NOTICE.md`, and
+`THIRD_PARTY_NOTICES.md`.

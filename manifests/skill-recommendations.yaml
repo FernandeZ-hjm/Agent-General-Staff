@@ -24,9 +24,12 @@ skills:
     risk_description: Read-only orchestration; no production writes
     install_location: $HOME/.agents/skills/superpowers/
     manual_steps:
+      - "Review https://github.com/obra/superpowers and its MIT license"
       - "mkdir -p ~/.agents/skills/superpowers"
       - "Copy SKILL.md and playbooks/ into the directory"
-    source: 需用户自行选择可信来源（community-maintained）
+    source: "https://github.com/obra/superpowers"
+    license: "MIT"
+    attribution: "Copyright (c) 2025 Jesse Vincent; retain upstream MIT notice when copying or adapting Superpowers material."
 
   - id: diagnose
     name: Systematic Debugging

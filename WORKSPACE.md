@@ -1,4 +1,4 @@
-# Agent Governance Suite — Public Edition Workspace
+# Agent Governance Suite 2.0 — Public Edition Workspace
 
 This is the **public distributable edition** of the Agent Governance Suite.
 It contains the public-safe Rust `ags` CLI core, canonical protocols, templates,
@@ -36,6 +36,8 @@ protocol/                   # Canonical protocol files
   runtime-adapters.md
   task-routing.md
   skill-governance.md
+  project-profile.md
+  context-memory.md
   2.0-baseline.md
   2.0-roadmap.md
 
@@ -65,6 +67,14 @@ docs/                       # Documentation
 templates/                  # Task card templates
 tests/                      # Test fixtures
 ```
+
+## Release Identity
+
+Release line: AGS 2.0 Public Edition.
+
+Repository name: `agent-governance-suite`.
+
+Repository URL: `https://github.com/FernandeZ-hjm/agent-governance-suite`.
 
 ## Standard Checks
 

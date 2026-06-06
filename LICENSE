@@ -1,21 +1,71 @@
-MIT License
+Agent Governance Suite Public License 2.0
 
 Copyright (c) 2025-2026 Agent Governance Suite Contributors
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This license governs the Agent Governance Suite ("AGS") public edition,
+including its Rust CLI, protocol documents, templates, scripts, and public
+governance framework.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. Permitted Uses
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+You may download, read, copy, modify, build, and use AGS for:
+
+- personal software development;
+- internal engineering, research, automation, and agent-governance workflows;
+- evaluation, education, and non-commercial demonstrations;
+- integration into your own private or internal development environment.
+
+You may share unmodified copies of this public edition, provided that this
+license, copyright notice, and third-party notices remain intact.
+
+2. Attribution and Notices
+
+All copies or substantial portions of AGS must retain:
+
+- this license;
+- the AGS copyright notice;
+- NOTICE.md, when present;
+- THIRD_PARTY_NOTICES.md, when present.
+
+Third-party components remain governed by their own licenses. In particular,
+Superpowers-derived or Superpowers-inspired skill workflow material is credited
+separately under THIRD_PARTY_NOTICES.md.
+
+3. Commercial Restrictions
+
+You may use AGS to improve your own engineering productivity, including in a
+commercial company or paid internal engineering environment.
+
+You may not, without prior written permission from the AGS copyright holders:
+
+- sell, rent, lease, sublicense, or provide AGS itself as a paid product;
+- offer AGS, a lightly modified AGS fork, or an AGS-compatible wrapper as a
+  hosted paid service, subscription product, marketplace package, plugin pack,
+  consulting deliverable, or commercial template kit;
+- remove or obscure AGS identity, copyright, license, or attribution notices in
+  order to rebrand AGS as your own commercial governance product;
+- use AGS primarily to create a competing agent-governance suite, task-card
+  governance runtime, or paid multi-agent engineering framework.
+
+4. No Trademark Grant
+
+This license does not grant permission to use the names "Agent Governance
+Suite", "AGS", project logos, or confusingly similar marks to market a product
+or service, except for truthful attribution and compatibility statements.
+
+5. Contributions
+
+Unless a separate written agreement says otherwise, contributions submitted to
+this repository may be incorporated into AGS under this same license.
+
+6. Warranty Disclaimer
+
+AGS is provided "as is", without warranty of any kind, express or implied,
+including but not limited to warranties of merchantability, fitness for a
+particular purpose, and non-infringement. The authors and copyright holders are
+not liable for any claim, damages, or other liability arising from use of AGS.
+
+7. Permission Requests
+
+For commercial licensing, redistribution, or wrapper-product permission, contact
+the AGS copyright holders through the public repository contact channel.

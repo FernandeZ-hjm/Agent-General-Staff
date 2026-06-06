@@ -16,9 +16,10 @@
 schema_version: "2.0-skill"
 suite:
   name: "agent-governance-suite"
-  version: "2.0-public"
+  version: "2.0.0-public"
   description: >
-    AGS public edition — full-blood governance runtime. All core governance
+    Agent Governance Suite 2.0 public edition — Rust-native governance
+    kernel and CLI for multi-agent engineering workflows. All core governance
     capabilities included. Optional third-party development skills available
     for confirmed install only.
   required: []

@@ -1,6 +1,6 @@
-# Agent Governance Suite — Public Edition
+# Agent Governance Suite 2.0 — Public Edition
 
-Agent Governance Suite (AGS) public distributable edition. Provides a
+Agent Governance Suite (AGS) 2.0 public distributable edition. Provides a
 Rust-native CLI toolchain for task-card validation, execution policy
 resolution, protocol drift checking, suite health diagnostics, bootstrap
 simulation, project discovery, agent instructions, session preflight, and
@@ -19,8 +19,8 @@ is required before routing. `ags task compile` enforces this with
 
 ```bash
 # Install from source
-git clone <repo-url>
-cd <repo-dir>
+git clone https://github.com/FernandeZ-hjm/agent-governance-suite.git
+cd agent-governance-suite
 bash scripts/install.sh
 
 # Or DIY: build and add to PATH
@@ -65,6 +65,8 @@ protocol/               # Canonical protocol files
   runtime-adapters.md
   task-routing.md
   skill-governance.md
+  project-profile.md
+  context-memory.md
   2.0-baseline.md
   2.0-roadmap.md
 
@@ -109,6 +111,17 @@ It must not include build output (`target/`, release/debug binaries), installed
 third-party skills, local skill packs, real task archives, real receipts, private
 memory, local agent config, secrets, or machine-specific private paths.
 
+## Memory Capsule Protocol
+
+AGS ships the memory-capsule protocol and blank templates, not real user
+memory. `protocol/project-profile.md` and `protocol/context-memory.md` define
+how integrated projects can grow their own project profile, context capsule,
+task-memory index, and task archives after installation.
+
+The public suite must keep these files generic. User-specific memory belongs in
+the user's chosen memory root, such as `$AGS_MEMORY_DIR`, not in the public
+distribution.
+
 ## Default: DIY Installation
 
 The default install is **DIY** — you get the Rust `ags` core, public protocols,
@@ -127,6 +140,10 @@ third-party development skills with installation instructions, source URLs,
 and risk assessments.
 
 Run `cat docs/skill-recommendations.md` after installation to review.
+
+## Release Notes
+
+See `RELEASE_NOTES.md` for the AGS 2.0 Rust and CLI conversion summary.
 
 ## Verification
 
@@ -177,4 +194,10 @@ All commands except `task validate`/`task-card-validator` support `--format text
 
 ## License
 
-MIT
+AGS is source-available under the Agent Governance Suite Public License 2.0.
+You may use it for personal and internal engineering work, including inside a
+commercial company, but you may not repackage, rebrand, host, or resell AGS as a
+paid wrapper product without prior written permission.
+
+Superpowers-related workflow inspiration and optional skill references are
+credited under `THIRD_PARTY_NOTICES.md`.

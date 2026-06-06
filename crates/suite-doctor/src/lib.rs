@@ -12,7 +12,7 @@
 //!     render_json, render_text, CheckStatus, Finding, HealthReport, Severity,
 //! };
 //!
-//! let mut report = HealthReport::new("Suite Doctor v0.1.0");
+//! let mut report = HealthReport::new("Suite Doctor v2.0.0");
 //! report.add(Finding::pass("cargo-fmt", "cargo fmt --check passed"));
 //! report.add(Finding::fail("cargo-test", "2 tests failed",
 //!     "Run `cargo test` for details."));

@@ -741,16 +741,21 @@ fn check_public_full_sanitized_tracked(repo_root: &Path) -> CheckItem {
         ".codex/",
         ".claude/local/",
     ];
-    let private_patterns = [
-        concat!("huji", "aming"),
-        concat!("/Users/", "huji", "aming"),
-        concat!("/Volumes/AI Project/", "agent-governance-suite-", "private"),
-        concat!("agent-governance-suite-", "private"),
-        concat!("agent-governance-suite-", "stable"),
-        concat!("git-remotes/", "agent-governance-suite"),
-        concat!("My ", "Passport"),
-        concat!("Tempoflow ", "spy"),
+    let mut private_patterns = vec![
+        concat!("PRIVATE_", "DO_NOT_SHIP").to_string(),
+        concat!("LOCAL_ONLY_", "DO_NOT_SHIP").to_string(),
+        concat!("SECRET_", "DO_NOT_SHIP").to_string(),
+        concat!("INTERNAL_ONLY_", "DO_NOT_SHIP").to_string(),
     ];
+    if let Ok(extra_patterns) = std::env::var("AGS_RELEASE_PRIVATE_PATTERNS") {
+        private_patterns.extend(
+            extra_patterns
+                .split(';')
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .map(str::to_string),
+        );
+    }
 
     let mut violations: Vec<String> = Vec::new();
     for rel in stdout.lines().filter(|l| !l.trim().is_empty()) {
@@ -766,7 +771,7 @@ fn check_public_full_sanitized_tracked(repo_root: &Path) -> CheckItem {
         let Ok(content) = std::fs::read_to_string(&path) else {
             continue;
         };
-        for pattern in private_patterns {
+        for pattern in &private_patterns {
             if content.contains(pattern) {
                 violations.push(format!("private pattern `{}` in {}", pattern, rel));
             }

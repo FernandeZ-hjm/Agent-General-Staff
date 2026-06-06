@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AGS Public Edition — DIY Install Script
+# AGS 2.0 Public Edition — DIY Install Script
 #
 # Installs the public-safe Rust ags core, protocols, templates, and basic
 # governance commands. No third-party skills are installed by default.
@@ -39,7 +39,7 @@ while [[ $# -gt 0 ]]; do
     --skip-build)
       SKIP_BUILD=true; shift ;;
     --help|-h)
-      echo "AGS Public Edition — DIY Install"
+      echo "AGS 2.0 Public Edition — DIY Install"
       echo ""
       echo "Usage: bash scripts/install.sh [OPTIONS]"
       echo ""
@@ -64,7 +64,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 echo ""
 echo "═══════════════════════════════════════════"
-echo "  AGS Public Edition — DIY Install"
+echo "  AGS 2.0 Public Edition — DIY Install"
 echo "═══════════════════════════════════════════"
 echo ""
 echo "  Install prefix:  $PREFIX"
