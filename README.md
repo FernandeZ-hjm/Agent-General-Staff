@@ -57,11 +57,48 @@ AGS 的标准工作流是：
   → 写入任务记忆
 ```
 
+可视化流程：
+
+```mermaid
+flowchart TD
+    A[用户需求] --> B[Ambient Preflight<br/>项目预检]
+    B --> B1[检测项目身份<br/>读取记忆胶囊]
+    B1 --> C[Solution Phase<br/>方案形成]
+    C --> C1[理解需求 → 诊断 → 形成方案]
+    C1 --> D{用户确认?}
+    D -->|方案 OK| E[Execution Contract<br/>执行契约]
+    D -->|修改方案| C
+    E --> F{任务卡指令?}
+    F -->|生成任务卡| G[Task-Card Instruction Gate ✅]
+    F -->|未收到指令| F_WAIT[等待 — ags task compile 拒绝输出]
+    F_WAIT --> F
+    G --> H[Routing<br/>Light / Medium / Heavy]
+    H --> I[Task Card Generation<br/>任务卡生成]
+    I --> J[Gate Check<br/>ags task validate]
+    J -->|通过| K[Policy Resolution<br/>ags policy resolve]
+    J -->|未通过| I
+    K --> L{stop_before_launch?}
+    L -->|是| L_STOP[停止: 修复任务卡或获取批准]
+    L -->|否| M[Execution<br/>执行]
+    M --> N[Verification<br/>验证]
+    N --> O[Receipt<br/>生成回执]
+    O --> P[Task Memory<br/>写入任务记忆]
+
+    style B fill:#e1f5fe
+    style C fill:#fff3e0
+    style G fill:#ffeb3b,stroke:#f57f17
+    style J fill:#ffcdd2
+    style K fill:#ffcdd2
+    style O fill:#e3f2fd
+```
+
 这里最重要的不是某一个命令，而是顺序。
 
 AGS 不允许 Agent 从用户的一句话直接跳到执行。它要求先理解项目，再形成方案，再由用户确认，再进入任务卡和执行策略。
 
-“方案 OK”不等于可以执行。只有用户明确要求生成任务卡，才进入可执行任务阶段。
+**三段门槛：** 方案 OK → 任务卡指令 → 任务分级路由。缺少中间的任务卡指令，不得进入路由。“方案 OK”不等于可以执行。只有用户明确要求生成任务卡，才进入可执行任务阶段。
+
+架构详情见 [docs/architecture.md](docs/architecture.md)。
 
 ## 核心能力
 
@@ -135,6 +172,50 @@ cargo build --release
 export PATH="$PWD/target/release:$PATH"
 ```
 
+### 三步可验证体验
+
+#### 第一步：源码构建
+
+```bash
+cargo build --release
+export PATH="$PWD/target/release:$PATH"
+```
+
+验证构建：
+
+```bash
+ags doctor
+ags verify --scope local
+```
+
+#### 第二步：Demo Dry-Run
+
+对仓库根目录跑一次 preflight，再用内置合成样例跑 task validate：
+
+```bash
+# 对 AGS 仓库执行预检
+ags session preflight --for claude-code --target .
+
+# 校验示例任务卡
+bash scripts/validate.sh examples/task-cards/light-demo-task.md
+
+# 解析执行策略
+ags policy resolve examples/task-cards/light-demo-task.md
+```
+
+#### 第三步：示例任务卡验证
+
+```bash
+# 用 Medium 级任务卡体验 gate -> policy -> receipt 链路
+bash scripts/validate.sh examples/task-cards/medium-demo-task.md
+ags policy resolve examples/task-cards/medium-demo-task.md
+
+# 校验合成 receipt
+ags receipt verify examples/receipts/sample-receipt.json
+```
+
+更多样例见 [examples/](examples/)，实验场景见 [evals/](evals/)。
+
 ## 常用命令
 
 | 命令 | 作用 |
@@ -148,6 +229,13 @@ export PATH="$PWD/target/release:$PATH"
 | `ags receipt` | 生成或校验执行回执 |
 | `ags compliance` | 检查任务执行合规性 |
 | `ags skill` | 管理技能推荐、扫描和确认式安装 |
+
+## 了解更多
+
+- [docs/architecture.md](docs/architecture.md) — AGS 架构：生命周期、crate 依赖图、执行链路、记忆胶囊机制
+- [examples/](examples/) — 公开安全样例：demo 项目、任务卡、输出样例、合成 receipt
+- [evals/](evals/) — 可复现评估实验：越权拦截、无验证交付、方案即执行三大风险场景
+- [COMMERCIAL.md](COMMERCIAL.md) — 商业使用边界与授权请求方式（基于 LICENSE 但不扩大其法律范围）
 
 ## 验证
 

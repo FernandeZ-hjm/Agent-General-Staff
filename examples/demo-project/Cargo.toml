@@ -1,0 +1,9 @@
+[package]
+name = "demo-project"
+version = "0.1.0"
+edition = "2021"
+description = "Synthetic demo project for AGS integration examples"
+
+[dependencies]
+
+[workspace]

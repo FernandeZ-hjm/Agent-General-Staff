@@ -1,0 +1,13 @@
+$ ags verify --scope local
+
+=== AGS Verification — Scope: local ===
+
+[1/7] cargo fmt --check ......................... PASS
+[2/7] cargo test (RUSTFLAGS=-D warnings) ....... PASS (12 passed, 0 failed)
+[3/7] cargo build --release ..................... PASS
+[4/7] task-card fixtures ........................ PASS (valid-compact.md ok)
+[5/7] YAML manifest validation .................. PASS (suite.yaml ok)
+[6/7] session preflight self-check .............. PASS
+[7/7] examples/ task-card validation ............ PASS (2/2 cards valid)
+
+Result: 7/7 PASS, 0 FAIL, 0 SKIP

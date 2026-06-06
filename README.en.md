@@ -57,11 +57,48 @@ Project preflight
   → task memory update
 ```
 
+Visual flow:
+
+```mermaid
+flowchart TD
+    A[User Request] --> B[Ambient Preflight<br/>Project preflight]
+    B --> B1[Detect project identity<br/>Read memory capsule]
+    B1 --> C[Solution Phase<br/>Solution formation]
+    C --> C1[Understand → Diagnose → Form solution]
+    C1 --> D{User confirms?}
+    D -->|Solution OK| E[Execution Contract]
+    D -->|Revise| C
+    E --> F{Task-card instruction?}
+    F -->|Generate task card| G[Task-Card Instruction Gate ✅]
+    F -->|Not received| F_WAIT[Wait — ags task compile blocks]
+    F_WAIT --> F
+    G --> H[Routing<br/>Light / Medium / Heavy]
+    H --> I[Task Card Generation]
+    I --> J[Gate Check<br/>ags task validate]
+    J -->|Pass| K[Policy Resolution<br/>ags policy resolve]
+    J -->|Fail| I
+    K --> L{stop_before_launch?}
+    L -->|Yes| L_STOP[STOP: fix card or get approval]
+    L -->|No| M[Execution]
+    M --> N[Verification]
+    N --> O[Receipt]
+    O --> P[Task Memory Update]
+
+    style B fill:#e1f5fe
+    style C fill:#fff3e0
+    style G fill:#ffeb3b,stroke:#f57f17
+    style J fill:#ffcdd2
+    style K fill:#ffcdd2
+    style O fill:#e3f2fd
+```
+
 The most important part is not any single command, but the order.
 
 AGS does not allow an agent to jump directly from one user sentence into execution. It requires the agent to understand the project, form a solution, wait for user confirmation, and only then enter task-card and execution-policy flow.
 
-"Solution OK" does not mean execution is allowed. A task becomes executable only after the user explicitly asks for a task card.
+**Three-gate threshold:** Solution OK → Task-card instruction → Task routing. Without the middle gate (task-card instruction), routing must not proceed. "Solution OK" does not mean execution is allowed. A task becomes executable only after the user explicitly asks for a task card.
+
+For architectural details, see [docs/architecture.md](docs/architecture.md).
 
 ## Core Capabilities
 
@@ -135,6 +172,50 @@ cargo build --release
 export PATH="$PWD/target/release:$PATH"
 ```
 
+### Three-Stage Verifiable Experience
+
+#### Step 1: Build from Source
+
+```bash
+cargo build --release
+export PATH="$PWD/target/release:$PATH"
+```
+
+Verify the build:
+
+```bash
+ags doctor
+ags verify --scope local
+```
+
+#### Step 2: Demo Dry-Run
+
+Run preflight against the AGS repository, then validate built-in synthetic examples:
+
+```bash
+# Preflight against the AGS repository
+ags session preflight --for claude-code --target .
+
+# Validate an example task card
+bash scripts/validate.sh examples/task-cards/light-demo-task.md
+
+# Resolve execution policy
+ags policy resolve examples/task-cards/light-demo-task.md
+```
+
+#### Step 3: Sample Task Card Verification
+
+```bash
+# Medium-level task card: gate → policy → receipt chain
+bash scripts/validate.sh examples/task-cards/medium-demo-task.md
+ags policy resolve examples/task-cards/medium-demo-task.md
+
+# Verify a synthetic receipt
+ags receipt verify examples/receipts/sample-receipt.json
+```
+
+More examples at [examples/](examples/). Eval scenarios at [evals/](evals/).
+
 ## Common Commands
 
 | Command | Purpose |
@@ -148,6 +229,13 @@ export PATH="$PWD/target/release:$PATH"
 | `ags receipt` | Generate or verify execution receipts |
 | `ags compliance` | Check task-execution compliance |
 | `ags skill` | Manage skill recommendations, scanning, and confirmed installs |
+
+## Learn More
+
+- [docs/architecture.md](docs/architecture.md) — AGS architecture: lifecycle, crate dependency graph, execution pipeline, memory capsule mechanism
+- [examples/](examples/) — Public-safe examples: demo project, task cards, sample outputs, synthetic receipts
+- [evals/](evals/) — Reproducible experiment scenarios: authority escalation, unverified delivery, solution-as-execution
+- [COMMERCIAL.md](COMMERCIAL.md) — Commercial use boundaries and authorization requests (based on LICENSE, not expanding its legal scope)
 
 ## Verification
 
