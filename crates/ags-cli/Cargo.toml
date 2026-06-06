@@ -1,0 +1,20 @@
+[package]
+name = "ags-cli"
+version.workspace = true
+edition.workspace = true
+description = "Agent Governance Suite unified CLI"
+
+[[bin]]
+name = "ags"
+path = "src/main.rs"
+
+[dependencies]
+task-card-validator = { path = "../task-card-validator" }
+workflow-sync-check = { path = "../workflow-sync-check" }
+suite-doctor = { path = "../suite-doctor" }
+bootstrap-dry-run = { path = "../bootstrap-dry-run" }
+execution-policy = { path = "../execution-policy" }
+project-discovery = { path = "../project-discovery" }
+ags-verify = { path = "../ags-verify" }
+clap = { version = "4", features = ["derive"] }
+serde_json = "1"

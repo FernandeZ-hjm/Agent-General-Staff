@@ -1,0 +1,164 @@
+# AGS Public Edition — Third-Party Skill Recommendations
+#
+# This manifest lists recommended third-party development skills.
+# These are RECOMMENDATIONS ONLY — no skills are auto-installed.
+# Each entry documents: source, purpose, risk, install location, manual steps.
+#
+# Schema version: 1.0-public
+
+schema_version: "1.0-public"
+generated: "2026-06-06"
+principle: >
+  Third-party skills enhance the full development experience but are
+  NEVER installed by default. Every skill requires explicit manual
+  installation by the user. AGS will never clone repositories,
+  run external install commands, or write to user skill directories.
+
+skills:
+  # ── Core Development ────────────────────────────────────────────────
+  - id: superpowers
+    name: Engineering Workflow
+    category: core-development
+    purpose: Structured engineering workflow — brainstorm, plan, execute, review, verify, worktree, parallel
+    risk: low
+    risk_description: Read-only orchestration; no production writes
+    install_location: $HOME/.agents/skills/superpowers/
+    manual_steps:
+      - "mkdir -p ~/.agents/skills/superpowers"
+      - "Copy SKILL.md and playbooks/ into the directory"
+    source: GitHub (community-maintained)
+
+  - id: diagnose
+    name: Systematic Debugging
+    category: core-development
+    purpose: HITL debugging loop with evidence-chain tracing and root-cause isolation
+    risk: low
+    risk_description: Read-only diagnosis; no production writes
+    install_location: $HOME/.agents/skills/diagnose/
+    manual_steps:
+      - "mkdir -p ~/.agents/skills/diagnose"
+      - "Copy SKILL.md, scripts/, references/ into the directory"
+    source: GitHub (community-maintained)
+
+  - id: tdd
+    name: Test-Driven Development
+    category: core-development
+    purpose: Red-green-refactor cycle with mocking and interface design patterns
+    risk: low
+    risk_description: Local development only
+    install_location: $HOME/.agents/skills/tdd/
+    manual_steps:
+      - "mkdir -p ~/.agents/skills/tdd"
+      - "Copy SKILL.md and reference .md files"
+    source: GitHub (community-maintained)
+
+  - id: code-review
+    name: Code Review
+    category: core-development
+    purpose: Code review across correctness, simplification, and efficiency
+    risk: low
+    risk_description: Read-only review; posts comments only when explicitly requested
+    install_location: $HOME/.agents/skills/code-review/
+    manual_steps:
+      - "mkdir -p ~/.agents/skills/code-review"
+      - "Copy SKILL.md and references/"
+    source: GitHub (community-maintained)
+
+  - id: using-git-worktrees
+    name: Git Worktrees
+    category: core-development
+    purpose: Isolated git worktree management for parallel feature branches
+    risk: low
+    risk_description: Local git operations only
+    install_location: $HOME/.agents/skills/using-git-worktrees/
+    manual_steps:
+      - "mkdir -p ~/.agents/skills/using-git-worktrees"
+      - "Copy SKILL.md"
+    source: GitHub (community-maintained)
+
+  # ── Quality & Verification ──────────────────────────────────────────
+  - id: auto-verify
+    name: Auto-Verify
+    category: quality
+    purpose: Automatic behavior verification on task completion
+    risk: low
+    risk_description: Read-only verification
+    install_location: $HOME/.agents/skills/auto-verify/
+    manual_steps:
+      - "mkdir -p ~/.agents/skills/auto-verify"
+      - "Copy SKILL.md"
+    source: GitHub (community-maintained)
+
+  - id: caveman-commit
+    name: Conventional Commits
+    category: quality
+    purpose: Generate concise Conventional Commit messages from diff analysis
+    risk: low
+    risk_description: Generates commit messages; does not commit without confirmation
+    install_location: $HOME/.agents/skills/caveman-commit/
+    manual_steps:
+      - "mkdir -p ~/.agents/skills/caveman-commit"
+      - "Copy SKILL.md and README.md"
+    source: GitHub (community-maintained)
+
+  - id: caveman-review
+    name: Code Review Lite
+    category: quality
+    purpose: Short, actionable code review feedback
+    risk: low
+    risk_description: Read-only review output
+    install_location: $HOME/.agents/skills/caveman-review/
+    manual_steps:
+      - "mkdir -p ~/.agents/skills/caveman-review"
+      - "Copy SKILL.md and README.md"
+    source: GitHub (community-maintained)
+
+  # ── Architecture & Planning ─────────────────────────────────────────
+  - id: zoom-out
+    name: Zoom Out
+    category: architecture
+    purpose: High-level architecture context and risk assessment before changes
+    risk: low
+    risk_description: Read-only architecture analysis
+    install_location: $HOME/.agents/skills/zoom-out/
+    manual_steps:
+      - "mkdir -p ~/.agents/skills/zoom-out"
+      - "Copy SKILL.md"
+    source: GitHub (community-maintained)
+
+  - id: improve-codebase-architecture
+    name: Improve Codebase Architecture
+    category: architecture
+    purpose: Architecture improvement patterns — boundary hardening, testability
+    risk: medium
+    risk_description: May propose structural refactors; always requires human approval
+    install_location: $HOME/.agents/skills/improve-codebase-architecture/
+    manual_steps:
+      - "mkdir -p ~/.agents/skills/improve-codebase-architecture"
+      - "Copy SKILL.md, DEEPENING.md, INTERFACE-DESIGN.md, LANGUAGE.md"
+    source: GitHub (community-maintained)
+
+  - id: grill-with-docs
+    name: Requirements Clarification
+    category: architecture
+    purpose: Align requirements with project docs before implementation
+    risk: low
+    risk_description: Read-only alignment check
+    install_location: $HOME/.agents/skills/grill-with-docs/
+    manual_steps:
+      - "mkdir -p ~/.agents/skills/grill-with-docs"
+      - "Copy SKILL.md and reference .md files"
+    source: GitHub (community-maintained)
+
+  # ── Security ────────────────────────────────────────────────────────
+  - id: supply-chain-risk-auditor
+    name: Supply Chain Risk Auditor
+    category: security
+    purpose: Dependency supply chain risk audit
+    risk: low
+    risk_description: Read-only audit report
+    install_location: $HOME/.agents/skills/supply-chain-risk-auditor/
+    manual_steps:
+      - "mkdir -p ~/.agents/skills/supply-chain-risk-auditor"
+      - "Copy SKILL.md and resources/"
+    source: GitHub (community-maintained)
