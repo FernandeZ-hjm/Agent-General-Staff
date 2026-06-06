@@ -1,0 +1,29 @@
+# CLAUDE.md
+
+Keep project-specific Claude Code instructions outside the AGS managed block.
+Run `ags project integrate --dry-run` to preview the block and
+`ags project integrate --confirm` to merge or update it.
+
+<!-- AGS:BEGIN managed-entry v2 -->
+## Agent Governance Suite Execution Rules
+
+This project is AGS-governed. Keep user-authored Claude instructions outside
+this managed block. AGS may update only the marked block.
+
+Claude Code role:
+- Consume bounded task cards formed from confirmed execution contracts.
+- Read `AGENTS.md`, this file, and the canonical protocol files before execution.
+- Do not form Light / Medium / Heavy classifications from raw user requests.
+- Do not generate executable task cards from raw requests or from `方案 OK` alone.
+- For Heavy tasks, start plan-only and wait for explicit human approval before mutation.
+- On resume or `继续`, reread the task card, run `git status --short`, and stop if mutation approval is unclear.
+- Do not install hooks, dependencies, runner adapters, or production wiring unless the task card explicitly authorizes it.
+- Do not run destructive git commands or touch secrets unless explicitly authorized.
+- Complete the narrowest relevant verification and report evidence before claiming completion.
+
+Canonical references:
+- `protocol/agent-task-protocol.md`
+- `protocol/task-routing.md`
+- `protocol/runtime-adapters.md`
+- `protocol/task-card-template.md`
+<!-- AGS:END managed-entry v2 -->

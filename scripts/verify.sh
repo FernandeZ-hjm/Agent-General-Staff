@@ -10,7 +10,7 @@
 # Full-blood public edition: tests all public commands (task validate/compile/new,
 # policy resolve/explain/check, sync check, gate check, doctor, bootstrap,
 # project detect, protocol status, agent instructions, session preflight,
-# verify, run, receipt, compliance, skill, capability, init, archive).
+# verify, run, receipt, compliance, skill, capability, archive).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -153,8 +153,27 @@ run_check "ags capability list" \
 run_check "ags capability show" \
     cargo run -q -p ags-cli -- capability show "policy:agent-task-protocol" --format text
 
-run_check "ags init (dry-run default)" \
-    cargo run -q -p ags-cli -- init --target /tmp/ags-smoke-test-init
+INTEGRATE_SMOKE_DIR="/tmp/ags-smoke-project-integrate"
+INTEGRATE_MEMORY_DIR="/tmp/ags-smoke-project-memory"
+rm -rf "$INTEGRATE_SMOKE_DIR" "$INTEGRATE_MEMORY_DIR"
+mkdir -p "$INTEGRATE_SMOKE_DIR"
+
+run_check "ags project integrate (dry-run)" \
+    cargo run -q -p ags-cli -- project integrate --target "$INTEGRATE_SMOKE_DIR" --dry-run --format text
+
+run_check "ags project integrate --confirm" \
+    env AGS_MEMORY_DIR="$INTEGRATE_MEMORY_DIR" cargo run -q -p ags-cli -- project integrate --target "$INTEGRATE_SMOKE_DIR" --confirm --format text
+
+echo -n "[....] ags project integrate initializes memory "
+if [ -f "$INTEGRATE_MEMORY_DIR/ags-smoke-project-integrate/context-capsule.md" ] \
+    && [ -f "$INTEGRATE_MEMORY_DIR/ags-smoke-project-integrate/task-memory.md" ] \
+    && [ -d "$INTEGRATE_MEMORY_DIR/ags-smoke-project-integrate/task-archive" ]; then
+    echo "OK"
+else
+    echo "FAIL"
+    find "$INTEGRATE_MEMORY_DIR" -maxdepth 3 -type f -o -type d 2>/dev/null || true
+    failures=$((failures + 1))
+fi
 
 # receipt generate + verify smoke
 echo -n "[....] ags receipt generate + verify "

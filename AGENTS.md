@@ -51,3 +51,18 @@ activation is independent of third-party skill governance.
 
 See `CLAUDE.md` M2 Agent Awareness Commands section for all M2 read-only
 commands.
+
+## Project Entry Integration
+
+User projects often already have their own `AGENTS.md` and `CLAUDE.md`. Do not
+replace those files with the public suite copies. To integrate AGS into a user
+project, use the incremental managed-block workflow:
+
+```bash
+ags project integrate --target /path/to/repo --dry-run
+ags project integrate --target /path/to/repo --confirm
+```
+
+The integration command preserves user-authored content, updates only the
+`<!-- AGS:BEGIN managed-entry v2 -->` block when present, and stops on conflicting
+entry-file instructions instead of overwriting them.

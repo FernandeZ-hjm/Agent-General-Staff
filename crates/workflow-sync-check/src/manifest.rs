@@ -67,6 +67,8 @@ pub const PUBLIC_MANIFEST: SyncManifest = SyncManifest {
         "templates/memory/task-memory.md",
         "templates/memory/archive-index.md",
         "templates/memory/task-archive/README.md",
+        "templates/project-integration/AGENTS.md.template",
+        "templates/project-integration/CLAUDE.md.template",
         "scripts/install.sh",
         "scripts/validate.sh",
         "scripts/run-task-card.sh",

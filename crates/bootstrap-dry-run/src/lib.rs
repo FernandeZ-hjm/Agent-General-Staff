@@ -230,6 +230,28 @@ pub fn plan(source_repo: &Path, target: &Path) -> BootstrapPlan {
         }
     }
 
+    // ── Project entry integration templates ───────────────────────────
+    // These are templates for incremental merging. They are not copied into
+    // AGENTS.md / CLAUDE.md directly, because user projects usually already
+    // have their own entry files.
+    for name in ["AGENTS.md.template", "CLAUDE.md.template"] {
+        let src = source_repo
+            .join("templates")
+            .join("project-integration")
+            .join(name);
+        let dst = target
+            .join("templates")
+            .join("project-integration")
+            .join(name);
+        if src.exists() {
+            actions.push(BootstrapAction {
+                action: "copy".into(),
+                path: dst.display().to_string(),
+                description: format!("copy templates/project-integration/{}", name),
+            });
+        }
+    }
+
     // ── Bootstrap log (generated, not copied) ───────────────────────────
     actions.push(BootstrapAction {
         action: "create".into(),
@@ -626,6 +648,24 @@ mod tests {
             "context-memory.sh should be in public-full bootstrap payload"
         );
 
+        let integration_template_actions: Vec<_> = plan
+            .actions
+            .iter()
+            .filter(|a| a.path.contains("templates/project-integration/"))
+            .collect();
+        assert!(
+            integration_template_actions
+                .iter()
+                .any(|a| a.path.contains("AGENTS.md.template")),
+            "AGENTS.md integration template should be in bootstrap payload"
+        );
+        assert!(
+            integration_template_actions
+                .iter()
+                .any(|a| a.path.contains("CLAUDE.md.template")),
+            "CLAUDE.md integration template should be in bootstrap payload"
+        );
+
         // Must include bootstrap log action
         assert!(
             plan.actions
@@ -667,6 +707,14 @@ mod tests {
         assert!(
             target.join("scripts").join("verify.sh").exists(),
             "verify.sh should be in public-full bootstrap payload"
+        );
+        assert!(
+            target
+                .join("templates")
+                .join("project-integration")
+                .join("AGENTS.md.template")
+                .exists(),
+            "AGENTS.md integration template should be copied"
         );
     }
 

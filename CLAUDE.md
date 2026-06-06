@@ -5,6 +5,96 @@ It provides a Rust-native CLI toolchain for task-card validation, execution poli
 resolution, protocol drift checking, suite health diagnostics, bootstrap simulation,
 project discovery, agent instructions, session preflight, and scoped verification.
 
+## Execution Protocol
+
+This file is an agent execution entry point, not only a command reference.
+Agents working in this repository must follow the canonical protocol files under
+`protocol/` before changing code, generating task cards, installing hooks, or
+declaring completion.
+
+AGS is a standing engineering hub for development work. When a development
+request arrives, governance engages automatically:
+
+```text
+ambient preflight
+  -> solution formation
+  -> user confirmation ("方案 OK")
+  -> explicit task-card instruction ("生成任务卡")
+  -> execution contract
+  -> task routing
+  -> gate / execution / receipt
+```
+
+Do not classify raw user requests as Light / Medium / Heavy. Classification
+happens only after preflight, solution formation, user confirmation, and a
+separate task-card instruction. `方案 OK` is not authorization to generate or
+execute a task card.
+
+## Required Reads
+
+Before development, debugging, review, commit, task-card generation, or handoff,
+read:
+
+1. `AGENTS.md`
+2. `CLAUDE.md`
+3. `AGENT_SUITE_PROTOCOL.md`
+4. `protocol/agent-task-protocol.md`
+5. `protocol/task-routing.md`
+6. `protocol/runtime-adapters.md`
+7. `protocol/task-card-template.md`
+8. `protocol/skill-governance.md` when skills, hooks, or local agent capability
+   changes are involved
+
+Then run or equivalently complete:
+
+```bash
+ags session preflight --for codex --target .
+ags session preflight --for claude-code --target .
+ags session preflight --for cursor --target .
+```
+
+Use the command matching the current agent runtime. The report is read-only and
+aggregates project identity, protocol status, agent instructions, memory paths,
+stop conditions, warnings, failures, and next steps.
+
+## Role Boundaries
+
+Codex and Cursor own preflight, diagnosis, solution formation, user confirmation,
+execution-contract formation, task routing, task-card generation, and final
+review.
+
+Claude Code executes bounded task cards that already exist. Claude Code must not
+derive task level, permission mode, or task-card authorization from raw user
+requests or from `方案 OK` alone.
+
+## Safety Gates
+
+- Do not install hooks, dependencies, runner adapters, or production wiring
+  without explicit task-card authorization.
+- Do not modify protocol files, task-card skeletons, public release boundaries,
+  or execution-policy rules unless the current task explicitly targets them.
+- Heavy tasks start plan-only and wait for explicit human approval before file
+  mutation.
+- Resume / `继续` is not mutation approval. Reread the task card, run
+  `git status --short`, and stop if approval is unclear.
+- Do not run destructive git commands, touch secrets, overwrite user files, or
+  replace user-owned entry files unless explicitly authorized.
+- Before claiming completion, run the narrowest relevant verification and report
+  the evidence.
+
+## Project Entry Integration
+
+User projects usually already have their own `AGENTS.md` and `CLAUDE.md`.
+Do not replace them with suite copies. Use the managed-block integration command:
+
+```bash
+ags project integrate --target /path/to/repo --dry-run
+ags project integrate --target /path/to/repo --confirm
+```
+
+This preserves user-authored content, updates only the marked AGS block, creates
+backups on confirmed writes, and stops on conflicting entry-file rules.
+
 ## Quick Start
 
 ```bash
@@ -35,6 +125,7 @@ ags verify --scope local
 | `ags bootstrap --dry-run` | Bootstrap dry-run simulation |
 | `ags bootstrap --apply` | Bootstrap a target directory |
 | `ags project detect` | Detect project identity and AGS integration |
+| `ags project integrate` | Incrementally merge AGS managed blocks into project entry files |
 | `ags protocol status` | Check protocol file status |
 | `ags agent instructions` | Export agent-specific project instructions |
 | `ags session preflight` | Aggregated agent wake-up check |

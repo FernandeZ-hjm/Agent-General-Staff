@@ -149,9 +149,10 @@ pub fn memory_capsule_check(repo_root: &Path) -> Finding {
             "memory-capsule",
             "context capsule found but task memory missing",
             format!(
-                "Capsule: {} (exists). Task memory: {} (missing). Run `ags init --apply` to create.",
+                "Capsule: {} (exists). Task memory: {} (missing). Run `ags project integrate --target {} --confirm` to initialize project memory, or let `ags archive` create task memory after the first task.",
                 capsule.display(),
-                task_memory.display()
+                task_memory.display(),
+                repo_root.display()
             ),
         )
     } else if task_memory.exists() {
@@ -159,9 +160,10 @@ pub fn memory_capsule_check(repo_root: &Path) -> Finding {
             "memory-capsule",
             "task memory found but context capsule missing",
             format!(
-                "Task memory: {} (exists). Capsule: {} (missing). Run `ags init --apply` to create.",
+                "Task memory: {} (exists). Capsule: {} (missing). Run `ags project integrate --target {} --confirm` to initialize the manual context capsule.",
                 task_memory.display(),
-                capsule.display()
+                capsule.display(),
+                repo_root.display()
             ),
         )
     } else {
@@ -169,8 +171,9 @@ pub fn memory_capsule_check(repo_root: &Path) -> Finding {
             "memory-capsule",
             "memory capsule not initialized",
             format!(
-                "Expected at: {}. Run `ags init --apply` to create the memory capsule and task memory.",
-                memory_base.join(&slug).display()
+                "Expected at: {}. Run `ags project integrate --target {} --confirm` to create the memory capsule and task memory.",
+                memory_base.join(&slug).display(),
+                repo_root.display()
             ),
         )
     }

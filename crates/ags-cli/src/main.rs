@@ -13,7 +13,6 @@
 //! - `ags doctor`                 Suite health diagnostics
 //! - `ags bootstrap --dry-run`    Bootstrap dry-run simulation
 //! - `ags bootstrap --apply`      Bootstrap a target directory
-//! - `ags init`                   Initialize AGS integration in a project
 //!
 //! ## M2 Agent Awareness Commands
 //!
@@ -21,6 +20,7 @@
 //! - `ags protocol status`        Check protocol file status
 //! - `ags agent instructions`     Export agent-specific project instructions
 //! - `ags session preflight`      Aggregated agent wake-up check (kernel activation)
+//! - `ags project integrate`      Incrementally merge AGS entry rules into project entry files
 //!
 //! ## Execution & Verification
 //!
@@ -437,6 +437,24 @@ enum ProjectAction {
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
     },
+    /// Incrementally merge AGS managed entry blocks into AGENTS.md and CLAUDE.md.
+    ///
+    /// Existing user content is preserved. Existing AGS managed blocks are
+    /// updated in place. Writes require --confirm; otherwise this is a dry-run.
+    Integrate {
+        /// Target repository path (default: current directory)
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+        /// Dry-run: show intended changes without writing
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+        /// Confirm writing managed blocks and backups
+        #[arg(long, default_value_t = false)]
+        confirm: bool,
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -651,24 +669,6 @@ enum Commands {
         /// Pass write approval to the policy resolver
         #[arg(long, default_value_t = false)]
         approve_writes: bool,
-        /// Output format: text (default) or json
-        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
-        format: String,
-    },
-
-    // ── Init ─────────────────────────────────────────────────────────
-    /// Initialize AGS integration in a project directory.
-    ///
-    /// Creates AGENTS.md, CLAUDE.md, protocol/, manifests/, templates/,
-    /// and memory capsule files. --dry-run (default) shows the plan only;
-    /// --apply writes files to the target directory.
-    Init {
-        /// Target directory (default: current directory)
-        #[arg(long, default_value = ".")]
-        target: PathBuf,
-        /// Apply — actually write files (default: dry-run)
-        #[arg(long, default_value_t = false)]
-        apply: bool,
         /// Output format: text (default) or json
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
@@ -1291,6 +1291,482 @@ fn cmd_project_detect(target: &Path, format: &str) {
         ),
     }
     std::process::exit(project_discovery::project_detect_exit_code(&identity));
+}
+
+const AGS_ENTRY_BEGIN: &str = "<!-- AGS:BEGIN managed-entry v2 -->";
+const AGS_ENTRY_END: &str = "<!-- AGS:END managed-entry v2 -->";
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct EntryFileReport {
+    path: String,
+    action: String,
+    changed: bool,
+    backup_path: Option<String>,
+    conflicts: Vec<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, serde::Serialize)]
+struct MemoryEntryReport {
+    path: String,
+    action: String,
+    changed: bool,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, serde::Serialize)]
+struct ProjectMemoryReport {
+    memory_dir: String,
+    changed: bool,
+    entries: Vec<MemoryEntryReport>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+enum ManagedBlockOutcome {
+    Created,
+    Appended,
+    Updated,
+    Unchanged,
+    Conflict(Vec<String>),
+}
+
+fn render_agents_managed_block() -> String {
+    format!(
+        "{AGS_ENTRY_BEGIN}\n\
+## Agent Governance Suite\n\
+\n\
+This project is governed by AGS. Preserve project-specific instructions above\n\
+and below this managed block; only AGS should update the block itself.\n\
+\n\
+Before development, debugging, review, commit, or task-card generation:\n\
+- Run or equivalently complete `ags session preflight --for <codex|claude-code|cursor>`.\n\
+- Read `CLAUDE.md` and the canonical protocol files under `protocol/`.\n\
+- Treat AGS as a standing engineering hub, not a CLI toolbox the user must invoke manually.\n\
+- Complete ambient preflight and solution formation before any Light / Medium / Heavy routing.\n\
+- Do not treat raw user requests as executable task cards.\n\
+- `方案 OK` only ends the solution phase; wait for an explicit task-card instruction before routing or calling `ags task compile --task-card-requested`.\n\
+- Preserve user-owned entry-file rules; if they conflict with this block, stop and report the conflict.\n\
+\n\
+Canonical references:\n\
+- `AGENT_SUITE_PROTOCOL.md`\n\
+- `protocol/agent-task-protocol.md`\n\
+- `protocol/task-routing.md`\n\
+- `protocol/runtime-adapters.md`\n\
+- `protocol/task-card-template.md`\n\
+{AGS_ENTRY_END}\n"
+    )
+}
+
+fn render_claude_managed_block() -> String {
+    format!(
+        "{AGS_ENTRY_BEGIN}\n\
+## Agent Governance Suite Execution Rules\n\
+\n\
+This project is AGS-governed. Keep user-authored Claude instructions outside\n\
+this managed block. AGS may update only the marked block.\n\
+\n\
+Claude Code role:\n\
+- Consume bounded task cards formed from confirmed execution contracts.\n\
+- Read `AGENTS.md`, this file, and the canonical protocol files before execution.\n\
+- Do not form Light / Medium / Heavy classifications from raw user requests.\n\
+- Do not generate executable task cards from raw requests or from `方案 OK` alone.\n\
+- For Heavy tasks, start plan-only and wait for explicit human approval before mutation.\n\
+- On resume or `继续`, reread the task card, run `git status --short`, and stop if mutation approval is unclear.\n\
+- Do not install hooks, dependencies, runner adapters, or production wiring unless the task card explicitly authorizes it.\n\
+- Do not run destructive git commands or touch secrets unless explicitly authorized.\n\
+- Complete the narrowest relevant verification and report evidence before claiming completion.\n\
+\n\
+Canonical references:\n\
+- `protocol/agent-task-protocol.md`\n\
+- `protocol/task-routing.md`\n\
+- `protocol/runtime-adapters.md`\n\
+- `protocol/task-card-template.md`\n\
+{AGS_ENTRY_END}\n"
+    )
+}
+
+fn upsert_managed_block(existing: Option<&str>, block: &str) -> (String, ManagedBlockOutcome) {
+    let Some(existing) = existing else {
+        return (
+            format!("# AGS Project Entry\n\n{block}"),
+            ManagedBlockOutcome::Created,
+        );
+    };
+
+    let begin = existing.find(AGS_ENTRY_BEGIN);
+    let end = existing.find(AGS_ENTRY_END);
+    match (begin, end) {
+        (Some(begin), Some(end)) if begin <= end => {
+            let end_with_marker = end + AGS_ENTRY_END.len();
+            let mut next = String::new();
+            next.push_str(&existing[..begin]);
+            next.push_str(block.trim_end());
+            next.push_str(&existing[end_with_marker..]);
+            if !next.ends_with('\n') {
+                next.push('\n');
+            }
+            if next == existing {
+                (existing.to_string(), ManagedBlockOutcome::Unchanged)
+            } else {
+                (next, ManagedBlockOutcome::Updated)
+            }
+        }
+        (None, None) => {
+            let mut next = existing.trim_end().to_string();
+            next.push_str("\n\n");
+            next.push_str(block);
+            (next, ManagedBlockOutcome::Appended)
+        }
+        _ => (
+            existing.to_string(),
+            ManagedBlockOutcome::Conflict(vec![
+                "partial AGS managed-entry marker found; manual repair required".to_string(),
+            ]),
+        ),
+    }
+}
+
+fn detect_entry_conflicts(content: &str) -> Vec<String> {
+    let mut conflicts = Vec::new();
+    let lowered = content.to_lowercase();
+    let patterns = [
+        (
+            "无需确认直接执行",
+            "entry file allows execution without confirmation",
+        ),
+        (
+            "不需要确认直接执行",
+            "entry file allows execution without confirmation",
+        ),
+        (
+            "directly execute without confirmation",
+            "entry file allows execution without confirmation",
+        ),
+        ("skip preflight", "entry file says to skip preflight"),
+        ("不要运行 preflight", "entry file says to skip preflight"),
+        (
+            "auto install hooks",
+            "entry file allows automatic hook installation",
+        ),
+        (
+            "自动安装 hook",
+            "entry file allows automatic hook installation",
+        ),
+    ];
+
+    for (needle, message) in patterns {
+        if lowered.contains(&needle.to_lowercase()) {
+            conflicts.push(message.to_string());
+        }
+    }
+    conflicts.sort();
+    conflicts.dedup();
+    conflicts
+}
+
+fn epoch_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn write_backup(target: &Path, rel_path: &str, content: &str) -> Result<String, String> {
+    let backup_dir = target.join(".ags").join("backups");
+    std::fs::create_dir_all(&backup_dir).map_err(|e| {
+        format!(
+            "cannot create backup directory {}: {}",
+            backup_dir.display(),
+            e
+        )
+    })?;
+    let backup_path = backup_dir.join(format!("{}.{}.bak", rel_path, epoch_seconds()));
+    std::fs::write(&backup_path, content)
+        .map_err(|e| format!("cannot write backup {}: {}", backup_path.display(), e))?;
+    Ok(backup_path.display().to_string())
+}
+
+fn integrate_entry_file(
+    target: &Path,
+    rel_path: &str,
+    block: &str,
+    confirm: bool,
+) -> Result<EntryFileReport, String> {
+    let full = target.join(rel_path);
+    let existing = if full.exists() {
+        Some(
+            std::fs::read_to_string(&full)
+                .map_err(|e| format!("cannot read {}: {}", full.display(), e))?,
+        )
+    } else {
+        None
+    };
+
+    let mut conflicts = existing
+        .as_deref()
+        .map(detect_entry_conflicts)
+        .unwrap_or_default();
+    let (next, outcome) = upsert_managed_block(existing.as_deref(), block);
+    if let ManagedBlockOutcome::Conflict(mut marker_conflicts) = outcome.clone() {
+        conflicts.append(&mut marker_conflicts);
+        conflicts.sort();
+        conflicts.dedup();
+        return Ok(EntryFileReport {
+            path: rel_path.to_string(),
+            action: "conflict".to_string(),
+            changed: false,
+            backup_path: None,
+            conflicts,
+        });
+    }
+
+    if !conflicts.is_empty() {
+        return Ok(EntryFileReport {
+            path: rel_path.to_string(),
+            action: "conflict".to_string(),
+            changed: false,
+            backup_path: None,
+            conflicts,
+        });
+    }
+
+    let action = match outcome {
+        ManagedBlockOutcome::Created => "create",
+        ManagedBlockOutcome::Appended => "append",
+        ManagedBlockOutcome::Updated => "update",
+        ManagedBlockOutcome::Unchanged => "unchanged",
+        ManagedBlockOutcome::Conflict(_) => unreachable!(),
+    };
+    let changed = action != "unchanged";
+    let mut backup_path = None;
+
+    if confirm && changed {
+        if let Some(parent) = full.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("cannot create directory {}: {}", parent.display(), e))?;
+        }
+        if let Some(ref existing) = existing {
+            backup_path = Some(write_backup(target, rel_path, existing)?);
+        }
+        std::fs::write(&full, next)
+            .map_err(|e| format!("cannot write {}: {}", full.display(), e))?;
+    }
+
+    Ok(EntryFileReport {
+        path: rel_path.to_string(),
+        action: action.to_string(),
+        changed,
+        backup_path,
+        conflicts,
+    })
+}
+
+fn render_project_integrate_text(
+    target: &Path,
+    confirm: bool,
+    files: &[EntryFileReport],
+    memory: Option<&ProjectMemoryReport>,
+) -> String {
+    let mut lines = Vec::new();
+    lines.push("AGS Project Entry Integration".to_string());
+    lines.push("=============================".to_string());
+    lines.push(format!("Target: {}", target.display()));
+    lines.push(format!(
+        "Mode: {}",
+        if confirm { "confirm" } else { "dry-run" }
+    ));
+    lines.push(String::new());
+    for file in files {
+        lines.push(format!(
+            "- {}: {}{}",
+            file.path,
+            file.action,
+            if file.changed { " (changed)" } else { "" }
+        ));
+        if let Some(backup) = &file.backup_path {
+            lines.push(format!("  backup: {backup}"));
+        }
+        for conflict in &file.conflicts {
+            lines.push(format!("  conflict: {conflict}"));
+        }
+    }
+    if let Some(memory) = memory {
+        lines.push(String::new());
+        lines.push(format!("Project memory: {}", memory.memory_dir));
+        for entry in &memory.entries {
+            lines.push(format!(
+                "- {}: {}{}",
+                entry.path,
+                entry.action,
+                if entry.changed { " (changed)" } else { "" }
+            ));
+        }
+    }
+    if !confirm {
+        lines.push(String::new());
+        lines.push(
+            "Dry-run only. Re-run with --confirm to write managed blocks and initialize memory."
+                .to_string(),
+        );
+    }
+    lines.join("\n")
+}
+
+fn project_memory_base() -> PathBuf {
+    if let Ok(dir) = std::env::var("AGS_MEMORY_DIR") {
+        PathBuf::from(dir)
+    } else {
+        let home = std::env::var("HOME").unwrap_or_default();
+        PathBuf::from(home).join(".agents/memory/projects")
+    }
+}
+
+fn project_slug(target: &Path) -> String {
+    target
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("project")
+        .to_string()
+}
+
+fn memory_entry(path: &Path, exists: bool, write: bool, create_dir: bool) -> MemoryEntryReport {
+    let action = match (exists, write) {
+        (true, _) => "exists",
+        (false, true) => "created",
+        (false, false) => {
+            if create_dir {
+                "would-create-dir"
+            } else {
+                "would-create"
+            }
+        }
+    };
+    MemoryEntryReport {
+        path: path.display().to_string(),
+        action: action.to_string(),
+        changed: !exists,
+    }
+}
+
+fn ensure_project_memory(target: &Path, write: bool) -> Result<ProjectMemoryReport, String> {
+    let slug = project_slug(target);
+    let memory_dir = project_memory_base().join(&slug);
+    let archive_dir = memory_dir.join("task-archive");
+    let sessions_dir = memory_dir.join("sessions");
+    let capsule = memory_dir.join("context-capsule.md");
+    let task_memory = memory_dir.join("task-memory.md");
+    let archive_index = memory_dir.join("archive-index.md");
+
+    let mut entries = Vec::new();
+
+    for dir in [&memory_dir, &archive_dir, &sessions_dir] {
+        let exists = dir.exists();
+        entries.push(memory_entry(dir, exists, write, true));
+        if write && !exists {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| format!("cannot create memory directory {}: {}", dir.display(), e))?;
+        }
+    }
+
+    let files = [
+        (
+            capsule.as_path(),
+            render_context_capsule_template(&slug, target),
+        ),
+        (task_memory.as_path(), render_task_memory_template(&slug)),
+        (
+            archive_index.as_path(),
+            render_archive_index_template(&slug),
+        ),
+    ];
+
+    for (path, content) in files {
+        let exists = path.exists();
+        entries.push(memory_entry(path, exists, write, false));
+        if write && !exists {
+            std::fs::write(path, content)
+                .map_err(|e| format!("cannot write memory file {}: {}", path.display(), e))?;
+        }
+    }
+
+    Ok(ProjectMemoryReport {
+        memory_dir: memory_dir.display().to_string(),
+        changed: entries.iter().any(|e| e.changed),
+        entries,
+    })
+}
+
+fn cmd_project_integrate(target: &Path, dry_run: bool, confirm: bool, format: &str) {
+    if !target.exists() {
+        eprintln!(
+            "project integrate: target does not exist — {}",
+            target.display()
+        );
+        std::process::exit(1);
+    }
+    if dry_run && confirm {
+        eprintln!("project integrate: --dry-run and --confirm cannot be used together");
+        std::process::exit(2);
+    }
+
+    let write = confirm;
+    let specs = [
+        ("AGENTS.md", render_agents_managed_block()),
+        ("CLAUDE.md", render_claude_managed_block()),
+    ];
+    let mut files = Vec::new();
+    for (rel_path, block) in specs {
+        match integrate_entry_file(target, rel_path, &block, write) {
+            Ok(report) => files.push(report),
+            Err(e) => {
+                eprintln!("project integrate: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    let has_conflict = files.iter().any(|f| !f.conflicts.is_empty());
+    let memory = if has_conflict && write {
+        None
+    } else {
+        match ensure_project_memory(target, write) {
+            Ok(report) => Some(report),
+            Err(e) => {
+                eprintln!("project integrate: {e}");
+                std::process::exit(1);
+            }
+        }
+    };
+    match format {
+        "json" => {
+            let output = serde_json::json!({
+                "target": target.display().to_string(),
+                "mode": if write { "confirm" } else { "dry-run" },
+                "changed": files.iter().any(|f| f.changed),
+                "conflicts": has_conflict,
+                "memory": memory,
+                "files": files.iter().map(|f| {
+                    serde_json::json!({
+                        "path": f.path,
+                        "action": f.action,
+                        "changed": f.changed,
+                        "backup_path": f.backup_path,
+                        "conflicts": f.conflicts,
+                    })
+                }).collect::<Vec<_>>(),
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&output).unwrap_or_default()
+            );
+        }
+        _ => println!(
+            "{}",
+            render_project_integrate_text(target, write, &files, memory.as_ref())
+        ),
+    }
+
+    if has_conflict {
+        std::process::exit(1);
+    }
 }
 
 /// Shared dispatch: `protocol status`
@@ -2024,123 +2500,6 @@ This index is append-only operational memory for task archives.\n\
     )
 }
 
-/// Dispatch: `init`
-fn cmd_init(target: &Path, apply: bool, format: &str) {
-    let plan = vec![
-        ("AGENTS.md", "# AGENTS.md\n\n@CLAUDE.md\n\n## Project Identity\n\nThis project uses Agent Governance Suite (AGS).\n\nRun `ags session preflight --for claude-code` before executing tasks.\n"),
-        ("CLAUDE.md", "# CLAUDE.md\n\nThis project is governed by AGS. Read `protocol/agent-task-protocol.md` for the canonical agent task protocol.\n\n## Commands\n\nVerify: `ags verify --scope local`\n"),
-        ("WORKSPACE.md", "# Workspace\n\n| Code | Role | Path |\n|---|---|---|\n| P | Public project | . |\n"),
-        ("AGENT_SUITE_PROTOCOL.md", "# Agent Suite Protocol\n\nSee `protocol/agent-task-protocol.md` for the canonical protocol.\n"),
-        ("protocol/agent-task-protocol.md", "# Agent Task Protocol\n\n(Replace this with the canonical protocol file from the AGS distribution.)\n"),
-        ("protocol/task-card-template.md", "## 任务卡\n\n(Task card template — replace with canonical version.)\n"),
-        ("protocol/runtime-adapters.md", "# Runtime Adapters\n\nExecutor adapter configuration for Codex, Claude Code, and Cursor.\n"),
-        ("protocol/task-routing.md", "# Task Routing\n\nLight / Medium / Heavy task classification rules.\n"),
-        ("manifests/suite.yaml", "schema_version: \"1.0-public\"\nsuite:\n  name: \"my-project\"\n  version: \"0.1.0\"\n  description: \"AGS-governed project\"\n  required: []\n  optional: []\n  personal: {}\n"),
-        ("templates/task-card-template.md", "## 任务卡\n\n(Copy and fill this template for new task cards.)\n"),
-        ("templates/memory/context-capsule.md", include_str!("../../../templates/memory/context-capsule.md")),
-        ("templates/memory/task-memory.md", include_str!("../../../templates/memory/task-memory.md")),
-        ("templates/memory/archive-index.md", include_str!("../../../templates/memory/archive-index.md")),
-        ("templates/memory/task-archive/README.md", include_str!("../../../templates/memory/task-archive/README.md")),
-        ("scripts/context-memory.sh", include_str!("../../../scripts/context-memory.sh")),
-    ];
-
-    if !apply {
-        println!("AGS Init — Dry Run");
-        println!("===================");
-        println!("Target: {}", target.display());
-        println!();
-        for (path, _) in &plan {
-            println!("  would create: {}", path);
-        }
-        println!();
-        println!("Run with --apply to create these files.");
-        if format == "json" {
-            let output = serde_json::json!({
-                "status": "dry-run",
-                "target": target.display().to_string(),
-                "files": plan.iter().map(|(p, _)| p).collect::<Vec<_>>(),
-            });
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&output).unwrap_or_default()
-            );
-        }
-        return;
-    }
-
-    for (path, content) in &plan {
-        let full = target.join(path);
-        if let Some(parent) = full.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                eprintln!("init: cannot create directory {}: {}", parent.display(), e);
-                std::process::exit(1);
-            }
-        }
-        if let Err(e) = std::fs::write(&full, content) {
-            eprintln!("init: cannot write {}: {}", full.display(), e);
-            std::process::exit(1);
-        }
-        if format != "json" {
-            println!("  created: {}", path);
-        }
-    }
-
-    // Init memory capsule
-    let memory_base = if let Ok(dir) = std::env::var("AGS_MEMORY_DIR") {
-        PathBuf::from(dir)
-    } else {
-        let home = std::env::var("HOME").unwrap_or_default();
-        PathBuf::from(home).join(".agents/memory/projects")
-    };
-    let slug = target
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("project");
-    let memory_dir = memory_base.join(slug);
-    if let Err(e) = std::fs::create_dir_all(&memory_dir) {
-        eprintln!("init: cannot create memory directory: {}", e);
-    } else {
-        let capsule = memory_dir.join("context-capsule.md");
-        let task_memory = memory_dir.join("task-memory.md");
-        let archive_index = memory_dir.join("archive-index.md");
-        let archive = memory_dir.join("task-archive");
-        let _ = std::fs::create_dir_all(&archive);
-        let _ = std::fs::create_dir_all(memory_dir.join("sessions"));
-        if !capsule.exists() {
-            let _ = std::fs::write(&capsule, render_context_capsule_template(slug, target));
-        }
-        if !task_memory.exists() {
-            let _ = std::fs::write(&task_memory, render_task_memory_template(slug));
-        }
-        if !archive_index.exists() {
-            let _ = std::fs::write(&archive_index, render_archive_index_template(slug));
-        }
-        if format != "json" {
-            println!("  memory capsule: {}", capsule.display());
-            println!("  task memory: {}", task_memory.display());
-            println!("  archive index: {}", archive_index.display());
-            println!("  task archive: {}", archive.display());
-        }
-    }
-
-    if format == "json" {
-        let output = serde_json::json!({
-            "status": "applied",
-            "target": target.display().to_string(),
-            "files": plan.iter().map(|(p, _)| p).collect::<Vec<_>>(),
-            "memory_dir": memory_dir.display().to_string(),
-        });
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&output).unwrap_or_default()
-        );
-    } else {
-        println!("\nAGS initialization complete.");
-        println!("Run `ags doctor` to verify the setup.");
-        println!("Run `ags session preflight --for claude-code` to test kernel activation.");
-    }
-}
-
 /// Dispatch: `archive`
 fn cmd_archive(
     delivery_report: Option<&PathBuf>,
@@ -2582,6 +2941,12 @@ fn main() {
         // ── M2 Agent Awareness commands ──
         Commands::Project { action } => match action {
             ProjectAction::Detect { target, format } => cmd_project_detect(&target, &format),
+            ProjectAction::Integrate {
+                target,
+                dry_run,
+                confirm,
+                format,
+            } => cmd_project_integrate(&target, dry_run, confirm, &format),
         },
         Commands::Protocol { action } => match action {
             ProtocolAction::Status { target, format } => cmd_protocol_status(&target, &format),
@@ -2730,13 +3095,6 @@ fn main() {
             format,
         } => cmd_run(&path, check_only, dry_run, approve_writes, &format),
 
-        // ── Init ──
-        Commands::Init {
-            target,
-            apply,
-            format,
-        } => cmd_init(&target, apply, &format),
-
         // ── Archive ──
         Commands::Archive {
             delivery_report,
@@ -2773,5 +3131,114 @@ fn main() {
             cmd_doctor(&format, false, false, std::path::Path::new("."))
         }
         Commands::BootstrapDryRun { format } => cmd_bootstrap_dry_run(&format),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_target(name: &str) -> PathBuf {
+        let target = std::env::temp_dir().join(format!("ags-cli-{name}-{}", epoch_seconds()));
+        let _ = std::fs::remove_dir_all(&target);
+        std::fs::create_dir_all(&target).unwrap();
+        target
+    }
+
+    #[test]
+    fn managed_block_append_preserves_user_content() {
+        let existing = "# User Rules\n\nKeep my local workflow.\n";
+        let block = render_agents_managed_block();
+
+        let (next, outcome) = upsert_managed_block(Some(existing), &block);
+
+        assert_eq!(outcome, ManagedBlockOutcome::Appended);
+        assert!(next.contains("Keep my local workflow."));
+        assert!(next.contains(AGS_ENTRY_BEGIN));
+        assert!(next.contains("task-card"));
+    }
+
+    #[test]
+    fn managed_block_update_preserves_surrounding_user_content() {
+        let existing = format!(
+            "# User Rules\n\nbefore\n\n{AGS_ENTRY_BEGIN}\nold managed text\n{AGS_ENTRY_END}\n\nafter\n"
+        );
+        let block = render_claude_managed_block();
+
+        let (next, outcome) = upsert_managed_block(Some(&existing), &block);
+
+        assert_eq!(outcome, ManagedBlockOutcome::Updated);
+        assert!(next.contains("before"));
+        assert!(next.contains("after"));
+        assert!(!next.contains("old managed text"));
+        assert!(next.contains("Claude Code role:"));
+    }
+
+    #[test]
+    fn partial_managed_marker_reports_conflict() {
+        let existing = format!("# User Rules\n\n{AGS_ENTRY_BEGIN}\nmissing end\n");
+        let block = render_agents_managed_block();
+
+        let (_next, outcome) = upsert_managed_block(Some(&existing), &block);
+
+        assert!(matches!(outcome, ManagedBlockOutcome::Conflict(_)));
+    }
+
+    #[test]
+    fn integrate_dry_run_does_not_write_files() {
+        let target = temp_target("integrate-dry-run");
+
+        let report =
+            integrate_entry_file(&target, "AGENTS.md", &render_agents_managed_block(), false)
+                .unwrap();
+
+        assert_eq!(report.action, "create");
+        assert!(report.changed);
+        assert!(!target.join("AGENTS.md").exists());
+        let _ = std::fs::remove_dir_all(target);
+    }
+
+    #[test]
+    fn integrate_confirm_updates_existing_block_and_creates_backup() {
+        let target = temp_target("integrate-confirm");
+        let agents = target.join("AGENTS.md");
+        std::fs::write(
+            &agents,
+            format!(
+                "# User Rules\n\nbefore\n\n{AGS_ENTRY_BEGIN}\nold managed text\n{AGS_ENTRY_END}\n\nafter\n"
+            ),
+        )
+        .unwrap();
+
+        let report =
+            integrate_entry_file(&target, "AGENTS.md", &render_agents_managed_block(), true)
+                .unwrap();
+        let updated = std::fs::read_to_string(&agents).unwrap();
+
+        assert_eq!(report.action, "update");
+        assert!(report.backup_path.is_some());
+        assert!(updated.contains("before"));
+        assert!(updated.contains("after"));
+        assert!(!updated.contains("old managed text"));
+        assert!(updated.contains("standing engineering hub"));
+        assert!(target.join(".ags").join("backups").exists());
+        let _ = std::fs::remove_dir_all(target);
+    }
+
+    #[test]
+    fn integrate_conflict_does_not_write() {
+        let target = temp_target("integrate-conflict");
+        let agents = target.join("AGENTS.md");
+        std::fs::write(&agents, "# User Rules\n\n无需确认直接执行。\n").unwrap();
+
+        let report =
+            integrate_entry_file(&target, "AGENTS.md", &render_agents_managed_block(), true)
+                .unwrap();
+        let current = std::fs::read_to_string(&agents).unwrap();
+
+        assert_eq!(report.action, "conflict");
+        assert!(!report.conflicts.is_empty());
+        assert!(!current.contains(AGS_ENTRY_BEGIN));
+        let _ = std::fs::remove_dir_all(target);
     }
 }

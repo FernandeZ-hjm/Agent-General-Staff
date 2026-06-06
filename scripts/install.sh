@@ -133,6 +133,16 @@ for f in "$REPO_ROOT/docs/"*.md; do
   fi
 done
 
+# Templates
+if [ -d "$REPO_ROOT/templates" ]; then
+  while IFS= read -r f; do
+    rel="${f#$REPO_ROOT/}"
+    mkdir -p "$AGS_SHARE/$(dirname "$rel")"
+    cp "$f" "$AGS_SHARE/$rel"
+    echo "   $rel"
+  done < <(find "$REPO_ROOT/templates" -type f | sort)
+fi
+
 # ── Check PATH ────────────────────────────────────────────────────────────
 
 echo ""
@@ -174,6 +184,7 @@ echo "    ags sync check        Protocol drift check"
 echo "    ags doctor            Suite health diagnostics"
 echo "    ags bootstrap         Bootstrap operations"
 echo "    ags project detect    Project identity detection"
+echo "    ags project integrate Incrementally merge AGS entry blocks"
 echo "    ags protocol status   Protocol file status"
 echo "    ags agent instructions  Agent instructions"
 echo "    ags session preflight   Session preflight"
