@@ -1,0 +1,22 @@
+[workspace]
+members = [
+    "crates/ags-cli",
+    "crates/task-card-validator",
+    "crates/workflow-sync-check",
+    "crates/suite-doctor",
+    "crates/bootstrap-dry-run",
+    "crates/execution-policy",
+    "crates/project-discovery",
+    "crates/ags-verify",
+    "crates/task-compiler",
+    "crates/runner",
+    "crates/receipt",
+    "crates/skill-governance",
+    "crates/capability-registry",
+]
+resolver = "2"
+
+[workspace.package]
+version = "2.0.0"
+edition = "2021"
+license = "LicenseRef-AGS-2.0"

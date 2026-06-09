@@ -1,0 +1,87 @@
+# EvoMap Runtime Hook Profiles — Portable Template
+#
+# Schema version: 1.0
+#
+# This is a PORTABLE INSTALLATION TEMPLATE. It defines the structure and
+# role policies for Claude Code executor and Codex/Cursor planner EvoMap
+# integration. Machine-specific values (token, proxy URL, hook file paths,
+# memory paths) are REPLACEMENT SLOTS — fill them during installation.
+#
+# This template is PUBLIC-SAFE: it contains no real token, node_secret,
+# API key, absolute home-directory path, task archive path, or memory
+# capsule path.
+#
+# Usage:
+#   1. Copy this file to manifests/runtime-profiles.yaml in the target repo.
+#   2. Fill evolver_proxy.proxy_url and evolver_proxy.auth_token_file from
+#      the target machine's EvoMap installation.
+#   3. Set hook file paths relative to the target repo root.
+#   4. To enable planner pre-solution recall, change
+#      profiles.planner.enabled_by_default to true.
+
+schema_version: "1.0"
+
+# ── EvoMap Proxy Configuration ──────────────────────────────────────────────
+# Fill these values during installation from the target machine's
+# ~/.evolver/settings.json.  The proxy_url field maps to proxy.url in
+# the settings file.  The auth_token_file points to a path on the
+# target machine whose contents are the Bearer token.
+evolver_proxy:
+  # REPLACE: set to the proxy.url value from ~/.evolver/settings.json
+  proxy_url: "http://127.0.0.1:PORT"
+  # REPLACE: path to a file containing the Bearer token (one line, no trailing newline).
+  # The file itself should be readable only by the user (mode 0600).
+  auth_token_file: "path/to/evolver-token.txt"
+  # Health check endpoint appended to proxy_url (usually /proxy/status).
+  health_endpoint: "/proxy/status"
+
+# ── Role Profiles ───────────────────────────────────────────────────────────
+
+profiles:
+  claude-code-executor:
+    role: executor
+    description: >
+      Claude Code executes bounded task cards. EvoMap participation is
+      limited to post-task method capture (Stop hook only). SessionStart,
+      UserPromptSubmit recall, and PostToolUse signal detection are
+      explicitly denied — they belong to the planner role, not the executor.
+    evolver_hooks:
+      Stop:
+        # REPLACE: set to the actual hook script path in the target repo.
+        # Default recommendation: .claude/hooks/evolver-session-end.js
+        - command: "node .claude/hooks/evolver-session-end.js"
+          timeout: 8
+          evidence_priority:
+            - delivery_report
+            - receipt
+            - verification_result
+            - git_diff_signal
+            - fallback_observation
+    denies:
+      - SessionStart
+      - UserPromptSubmit
+      - PostToolUse
+
+  planner:
+    role: planner
+    description: >
+      Codex/Cursor may use EvoMap for pre-solution advisory recall.
+      Recall is advisory only — it must not decide task level,
+      permission mode, review gate, or verification gate.
+      Not enabled by default; requires explicit opt-in.
+    evolver_recall: advisory_only
+    enabled_by_default: false
+    # When enabled, the planner may use these optional hooks:
+    #   SessionStart       — pre-solution advisory recall
+    #   UserPromptSubmit   — task signal capture for recall input
+    #   PostToolUse        — signal detection for method improvement
+    optional_hooks:
+      SessionStart:
+        description: "Pre-solution advisory recall. Enabled only when evolver_recall is active."
+        advisory_only: true
+      UserPromptSubmit:
+        description: "Task signal capture for recall input. Must not read secrets or full task archives."
+        advisory_only: true
+      PostToolUse:
+        description: "Signal detection for method improvement. Advisory only — does not change task classification."
+        advisory_only: true

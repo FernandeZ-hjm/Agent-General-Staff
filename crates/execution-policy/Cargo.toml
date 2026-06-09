@@ -1,0 +1,10 @@
+[package]
+name = "execution-policy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Execution-policy resolver — resolves how a validated task card should execute"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

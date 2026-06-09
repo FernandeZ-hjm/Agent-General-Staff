@@ -1,0 +1,12 @@
+[package]
+name = "runner"
+version.workspace = true
+edition.workspace = true
+description = "AGS runner — gate-first task card execution planner"
+
+[dependencies]
+task-card-validator = { path = "../task-card-validator" }
+execution-policy = { path = "../execution-policy" }
+receipt = { path = "../receipt" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

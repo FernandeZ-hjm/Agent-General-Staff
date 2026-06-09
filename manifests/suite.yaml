@@ -1,0 +1,65 @@
+# Suite Manifest — Agent Governance Suite public edition
+#
+# Schema version: 2.0-skill
+#
+# Full-blood public governance runtime.  Includes task-card validation,
+# compilation, execution policy resolution, gate check, protocol drift
+# checking, suite health diagnostics, bootstrap, project discovery,
+# session preflight, scoped verification, runner, receipt/compliance,
+# skill governance, capability registry, memory capsule, and stop-hook
+# archive.
+#
+# Third-party skills are optional and NEVER auto-installed.
+# Use `ags skill install --skill <name> --confirm` to install.
+# See docs/skill-recommendations.md for recommendations.
+
+schema_version: "2.0-skill"
+suite:
+  name: "agent-governance-suite"
+  version: "2.0.0-public"
+  description: >
+    Agent Governance Suite 2.0 public edition — Rust-native governance
+    kernel and CLI for multi-agent engineering workflows. All core governance
+    capabilities included. Optional third-party development skills available
+    for confirmed install only.
+  required: []
+  optional:
+    # ── Auto-trigger skills (activate automatically) ──
+    - name: auto-brainstorm
+      source: "https://github.com/anthropics/skills/tree/main/auto-brainstorm"
+      version: "latest"
+      description: "Auto brainstorms approach options before plan mode"
+    - name: auto-debug
+      source: "https://github.com/anthropics/skills/tree/main/auto-debug"
+      version: "latest"
+      description: "Auto diagnoses errors and exceptions"
+    - name: auto-verify
+      source: "https://github.com/anthropics/skills/tree/main/auto-verify"
+      version: "latest"
+      description: "Auto verifies completion claims"
+    # ── Manual skills ──
+    - name: tdd
+      source: "https://github.com/anthropics/skills/tree/main/tdd"
+      version: "latest"
+      description: "Test-driven development workflow"
+    - name: diagnose
+      source: "https://github.com/anthropics/skills/tree/main/diagnose"
+      version: "latest"
+      description: "Root cause diagnosis with evidence chain"
+    - name: verification-before-completion
+      source: "https://github.com/anthropics/skills/tree/main/verification-before-completion"
+      version: "latest"
+      description: "Verification gate before claiming completion"
+    - name: webapp-testing
+      source: "https://github.com/anthropics/skills/tree/main/webapp-testing"
+      version: "latest"
+      description: "Playwright-based web application testing"
+    - name: caveman-review
+      source: "https://github.com/anthropics/skills/tree/main/caveman-review"
+      version: "latest"
+      description: "Short actionable code review feedback"
+    - name: caveman-commit
+      source: "https://github.com/anthropics/skills/tree/main/caveman-commit"
+      version: "latest"
+      description: "Concise Conventional Commit message generation"
+  personal: {}

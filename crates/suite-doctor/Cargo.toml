@@ -1,0 +1,10 @@
+[package]
+name = "suite-doctor"
+version.workspace = true
+edition.workspace = true
+description = "Suite doctor — shared diagnostics core with HealthReport / Finding / Severity types"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"

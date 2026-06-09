@@ -1,0 +1,10 @@
+# Skill Adoption Log — AGS public edition
+#
+# Append-only audit log recording skill adoption decisions.
+# Each entry records a skill_name, decision (adopted/rejected), and timestamp.
+#
+# Schema version: 2.0-skill
+# Never delete or reorder entries — this is an audit trail.
+
+schema_version: "2.0-skill"
+entries: []

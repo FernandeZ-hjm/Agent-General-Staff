@@ -1,0 +1,15 @@
+/target/
+/.codegraph/
+**/*.rs.bk
+
+# Local agent/user state must not be shipped in public-full sanitized releases.
+/.agents/
+/.codex/
+/.claude/local/
+/.evolver/
+/global-skills/
+/skill-packs/
+/task-archive/
+/docs/evomap/
+*.receipt.json
+*.delivery-report.md

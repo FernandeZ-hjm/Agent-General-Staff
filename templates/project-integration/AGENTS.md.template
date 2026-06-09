@@ -1,0 +1,28 @@
+# AGENTS.md
+
+Keep project-specific agent instructions outside the AGS managed block. Run
+`ags project integrate --dry-run` to preview the block and
+`ags project integrate --confirm` to merge or update it.
+
+<!-- AGS:BEGIN managed-entry v2 -->
+## Agent Governance Suite
+
+This project is governed by AGS. Preserve project-specific instructions above
+and below this managed block; only AGS should update the block itself.
+
+Before development, debugging, review, commit, or task-card generation:
+- Run or equivalently complete `ags session preflight --for <codex|claude-code|cursor>`.
+- Read `CLAUDE.md` and the canonical protocol files under `protocol/`.
+- Treat AGS as a standing engineering hub, not a CLI toolbox the user must invoke manually.
+- Complete ambient preflight and solution formation before any Light / Medium / Heavy routing.
+- Do not treat raw user requests as executable task cards.
+- `方案 OK` only ends the solution phase; wait for an explicit task-card instruction before routing or calling `ags task compile --task-card-requested`.
+- Preserve user-owned entry-file rules; if they conflict with this block, stop and report the conflict.
+
+Canonical references:
+- `AGENT_SUITE_PROTOCOL.md`
+- `protocol/agent-task-protocol.md`
+- `protocol/task-routing.md`
+- `protocol/runtime-adapters.md`
+- `protocol/task-card-template.md`
+<!-- AGS:END managed-entry v2 -->
