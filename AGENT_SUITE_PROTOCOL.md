@@ -21,7 +21,7 @@ Release line: **Agent Governance Suite 2.0 Public Edition**.
 - `ags bootstrap --dry-run`（别名：`bootstrap-dry-run`） — 引导干运行模拟
 - `ags project detect` / `ags protocol status` / `ags agent instructions` — M2 Agent 感知能力（只读）
 - `ags project integrate --dry-run|--confirm` — 增量融合 AGS 托管入口块到用户项目入口文件，不覆盖用户自有内容
-- `ags session preflight --for codex|claude-code|cursor` — 聚合 Agent 唤醒检查（kernel activation 入口，不依赖 skill governance）
+- `ags session preflight --for codex|claude-code|cursor` — 聚合 Agent 唤醒检查（CLI 降级/独立检查入口，不依赖 skill governance）
 - `ags verify --scope local|full|release` — 结构化验证入口，提供稳定 CheckItem 模型和 text/json 双格式报告
 
 AGS 定位为开发相关工作中的**常驻工程中枢**，不是需要用户单独唤出的 CLI 工具箱。
@@ -166,16 +166,17 @@ ags agent instructions --for codex
 ags agent instructions --for claude-code
 ags agent instructions --for cursor
 
-# Kernel activation — 聚合唤醒检查（组合以上所有能力）
+# Kernel activation — CLI 降级路径（MCP 不可用时使用）
 ags session preflight --for codex
 ags session preflight --for claude-code --format json
 ags session preflight --for cursor --target /path/to/repo
 ```
 
-`ags session preflight` 是默认 kernel activation 唤醒入口。它将 project detect、
-protocol status、agent instructions 聚合为单一只读报告，包含 memory capsule/task-memory
-路径、stop conditions、warnings、failures 和下一步建议。它不依赖 skill governance —
-核心 kernel activation 独立于第三方 skill governance。
+当宿主可调用 AGS MCP 时，`ags_preflight` 是默认 kernel activation 唤醒入口。
+`ags session preflight` 是 MCP 不可用时的 CLI 降级路径。两条路径都将 project
+detect、protocol status、agent instructions 聚合为单一只读报告，包含 memory
+capsule/task-memory 路径、stop conditions、warnings、failures 和下一步建议。
+核心 kernel activation 不依赖 skill governance，且独立于第三方 skill governance。
 
 M2 awareness 命令（detect/status/instructions/preflight）均为只读；不安装 hook、
 不启动 runner、不执行任务。`project integrate` 默认 dry-run，只有 `--confirm`

@@ -238,7 +238,7 @@ ags receipt verify examples/receipts/sample-receipt.json
 | `$ags-setup` / `$ags-init` | Codex 可见入口技能，要求先调用 AGS MCP `ags_preflight` |
 | `ags init` | 对用户项目执行 AGS managed-block 接入 |
 | `ags mcp serve` | 启动 AGS MCP stdio 服务 |
-| `ags session preflight` | 执行任务前项目预检 |
+| `ags session preflight` | MCP 不可用时的 CLI 项目预检 / 独立检查 |
 | `ags task validate` | 校验任务卡格式与语义 |
 | `ags policy resolve` | 解析任务执行策略 |
 | `ags policy check` | 校验任务卡并输出 gate 结果 |
@@ -251,7 +251,7 @@ ags receipt verify examples/receipts/sample-receipt.json
 ## 了解更多
 
 - [docs/philosophy.md](docs/philosophy.md) — 五条宪章详解，以及这套工程秩序背后的控制论思路
-- [docs/architecture.md](docs/architecture.md) — AGS 架构：生命周期、crate 依赖图、执行链路、记忆胶囊机制
+- [docs/architecture.md](docs/architecture.md) — AGS 架构：生命周期、AGS MCP 初始化门禁、crate 依赖图、执行链路、记忆胶囊机制
 - [examples/](examples/) — 公开安全样例：demo 项目、任务卡、输出样例、合成 receipt
 - [evals/](evals/) — 可复现评估实验：越权拦截、无验证交付、方案即执行三大风险场景
 - [COMMERCIAL.md](COMMERCIAL.md) — MIT 许可证下的商业使用、署名和品牌说明

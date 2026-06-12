@@ -2,7 +2,8 @@
 
 This document describes the internal architecture of Agent Governance Suite 2.0
 Public Edition. It covers the lifecycle phases, the Rust CLI crate dependency
-graph, the task-card-to-execution pipeline, and the memory capsule mechanism.
+graph, the AGS MCP host initialization adapter, the task-card-to-execution
+pipeline, and the memory capsule mechanism.
 
 ## 1. AGS Lifecycle
 
@@ -12,8 +13,11 @@ the next — no phase may be skipped or executed out of order.
 ```mermaid
 flowchart TD
     A[User Request] --> B[1. Ambient Preflight]
-    B --> B1[ags session preflight]
+    B --> B0{AGS MCP available?}
+    B0 -->|Yes| B1[ags_preflight via AGS MCP]
+    B0 -->|No| B1F[CLI fallback: ags session preflight]
     B1 --> B2[Read context capsule + task memory]
+    B1F --> B2
     B2 --> B3[Check git status]
     B3 --> B4[Load protocol files]
     B4 --> C[2. Solution Phase]
@@ -60,10 +64,15 @@ flowchart TD
 
 | Gate | What It Blocks | Hard/Soft |
 |---|---|---|
+| AGS MCP initialization gate | AGS scenarios before `ags_preflight` completes | Hard, with CLI fallback only if MCP is unavailable |
 | Task-card instruction gate | Routing before explicit "生成任务卡" | Hard |
 | Task-card validation | Execution of invalid task cards | Hard |
 | Policy resolution | Execution with wrong permission/parallelism | Soft (downgrades, never rejects) |
 | Verification gate | Delivery claims without evidence | Per task card |
+
+`ags_preflight` is the preferred kernel activation entry when AGS MCP is
+available. `ags session preflight` is the equivalent CLI fallback, not the
+primary path for MCP-capable hosts.
 
 ## 2. Rust CLI Crate Architecture
 
@@ -85,6 +94,7 @@ graph TD
     B --> C10[skill-governance<br/>Skill Management]
     B --> C11[capability-registry<br/>Capability Detection]
     B --> C12[runner<br/>Runner Launch]
+    B --> C13[ags-mcp<br/>Host Initialization Adapter]
 
     C2 --> C1
     C2 --> C8
@@ -92,6 +102,9 @@ graph TD
     C6 --> C5
     C9 --> C1
     C10 --> C11
+    C13 --> C7
+    C13 --> C1
+    C13 --> C6
 
     style A fill:#1565c0,color:#fff
     style B fill:#1976d2,color:#fff
@@ -112,14 +125,54 @@ graph TD
 | `bootstrap-dry-run` | Simulate project bootstrap without writing | Users, `ags bootstrap` |
 | `workflow-sync-check` | Multi-target protocol drift detection | `ags verify --scope full` |
 | `ags-verify` | Scoped verification orchestrator (`local`/`full`/`release`) | Users, CI, preflight |
-| `project-discovery` | Detect project identity and AGS integration | `ags session preflight` |
+| `project-discovery` | Detect project identity and AGS integration | `ags_preflight`, `ags session preflight` |
 | `receipt` | Receipt generation, verification, compliance check | Runner, verification gate |
 | `task-compiler` | Compile execution contract into canonical task card | Codex, Cursor |
 | `skill-governance` | Skill scan, check, propose, install, adopt, ignore | Users |
 | `capability-registry` | Detect available capabilities (MCP, tools, skills) | `skill-governance` |
 | `runner` | Launch executor with resolved policy | `scripts/run-task-card.sh` |
+| `ags-mcp` | Expose read-only AGS governance tools/resources/prompts over stdio MCP; requires `ags_preflight` first | MCP hosts: Codex, Claude Code, Cursor, WorkBuddy |
 
-## 3. Task-Card to Execution Pipeline
+## 3. AGS MCP Host Initialization Adapter
+
+AGS MCP is the suite's host initialization adapter. It is not a governed
+third-party MCP and should not be listed with governed external MCPs. It exposes
+the AGS governance kernel over stdio so MCP-capable hosts can call
+`ags_preflight` before any other AGS action.
+
+```mermaid
+flowchart LR
+    HOST[MCP Host<br/>Codex / Claude Code / Cursor / WorkBuddy]
+    AGSMCP[AGS MCP<br/>ags mcp serve --transport stdio]
+    PREFLIGHT[ags_preflight<br/>mandatory first call]
+    PHASE[ags_solution_check<br/>phase gate]
+    TOOLS[Read-only AGS tools<br/>agent instructions / protocol status / task validate / verify local]
+    CLI[CLI fallback<br/>ags session preflight]
+    EXT[Optional external MCP<br/>parallel advisory recall]
+
+    HOST --> AGSMCP
+    AGSMCP --> PREFLIGHT
+    PREFLIGHT --> PHASE
+    PREFLIGHT --> TOOLS
+    HOST -. MCP unavailable .-> CLI
+    HOST -. optional parallel recall .-> EXT
+
+    style AGSMCP fill:#1565c0,color:#fff
+    style PREFLIGHT fill:#ffeb3b,stroke:#f57f17
+    style CLI fill:#e0e0e0
+    style EXT fill:#e8f5e9
+```
+
+**Boundary rules:**
+
+- AGS MCP is the mandatory governance interface for AGS scenarios when present.
+- `ags_preflight` must be the first AGS MCP tool call.
+- AGS MCP does not proxy, wrap, install, or require external advisory MCPs.
+  Hosts call AGS MCP and any optional advisory MCP separately when both are
+  available.
+- CLI preflight remains a supported fallback when the host cannot call AGS MCP.
+
+## 4. Task-Card to Execution Pipeline
 
 This diagram shows the data flow from a raw task card through validation, policy
 resolution, and execution to the final receipt.
@@ -192,7 +245,7 @@ policy, NOT synthesize args from raw task-card fields. This ensures the M5/M6
 writability gate (read-only/plan-only cards never produce write-type launch args)
 cannot be bypassed.
 
-## 4. Memory Capsule & Task Archive Mechanism
+## 5. Memory Capsule & Task Archive Mechanism
 
 AGS provides durable project memory through a layered mechanism that grows with
 project usage. The memory system is separate from the AGS public distribution —
@@ -210,7 +263,7 @@ flowchart TD
     end
 
     subgraph "Session Entry"
-        SP[ags session preflight]
+        SP[ags_preflight<br/>or CLI preflight fallback]
         SP --> CC
         SP --> TM
     end
@@ -229,7 +282,7 @@ flowchart TD
 
     subgraph "Next Session"
         NS[Next agent session]
-        NS --> SP2[ags session preflight]
+        NS --> SP2[ags_preflight<br/>or CLI preflight fallback]
         SP2 --> CC2[Read context-capsule.md]
         SP2 --> TM2[Read task-memory.md]
         TM2 --> TA2[Read recent task archives]

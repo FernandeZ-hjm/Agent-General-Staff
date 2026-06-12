@@ -1,8 +1,8 @@
 # Agent Governance Suite 2.0 — Public Edition Workspace
 
 This is the **public distributable edition** of the Agent Governance Suite.
-It contains the public-safe Rust `ags` CLI core, canonical protocols, templates,
-and documentation.
+It contains the public-safe Rust `ags` CLI core, AGS MCP host initialization
+adapter, canonical protocols, templates, and documentation.
 
 ## Default: DIY
 
@@ -53,6 +53,7 @@ scripts/                    # Public-safe scripts
 
 crates/                     # Rust crates (public-safe core)
   ags-cli/                  # Unified CLI entry point
+  ags-mcp/                  # AGS MCP host initialization adapter
   task-card-validator/      # Task-card validation
   execution-policy/         # Execution policy resolver
   suite-doctor/             # Suite health diagnostics
@@ -60,6 +61,11 @@ crates/                     # Rust crates (public-safe core)
   workflow-sync-check/      # Protocol drift checker
   ags-verify/               # Scoped verification
   project-discovery/        # Project/agent detection
+  receipt/                  # Execution receipt generation and verification
+  runner/                   # Policy-resolved executor launch
+  task-compiler/            # Execution contract to task-card compiler
+  skill-governance/         # Skill recommendation and governance
+  capability-registry/      # Local capability detection
 
 docs/                       # Documentation
   skill-recommendations.md

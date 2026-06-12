@@ -238,7 +238,7 @@ More examples at [examples/](examples/). Eval scenarios at [evals/](evals/).
 | `$ags-setup` / `$ags-init` | Codex-visible entry skills; require calling AGS MCP `ags_preflight` first |
 | `ags init` | Integrate AGS managed blocks into a target project |
 | `ags mcp serve` | Start the AGS MCP stdio server |
-| `ags session preflight` | Run project preflight before a task |
+| `ags session preflight` | CLI project preflight fallback / standalone check when MCP is unavailable |
 | `ags task validate` | Validate task-card format and semantics |
 | `ags policy resolve` | Resolve execution policy |
 | `ags policy check` | Validate a task card and output gate result |
@@ -251,7 +251,7 @@ More examples at [examples/](examples/). Eval scenarios at [evals/](evals/).
 ## Learn More
 
 - [docs/philosophy.en.md](docs/philosophy.en.md) — the five articles in depth, and the control-theory idea behind this engineering order
-- [docs/architecture.md](docs/architecture.md) — AGS architecture: lifecycle, crate dependency graph, execution pipeline, memory capsule mechanism
+- [docs/architecture.md](docs/architecture.md) — AGS architecture: lifecycle, AGS MCP initialization gate, crate dependency graph, execution pipeline, memory capsule mechanism
 - [examples/](examples/) — Public-safe examples: demo project, task cards, sample outputs, synthetic receipts
 - [evals/](evals/) — Reproducible experiment scenarios: authority escalation, unverified delivery, solution-as-execution
 - [COMMERCIAL.md](COMMERCIAL.md) — Commercial use, attribution, and brand notes under the MIT License
