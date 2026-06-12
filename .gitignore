@@ -13,6 +13,7 @@
 /docs/evomap/
 *.receipt.json
 *.delivery-report.md
+config/agent-project-profile.yaml
 
 # AGS/GEP local runtime data
 assets/gep/
