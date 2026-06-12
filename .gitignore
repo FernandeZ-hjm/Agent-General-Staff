@@ -11,6 +11,7 @@
 /skill-packs/
 /task-archive/
 /docs/evomap/
+/manifests/templates/
 *.receipt.json
 *.delivery-report.md
 config/agent-project-profile.yaml

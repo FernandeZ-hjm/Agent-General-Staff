@@ -47,7 +47,9 @@ pub const FULL_MANIFEST: SyncManifest = SyncManifest {
 /// Manifest for public-full sanitized targets.
 ///
 /// Public-full includes the Rust AGS runtime and governance framework, but ships
-/// only sanitized templates and empty user-owned memory/audit skeletons.
+/// only public-safe templates and empty user-owned memory/audit skeletons.
+/// Private runtime overlays, including EvoMap hook/profile templates, are local
+/// operator state and are intentionally excluded.
 pub const PUBLIC_MANIFEST: SyncManifest = SyncManifest {
     required_files: &[
         "AGENTS.md",
@@ -78,10 +80,6 @@ pub const PUBLIC_MANIFEST: SyncManifest = SyncManifest {
         "scripts/stop-archive-hook.sh",
         "manifests/suite.yaml",
         "manifests/skill-recommendations.yaml",
-        "manifests/templates/runtime-profiles.template.yaml",
-        "manifests/templates/hooks/claude-code-executor-stop.template.js",
-        "manifests/templates/hooks/codex-planner-recall.template.json",
-        "manifests/templates/README.md",
         "governance/skill-sync.md",
         "governance/skill-adoption-log.yaml",
         "governance/skill-ignore-list.yaml",
@@ -267,7 +265,7 @@ mod tests {
     }
 
     #[test]
-    fn public_manifest_includes_full_runtime_and_templates() {
+    fn public_manifest_includes_public_runtime_without_private_overlays() {
         let public: BTreeSet<_> = PUBLIC_MANIFEST.required_files.iter().copied().collect();
         for path in [
             "AGENTS.md",
@@ -282,12 +280,19 @@ mod tests {
             "scripts/stop-archive-hook.sh",
             "governance/skill-adoption-log.yaml",
             "governance/skill-ignore-list.yaml",
+        ] {
+            assert!(public.contains(path), "public manifest missing {path}");
+        }
+        for path in [
             "manifests/templates/runtime-profiles.template.yaml",
             "manifests/templates/hooks/claude-code-executor-stop.template.js",
             "manifests/templates/hooks/codex-planner-recall.template.json",
             "manifests/templates/README.md",
         ] {
-            assert!(public.contains(path), "public manifest missing {path}");
+            assert!(
+                !public.contains(path),
+                "public manifest must not ship private runtime overlay {path}"
+            );
         }
     }
 

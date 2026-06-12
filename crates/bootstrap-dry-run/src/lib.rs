@@ -207,42 +207,6 @@ pub fn plan(source_repo: &Path, target: &Path) -> BootstrapPlan {
         }
     }
 
-    // ── Portable runtime profile / hook templates (public-safe) ──────────
-    // These templates are installation skeletons — they contain no real
-    // token, node_secret, API key, absolute $HOME path, task archive path,
-    // or memory capsule path.  They can safely enter public and bootstrap
-    // payloads.
-    let template_files: &[(&str, &str)] = &[
-        (
-            "manifests/templates/runtime-profiles.template.yaml",
-            "EvoMap runtime profiles (executor + planner) portable template",
-        ),
-        (
-            "manifests/templates/hooks/claude-code-executor-stop.template.js",
-            "Claude Code Stop hook for post-task method capture",
-        ),
-        (
-            "manifests/templates/hooks/codex-planner-recall.template.json",
-            "Codex/Cursor planner pre-solution advisory recall hook template",
-        ),
-        (
-            "manifests/templates/README.md",
-            "Template installation and migration boundary documentation",
-        ),
-    ];
-
-    for (rel_path, desc) in template_files {
-        let src = source_repo.join(rel_path);
-        let dst = target.join(rel_path);
-        if src.exists() {
-            actions.push(BootstrapAction {
-                action: "copy-template".into(),
-                path: dst.display().to_string(),
-                description: format!("copy {rel_path}: {desc}"),
-            });
-        }
-    }
-
     // ── Bootstrap log (generated, not copied) ───────────────────────────
     actions.push(BootstrapAction {
         action: "create".into(),
@@ -644,34 +608,21 @@ mod tests {
             "should include bootstrap log"
         );
 
-        // Must include template file actions
+        // Private runtime overlays must stay outside the public bootstrap payload.
         let template_actions: Vec<_> = plan
             .actions
             .iter()
             .filter(|a| a.action == "copy-template")
             .collect();
         assert!(
-            template_actions.len() >= 3,
-            "should include at least 3 template actions (profile, js hook, json hook), got {}",
+            template_actions.is_empty(),
+            "public bootstrap payload must not include private runtime template actions, got {}",
             template_actions.len()
         );
-        // All template action paths must be under manifests/templates/
-        for a in &template_actions {
-            assert!(
-                a.path.contains("manifests/templates/"),
-                "template action path must be under manifests/templates/: {}",
-                a.path
-            );
-            assert_eq!(
-                a.action, "copy-template",
-                "template action must use 'copy-template', got '{}' for {}",
-                a.action, a.path
-            );
-        }
     }
 
     #[test]
-    fn plan_template_actions_are_public_safe() {
+    fn plan_does_not_publish_private_runtime_templates() {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
@@ -686,21 +637,10 @@ mod tests {
             .filter(|a| a.action == "copy-template")
             .collect();
 
-        for a in &template_actions {
-            // Template action descriptions must not contain real paths with /Users/
-            assert!(
-                !a.description.contains("/Users/"),
-                "template description must not leak /Users/ path: {}",
-                a.description
-            );
-            // Template action paths are target paths (not source paths)
-            // but they should still be relative, not absolute home dir paths
-            assert!(
-                !a.path.starts_with("/Users/"),
-                "template path must not be absolute /Users/ path: {}",
-                a.path
-            );
-        }
+        assert!(
+            template_actions.is_empty(),
+            "public bootstrap payload must not copy manifests/templates private overlay files"
+        );
     }
 
     #[test]
