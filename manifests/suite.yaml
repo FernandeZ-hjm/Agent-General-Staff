@@ -1,4 +1,4 @@
-# Suite Manifest — Agent Governance Suite public edition
+# Suite Manifest — Agent General Staff public edition
 #
 # Schema version: 2.0-skill
 #
@@ -15,10 +15,10 @@
 
 schema_version: "2.0-skill"
 suite:
-  name: "agent-governance-suite"
-  version: "2.0.0-public"
+  name: "agent-general-staff"
+  version: "2.4.0-public"
   description: >
-    Agent Governance Suite 2.0 public edition — Rust-native governance
+    Agent General Staff 2.4 public edition — Rust-native governance
     kernel and CLI for multi-agent engineering workflows. All core governance
     capabilities included. Optional third-party development skills available
     for confirmed install only.

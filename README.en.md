@@ -1,47 +1,56 @@
-# Agent Governance Suite (AGS)
+# Agent General Staff (AGS)
 
-[![CI](https://github.com/FernandeZ-hjm/Agent-Governance-Suite/actions/workflows/ci.yml/badge.svg)](https://github.com/FernandeZ-hjm/Agent-Governance-Suite/actions/workflows/ci.yml)
+[![CI](https://github.com/FernandeZ-hjm/Agent-General-Staff/actions/workflows/ci.yml/badge.svg)](https://github.com/FernandeZ-hjm/Agent-General-Staff/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 [中文](README.md) | [English](README.en.md)
 
-**A governance-kernel CLI for multi-agent engineering workflows.**
+**A security gate for a workforce of increasingly capable — and increasingly cheap — AI programmers.**
 
-AGS is a local-first multi-agent engineering governance CLI. It brings local `skills`, hooks, MCP, task memory, and different AI agent frameworks such as Codex, Claude Code, and Cursor into one verifiable, auditable, and continuously collaborative development system.
+AGS (Agent General Staff) is a local-first multi-agent engineering governance kernel. It ships a Rust-native `ags` CLI, an `ags mcp serve` kernel bridge, a `/ags` entry for Claude Code, and Codex-visible command skills, bringing local `skills`, hooks, MCP, task memory, and different AI agent frameworks — Codex, Claude Code, Cursor — into one verifiable, auditable, continuously collaborative development system.
 
-AGS is not a new agent, and it is not just a collection of tools. It solves the governance problem that appears when multiple agents participate in real project development: who is allowed to do what, when an agent must stop, how tasks are handed off, how execution is verified, and how context continues across tasks.
+It is not another agent, and it is not a bundle of tools. It solves the governance problem that shows up when several agents work on a real project together: who may do what, when an agent must stop, how tasks are handed off, how execution is verified, and how context survives across tasks.
 
-## Why AGS Is Needed
+## Origin: I Just Wanted to Manage a Few Plugins
 
-AI cannot understand and execute human intent with perfect fidelity. Even strong models drift in requirement interpretation, context selection, implementation details, and risk judgment. A single agent also tends to develop its own coding style and decision habits, so it naturally needs review, inspection, and verification from other agents or human developers.
+I'm new to AI coding. Like a lot of people, I got hooked fast. Someone on social media shows off a killer skill, an MCP server, a hook, a pile of config files — and I want to install all of it. A code-review plugin today, a task-memory system tomorrow, an automation hook the day after, as if not installing it meant falling behind.
 
-In real projects, that drift becomes concrete. An agent may edit the wrong file, exceed its authority, skip verification, treat a solution discussion as an execution command, or expand task scope without confirmation.
+Then the plugins pile up, and the trouble starts. Who manages versions? How do I update a third-party skill without breaking a local setup that already works? Do the MCP servers, hooks, project rules, and agent configs fight each other? Do they fire at the right moment, or does it all come down to the model's mood that day? I only wanted a small script to keep my local plugins in order. A month later, it had become my first open-source project: Agent General Staff, or AGS.
 
-AGS adds engineering boundaries before agent execution. Through task cards, permission policies, execution gates, stop conditions, and verification flows, it turns "what the AI wants to do" into "what the project allows it to do."
+What makes it stranger: I later found out it collides, by name, with a Microsoft open-source project called AGT ([Agent Governance Toolkit](https://github.com/microsoft/agent-governance-toolkit)). I panicked for a second, then let it go. AGT is a gate at execution time — it intercepts an agent's tool calls, API calls, and file operations before they land. AGS governs the whole engineering lifecycle of agent collaboration: preflight, solution, task card, execution policy, verification, receipt, memory. The names nearly collide, but what we'd really collided with was the same question of the era: as AI programmers get more capable, how do humans stay in control?
 
-This has another practical value: it reduces the need for top-tier models to participate in every step of development.
+So AGS wasn't designed at a whiteboard. It's more like a defense system my body grew after AI coding beat me up a few times in a row. Every beating, I added another gate. Stack the gates together, and you get AGS.
 
-Top-tier models matter, but real development should not put every phase on the most expensive model. Domestic models such as GLM, DeepSeek, and MiMo, combined with AGS task decomposition, execution boundaries, verification gates, and an engineering entry point such as Codex or Cursor, can approach much of the effect of high-end-model full-cycle development in many low- and medium-risk tasks at a lower cost.
+## Why AGS Exists
 
-The point is not to make ordinary models pretend to be top-tier models. The point is to put tasks into a clearer engineering structure. Models guess less, improvise less, and collaborate more through task cards, protocols, verification, and memory. Model capability will fluctuate; the engineering process has to carry part of the stability burden.
+I used to think the biggest problem in AI coding was that models weren't smart enough. They are. The problem is the opposite: they're too smart, too eager, too willing to act.
 
-## The Core Problems AGS Solves
+Ask it to change one function, and it refactors half a module. Ask it for a read-only audit, and halfway through it wants to fix things for you. Say "this plan looks good," and it hears "go." Ask it to finish a task, and it tells you "done" — with no tests, no evidence, no record you can look back on. It's not that it can't do the work. It does the work too well, well enough to make you nervous.
 
-Local development environments often accumulate third-party GitHub skills, custom local skills, hooks, MCP configuration, and project rules. Different agent frameworks manage skills, configuration files, and project context in different ways.
+Each of those potholes became a specific gate in AGS:
 
-As a result, the same development capability is easily split across multiple tools. Codex has one configuration, Claude Code has another, and Cursor has another set of rules. This raises maintenance cost, makes migration harder, and can pollute local environments.
+| The pothole I hit | The gate AGS grew |
+|---|---|
+| A read-only task escalated into editing code | Execution policy resolution + gate |
+| "Done" — with nothing verified | Verification gate + execution receipt |
+| Amnesia in a new chat, the same pothole hit twice | Memory capsule |
+| Skills, hooks, and MCP configs polluting each other | Unified skill governance |
 
-AGS provides a unified skill-governance layer. It does not try to replace each agent framework. Instead, it centralizes skill recommendations, install confirmation, project rules, execution protocols, and safety boundaries. Users can update third-party skills incrementally while keeping their local customizations and existing development environment intact.
+One level down, this is a control problem. A large model is a high-gain component that drifts — capable one moment, off the next, and you can't make it stop drifting. What engineering can do is not build a model that never errs, but wrap a loop around it: let it guess less, improvise less, and collaborate through task cards, protocols, verification, and memory. Model capability fluctuates; the engineering process carries the stability.
 
-Another problem is task memory.
+And the rule that matters most: AGS does not let an agent jump from a single user sentence straight into execution. **"Solution OK" does not mean "go."** A task becomes executable only when the user explicitly asks for a task card. No task card, no clear permission, no verification method, no stop condition — the agent touches nothing.
 
-Most agent frameworks do not have a structured task-memory system. After a task ends, the execution process, key decisions, verification results, unfinished items, and risk notes are often scattered across chat history.
+## The Five Articles
 
-That is dangerous in large projects. Human developers have to track progress from memory, and a new agent often cannot tell what happened last time, why a decision was made, or which areas must not be touched.
+This past month, the open-source community and the model labs shipped non-stop. AGS wasn't invented in a vacuum — it's five articles I settled into while learning from the community and getting schooled by my own project in real time. Full walk-through in [docs/philosophy.en.md](docs/philosophy.en.md); here is the skeleton:
 
-AGS provides a memory-capsule mechanism. After each task, it can save task snapshots, delivery records, verification results, and context summaries. When a later agent enters the project, it can read the project profile and task memory before continuing development.
-
-This turns multi-step development into a continuous engineering process instead of repeatedly re-explaining the same requirements.
+| Article | In one line | What it became in AGS |
+|---|---|---|
+| I · Don't trust a single AI or a single tool | Codex, Claude Code, Gemini CLI, Cursor are all strong, but strong at different things, with different habits | A shared engineering order for every agent: who plans, who executes, who reviews, who may touch files, who is read-only, when to stop |
+| II · AI can't fully understand human speech | A prompt is chat language, not an engineering contract — and Chinese is especially slippery | A prompt is chat language; the task card is the engineering contract |
+| III · Execution is not a straight line | Sometimes brilliant, sometimes distracted, sometimes confidently wrong | Keep the trail; the goal isn't a model that never errs, but errors that never happen quietly |
+| IV · Human judgment deserves to be saved | The valuable thing isn't a single model output, it's human judgment at the solution and architecture stage | The memory capsule — let experience escape the chat log and become a project asset |
+| V · Mix your models, work without fatigue | Top-tier models are expensive; cheap models left unsupervised are unstable | Top-tier models judge, cheaper models execute, AGS governs the whole run |
 
 ## How AGS Works
 
@@ -95,9 +104,7 @@ flowchart TD
     style O fill:#e3f2fd
 ```
 
-The most important part is not any single command, but the order.
-
-AGS does not allow an agent to jump directly from one user sentence into execution. It requires the agent to understand the project, form a solution, wait for user confirmation, and only then enter task-card and execution-policy flow.
+The most important part is not any single command, but the order. AGS does not allow an agent to jump directly from one user sentence into execution. It requires the agent to understand the project, form a solution, wait for user confirmation, and only then enter the task-card and execution-policy flow.
 
 **Three-gate threshold:** Solution OK → Task-card instruction → Task routing. Without the middle gate (task-card instruction), routing must not proceed. "Solution OK" does not mean execution is allowed. A task becomes executable only after the user explicitly asks for a task card.
 
@@ -107,66 +114,61 @@ For architectural details, see [docs/architecture.md](docs/architecture.md).
 
 ### Task Card Governance
 
-AGS uses task cards as the formal entry point for development tasks.
-
-A task card is not a normal prompt. It must specify the goal, background, non-goals, permission mode, execution boundaries, verification method, and delivery format. Before execution, the agent is constrained by an explicit engineering contract.
+A task card is not a normal prompt — it's the engineering contract an agent signs before it touches anything. It spells out the goal, background, non-goals, permission mode, execution boundaries, verification method, and delivery format, constraining the agent inside an explicit contract instead of letting it improvise from one sentence.
 
 ### Execution Policy Resolution
 
-AGS resolves execution policy from task-card content.
-
-It decides whether a task should be read-only, plan-first, execute-and-verify, or stopped for human confirmation. An agent should not decide what it may do directly from the raw request. It must go through policy resolution before execution.
+An agent shouldn't decide for itself what it may do. AGS resolves execution policy from the task card — read-only, plan-first, execute-and-verify, or stop for human confirmation. Policy first, execution second.
 
 ### Project Preflight
 
-Before each task, AGS can run session preflight.
-
-Preflight reads project identity, protocol status, memory paths, stop conditions, verification commands, and missing-file warnings. When an agent enters a repository, it does not need to guess what the repository is, whether it may edit, or which rules it should read first.
+An agent should know where it stands before it walks in. Before each task, AGS can run session preflight, reading project identity, protocol status, memory paths, stop conditions, verification commands, and missing-file warnings — no guessing.
 
 ### Verification Gate
 
-AGS includes a structured verification entry point.
-
-It can check formatting, tests, builds, task-card fixtures, YAML, protocol status, and release boundaries. Verification results are emitted through a unified model that can be read by humans, agents, or CI.
-
-AGS requires evidence from verification, not just an agent saying "I finished."
+Speak with verification results, not with the words "I finished." AGS includes a structured verification entry point that checks formatting, tests, builds, task-card fixtures, YAML, protocol status, and release boundaries, emitting results through a unified model that humans, agents, and CI can all read.
 
 ### Execution Receipt
 
-After task execution, AGS can generate a receipt.
-
-The receipt records the task card, execution policy, verification results, exit code, and review-gate status. It is not ceremony. It makes each agent execution traceable.
+Every run leaves a receipt you can trace. It records the task card, execution policy, verification results, exit code, and review-gate status. Not ceremony — it makes each agent execution something you can look back on.
 
 ### Skill Governance
 
-AGS does not install third-party skills by default. To provide a more complete engineering-collaboration experience, it may recommend selected GitHub development skill packs, but installation must be explicitly confirmed by the user.
-
-It provides skill recommendation, scanning, checking, proposal, and confirmed-install flows. Users can selectively install or update skills to fit their local development style, instead of letting third-party skills rewrite the development environment directly.
-
-The goal is not to absorb every skill into AGS. The goal is to make skill updates bounded, recorded, and confirmed.
+Third-party skills can be recommended, never installed for you by default. AGS provides recommendation, scanning, checking, proposal, and confirmed-install flows. Its stance: recommend, check, record — but every install is explicitly confirmed by the user, so skill updates stay bounded, recorded, and confirmed.
 
 ### Memory Capsule
 
-AGS provides protocols and templates for project profiles, context memory, task archives, and delivery records.
+Let experience escape the chat log and become a project asset. After each task, AGS can save task snapshots, key decisions, verification results, and context summaries. A later agent reads the project profile and task memory before continuing, instead of re-explaining the requirement from scratch every round. The larger the project, the longer the task chain, the more agents involved — the more this matters.
 
-The memory capsule lives inside the user's own project and grows with the development process. It records task snapshots, key decisions, verification results, and delivery information, so later agents do not have to understand the project from scratch every time.
+## The "Arc Reactor" for Domestic Models
 
-The larger the project, the longer the task chain, and the more agents participate, the more important accumulated memory becomes. It makes project progress traceable and reduces the need for multi-agent collaboration to rely entirely on the human developer's memory.
+Top-tier foreign models are genuinely good, but expensive. Domestic models are cheap and plentiful, but unstable when fully unsupervised. What AGS does is wrap the engineering process around the cheaper model: a clear task, clear boundaries, clear acceptance criteria. Top-tier models make the key calls, cheaper models do the bulk of the concrete work, AGS keeps the whole run in line — and a stronger model sweeps for gaps after delivery.
+
+This isn't frugality for its own sake. Model capability fluctuates — that's the nature of the component under control; the engineering answer is not a part that never fails, but a loop that lets an unreliable part deliver reliable results. AGS is that loop. On a single output, it won't turn a domestic model into a top-tier one; but in real engineering, it can reach roughly seventy to eighty percent of top-tier full-cycle development at something like a tenth of the all-foreign-model cost.
+
+Put more vividly: it's like fitting a domestic model with an arc reactor — a small core that lets a budget frame run with near-flagship endurance. As more platforms tighten quotas, the future is mixed collaboration between top-tier and budget models. Whoever can fold cheap models into a stable engineering process turns AI coding from a parlor trick into productivity.
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/FernandeZ-hjm/agent-governance-suite.git
-cd agent-governance-suite
+git clone https://github.com/FernandeZ-hjm/Agent-General-Staff.git
+cd Agent-General-Staff
 bash scripts/install.sh
 ```
+
+The install script installs `ags` and then runs `ags setup --yes --force`. That step writes only public-safe local entries and MCP snippets — no third-party skills, no private runtime.
 
 After installation:
 
 ```bash
+/ags setup
+/ags init
+ags mcp serve --transport stdio
 ags doctor
 ags verify --scope local
 ```
+
+`/ags` is the Claude Code entry; the Codex-visible counterparts are `$ags-setup`, `$ags-init`, `$ags-skill`, `$ags-doctor`. Their shared rule: any AGS task must call the AGS MCP `ags_preflight` tool first, with the CLI as a fallback only.
 
 Update AGS:
 
@@ -178,16 +180,7 @@ bash scripts/update.sh --check --max-age-days 1
 bash scripts/update.sh --apply
 ```
 
-If `ags --version` still shows an older version after updating, the shell is
-usually resolving an older binary first. Run:
-
-```bash
-command -v ags
-```
-
-to see which `ags` binary is active. Both `scripts/install.sh` and
-`scripts/update.sh` report this path and warn when an older binary shadows the
-newly installed one.
+If `ags --version` still shows an older version after updating, the shell is usually resolving an older binary first. Run `command -v ags` to see which `ags` binary is active. Both `scripts/install.sh` and `scripts/update.sh` report this path and warn when an older binary shadows the newly installed one.
 
 To build from source:
 
@@ -212,43 +205,21 @@ ags receipt verify examples/receipts/sample-receipt.json
 
 ### Three-Stage Verifiable Experience
 
-#### Step 1: Build from Source
-
 ```bash
+# Step 1: build from source and verify
 cargo build --release
 export PATH="$PWD/target/release:$PATH"
-```
-
-Verify the build:
-
-```bash
 ags doctor
 ags verify --scope local
-```
 
-#### Step 2: Demo Dry-Run
-
-Run preflight against the AGS repository, then validate built-in synthetic examples:
-
-```bash
-# Preflight against the AGS repository
+# Step 2: preflight against the repo root, then validate built-in samples
 ags session preflight --for claude-code --target .
-
-# Validate an example task card
 bash scripts/validate.sh examples/task-cards/light-demo-task.md
-
-# Resolve execution policy
 ags policy resolve examples/task-cards/light-demo-task.md
-```
 
-#### Step 3: Sample Task Card Verification
-
-```bash
-# Medium-level task card: gate → policy → receipt chain
+# Step 3: walk the gate → policy → receipt chain with a Medium task card
 bash scripts/validate.sh examples/task-cards/medium-demo-task.md
 ags policy resolve examples/task-cards/medium-demo-task.md
-
-# Verify a synthetic receipt
 ags receipt verify examples/receipts/sample-receipt.json
 ```
 
@@ -258,6 +229,11 @@ More examples at [examples/](examples/). Eval scenarios at [evals/](evals/).
 
 | Command | Purpose |
 |---|---|
+| `ags setup` | Write public-safe local AGS runtime, MCP snippets, and agent entries |
+| `/ags setup` | Claude Code entry; still requires AGS MCP preflight first |
+| `$ags-setup` / `$ags-init` | Codex-visible entry skills; require calling AGS MCP `ags_preflight` first |
+| `ags init` | Integrate AGS managed blocks into a target project |
+| `ags mcp serve` | Start the AGS MCP stdio server |
 | `ags session preflight` | Run project preflight before a task |
 | `ags task validate` | Validate task-card format and semantics |
 | `ags policy resolve` | Resolve execution policy |
@@ -270,6 +246,7 @@ More examples at [examples/](examples/). Eval scenarios at [evals/](evals/).
 
 ## Learn More
 
+- [docs/philosophy.en.md](docs/philosophy.en.md) — the five articles in depth, and the control-theory idea behind this engineering order
 - [docs/architecture.md](docs/architecture.md) — AGS architecture: lifecycle, crate dependency graph, execution pipeline, memory capsule mechanism
 - [examples/](examples/) — Public-safe examples: demo project, task cards, sample outputs, synthetic receipts
 - [evals/](evals/) — Reproducible experiment scenarios: authority escalation, unverified delivery, solution-as-execution
@@ -277,27 +254,17 @@ More examples at [examples/](examples/). Eval scenarios at [evals/](evals/).
 
 ## Verification
 
-Local verification:
-
 ```bash
+# Local verification
 ags verify --scope local
-```
 
-Full verification:
-
-```bash
+# Full verification
 ags verify --scope full
-```
 
-Release-boundary verification:
-
-```bash
+# Release-boundary verification
 AGS_PUBLIC_ROOT="$PWD" ags verify --scope release
-```
 
-Compatibility gate:
-
-```bash
+# Compatibility gate
 bash scripts/verify.sh
 ```
 
@@ -305,20 +272,18 @@ bash scripts/verify.sh
 
 AGS can recommend third-party development skills, but it does not install them by default.
 
-Third-party skills change agent behavior and may affect the local development environment. AGS treats them as recommendations that can be checked and recorded, but must be explicitly confirmed by the user.
-
-Superpowers-related skills and methodology are third-party work. AGS preserves attribution and documents the MIT License in `THIRD_PARTY_NOTICES.md`.
+Third-party skills change agent behavior and may affect the local development environment. AGS treats them as recommendations that can be checked and recorded, but must be explicitly confirmed by the user. Superpowers-related skills and methodology are third-party work; AGS preserves attribution and documents the MIT License in `THIRD_PARTY_NOTICES.md`.
 
 ## License
 
-AGS 2.0 Public Edition uses the MIT License.
+AGS (Agent General Staff, formerly Agent Governance Suite) uses the MIT License.
 
-You may download, read, copy, modify, distribute, use commercially, and create
-derivative works from AGS.
+You may download, read, copy, modify, distribute, use commercially, and create derivative works from AGS. The required condition is preserving the MIT license text and copyright notice. `NOTICE.md` and `THIRD_PARTY_NOTICES.md` record project attribution and third-party materials and should be preserved when distributing AGS. The names "Agent General Staff" and "AGS" may be used for truthful attribution and compatibility statements, but they do not grant brand endorsement or trademark rights.
 
-The required condition is preserving the MIT license text and copyright notice.
-`NOTICE.md` and `THIRD_PARTY_NOTICES.md` record project attribution and
-third-party materials and should be preserved when distributing AGS. The names
-"Agent Governance Suite" and "AGS" may be used for truthful attribution and
-compatibility statements, but they do not grant brand endorsement or trademark
-rights.
+---
+
+I used to think vibe coding meant stating a requirement and waiting for the AI to build it. I don't anymore. What it really tests isn't whether you can write prompts — it's whether you can turn your own judgment, boundaries, authorizations, acceptance criteria, and experience into an engineering order an agent can inherit.
+
+In the end, AGS is a security gate bolted onto an AI programmer — not to make it freer, but to make sure that when it walks into a real project, it knows the boundaries, leaves a record, accepts review, and carries what it learned into the next task.
+
+It's not a tool I wrote for the AI. It's more that the AI pushed me to learn how to be a better engineering lead.

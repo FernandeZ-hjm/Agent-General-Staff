@@ -2,6 +2,7 @@
 .codegraph/
 **/*.rs.bk
 .claude/review_targets.json
+benchmarks/
 
 # Public worktree private/local overlays
 /config/

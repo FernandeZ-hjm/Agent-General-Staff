@@ -1,47 +1,56 @@
-# Agent Governance Suite (AGS)
+# Agent General Staff (AGS)
 
-[![CI](https://github.com/FernandeZ-hjm/Agent-Governance-Suite/actions/workflows/ci.yml/badge.svg)](https://github.com/FernandeZ-hjm/Agent-Governance-Suite/actions/workflows/ci.yml)
+[![CI](https://github.com/FernandeZ-hjm/Agent-General-Staff/actions/workflows/ci.yml/badge.svg)](https://github.com/FernandeZ-hjm/Agent-General-Staff/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 [中文](README.md) | [English](README.en.md)
 
-**多 Agent 工程化治理内核 CLI。**
+**给一群越来越能干、越来越便宜的 AI 程序员，装一道工程安检门。**
 
-AGS 是一套面向本地开发环境的多 Agent 工程治理内核。公开版同时提供 `ags` CLI、`ags mcp serve` 内核桥、Claude Code 的 `/ags` 入口，以及 Codex 可见的 `$ags-setup`、`$ags-init`、`$ags-skill`、`$ags-doctor` 命令技能。它把本地 `skills`、hooks、MCP、任务记忆，以及 Codex、Claude Code、Cursor 等不同 AI Agent 框架，纳入同一套可验证、可审计、可持续协作的开发体系。
+AGS（Agent General Staff，智能体总参谋部）是一套面向本地开发环境的多 Agent 工程治理内核。它提供 Rust-native 的 `ags` CLI、`ags mcp serve` 内核桥、Claude Code 的 `/ags` 入口，以及 Codex 可见的命令技能，把本地 `skills`、hooks、MCP、任务记忆，以及 Codex、Claude Code、Cursor 等不同 AI Agent 框架，纳入同一套可验证、可审计、可持续协作的开发体系。
 
-AGS 不是新的 Agent，也不是简单的工具集合。它解决的是多 Agent 参与真实项目开发时的治理问题：谁可以做什么，什么时候必须停下，任务如何交接，执行如何验证，上下文如何延续。
+它不是又一个 Agent，也不是一堆工具的合订本。它解决的是多个 Agent 一起进真实项目时的治理问题：谁可以做什么，什么时候必须停，任务怎么交接，执行怎么验证，上下文怎么延续。
+
+## 起源：我只是想管几个插件
+
+我是个 AI 编程新手。跟很多人一样，刚上手那阵特别容易上头——社交网络上有人晒神级技能、MCP、钩子、各种配置文件，我看见就想装。今天一个代码审查插件，明天一个任务记忆系统，后天一个自动化钩子，不装好像就落后了。
+
+插件一多，问题就来了。谁来管版本？第三方技能怎么更新，才不会破坏我本地已经跑通的环境？MCP、钩子、项目规则、智能体配置会不会互相打架？它们到底会不会在正确的时候触发，还是说，最后依然要看模型当天心情？我本来只想写个小脚本，把这些本地插件管起来。一个月后，它变成了我的第一个开源项目：Agent General Staff，简称 AGS。
+
+更离谱的是，后来我发现它和微软一个叫 AGT（[Agent Governance Toolkit](https://github.com/microsoft/agent-governance-toolkit)）的开源项目撞了名。我慌了一下，很快释然：AGT 管的是 Agent 执行时的策略闸门，在工具调用、API、文件操作落地前做拦截；AGS 管的是 Agent 工程协作的整条生命周期——预检、方案、任务卡、执行策略、验证、回执、记忆。名字撞得近，但我们其实撞到了同一个时代命题：AI 程序员越来越能干，人类到底怎么管。
+
+所以 AGS 不是我拍脑袋设计出来的。它更像是我被 AI 编程连续打了几顿之后，身体自己长出来的一套防御系统。每被毒打一回，我就多加一道闸门；最后这些闸门拼起来，成了 AGS。
 
 ## 为什么需要 AGS
 
-AI 不能百分百理解并执行人类需求。即使模型足够强，也会在需求理解、上下文取舍、执行细节和风险判断上产生偏差。单个 Agent 也会形成自己的代码风格和判断惯性，它天然需要其他 Agent 或人类开发者进行 review、审查和验证。
+我一开始以为，AI 编程最大的问题是模型不够聪明。后来发现不是。问题是它太聪明、太勤快、太敢干。
 
-在真实项目里，这种偏差会变成具体问题。Agent 可能改错文件，越过权限，跳过验证，把方案讨论当成执行指令，或者在没有确认的情况下扩大任务范围。
+你让它改一个函数，它顺手重构半个模块。你让它做只读审计，它看着看着就想帮你修。你说"这个方案可以"，它理解成"那我开工了"。你让它完成任务，它告诉你"完成了"，但没有测试、没有证据，也没有一份能回看的记录。它不是不会干，它是太会干，干到你心里发毛。
 
-AGS 的作用，是在 Agent 执行前加入工程边界。它通过任务卡、权限策略、执行门禁、停止条件和验证流程，把“AI 想怎么做”约束为“项目允许它怎么做”。
+这些坑后来都变成了 AGS 里的具体闸门：
 
-这件事还有一个现实意义：降低对顶级模型全程参与的依赖。
+| 我踩过的坑 | AGS 长出的闸门 |
+|---|---|
+| 只读任务被越权改成改代码 | 执行策略解析 + 门禁 |
+| 说"完成了"却没有验证 | 验证门禁 + 执行回执 |
+| 换个对话就失忆，同一个坑再踩一遍 | 记忆胶囊 |
+| 技能、钩子、MCP 配置互相污染 | 统一技能治理 |
 
-顶级模型当然重要，但真实开发不应该把所有环节都押在最贵的模型上。GLM、DeepSeek、MiMo 等国产模型，配合 AGS 的任务拆解、执行边界和验证门禁，再搭配 Codex 或 Cursor 这样的工程入口，在很多中低风险开发任务中，可以用更低成本接近高阶模型全程开发的大部分效果。
+往更底层看，这是个控制问题。大模型是一个高增益但会漂移的元件，能力时好时坏，你没法让它不漂移。工程能做的，不是造一个永不出错的模型，而是在它外面套一道回路：让它少猜一点、少自由发挥一点，多按任务卡、协议、验证和记忆来协作。模型能力会波动，工程流程负责兜底。
 
-这里的关键不是让普通模型假装成顶级模型，而是把任务放进更清楚的工程结构里。模型少猜一点，少自由发挥一点，多按任务卡、协议、验证和记忆来协作。模型能力会波动，工程流程要负责兜底。
+最关键的一条规矩：AGS 不允许智能体从用户的一句话直接跳到执行。**方案 OK，不等于可以开工。** 只有用户明确要求生成任务卡，任务才进入可执行阶段。没有任务卡，没有明确权限，没有验证方式，没有停止条件，智能体就不应该动手。
 
-## AGS 解决的核心问题
+## 五条宪章
 
-本地开发环境通常会积累大量第三方 GitHub 技能、本地自定义技能、hooks、MCP 配置和项目规则。不同 Agent 框架对技能、配置文件和项目上下文的管理方式并不一致。
+这一个月，开源社区和模型公司都在疯狂更新。AGS 不是闭门造车，是我一边学社区经验、一边被自己的项目现场反复教育，沉淀出来的五条智能体宪章。详解见 [docs/philosophy.md](docs/philosophy.md)，这里给骨架：
 
-结果是，同一套开发能力很容易被拆散在多个工具里。Codex 有一套配置，Claude Code 有一套配置，Cursor 又有另一套规则。维护成本高，迁移困难，也容易互相污染。
-
-AGS 提供统一的技能治理层。它不强行替代各个 Agent 框架，而是把技能推荐、安装确认、项目规则、执行协议和安全边界集中管理。用户可以按自己的节奏增量更新第三方技能，也可以保留自己的本地定制能力，而不破坏已有开发环境。
-
-另一个问题是任务记忆。
-
-多数 Agent 框架没有成体系的任务记忆。一次任务结束后，执行过程、关键判断、验证结果、未完成事项和风险说明，往往散落在聊天记录里。
-
-这对大型项目很危险。人类开发者需要靠记忆追踪进度，新的 Agent 也很难知道上一次到底做了什么、为什么这么做、哪些地方不能碰。
-
-AGS 提供记忆胶囊机制。每次任务后，它可以保存任务快照、交付记录、验证结果和上下文摘要。后续 Agent 进入项目时，可以先读取项目画像和任务记忆，再继续开发。
-
-这让多步骤开发变成可延续的工程过程，而不是一轮一轮重新解释需求。
+| 宪章 | 一句话 | 在 AGS 里变成了 |
+|---|---|---|
+| 一·不迷信单一 AI、单一工具 | Codex、Claude Code、Gemini CLI、Cursor 都强，但强的地方不一样，惯性也不一样 | 给所有 Agent 一套共同工程秩序：谁规划、谁执行、谁审查、谁能动文件、谁只能只读、何时必须停 |
+| 二·AI 听不全人话 | 提示词本质是聊天语言，不是工程合同，中文尤其复杂 | 提示词是聊天语言，任务卡才是工程合同 |
+| 三·执行不是一条直线 | 它有时天才，有时走神，有时一本正经地胡说 | 留下过程；目标不是让 AI 永不犯错，而是让错误不要悄悄发生 |
+| 四·高光判断该被沉淀 | 宝贵的不是某一次模型输出，是人在方案和架构阶段的判断 | 记忆胶囊，让经验从聊天里逃出来，变成项目资产 |
+| 五·模型搭配，干活不累 | 顶级模型贵，平价模型放飞又不稳 | 顶级模型做判断，平价模型做执行，AGS 管住全程 |
 
 ## AGS 如何工作
 
@@ -95,11 +104,9 @@ flowchart TD
     style O fill:#e3f2fd
 ```
 
-这里最重要的不是某一个命令，而是顺序。
+这里最重要的不是某一个命令，而是顺序。AGS 不允许 Agent 从用户的一句话直接跳到执行。它要求先理解项目，再形成方案，再由用户确认，再进入任务卡和执行策略。
 
-AGS 不允许 Agent 从用户的一句话直接跳到执行。它要求先理解项目，再形成方案，再由用户确认，再进入任务卡和执行策略。
-
-**三段门槛：** 方案 OK → 任务卡指令 → 任务分级路由。缺少中间的任务卡指令，不得进入路由。“方案 OK”不等于可以执行。只有用户明确要求生成任务卡，才进入可执行任务阶段。
+**三段门槛：** 方案 OK → 任务卡指令 → 任务分级路由。缺少中间的任务卡指令，不得进入路由。"方案 OK"不等于可以执行。只有用户明确要求生成任务卡，才进入可执行任务阶段。
 
 架构详情见 [docs/architecture.md](docs/architecture.md)。
 
@@ -107,57 +114,45 @@ AGS 不允许 Agent 从用户的一句话直接跳到执行。它要求先理解
 
 ### 任务卡治理
 
-AGS 使用任务卡作为开发任务的正式入口。
-
-任务卡不是普通 prompt。它必须写清楚目标、背景、非目标、权限模式、执行边界、验证方式和交付格式。这样 Agent 在执行前，先被约束在一个明确的工程契约里。
+任务卡不是普通 prompt，它是 Agent 动手前必须先签的工程合同。它写清楚目标、背景、非目标、权限模式、执行边界、验证方式和交付格式，把 Agent 约束在一个明确的契约里，而不是任它从一句话里自由发挥。
 
 ### 执行策略解析
 
-AGS 会根据任务卡内容解析执行策略。
-
-它会判断任务应该是只读、计划优先、执行并验证，还是必须先停下来等待人工确认。Agent 不应该直接从原始需求里决定自己能做什么，它必须先经过策略解析，再进入执行。
+Agent 不该自己决定能做什么。AGS 根据任务卡解析执行策略，判断这次任务是只读、计划优先、执行并验证，还是必须先停下来等人工确认。策略先行，执行在后。
 
 ### 项目预检
 
-每次任务开始前，AGS 可以执行 session preflight。
-
-预检会读取项目身份、协议状态、记忆路径、停止条件、验证命令和缺口提示。Agent 进入项目后，不需要靠猜测判断当前仓库是什么、能不能改、应该先看哪些规则。
+Agent 进项目前，先知道自己在哪。每次任务开始前，AGS 可以执行 session preflight，读取项目身份、协议状态、记忆路径、停止条件、验证命令和缺口提示——不靠猜。
 
 ### 验证门禁
 
-AGS 内置结构化验证入口。
-
-它可以检查格式、测试、构建、任务卡 fixture、YAML、协议状态和发布边界。验证结果以统一模型输出，既能给人看，也能给 Agent 或 CI 读取。
-
-AGS 要求用验证结果说话，而不是让 Agent 只说“我完成了”。
+用验证结果说话，不接受口头"我完成了"。AGS 内置结构化验证入口，可以检查格式、测试、构建、任务卡 fixture、YAML、协议状态和发布边界，结果以统一模型输出，人能看，Agent 和 CI 也能读。
 
 ### 执行回执
 
-任务执行结束后，AGS 可以生成 receipt。
-
-Receipt 记录任务卡、执行策略、验证结果、退出码和 review gate 状态。它不是为了增加仪式感，而是为了让每次 Agent 执行都有可追踪记录。
+每一次执行都留一张可追溯的回执。Receipt 记录任务卡、执行策略、验证结果、退出码和 review gate 状态。它不是为了增加仪式感，而是为了让每次 Agent 执行都能被回看。
 
 ### 技能治理
 
-AGS 不默认安装第三方技能。为了获得更完整的工程协作体验，它会推荐部分 GitHub 开发技能包，但安装必须由用户显式确认。
-
-它提供技能推荐、扫描、检查、提案和确认式安装能力。用户可以选择性安装部分技能或更新部分技能，从而适应自己的本地开发风格，而不是让第三方技能直接改写开发环境。
-
-这套机制的目标不是把所有技能收编进 AGS，而是让技能更新有边界、有记录、有确认。
+第三方技能可以推荐，但不替你默认安装。AGS 提供技能推荐、扫描、检查、提案和确认式安装能力。它的态度是：可以推荐，可以检查，可以记录，但必须由用户显式确认——让技能更新有边界、有记录、有确认。
 
 ### 记忆胶囊
 
-AGS 提供项目画像、上下文记忆、任务归档和交付记录的协议与模板。
+让经验从聊天里逃出来，变成项目资产。每次任务后，AGS 可以保存任务快照、关键判断、验证结果和上下文摘要。后续 Agent 进项目时，先读项目画像和任务记忆，再继续开发，而不是每轮都从零重新解释需求。项目越大、任务越长、参与的 Agent 越多，这件事越值钱。
 
-记忆胶囊存在于用户自己的项目中，会随着开发进程逐步生长。它记录任务快照、关键判断、验证结果和交付信息，让后续 Agent 不必每次都从零开始理解项目。
+## 国产模型的"方舟反应炉"
 
-项目越大、任务越长、参与的 Agent 越多，记忆胶囊沉淀的信息就越重要。它让项目进度可以被追踪，也让多 Agent 协作不再完全依赖人类开发者的记忆。
+国外顶级模型确实好用，但贵。国产模型便宜大碗，完全放飞又容易不稳。AGS 做的，是给平价模型套上工程流程：明确任务、明确边界、明确验收。顶级模型负责关键判断，平价模型负责大量具体执行，AGS 负责把整个过程管住，交付之后再让更强的模型查漏补缺。
+
+这不是为省钱而省钱。模型能力会波动，这是被控对象的天性；工程的答案不是造一个永不出错的元件，而是用一个确定的回路，让不确定的元件交付稳定结果。AGS 就是那道回路——单看一次输出，它不能让国产模型变成顶级模型；但在真实工程里，它能用全程国外模型十几分之一的成本，做到顶级模型七八成的开发实效。
+
+说得形象点，像给国产模型装了一个方舟反应炉：核心不大，却能让平价的机体迸发出接近顶配的续航。尤其在很多平台都在收紧额度的当下，未来一定是顶级模型和平价模型混合协作——谁能把便宜模型稳定地纳入工程流程，谁就能把 AI 编程从炫技变成生产力。
 
 ## 快速开始
 
 ```bash
-git clone https://github.com/FernandeZ-hjm/agent-governance-suite.git
-cd agent-governance-suite
+git clone https://github.com/FernandeZ-hjm/Agent-General-Staff.git
+cd Agent-General-Staff
 bash scripts/install.sh
 ```
 
@@ -185,14 +180,7 @@ bash scripts/update.sh --check --max-age-days 1
 bash scripts/update.sh --apply
 ```
 
-如果更新后 `ags --version` 仍显示旧版本，通常是 PATH 命中了旧二进制。运行：
-
-```bash
-command -v ags
-```
-
-确认当前 shell 实际调用的是哪个 `ags`。`scripts/install.sh` 和 `scripts/update.sh`
-都会在结束时报告这个路径，并在旧二进制抢占 PATH 时给出修复提示。
+如果更新后 `ags --version` 仍显示旧版本，通常是 PATH 命中了旧二进制。运行 `command -v ags` 确认当前 shell 实际调用的是哪个 `ags`。`scripts/install.sh` 和 `scripts/update.sh` 都会在结束时报告这个路径，并在旧二进制抢占 PATH 时给出修复提示。
 
 如果只想从源码构建：
 
@@ -217,43 +205,21 @@ ags receipt verify examples/receipts/sample-receipt.json
 
 ### 三步可验证体验
 
-#### 第一步：源码构建
-
 ```bash
+# 第一步：源码构建并验证
 cargo build --release
 export PATH="$PWD/target/release:$PATH"
-```
-
-验证构建：
-
-```bash
 ags doctor
 ags verify --scope local
-```
 
-#### 第二步：Demo Dry-Run
-
-对仓库根目录跑一次 preflight，再用内置合成样例跑 task validate：
-
-```bash
-# 对 AGS 仓库执行预检
+# 第二步：对仓库根目录预检，再用内置样例跑 task validate
 ags session preflight --for claude-code --target .
-
-# 校验示例任务卡
 bash scripts/validate.sh examples/task-cards/light-demo-task.md
-
-# 解析执行策略
 ags policy resolve examples/task-cards/light-demo-task.md
-```
 
-#### 第三步：示例任务卡验证
-
-```bash
-# 用 Medium 级任务卡体验 gate -> policy -> receipt 链路
+# 第三步：用 Medium 级任务卡体验 gate → policy → receipt 链路
 bash scripts/validate.sh examples/task-cards/medium-demo-task.md
 ags policy resolve examples/task-cards/medium-demo-task.md
-
-# 校验合成 receipt
 ags receipt verify examples/receipts/sample-receipt.json
 ```
 
@@ -280,6 +246,7 @@ ags receipt verify examples/receipts/sample-receipt.json
 
 ## 了解更多
 
+- [docs/philosophy.md](docs/philosophy.md) — 五条宪章详解，以及这套工程秩序背后的控制论思路
 - [docs/architecture.md](docs/architecture.md) — AGS 架构：生命周期、crate 依赖图、执行链路、记忆胶囊机制
 - [examples/](examples/) — 公开安全样例：demo 项目、任务卡、输出样例、合成 receipt
 - [evals/](evals/) — 可复现评估实验：越权拦截、无验证交付、方案即执行三大风险场景
@@ -287,27 +254,17 @@ ags receipt verify examples/receipts/sample-receipt.json
 
 ## 验证
 
-本地验证：
-
 ```bash
+# 本地验证
 ags verify --scope local
-```
 
-完整验证：
-
-```bash
+# 完整验证
 ags verify --scope full
-```
 
-发布边界验证：
-
-```bash
+# 发布边界验证
 AGS_PUBLIC_ROOT="$PWD" ags verify --scope release
-```
 
-兼容总闸：
-
-```bash
+# 兼容总闸
 bash scripts/verify.sh
 ```
 
@@ -315,17 +272,18 @@ bash scripts/verify.sh
 
 AGS 可以推荐第三方开发技能，但不会默认安装它们。
 
-第三方技能会改变 Agent 的行为方式，也可能影响本地开发环境。AGS 的态度是：可以推荐，可以检查，可以记录，但必须由用户显式确认。
-
-Superpowers 相关技能和方法论属于第三方项目。AGS 对相关来源保留署名，并在 `THIRD_PARTY_NOTICES.md` 中说明其 MIT License。
+第三方技能会改变 Agent 的行为方式，也可能影响本地开发环境。AGS 的态度是：可以推荐，可以检查，可以记录，但必须由用户显式确认。Superpowers 相关技能和方法论属于第三方项目，AGS 对相关来源保留署名，并在 `THIRD_PARTY_NOTICES.md` 中说明其 MIT License。
 
 ## 许可证
 
-AGS 2.0 Public Edition 使用 MIT License。
+AGS（Agent General Staff，原名 Agent Governance Suite）使用 MIT License。
 
-你可以下载、阅读、复制、修改、分发、商用，也可以基于它创建衍生作品。
+你可以下载、阅读、复制、修改、分发、商用，也可以基于它创建衍生作品。唯一硬性要求是保留 MIT 许可证文本和版权声明。`NOTICE.md` 和 `THIRD_PARTY_NOTICES.md` 记录项目署名和第三方材料来源，分发时也应保留。"Agent General Staff" 和 "AGS" 名称可用于真实署名和兼容性说明，但不代表授予品牌背书或商标授权。
 
-唯一硬性要求是保留 MIT 许可证文本和版权声明。`NOTICE.md` 和
-`THIRD_PARTY_NOTICES.md` 记录项目署名和第三方材料来源，分发时也应保留。
-“Agent Governance Suite” 和 “AGS” 名称可用于真实署名和兼容性说明，但不代表授予
-品牌背书或商标授权。
+---
+
+我以前以为，氛围编程就是把需求说出来，然后等 AI 帮我实现。现在我不这么想了。它真正考验人的，不是会不会写提示词，而是你能不能把自己的判断、边界、授权、验收和经验，变成一套可以被智能体继承的工程秩序。
+
+说到底，AGS 是给 AI 程序员装的一道安检门——不是为了让它更自由，而是为了让它进真实项目时知道边界、留下记录、接受验收，把经验带到下一次任务。
+
+它不是我写给 AI 的工具。更像是 AI 反过来逼我，学会怎么当一个更好的工程负责人。

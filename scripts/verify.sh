@@ -287,17 +287,17 @@ else
     failures=$((failures + 1))
 fi
 
-# doctor: full-blood checks report expanded health status
+# doctor: public edition checks report expanded health status
 echo -n "[....] ags doctor reports full-blood checks "
 if cargo run -q -p ags-cli -- doctor --format text > /tmp/ags-smoke-doctor.log 2>&1; then
     has_checks=0
-    grep -q 'memory-capsule\|memory capsule' /tmp/ags-smoke-doctor.log && has_checks=$((has_checks + 1)) || true
-    grep -q 'skill-directory\|skill.*install' /tmp/ags-smoke-doctor.log && has_checks=$((has_checks + 1)) || true
-    grep -q 'auto-trigger' /tmp/ags-smoke-doctor.log && has_checks=$((has_checks + 1)) || true
-    grep -q 'runner' /tmp/ags-smoke-doctor.log && has_checks=$((has_checks + 1)) || true
-    grep -q 'full-blood' /tmp/ags-smoke-doctor.log && has_checks=$((has_checks + 1)) || true
+    grep -q 'mcp_registry_gep_adopted' /tmp/ags-smoke-doctor.log && has_checks=$((has_checks + 1)) || true
+    grep -q 'evolver_proxy_health' /tmp/ags-smoke-doctor.log && has_checks=$((has_checks + 1)) || true
+    grep -q 'runtime_profile_template_exists' /tmp/ags-smoke-doctor.log && has_checks=$((has_checks + 1)) || true
+    grep -q 'codex_planner_hook_template_exists' /tmp/ags-smoke-doctor.log && has_checks=$((has_checks + 1)) || true
+    grep -q 'claude_code_stop_hook_template_exists' /tmp/ags-smoke-doctor.log && has_checks=$((has_checks + 1)) || true
     if [ "$has_checks" -ge 3 ]; then
-        echo "OK ($has_checks/5 full-blood check categories reported)"
+        echo "OK ($has_checks/5 public health check categories reported)"
     else
         echo "FAIL (only $has_checks/5 check categories found)"
         failures=$((failures + 1))

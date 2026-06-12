@@ -13,7 +13,10 @@
 //! `VerificationReport` with summary statistics.
 //!
 //! Checks in `local` scope run entirely within the current repository.
-//! `full` adds drift checks against stable and public targets.
+//! `full` adds drift checks against stable and public targets. Public edition
+//! worktrees skip the private↔stable full-manifest drift gate because their
+//! entry files intentionally differ from stable and are verified by the
+//! public-full sanitized boundary gate instead.
 //! `release` focuses on public-full sanitized boundary checks.
 
 use serde::{Deserialize, Serialize};
@@ -556,6 +559,14 @@ fn check_session_preflight(repo_root: &Path) -> CheckItem {
 }
 
 fn check_private_vs_stable_drift(repo_root: &Path) -> CheckItem {
+    if is_public_edition_worktree(repo_root) {
+        return CheckItem::skip(
+            "drift-private-vs-stable",
+            "full",
+            "Public edition worktree: private↔stable full-manifest drift gate is not applicable; public-full sanitized boundary gate covers release safety.",
+        );
+    }
+
     let stable_root = "/Volumes/AI Project/agent-governance-suite-stable";
     if !Path::new(stable_root).exists() {
         return CheckItem::skip(
@@ -629,6 +640,30 @@ fn check_private_vs_stable_drift(repo_root: &Path) -> CheckItem {
         ))
         .with_exit_code(code)
     }
+}
+
+fn is_public_edition_worktree(repo_root: &Path) -> bool {
+    let workspace = repo_root.join("WORKSPACE.md");
+    if let Ok(content) = std::fs::read_to_string(workspace) {
+        let normalized = content.to_ascii_lowercase();
+        if normalized.contains("public edition workspace")
+            || normalized.contains("public distributable edition")
+        {
+            return true;
+        }
+    }
+
+    let protocol = repo_root.join("AGENT_SUITE_PROTOCOL.md");
+    if let Ok(content) = std::fs::read_to_string(protocol) {
+        let normalized = content.to_ascii_lowercase();
+        if normalized.contains("agent governance suite 2.0 public edition")
+            || normalized.contains("public-full sanitized")
+        {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn check_private_vs_public_boundary(repo_root: &Path) -> CheckItem {
@@ -1380,6 +1415,61 @@ mod tests {
             item.remediation.unwrap_or_default().contains("--target"),
             "preflight remediation must preserve target authority"
         );
+    }
+
+    #[test]
+    fn test_public_edition_worktree_detection_from_workspace() {
+        let root = std::env::temp_dir().join(format!(
+            "ags-verify-public-worktree-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("WORKSPACE.md"),
+            "# Agent Governance Suite 2.0 — Public Edition Workspace\n\nThis is the public distributable edition.\n",
+        )
+        .unwrap();
+
+        assert!(is_public_edition_worktree(&root));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_private_vs_stable_drift_skips_public_worktree() {
+        let root = std::env::temp_dir().join(format!(
+            "ags-verify-public-drift-skip-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("WORKSPACE.md"),
+            "# Agent Governance Suite 2.0 — Public Edition Workspace\n\nThis is the public distributable edition.\n",
+        )
+        .unwrap();
+
+        let item = check_private_vs_stable_drift(&root);
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(item.status, CheckStatus::Skip);
+        assert_eq!(item.id, "drift-private-vs-stable");
+        assert!(item.evidence.contains("not applicable"));
+    }
+
+    #[test]
+    fn test_non_public_worktree_detection_does_not_match_stable() {
+        let root = std::env::temp_dir().join(format!(
+            "ags-verify-stable-worktree-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("WORKSPACE.md"),
+            "# Agent Governance Suite Workspace\n\n| Code | Role | Path |\n|---|---|---|\n| S | Stable private suite | /tmp/stable |\n",
+        )
+        .unwrap();
+
+        assert!(!is_public_edition_worktree(&root));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     // ── Template leak detection tests ──────────────────────────────────
