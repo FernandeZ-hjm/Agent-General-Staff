@@ -151,6 +151,10 @@ Put more vividly: it's like fitting a domestic model with an arc reactor — a s
 ## Quick Start
 
 ```bash
+# Install the Rust toolchain and cargo
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+
 git clone https://github.com/FernandeZ-hjm/Agent-General-Staff.git
 cd Agent-General-Staff
 bash scripts/install.sh
