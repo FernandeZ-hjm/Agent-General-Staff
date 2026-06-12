@@ -13,3 +13,6 @@
 /docs/evomap/
 *.receipt.json
 *.delivery-report.md
+
+# AGS/GEP local runtime data
+assets/gep/
