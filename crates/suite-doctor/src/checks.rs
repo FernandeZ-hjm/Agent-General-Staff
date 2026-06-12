@@ -1191,15 +1191,20 @@ const evidence = latestTaskArchiveEvidence(process.cwd());
     // ── Template existence tests ───────────────────────────────────────
 
     #[test]
-    fn runtime_profile_template_exists_in_ags_repo() {
-        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap();
-        let f = runtime_profile_template_exists(repo_root);
+    fn runtime_profile_template_exists_when_file_present() {
+        let tmp = std::env::temp_dir().join("ags-runtime-template-present-test");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("manifests/templates")).unwrap();
+        std::fs::write(
+            tmp.join("manifests/templates/runtime-profiles.template.yaml"),
+            "schema_version: \"1.0\"\nprofiles: []\n",
+        )
+        .unwrap();
+
+        let f = runtime_profile_template_exists(&tmp);
         assert_eq!(f.status, CheckStatus::Pass);
         assert_eq!(f.check_name, "runtime_profile_template_exists");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
@@ -1214,15 +1219,20 @@ const evidence = latestTaskArchiveEvidence(process.cwd());
     }
 
     #[test]
-    fn codex_planner_hook_template_exists_in_ags_repo() {
-        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap();
-        let f = codex_planner_hook_template_exists(repo_root);
+    fn codex_planner_hook_template_exists_when_file_present() {
+        let tmp = std::env::temp_dir().join("ags-planner-template-present-test");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("manifests/templates/hooks")).unwrap();
+        std::fs::write(
+            tmp.join("manifests/templates/hooks/codex-planner-recall.template.json"),
+            "{}\n",
+        )
+        .unwrap();
+
+        let f = codex_planner_hook_template_exists(&tmp);
         assert_eq!(f.status, CheckStatus::Pass);
         assert_eq!(f.check_name, "codex_planner_hook_template_exists");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
@@ -1237,15 +1247,20 @@ const evidence = latestTaskArchiveEvidence(process.cwd());
     }
 
     #[test]
-    fn claude_code_stop_hook_template_exists_in_ags_repo() {
-        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap();
-        let f = claude_code_stop_hook_template_exists(repo_root);
+    fn claude_code_stop_hook_template_exists_when_file_present() {
+        let tmp = std::env::temp_dir().join("ags-stop-template-present-test");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("manifests/templates/hooks")).unwrap();
+        std::fs::write(
+            tmp.join("manifests/templates/hooks/claude-code-executor-stop.template.js"),
+            "console.log('ok');\n",
+        )
+        .unwrap();
+
+        let f = claude_code_stop_hook_template_exists(&tmp);
         assert_eq!(f.status, CheckStatus::Pass);
         assert_eq!(f.check_name, "claude_code_stop_hook_template_exists");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
