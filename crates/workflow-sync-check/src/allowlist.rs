@@ -1,9 +1,9 @@
 //! Legal-difference allowlist for public-full sanitized and other target types.
 //!
 //! An allowlist declares which differences between source and target are legally
-//! permissible (not drift). This supports the public-full sanitized use case where
-//! internal paths, collaboration notes, and machine-specific details are
-//! intentionally removed from the public distribution.
+//! permissible (not drift). This supports the public-full sanitized use case
+//! where private paths, local collaboration notes, and machine-specific details
+//! are intentionally removed from the public distribution.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -57,45 +57,39 @@ pub struct FileAllowlistEntry {
 ///
 /// This encodes the known legal differences between the private suite and
 /// a public distribution:
-/// - Internal collaboration files are absent
 /// - Machine-specific paths are redacted
 /// - Internal workflow sections are removed
 pub fn default_public_allowlist() -> Allowlist {
     Allowlist {
         description: "Default allowlist for public-full sanitized distribution".into(),
         files: vec![
-            FileAllowlistEntry {
-                file: "AGENTS.md".to_string(),
-                allowed_missing_files: vec!["AGENTS.md".to_string()],
-                allowed_missing_sections: vec![],
-                allowed_content_drift_sections: vec![],
-                removable_content_patterns: vec![],
-                removable_content_regex: vec![],
-            },
-            FileAllowlistEntry {
-                file: "CLAUDE.md".to_string(),
-                allowed_missing_files: vec!["CLAUDE.md".to_string()],
-                allowed_missing_sections: vec![],
-                allowed_content_drift_sections: vec![],
-                removable_content_patterns: vec![],
-                removable_content_regex: vec![],
-            },
-            FileAllowlistEntry {
-                file: "WORKSPACE.md".to_string(),
-                allowed_missing_files: vec!["WORKSPACE.md".to_string()],
-                allowed_missing_sections: vec![],
-                allowed_content_drift_sections: vec![],
-                removable_content_patterns: vec![],
-                removable_content_regex: vec![],
-            },
-            FileAllowlistEntry {
-                file: "AGENT_SUITE_PROTOCOL.md".to_string(),
-                allowed_missing_files: vec!["AGENT_SUITE_PROTOCOL.md".to_string()],
-                allowed_missing_sections: vec![],
-                allowed_content_drift_sections: vec![],
-                removable_content_patterns: vec![],
-                removable_content_regex: vec![],
-            },
+            public_rewritten_doc("AGENTS.md"),
+            public_rewritten_doc("CLAUDE.md"),
+            public_rewritten_doc("WORKSPACE.md"),
+            public_rewritten_doc("AGENT_SUITE_PROTOCOL.md"),
+            public_rewritten_doc("README.md"),
+            public_rewritten_doc("Cargo.lock"),
+            public_rewritten_doc("protocol/2.0-baseline.md"),
+            public_rewritten_doc("protocol/2.0-roadmap.md"),
+            public_rewritten_doc("protocol/context-memory.md"),
+            public_rewritten_doc("protocol/project-profile.md"),
+            public_rewritten_doc("protocol/skill-governance.md"),
+            public_rewritten_doc("scripts/verify.sh"),
+            public_rewritten_doc("governance/skill-sync.md"),
+            public_rewritten_doc("governance/skill-adoption-log.yaml"),
+            public_rewritten_doc("governance/skill-ignore-list.yaml"),
+            public_rewritten_doc("manifests/suite.yaml"),
+            public_target_only_file("LICENSE"),
+            public_target_only_file("templates/task-card-template.md"),
+            public_target_only_file("templates/memory/context-capsule.md"),
+            public_target_only_file("templates/memory/task-memory.md"),
+            public_target_only_file("templates/memory/archive-index.md"),
+            public_target_only_file("templates/memory/task-archive/README.md"),
+            public_target_only_file("scripts/install.sh"),
+            public_target_only_file("scripts/context-memory.sh"),
+            public_target_only_file("scripts/stop-archive-hook.sh"),
+            public_target_only_file("docs/skill-recommendations.md"),
+            public_target_only_file("manifests/skill-recommendations.yaml"),
             FileAllowlistEntry {
                 file: "protocol/runtime-adapters.md".to_string(),
                 allowed_missing_files: vec![],
@@ -159,6 +153,7 @@ pub fn default_public_allowlist() -> Allowlist {
                     "Agent Task Protocol > Skill Governance 治理".to_string(),
                 ],
                 allowed_content_drift_sections: vec![
+                    "Agent Task Protocol > Executor 入口规则".to_string(),
                     "Agent Task Protocol > Review Gate 规则".to_string(),
                     "Agent Task Protocol > Runtime Hook Policy".to_string(),
                     "Agent Task Protocol > Skill Governance 治理".to_string(),
@@ -199,6 +194,28 @@ pub fn default_public_allowlist() -> Allowlist {
                 removable_content_regex: vec![],
             },
         ],
+    }
+}
+
+fn public_rewritten_doc(file: &str) -> FileAllowlistEntry {
+    FileAllowlistEntry {
+        file: file.to_string(),
+        allowed_missing_files: vec![],
+        allowed_missing_sections: vec!["*".to_string()],
+        allowed_content_drift_sections: vec!["*".to_string()],
+        removable_content_patterns: vec![],
+        removable_content_regex: vec![],
+    }
+}
+
+fn public_target_only_file(file: &str) -> FileAllowlistEntry {
+    FileAllowlistEntry {
+        file: file.to_string(),
+        allowed_missing_files: vec![file.to_string()],
+        allowed_missing_sections: vec![],
+        allowed_content_drift_sections: vec![],
+        removable_content_patterns: vec![],
+        removable_content_regex: vec![],
     }
 }
 
@@ -250,13 +267,20 @@ pub fn is_allowed(
             }
             DriftKind::SectionMissing | DriftKind::ExtraSection => {
                 let path_str = crate::types::format_section_path(section_path);
-                if entry.allowed_missing_sections.contains(&path_str) {
+                if entry.allowed_missing_sections.iter().any(|s| s == "*")
+                    || entry.allowed_missing_sections.contains(&path_str)
+                {
                     return true;
                 }
             }
             DriftKind::ContentDrift => {
                 let path_str = crate::types::format_section_path(section_path);
-                if entry.allowed_content_drift_sections.contains(&path_str) {
+                if entry
+                    .allowed_content_drift_sections
+                    .iter()
+                    .any(|s| s == "*")
+                    || entry.allowed_content_drift_sections.contains(&path_str)
+                {
                     return true;
                 }
                 // Content drift is also allowed if the only difference is
@@ -316,9 +340,9 @@ mod tests {
     }
 
     #[test]
-    fn public_allowlist_allows_internal_file_missing() {
+    fn public_allowlist_requires_root_entry_files() {
         let al = default_public_allowlist();
-        assert!(is_allowed(
+        assert!(!is_allowed(
             &al,
             "AGENTS.md",
             &[],
@@ -338,6 +362,23 @@ mod tests {
                 "Codex Direct Execution".to_string()
             ],
             &DriftKind::SectionMissing
+        ));
+    }
+
+    #[test]
+    fn public_allowlist_allows_rewritten_public_docs() {
+        let al = default_public_allowlist();
+        assert!(is_allowed(
+            &al,
+            "CLAUDE.md",
+            &["Agent Governance Suite 2.0 — Public Edition".to_string()],
+            &DriftKind::ExtraSection
+        ));
+        assert!(is_allowed(
+            &al,
+            "scripts/verify.sh",
+            &["verify.sh — AGS public edition verification gate".to_string()],
+            &DriftKind::ContentDrift
         ));
     }
 

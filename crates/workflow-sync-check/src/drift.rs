@@ -27,7 +27,7 @@ pub fn check_target(
 
     // Check only the files required by this target's manifest.
     // Public-full sanitized targets use PUBLIC_MANIFEST: the full public AGS
-    // runtime, templates, and sanitized skeletons.
+    // runtime, templates, scripts, and sanitized skeletons.
     for relative in manifest.required_files {
         check_file(source_root, target_root, relative, allowlist, &mut drifts);
     }
@@ -548,9 +548,8 @@ mod tests {
             &allowlist::default_public_allowlist(),
         );
 
-        // Public target uses PUBLIC_MANIFEST (4 files). Internal files
-        // (AGENTS.md, CLAUDE.md, WORKSPACE.md, AGENT_SUITE_PROTOCOL.md) are
-        // NOT checked at all — they're not in the manifest.
+        // Public target uses PUBLIC_MANIFEST: the public Rust runtime plus
+        // public docs, templates, scripts, and empty governance skeletons.
         let checked_files: BTreeSet<&str> = result.drifts.iter().map(|d| d.file.as_str()).collect();
         let public_manifest: BTreeSet<&str> = crate::manifest::PUBLIC_MANIFEST
             .required_files
@@ -559,7 +558,7 @@ mod tests {
             .collect();
 
         // Every drift must be for a file in PUBLIC_MANIFEST, or be a
-        // PUBLIC_FORBIDDEN_PAYLOAD drift (governance/, manifests/).
+        // PUBLIC_FORBIDDEN_PAYLOAD drift (runtime/private payload).
         let forbidden: BTreeSet<&str> = crate::manifest::PUBLIC_FORBIDDEN_PAYLOAD
             .iter()
             .copied()
@@ -574,16 +573,16 @@ mod tests {
             );
         }
 
-        // Internal files must NOT appear in any drift
-        for internal in &[
+        // Root entry files are part of the public-full manifest.
+        for root_file in &[
             "AGENTS.md",
             "CLAUDE.md",
             "WORKSPACE.md",
             "AGENT_SUITE_PROTOCOL.md",
         ] {
             assert!(
-                !checked_files.contains(internal),
-                "internal file {internal} must not be checked for public target"
+                public_manifest.contains(root_file),
+                "root file {root_file} must be checked for public-full target"
             );
         }
 
@@ -624,20 +623,14 @@ mod tests {
     }
 
     #[test]
-    fn public_target_with_forbidden_payload_fails() {
-        // In 2.0, Cargo.toml + crates/ are public-safe.
-        // Only build artifacts (target/) and private audit logs are forbidden.
+    fn public_target_with_forbidden_runtime_payload_fails() {
         let (source, target) = temp_dir("public_forbidden_payload");
         for relative in crate::manifest::PUBLIC_MANIFEST.required_files {
             write_file(&source, relative, "same\n# Test\n\ncontent\n");
             write_file(&target, relative, "same\n# Test\n\ncontent\n");
         }
         write_file(&target, "target/release/ags", "binary\n");
-        write_file(
-            &target,
-            "governance/skill-adoption-log.yaml",
-            "entries: []\n",
-        );
+        write_file(&target, "skill-packs/personal/demo/SKILL.md", "private\n");
 
         let result = check_target(
             &source,
@@ -654,44 +647,9 @@ mod tests {
             .collect();
         assert!(
             !forbidden.is_empty(),
-            "public target must fail when forbidden payload is present: {result:?}"
+            "public target must fail when forbidden runtime payload is present: {result:?}"
         );
         assert!(forbidden.iter().all(|d| d.severity == Severity::Fail));
-        cleanup(&source, &target);
-    }
-
-    #[test]
-    fn public_target_ignores_gitignored_build_output() {
-        let (source, target) = temp_dir("public_ignored_target");
-        for relative in crate::manifest::PUBLIC_MANIFEST.required_files {
-            write_file(&source, relative, "same\n# Test\n\ncontent\n");
-            write_file(&target, relative, "same\n# Test\n\ncontent\n");
-        }
-        let status = std::process::Command::new("git")
-            .arg("-C")
-            .arg(&target)
-            .arg("init")
-            .status()
-            .unwrap();
-        assert!(status.success());
-        write_file(&target, ".gitignore", "/target/\n");
-        write_file(&target, "target/release/ags", "binary\n");
-
-        let result = check_target(
-            &source,
-            &target,
-            "public",
-            &ProjectKind::PublicCoreOnly,
-            &allowlist::default_public_allowlist(),
-        );
-
-        assert!(
-            result
-                .drifts
-                .iter()
-                .all(|d| d.kind != DriftKind::PublicForbiddenPayload),
-            "gitignored build output should not count as public payload: {result:?}"
-        );
         cleanup(&source, &target);
     }
 

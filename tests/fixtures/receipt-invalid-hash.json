@@ -1,0 +1,27 @@
+{
+  "schema_version": "2.0-m6",
+  "receipt_id": "receipt-00deadbeef00",
+  "timestamp": "unix-0",
+  "task_card_hash": "00deadbeef000000000000000000000000000000000000000000000000000000",
+  "task_card_path": "tests/fixtures/valid-compact.md",
+  "gate_result": {
+    "decision": "allow"
+  },
+  "verification_results": [
+    {
+      "command": "cargo fmt --check",
+      "exit_code": 0,
+      "output_hash": ""
+    },
+    {
+      "command": "cargo test",
+      "exit_code": 0,
+      "output_hash": ""
+    },
+    {
+      "command": "cargo build --release",
+      "exit_code": 0,
+      "output_hash": ""
+    }
+  ]
+}

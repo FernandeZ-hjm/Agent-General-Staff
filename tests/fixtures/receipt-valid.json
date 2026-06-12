@@ -1,0 +1,27 @@
+{
+  "schema_version": "2.0-m6",
+  "receipt_id": "receipt-c2a37a0e9201",
+  "timestamp": "unix-0",
+  "task_card_hash": "c2a37a0e920166ad5e9a3f05ad95b1a42accd5db27392b9c39414e0424104c23",
+  "task_card_path": "tests/fixtures/valid-compact.md",
+  "gate_result": {
+    "decision": "allow"
+  },
+  "verification_results": [
+    {
+      "command": "cargo fmt --check",
+      "exit_code": 0,
+      "output_hash": ""
+    },
+    {
+      "command": "cargo test",
+      "exit_code": 0,
+      "output_hash": ""
+    },
+    {
+      "command": "cargo build --release",
+      "exit_code": 0,
+      "output_hash": ""
+    }
+  ]
+}

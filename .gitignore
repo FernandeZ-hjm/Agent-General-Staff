@@ -1,21 +1,19 @@
 /target/
-/.codegraph/
+.codegraph/
 **/*.rs.bk
+.claude/review_targets.json
 
-# Local agent/user state must not be shipped in public-full sanitized releases.
-/.agents/
-/.codex/
-/.claude/local/
-/.evolver/
-/global-skills/
-/skill-packs/
+# Public worktree private/local overlays
+/config/
 /memory/
-/task-archive/
+/.evolver/
+/.ags/
+
+# Graphify local project-map outputs
+.graphifyignore
+graphify-out/
+
+# GEP local runtime data
+assets/gep/
 /docs/evomap/
 /manifests/templates/
-*.receipt.json
-*.delivery-report.md
-config/agent-project-profile.yaml
-
-# AGS/GEP local runtime data
-assets/gep/

@@ -2,7 +2,6 @@
 name = "workflow-sync-check"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
 description = "Read-only multi-project protocol drift checker with section-level comparison and legal-difference allowlists"
 
 [dependencies]

@@ -2,7 +2,6 @@
 name = "bootstrap-dry-run"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
 description = "Bootstrap dry run — simulated readiness checks, no real bootstrap"
 
 [dependencies]

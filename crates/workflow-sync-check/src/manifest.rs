@@ -46,10 +46,8 @@ pub const FULL_MANIFEST: SyncManifest = SyncManifest {
 
 /// Manifest for public-full sanitized targets.
 ///
-/// Public-full includes the Rust AGS runtime and governance framework, but ships
-/// only public-safe templates and empty user-owned memory/audit skeletons.
-/// Private runtime overlays, including EvoMap hook/profile templates, are local
-/// operator state and are intentionally excluded.
+/// Public-full includes the Rust AGS runtime and governance framework, while
+/// keeping private EvoMap/GEP runtime surfaces outside the public sync surface.
 pub const PUBLIC_MANIFEST: SyncManifest = SyncManifest {
     required_files: &[
         "AGENTS.md",
@@ -58,7 +56,6 @@ pub const PUBLIC_MANIFEST: SyncManifest = SyncManifest {
         "AGENT_SUITE_PROTOCOL.md",
         "README.md",
         "LICENSE",
-        ".github/workflows/ci.yml",
         "Cargo.toml",
         "Cargo.lock",
         "protocol/agent-task-protocol.md",
@@ -103,6 +100,16 @@ pub const PUBLIC_FORBIDDEN_PAYLOAD: &[&str] = &[
     ".agents/",
     ".codex/",
     ".claude/local/",
+    ".evolver/",
+    "assets/gep/",
+    "evomap/",
+    "mcp/gep.mcp.json",
+    "hosts/claude-code.evomap-mcp.snippet.json",
+    "bin/evolver-proxy-mcp",
+    "manifests/runtime-profiles.yaml",
+    "manifests/templates/",
+    "crates/ags-mcp/src/resources/evolver_boundary.md",
+    "protocol/evolution-memory.md",
     "memory/",
     "task-archive/",
 ];
@@ -266,15 +273,13 @@ mod tests {
     }
 
     #[test]
-    fn public_manifest_includes_public_runtime_without_private_overlays() {
+    fn public_manifest_includes_public_core_protocol_and_scripts() {
         let public: BTreeSet<_> = PUBLIC_MANIFEST.required_files.iter().copied().collect();
         for path in [
             "AGENTS.md",
             "CLAUDE.md",
             "WORKSPACE.md",
             "AGENT_SUITE_PROTOCOL.md",
-            "Cargo.toml",
-            "Cargo.lock",
             "templates/memory/context-capsule.md",
             "templates/memory/task-memory.md",
             "scripts/context-memory.sh",
@@ -283,17 +288,6 @@ mod tests {
             "governance/skill-ignore-list.yaml",
         ] {
             assert!(public.contains(path), "public manifest missing {path}");
-        }
-        for path in [
-            "manifests/templates/runtime-profiles.template.yaml",
-            "manifests/templates/hooks/claude-code-executor-stop.template.js",
-            "manifests/templates/hooks/codex-planner-recall.template.json",
-            "manifests/templates/README.md",
-        ] {
-            assert!(
-                !public.contains(path),
-                "public manifest must not ship private runtime overlay {path}"
-            );
         }
     }
 
@@ -343,6 +337,18 @@ mod tests {
         assert!(is_public_forbidden_payload(
             "global-skills/example/SKILL.md"
         ));
+        assert!(is_public_forbidden_payload(".evolver/gep/genes.json"));
+        assert!(is_public_forbidden_payload("assets/gep/capsules.json"));
+        assert!(is_public_forbidden_payload("evomap/README.md"));
+        assert!(is_public_forbidden_payload("mcp/gep.mcp.json"));
+        assert!(is_public_forbidden_payload(
+            "hosts/claude-code.evomap-mcp.snippet.json"
+        ));
+        assert!(is_public_forbidden_payload("bin/evolver-proxy-mcp"));
+        assert!(is_public_forbidden_payload(
+            "manifests/templates/runtime-profiles.template.yaml"
+        ));
+        assert!(is_public_forbidden_payload("protocol/evolution-memory.md"));
         assert!(!is_public_forbidden_payload("global-skills.md"));
         assert!(!is_public_forbidden_payload("governance/skill-sync.md"));
     }
@@ -350,16 +356,15 @@ mod tests {
     #[test]
     fn public_forbidden_payload_allows_public_protocol_and_scripts() {
         for path in [
+            "Cargo.toml",
+            "Cargo.lock",
+            "crates/ags-cli/src/main.rs",
             "protocol/task-card-template.md",
             "templates/fallback-task-cards/light.md",
             "project-integration/AGENTS.md.template",
             "scripts/verify.sh",
             "scripts/validate-task-card.sh",
             "README.md",
-            ".github/workflows/ci.yml",
-            "Cargo.toml",
-            "Cargo.lock",
-            "crates/ags-cli/src/main.rs",
             // Public targets may have their own governance/manifests and empty
             // audit skeletons. Non-empty private audit content is checked by
             // release sanitize, not path-level manifest filtering.

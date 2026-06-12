@@ -6,7 +6,7 @@
 //! source, assertion checks scan for specific invariant signatures.
 //!
 //! Missing or contradicted safety assertions are ALWAYS `Severity::Fail`,
-//! even for public/core-only targets where normal content drift may be
+//! even for public-full sanitized targets where normal content drift may be
 //! allowlisted.
 //!
 //! # Design

@@ -111,7 +111,7 @@ pub enum DriftKind {
     /// Structural difference (heading order, level mismatch).
     #[serde(rename = "structure_drift")]
     StructureDrift,
-    /// A legal redaction — content removed per public/core-only allowlist.
+    /// A legal redaction — content adjusted per public-full sanitized allowlist.
     #[serde(rename = "legal_redaction")]
     LegalRedaction,
     /// A file in protocol/ that is not in the sync manifest.
@@ -126,7 +126,7 @@ pub enum DriftKind {
     /// A protocol safety assertion is present but has been contradictorily rewritten.
     #[serde(rename = "invariant_contradicted")]
     InvariantContradicted,
-    /// A private-only toolchain artifact is present in a public/core-only target.
+    /// A forbidden private runtime/build artifact is present in a public-full target.
     #[serde(rename = "public_forbidden_payload")]
     PublicForbiddenPayload,
 }
@@ -306,7 +306,11 @@ impl CheckOptions {
                     ProjectKind::Stable
                 } else if matches!(
                     target_name.as_str(),
-                    "public" | "public-core-only" | "public-full" | "public-full-sanitized"
+                    "public"
+                        | "public-core"
+                        | "public-core-only"
+                        | "public-full"
+                        | "public-full-sanitized"
                 ) {
                     ProjectKind::PublicCoreOnly
                 } else {

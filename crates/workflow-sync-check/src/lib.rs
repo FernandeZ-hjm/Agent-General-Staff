@@ -4,7 +4,7 @@
 //! 1. Parse markdown files into heading-path → content sections
 //! 2. Compare sections across source and multiple targets
 //! 3. Classify drift by type and severity
-//! 4. Apply allowlists for legal differences (e.g. public/core-only redactions)
+//! 4. Apply allowlists for legal differences (e.g. public-full sanitized adjustments)
 //! 5. Verify critical protocol safety assertions are present in every target
 //! 6. Output structured text or JSON reports
 //!
@@ -40,13 +40,11 @@ pub use types::{
     ProjectKind, SectionPath, Severity, TargetConfig,
 };
 
-/// Default stable suite root — not hardcoded in public version.
-/// Users must specify `--targets stable=/path/to/stable` explicitly.
-pub const DEFAULT_STABLE_ROOT: &str = "";
+/// Default stable suite root (used by CLI as default target).
+pub const DEFAULT_STABLE_ROOT: &str = "/Volumes/AI Project/agent-governance-suite-stable";
 
-/// Default public/core-only suite root — not hardcoded in public version.
-/// Users must specify `--targets public=/path/to/public` explicitly.
-pub const DEFAULT_PUBLIC_ROOT: &str = "";
+/// Default public-full sanitized suite root.
+pub const DEFAULT_PUBLIC_ROOT: &str = "/Volumes/AI Project/ai-dev-env-bootstrap";
 
 // ── Public API ─────────────────────────────────────────────────────────
 
@@ -194,17 +192,36 @@ mod tests {
             Runners must consume allowed_launch_args and effective_permission_mode.\n";
         let default_fmt = |rel: &str| format!("{rel}\n# Test\n\ncontent\n");
 
-        let mut files: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
-        files.extend(manifest::FULL_MANIFEST.required_files.iter().copied());
-        files.extend(manifest::PUBLIC_MANIFEST.required_files.iter().copied());
-
-        for relative in files {
-            if relative == "protocol/runtime-adapters.md" {
+        for relative in manifest::FULL_MANIFEST.required_files {
+            if *relative == "protocol/runtime-adapters.md" {
                 write_file(root, relative, safety);
             } else {
                 let content = default_fmt(relative);
                 write_file(root, relative, &content);
             }
+        }
+    }
+
+    fn write_public_manifest(source: &PathBuf, target: &PathBuf) {
+        for relative in crate::manifest::PUBLIC_MANIFEST.required_files {
+            let source_path = source.join(relative);
+            if !source_path.exists() {
+                let content = format!("{relative}\n# Test\n\ndefault content\n");
+                if let Some(parent) = source_path.parent() {
+                    fs::create_dir_all(parent).unwrap();
+                }
+                fs::write(&source_path, &content).unwrap();
+            }
+
+            let target_path = target.join(relative);
+            if target_path.exists() {
+                continue;
+            }
+            if let Some(parent) = target_path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            let content = fs::read(&source_path).unwrap();
+            fs::write(target_path, content).unwrap();
         }
     }
 
@@ -334,7 +351,7 @@ mod tests {
 
         write_manifest(&source);
         write_manifest(&target1);
-        write_manifest(&target2);
+        write_public_manifest(&source, &target2);
 
         let options = CheckOptions {
             source_root: source.clone(),
@@ -372,8 +389,7 @@ mod tests {
     fn public_target_only_checks_public_manifest() {
         let (source, target) = temp_dir("public_manifest_only");
         write_manifest(&source);
-        // For public target, write all FULL_MANIFEST files (including internal ones)
-        write_manifest(&target);
+        write_public_manifest(&source, &target);
 
         let options = CheckOptions {
             source_root: source.clone(),
@@ -389,19 +405,19 @@ mod tests {
         let report = check_multi(&options);
         let project = &report.projects[0];
 
-        // Public target uses PUBLIC_MANIFEST (4 files). Internal files
-        // (AGENTS.md, CLAUDE.md, WORKSPACE.md, AGENT_SUITE_PROTOCOL.md)
-        // must NOT appear in any drift — they are not in the manifest.
-        for internal in &[
+        // Public target uses PUBLIC_MANIFEST, which includes the public root
+        // entry files. With identical public-full manifest files there should
+        // be no drift for those entries.
+        for root_file in &[
             "AGENTS.md",
             "CLAUDE.md",
             "WORKSPACE.md",
             "AGENT_SUITE_PROTOCOL.md",
         ] {
-            let has_internal = project.drifts.iter().any(|d| d.file == *internal);
+            let has_root_entry_drift = project.drifts.iter().any(|d| d.file == *root_file);
             assert!(
-                !has_internal,
-                "internal file {internal} must not be checked for public target, got drifts: {project:?}"
+                !has_root_entry_drift,
+                "root entry file {root_file} should be clean in public target, got drifts: {project:?}"
             );
         }
 
