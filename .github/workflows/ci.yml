@@ -50,4 +50,6 @@ jobs:
         run: cargo build --release
 
       - name: Verify public worktree
-        run: cargo run -q -p ags-cli -- verify --scope local --format text
+        run: |
+          echo "$PWD/target/release" >> "$GITHUB_PATH"
+          cargo run -q -p ags-cli -- verify --scope local --format text
