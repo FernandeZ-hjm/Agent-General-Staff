@@ -953,8 +953,10 @@ pub fn run_verify(scope: Scope, repo_root: &Path) -> VerificationReport {
     items.extend(check_governance_yaml(&repo_root));
     items.push(check_session_preflight(&repo_root));
 
-    // Full scope — add drift checks
-    if matches!(scope, Scope::Full) || matches!(scope, Scope::Release) {
+    // Full scope — compare long-running suite lines. Release scope is checked
+    // against the public boundary below and should not fail because a private or
+    // stable working tree has extra internal sections.
+    if matches!(scope, Scope::Full) {
         items.push(check_private_vs_stable_drift(&repo_root));
         items.push(check_private_vs_public_boundary(&repo_root));
     }

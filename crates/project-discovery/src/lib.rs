@@ -701,6 +701,7 @@ pub enum AgentType {
     #[serde(rename = "claude-code")]
     ClaudeCode,
     Cursor,
+    Generic,
 }
 
 impl AgentType {
@@ -709,8 +710,9 @@ impl AgentType {
             "codex" => Ok(AgentType::Codex),
             "claude-code" => Ok(AgentType::ClaudeCode),
             "cursor" => Ok(AgentType::Cursor),
+            "workbuddy" | "cowork" | "generic" => Ok(AgentType::Generic),
             other => Err(format!(
-                "invalid agent type: '{}'. Valid values: codex, claude-code, cursor",
+                "invalid agent type: '{}'. Valid values: codex, claude-code, cursor, workbuddy, generic",
                 other
             )),
         }
@@ -721,6 +723,7 @@ impl AgentType {
             AgentType::Codex => "codex",
             AgentType::ClaudeCode => "claude-code",
             AgentType::Cursor => "cursor",
+            AgentType::Generic => "generic",
         }
     }
 
@@ -729,6 +732,7 @@ impl AgentType {
             AgentType::Codex => "Codex",
             AgentType::ClaudeCode => "Claude Code",
             AgentType::Cursor => "Cursor",
+            AgentType::Generic => "Generic AGS Host",
         }
     }
 }
@@ -964,6 +968,66 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
                     InstructionFile {
                         path: "protocol/task-card-template.md".to_string(),
                         description: "Fixed task card skeleton".to_string(),
+                        priority: "required".to_string(),
+                    },
+                    InstructionFile {
+                        path: "protocol/runtime-adapters.md".to_string(),
+                        description: "Executor, permission, review, resume rules".to_string(),
+                        priority: "required".to_string(),
+                    },
+                    InstructionFile {
+                        path: "protocol/task-routing.md".to_string(),
+                        description: "Light/medium/heavy task routing".to_string(),
+                        priority: "required".to_string(),
+                    },
+                ],
+            ),
+            AgentType::Generic => (
+                "This host is AGS-compatible but not one of the named first-party runtimes. It must complete AGS initialization preflight before any AGS scenario work, then follow the governed lifecycle surfaced by the preflight report. Generic hosts may read project context and help form solutions, but they must not assume Codex, Claude Code, or Cursor-specific privileges from their agent name alone.\n\nCRITICAL — Task-Card Request Gate: do not generate executable task cards from raw user requests or solution-phase output. \"方案 OK\" only ends solution formation; a separate explicit task-card instruction is required before routing or execution."
+                    .to_string(),
+                AgentPermissions {
+                    default_permission_mode: "edit-with-confirmation".to_string(),
+                    default_parallelism: "none".to_string(),
+                    may_edit_files: true,
+                    may_delegate: false,
+                    may_install: false,
+                },
+                vec![
+                    "Call AGS MCP `ags_preflight` first for AGS scenarios; use CLI preflight only as fallback."
+                        .to_string(),
+                    "Do not perform Light/Medium/Heavy classification from raw user requests."
+                        .to_string(),
+                    "Do not generate executable task cards until the user explicitly issues a task-card instruction."
+                        .to_string(),
+                    "Do not install hooks, dependencies, runner adapters, MCP servers, or production wiring without explicit task-card authorization."
+                        .to_string(),
+                    "If host capability is unclear, stop and ask Codex/Cursor or the human operator to route the task."
+                        .to_string(),
+                ],
+                vec![
+                    InstructionFile {
+                        path: "AGENTS.md".to_string(),
+                        description: "Agent entry point".to_string(),
+                        priority: "required".to_string(),
+                    },
+                    InstructionFile {
+                        path: "CLAUDE.md".to_string(),
+                        description: "Agent execution protocol".to_string(),
+                        priority: "required".to_string(),
+                    },
+                    InstructionFile {
+                        path: "AGENT_SUITE_PROTOCOL.md".to_string(),
+                        description: "Suite protocol overview".to_string(),
+                        priority: "required".to_string(),
+                    },
+                    InstructionFile {
+                        path: "protocol/mcp-server.md".to_string(),
+                        description: "AGS MCP mandatory initialization gate".to_string(),
+                        priority: "required".to_string(),
+                    },
+                    InstructionFile {
+                        path: "protocol/agent-task-protocol.md".to_string(),
+                        description: "Task card and review rules".to_string(),
                         priority: "required".to_string(),
                     },
                     InstructionFile {

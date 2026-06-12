@@ -1,0 +1,54 @@
+## AGS Delivery Report
+
+You have completed task execution. Produce a delivery report in this format:
+
+```markdown
+# 任务交付报告
+
+## 任务状态
+完成 / 部分完成 / 未完成
+
+一句话结论：
+
+## 改动内容
+修改文件：
+- `path`: 改动摘要
+
+新增文件 / 输出物：
+- `path`: 用途
+
+删除文件：
+- 无 / `path`: 原因
+
+## 验证结果
+已运行：
+- `command` → 结果
+
+未验证内容：
+- 无 / 说明原因
+
+## 风险提示
+- 风险项
+
+## 下一步建议
+- 建议项
+```
+
+### Requirements:
+
+- Task status: "部分完成 / 等待 Codex review" or "部分完成 / 等待人工 adversarial review"
+  if review gate has not passed. Only write "完成" when both verification AND review gate pass.
+- One-line conclusion: the single most important takeaway.
+- Changed files: every modified, created, and deleted file with a one-line summary.
+- Verification: exact commands run and their results. If something was not verified, say why.
+- Risks: residual risks, unverified assumptions, known limitations.
+- Next steps: what the user or another agent should do next.
+
+### Before delivering:
+
+- Did you run `git status --short`?
+- Did you run the narrowest relevant verification?
+- Did you check the review gate status?
+- If Medium/Heavy: is review gate complete? If not, mark "部分完成".
+- Is the EvoMap method-capture boundary respected? (Only reusable method goes to Evolver;
+  project facts stay in AGS memory.)

@@ -63,6 +63,20 @@ pub const PUBLIC_MANIFEST: SyncManifest = SyncManifest {
         "protocol/task-card-template.md",
         "protocol/task-routing.md",
         "protocol/skill-governance.md",
+        "protocol/mcp-server.md",
+        "protocol/evolution-memory.md",
+        "crates/ags-mcp/Cargo.toml",
+        "crates/ags-mcp/src/lib.rs",
+        "crates/ags-mcp/src/protocol.rs",
+        "crates/ags-mcp/src/server.rs",
+        "crates/ags-mcp/src/tools.rs",
+        "crates/ags-mcp/src/resources.rs",
+        "crates/ags-mcp/src/prompts.rs",
+        "crates/ags-mcp/src/resources/global_kernel.md",
+        "crates/ags-mcp/src/resources/evolver_boundary.md",
+        "crates/ags-mcp/src/prompts/global_kernel.txt",
+        "crates/ags-mcp/src/prompts/task_card_request_gate.txt",
+        "crates/ags-mcp/src/prompts/delivery_report.txt",
         "protocol/2.0-baseline.md",
         "protocol/2.0-roadmap.md",
         "templates/task-card-template.md",
@@ -108,8 +122,6 @@ pub const PUBLIC_FORBIDDEN_PAYLOAD: &[&str] = &[
     "bin/evolver-proxy-mcp",
     "manifests/runtime-profiles.yaml",
     "manifests/templates/",
-    "crates/ags-mcp/src/resources/evolver_boundary.md",
-    "protocol/evolution-memory.md",
     "memory/",
     "task-archive/",
 ];
@@ -348,7 +360,10 @@ mod tests {
         assert!(is_public_forbidden_payload(
             "manifests/templates/runtime-profiles.template.yaml"
         ));
-        assert!(is_public_forbidden_payload("protocol/evolution-memory.md"));
+        assert!(!is_public_forbidden_payload("protocol/evolution-memory.md"));
+        assert!(!is_public_forbidden_payload(
+            "crates/ags-mcp/src/resources/evolver_boundary.md"
+        ));
         assert!(!is_public_forbidden_payload("global-skills.md"));
         assert!(!is_public_forbidden_payload("governance/skill-sync.md"));
     }

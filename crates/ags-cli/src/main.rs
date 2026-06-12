@@ -60,6 +60,8 @@
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
+const AGS_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 // ── CLI root ──────────────────────────────────────────────────────────────
 
 #[derive(Parser)]
@@ -520,10 +522,51 @@ enum VerifyAction {
     },
 }
 
+/// MCP server operations.
+#[derive(Subcommand)]
+enum McpAction {
+    /// Start AGS MCP server on stdio.
+    Serve {
+        /// Transport protocol; v1 supports stdio only.
+        #[arg(long, default_value = "stdio", value_parser = ["stdio"])]
+        transport: String,
+    },
+}
+
 // ── Top-level Commands ────────────────────────────────────────────────────
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Initialize local AGS host entrypoints: /ags, Codex command skills, MCP snippets.
+    Setup {
+        /// Confirm writes to AGS-owned command/snippet files.
+        #[arg(long, default_value_t = false)]
+        yes: bool,
+        /// Replace existing AGS-owned command files.
+        #[arg(long, default_value_t = false)]
+        force: bool,
+        /// Runtime/share target for generated MCP snippets.
+        #[arg(long)]
+        target: Option<PathBuf>,
+        /// Register AGS MCP in Claude Code using `claude mcp add`.
+        #[arg(long, default_value_t = false)]
+        register_claude: bool,
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Onboard the current project into AGS governance.
+    Init {
+        /// Target repository path (default: current directory)
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+        /// Dry-run only; do not write managed blocks or memory templates.
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
     /// Task card operations
     Task {
         #[command(subcommand)]
@@ -650,6 +693,13 @@ enum Commands {
     Skill {
         #[command(subcommand)]
         action: SkillAction,
+    },
+
+    // ── MCP host adapter ─────────────────────────────────────────────
+    /// Start AGS MCP host initialization adapter.
+    Mcp {
+        #[command(subcommand)]
+        action: McpAction,
     },
 
     // ── Runner ───────────────────────────────────────────────────────
@@ -812,6 +862,576 @@ fn guard_writable_target(command: &str, target: &Path) {
         );
         eprintln!("Write-mode operations must target a tempdir or non-suite directory.");
         std::process::exit(1);
+    }
+}
+
+fn home_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn shell_quote(path: &Path) -> String {
+    let s = path.to_string_lossy();
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+fn default_setup_target() -> PathBuf {
+    std::env::var_os("AGS_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join(".ags").join("public-runtime"))
+}
+
+fn claude_ags_command_path() -> PathBuf {
+    home_dir().join(".claude").join("commands").join("ags.md")
+}
+
+fn codex_ags_named_skill_dir(name: &str) -> PathBuf {
+    home_dir().join(".codex").join("skills").join(name)
+}
+
+fn codex_ags_named_skill_path(name: &str) -> PathBuf {
+    codex_ags_named_skill_dir(name).join("SKILL.md")
+}
+
+fn codex_ags_named_skill_agent_metadata_path(name: &str) -> PathBuf {
+    codex_ags_named_skill_dir(name)
+        .join("agents")
+        .join("openai.yaml")
+}
+
+fn retired_codex_ags_skill_dirs() -> Vec<PathBuf> {
+    vec![
+        codex_ags_named_skill_dir("ags"),
+        codex_ags_named_skill_dir("ags-preflight"),
+        codex_ags_named_skill_dir("ags-verify"),
+    ]
+}
+
+#[derive(Debug, Clone)]
+struct SetupFile {
+    path: PathBuf,
+    description: String,
+    content: String,
+    executable: bool,
+}
+
+fn claude_ags_command_content() -> String {
+    format!(
+        r#"---
+description: AGS one-command setup, project onboarding, and governance
+argument-hint: [setup|init|preflight|doctor|verify|request...]
+---
+
+# AGS
+
+Route by the first token in `$ARGUMENTS`.
+
+## `/ags setup`
+
+Initialize this machine into AGS:
+
+```bash
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+ags setup --yes --force --register-claude
+ags doctor --target .
+```
+
+Expected result: `ags`, `/ags`, Codex AGS command skills, and AGS MCP are ready.
+
+## `/ags init`
+
+Onboard the current repository into AGS governance:
+
+```bash
+ags init --target .
+ags session preflight --for claude-code --target .
+```
+
+Aliases: `/ags onboard`, `/ags manage`, `/ags 纳管`.
+
+## Other routes
+
+- Empty or `preflight`: call AGS MCP `ags_preflight` first. If MCP is unavailable, run `ags session preflight --for claude-code --target .`.
+- `doctor`: run `ags doctor --target .` and summarize failures first.
+- `verify`: run `ags verify --scope local --target .` and summarize evidence.
+- Any other text: treat it as the user request. For AGS scenarios, AGS MCP `ags_preflight` is mandatory first; CLI preflight is only a fallback. Do not generate an executable task card until the user explicitly asks for one.
+
+Current AGS version expected by this command: {AGS_VERSION}.
+"#
+    )
+}
+
+fn codex_ags_command_skill_specs() -> &'static [(
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+)] {
+    &[
+        (
+            "ags-setup",
+            "AGS Setup",
+            "初始化本机 AGS 环境",
+            "用 $ags-setup 初始化本机 AGS 环境。",
+            "初始化本机 AGS 环境：运行 `ags setup --yes --force`，确保 `/ags`、Codex AGS command skills 和 `ags mcp serve --transport stdio` 可用",
+        ),
+        (
+            "ags-init",
+            "AGS Init",
+            "纳管当前项目",
+            "用 $ags-init 纳管当前项目。",
+            "纳管当前仓库：运行 `ags init --target .`，然后运行 `ags session preflight --for codex --target .`",
+        ),
+        (
+            "ags-skill",
+            "AGS Skill",
+            "管理第三方技能",
+            "用 $ags-skill 管理第三方技能。",
+            "管理第三方技能：运行 `ags skill` 查看概览，或运行 `ags skill scan`、`ags skill check`、`ags skill propose --action adopt --skill <name>` 生成纳管建议",
+        ),
+        (
+            "ags-doctor",
+            "AGS Doctor",
+            "诊断 AGS 状态",
+            "用 $ags-doctor 诊断 AGS 状态。",
+            "诊断 AGS 安装和项目状态：运行 `ags doctor --target .` 并优先汇总失败项",
+        ),
+    ]
+}
+
+fn codex_ags_command_skill_content(name: &str, display_name: &str, summary: &str) -> String {
+    let route = name.strip_prefix("ags-").unwrap_or(name);
+    format!(
+        r#"---
+name: "{name}"
+description: "当用户提到 /ags {route}、{display_name}、AGS {route}，或需要{summary}时使用。"
+---
+
+# {display_name}
+
+这是 Codex 顶层 AGS 命令技能，用来把明确的 AGS 操作路由到已安装的 `ags` CLI、AGS MCP 和 AGS 初始化门禁。
+
+## 必须先执行
+
+对目标仓库先调用 AGS MCP `ags_preflight`。如果 MCP 不可用，才使用 CLI fallback：
+
+```bash
+ags session preflight --for codex --target .
+```
+
+如果目标项目不明确，先询问仓库路径，不要误把桌面工作区当成项目。
+
+## 路由
+
+{summary}.
+
+## 安全边界
+
+不要绕过 AGS 做临时初始化。除非用户明确要求生成任务卡，否则不要生成可执行任务卡。
+
+此技能期望的 AGS 版本：{AGS_VERSION}。
+"#
+    )
+}
+
+fn codex_ags_command_skill_agent_metadata_content(
+    display_name: &str,
+    short_description: &str,
+    default_prompt: &str,
+) -> String {
+    format!(
+        r#"interface:
+  display_name: "{display_name}"
+  short_description: "{short_description}"
+  default_prompt: "{default_prompt}"
+
+policy:
+  allow_implicit_invocation: true
+"#
+    )
+}
+
+fn setup_files(target: &Path) -> Vec<SetupFile> {
+    let target_s = target.to_string_lossy();
+    let ags_mcp_json = format!(
+        r#"{{
+  "mcpServers": {{
+    "ags": {{
+      "command": "ags",
+      "args": ["mcp", "serve", "--transport", "stdio"],
+      "env": {{
+        "AGS_RUNTIME_HOME": "{target_s}"
+      }}
+    }}
+  }},
+  "initialization_gate": {{
+    "mandatory_first_tool": "ags_preflight",
+    "failed_preflight_opens_gate": false
+  }}
+}}
+"#
+    );
+    let codex_snippet = format!(
+        r#"# AGS MCP host initialization adapter
+# Merge this snippet into ~/.codex/config.toml after review.
+[mcp_servers.ags]
+command = "ags"
+args = ["mcp", "serve", "--transport", "stdio"]
+
+[mcp_servers.ags.env]
+AGS_RUNTIME_HOME = "{target_s}"
+"#
+    );
+    let claude_snippet = format!(
+        r#"{{
+  "mcpServers": {{
+    "ags": {{
+      "command": "ags",
+      "args": ["mcp", "serve", "--transport", "stdio"],
+      "env": {{
+        "AGS_RUNTIME_HOME": "{target_s}"
+      }}
+    }}
+  }}
+}}
+"#
+    );
+    let workbuddy_snippet = format!(
+        r#"{{
+  "mcps": [
+    {{
+      "name": "ags",
+      "transport": "stdio",
+      "command": "ags",
+      "args": ["mcp", "serve", "--transport", "stdio"],
+      "role": "host_initialization_adapter",
+      "mandatory_first": true,
+      "env": {{
+        "AGS_RUNTIME_HOME": "{target_s}"
+      }}
+    }}
+  ]
+}}
+"#
+    );
+    let launcher = format!(
+        "#!/usr/bin/env bash\nset -euo pipefail\nexport AGS_RUNTIME_HOME={}\nexec ags mcp serve --transport stdio\n",
+        shell_quote(target)
+    );
+    let readme = format!(
+        "# AGS Public Runtime\n\n\
+This directory was generated by `ags setup`.\n\n\
+## Commands\n\n\
+- MCP server: `ags mcp serve --transport stdio`\n\
+- Doctor: `ags doctor`\n\
+- Project onboarding: `/ags init` or `ags init --target .`\n\n\
+## Host snippets\n\n\
+Review files in `hosts/` before merging them into host-specific global config.\n\
+AGS scenarios must call `ags_preflight` before any other AGS tool.\n\n\
+## Claude Code slash command\n\n\
+`ags setup --yes` refreshes `/ags` at `~/.claude/commands/ags.md`.\n\
+\n\
+## Codex skills\n\n\
+`ags setup --yes` installs visible top-level command skills: `$ags-setup`, `$ags-init`, `$ags-skill`, and `$ags-doctor`.\n\
+Retired visible skills (`$ags`, `$ags-preflight`, `$ags-verify`) are removed when `--force` is used.\n\
+\n\
+## Boundary\n\n\
+AGS MCP is the mandatory governance interface. Advisory memory MCPs, when installed separately, remain parallel peers and are not proxied by AGS MCP.\n"
+    );
+
+    let mut files = vec![
+        SetupFile {
+            path: target.join("README.md"),
+            description: "operator notes for this public runtime".to_string(),
+            content: readme,
+            executable: false,
+        },
+        SetupFile {
+            path: target.join("mcp/ags.mcp.json"),
+            description: "generic MCP registration snippet for AGS host adapter".to_string(),
+            content: ags_mcp_json,
+            executable: false,
+        },
+        SetupFile {
+            path: target.join("hosts/codex.config.snippet.toml"),
+            description: "Codex MCP config snippet".to_string(),
+            content: codex_snippet,
+            executable: false,
+        },
+        SetupFile {
+            path: target.join("hosts/claude-code.mcp.snippet.json"),
+            description: "Claude Code MCP snippet".to_string(),
+            content: claude_snippet,
+            executable: false,
+        },
+        SetupFile {
+            path: target.join("hosts/workbuddy.mcp.snippet.json"),
+            description: "WorkBuddy MCP config snippet".to_string(),
+            content: workbuddy_snippet,
+            executable: false,
+        },
+        SetupFile {
+            path: target.join("bin/ags-mcp-stdio.sh"),
+            description: "portable launcher for AGS MCP stdio server".to_string(),
+            content: launcher,
+            executable: true,
+        },
+        SetupFile {
+            path: claude_ags_command_path(),
+            description: "Claude Code user slash command for AGS governance".to_string(),
+            content: claude_ags_command_content(),
+            executable: false,
+        },
+    ];
+
+    for (name, display_name, short_description, default_prompt, summary) in
+        codex_ags_command_skill_specs()
+    {
+        files.push(SetupFile {
+            path: codex_ags_named_skill_path(name),
+            description: format!("Codex AGS command skill: {name}"),
+            content: codex_ags_command_skill_content(name, display_name, summary),
+            executable: false,
+        });
+        files.push(SetupFile {
+            path: codex_ags_named_skill_agent_metadata_path(name),
+            description: format!("Codex AGS command skill UI metadata: {name}"),
+            content: codex_ags_command_skill_agent_metadata_content(
+                display_name,
+                short_description,
+                default_prompt,
+            ),
+            executable: false,
+        });
+    }
+
+    files
+}
+
+fn render_setup_plan_text(target: &Path, yes: bool, force: bool, files: &[SetupFile]) -> String {
+    let mut lines = vec![
+        "AGS Public Runtime Setup".to_string(),
+        "========================".to_string(),
+        format!("Target: {}", target.display()),
+        format!("Mode: {}", if yes { "apply" } else { "plan-only" }),
+        format!("Force: {}", force),
+        String::new(),
+        "Files:".to_string(),
+    ];
+    for file in files {
+        let status = if file.path.exists() {
+            if force {
+                "replace"
+            } else {
+                "exists-skip"
+            }
+        } else {
+            "create"
+        };
+        lines.push(format!(
+            "- [{}] {} — {}",
+            status,
+            file.path.display(),
+            file.description
+        ));
+    }
+    lines.push(String::new());
+    lines.push(
+        "MCP rule: AGS scenarios must call `ags_preflight` first; CLI preflight is fallback only."
+            .to_string(),
+    );
+    if !yes {
+        lines.push(
+            "Dry-run only. Re-run with `ags setup --yes` to write AGS-owned command/snippet files."
+                .to_string(),
+        );
+    }
+    lines.join("\n")
+}
+
+fn write_setup_file(file: &SetupFile, force: bool) -> Result<String, String> {
+    if file.path.exists() && !force {
+        return Ok("exists-skip".to_string());
+    }
+    if let Some(parent) = file.path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("cannot create {}: {}", parent.display(), e))?;
+    }
+    std::fs::write(&file.path, &file.content)
+        .map_err(|e| format!("cannot write {}: {}", file.path.display(), e))?;
+    if file.executable {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&file.path)
+                .map_err(|e| format!("cannot stat {}: {}", file.path.display(), e))?
+                .permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&file.path, perms)
+                .map_err(|e| format!("cannot chmod {}: {}", file.path.display(), e))?;
+        }
+    }
+    Ok("written".to_string())
+}
+
+fn cmd_setup(yes: bool, force: bool, target: Option<PathBuf>, register_claude: bool, format: &str) {
+    let target = target.unwrap_or_else(default_setup_target);
+    let files = setup_files(&target);
+
+    if !yes {
+        match format {
+            "json" => {
+                let output = serde_json::json!({
+                    "schema_version": "2.4-public-setup",
+                    "target": target.display().to_string(),
+                    "mode": "plan-only",
+                    "force": force,
+                    "register_claude": register_claude,
+                    "mcp": {
+                        "command": "ags mcp serve --transport stdio",
+                        "mandatory_first_tool": "ags_preflight"
+                    },
+                    "files": files.iter().map(|file| serde_json::json!({
+                        "path": file.path.display().to_string(),
+                        "description": file.description,
+                        "status": if file.path.exists() { if force { "replace" } else { "exists-skip" } } else { "create" },
+                    })).collect::<Vec<_>>(),
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&output).unwrap_or_default()
+                );
+            }
+            _ => println!("{}", render_setup_plan_text(&target, false, force, &files)),
+        }
+        return;
+    }
+
+    let mut results = Vec::new();
+    for file in &files {
+        match write_setup_file(file, force) {
+            Ok(status) => results.push((file.path.display().to_string(), status, None)),
+            Err(e) => results.push((
+                file.path.display().to_string(),
+                "error".to_string(),
+                Some(e),
+            )),
+        }
+    }
+
+    for retired_dir in retired_codex_ags_skill_dirs() {
+        if retired_dir.exists() && force {
+            match std::fs::remove_dir_all(&retired_dir) {
+                Ok(()) => results.push((
+                    retired_dir.display().to_string(),
+                    "removed-retired".to_string(),
+                    None,
+                )),
+                Err(e) => results.push((
+                    retired_dir.display().to_string(),
+                    "error".to_string(),
+                    Some(e.to_string()),
+                )),
+            }
+        }
+    }
+
+    if register_claude {
+        match std::process::Command::new("claude")
+            .args([
+                "mcp",
+                "add",
+                "-s",
+                "user",
+                "ags",
+                "--",
+                "ags",
+                "mcp",
+                "serve",
+                "--transport",
+                "stdio",
+            ])
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                results.push(("claude mcp ags".to_string(), "registered".to_string(), None))
+            }
+            Ok(output) => results.push((
+                "claude mcp ags".to_string(),
+                "error".to_string(),
+                Some(String::from_utf8_lossy(&output.stderr).trim().to_string()),
+            )),
+            Err(e) => results.push((
+                "claude mcp ags".to_string(),
+                "error".to_string(),
+                Some(e.to_string()),
+            )),
+        }
+    }
+
+    let failed = results.iter().any(|(_, status, _)| status == "error");
+    match format {
+        "json" => {
+            let output = serde_json::json!({
+                "schema_version": "2.4-public-setup",
+                "target": target.display().to_string(),
+                "mode": "apply",
+                "force": force,
+                "register_claude": register_claude,
+                "results": results.iter().map(|(path, status, error)| serde_json::json!({
+                    "path": path,
+                    "status": status,
+                    "error": error,
+                })).collect::<Vec<_>>(),
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&output).unwrap_or_default()
+            );
+        }
+        _ => {
+            println!("{}", render_setup_plan_text(&target, true, force, &files));
+            println!();
+            println!("Results:");
+            for (path, status, error) in &results {
+                println!("- [{status}] {path}");
+                if let Some(error) = error {
+                    println!("  error: {error}");
+                }
+            }
+        }
+    }
+
+    if failed {
+        std::process::exit(1);
+    }
+}
+
+fn cmd_init(target: &Path, dry_run: bool, format: &str) {
+    cmd_project_integrate(target, dry_run, !dry_run, format);
+}
+
+fn cmd_mcp_serve(transport: &str) {
+    match transport {
+        "stdio" => {
+            eprintln!(
+                "[ags-mcp] starting AGS MCP host initialization adapter v{} on stdio",
+                AGS_VERSION
+            );
+            eprintln!(
+                "[ags-mcp] AGS MCP is the mandatory governance interface; call ags_preflight first."
+            );
+            ags_mcp::run_mcp_server();
+        }
+        other => {
+            eprintln!(
+                "ags mcp serve: unsupported transport '{}' — only 'stdio' is supported in v1",
+                other
+            );
+            std::process::exit(2);
+        }
     }
 }
 
@@ -2859,6 +3479,19 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Setup {
+            yes,
+            force,
+            target,
+            register_claude,
+            format,
+        } => cmd_setup(yes, force, target, register_claude, &format),
+        Commands::Init {
+            target,
+            dry_run,
+            format,
+        } => cmd_init(&target, dry_run, &format),
+
         // ── M1 object commands ──
         Commands::Task { action } => match action {
             TaskAction::Validate { paths } => cmd_task_validate(&paths),
@@ -3084,6 +3717,9 @@ fn main() {
                 apply,
                 format,
             } => cmd_skill_ignore(&skill, reason.as_deref(), apply, &format),
+        },
+        Commands::Mcp { action } => match action {
+            McpAction::Serve { transport } => cmd_mcp_serve(&transport),
         },
 
         // ── Runner ──

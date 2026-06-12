@@ -120,6 +120,20 @@ info "reading stable public-full package plan"
 ruby -rjson -e 'JSON.parse(File.read(ARGV[0])).fetch("included_files").each { |f| puts f }' "$PLAN_JSON" \
   > "$INCLUDED_LIST"
 
+# The stable release planner intentionally strips private runtime payload, but
+# AGS MCP needs these public-safe boundary resources at compile/runtime. They
+# describe authority and recall boundaries; they do not ship private runtime
+# state, credentials, or installed EvoMap/GEP services.
+for rel in \
+  crates/ags-mcp/src/resources/evolver_boundary.md \
+  protocol/evolution-memory.md
+do
+  if [[ -f "$STABLE_ROOT/$rel" ]] && ! grep -Fxq "$rel" "$INCLUDED_LIST"; then
+    echo "$rel" >> "$INCLUDED_LIST"
+  fi
+done
+sort -u "$INCLUDED_LIST" -o "$INCLUDED_LIST"
+
 should_skip_public_overlay() {
   local rel="$1"
   case "$rel" in
@@ -127,24 +141,30 @@ should_skip_public_overlay() {
       return 0 ;;
     AGENTS.md|CLAUDE.md|WORKSPACE.md|AGENT_SUITE_PROTOCOL.md)
       return 0 ;;
-    Cargo.toml|Cargo.lock)
-      return 0 ;;
     docs/*|evals/*|examples/*|templates/*|config/*)
       return 0 ;;
-    scripts/install.sh|scripts/sync-public.sh|scripts/update.sh|scripts/verify.sh|scripts/push-a1.sh)
+    scripts/sync-public.sh|scripts/update.sh|scripts/verify.sh|scripts/push-a1.sh)
       return 0 ;;
     manifests/skill-recommendations.yaml|governance/skill-adoption-log.yaml|governance/skill-ignore-list.yaml)
       return 0 ;;
-    crates/ags-cli/*|crates/ags-mcp/*|crates/ags-verify/*|crates/receipt/*|crates/skill-governance/*)
+    crates/ags-cli/Cargo.toml|crates/ags-verify/*|crates/receipt/*|crates/skill-governance/*|crates/workflow-sync-check/*)
       return 0 ;;
   esac
   return 1
 }
 
 contains_private_payload() {
-  local source_file="$1"
+  local rel="$1"
+  local source_file="$2"
   [[ -f "$source_file" ]] || return 1
   grep -Iq . "$source_file" || return 1
+
+  case "$rel" in
+    protocol/mcp-server.md|protocol/evolution-memory.md|crates/ags-mcp/src/resources/*.md)
+      grep -Eq '(/Volumes/AI Project/agent-governance-suite-private|/Users/hujiaming/git-remotes/agent-governance-suite-private\.git|EVOLVER_PROXY_MCP|evolver-token|with-evomap|gep-mcp-server|@evomap)' "$source_file"
+      return ;;
+  esac
+
   grep -Eq '(/Volumes/AI Project/agent-governance-suite-private|/Users/hujiaming/git-remotes/agent-governance-suite-private\.git|node_secret|EVOLVER_PROXY_MCP|evolver-token|with-evomap|gep-mcp-server|@evomap)' "$source_file"
 }
 
@@ -158,7 +178,7 @@ while IFS= read -r rel; do
     continue
   fi
 
-  if contains_private_payload "$src"; then
+  if contains_private_payload "$rel" "$src"; then
     echo "private-content $rel" >> "$SKIPPED_LIST"
     continue
   fi

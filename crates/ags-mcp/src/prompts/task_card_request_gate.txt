@@ -1,0 +1,40 @@
+## Task-Card Instruction Gate — HARD GATE
+
+The solution has been confirmed ("方案 OK"), but that only ends the solution phase.
+It does NOT authorize a task card.
+
+### Three-gate threshold
+
+```
+方案 OK  →  任务卡指令  →  任务分级路由
+ (done)     (THIS GATE)     (next)
+```
+
+### You MUST NOT proceed to routing or task card generation before the user:
+
+Explicitly issues a task-card instruction such as:
+- "生成任务卡"
+- "按这个方案出任务卡"
+- "交给 Claude Code 执行"
+- "帮我写个任务卡拉去执行"
+
+### What to tell the user:
+
+"方案已确认。需要你明确发出任务卡指令（如'生成任务卡'或'交给 Claude Code 执行'）后，我才能进入任务分级路由并生成可执行任务卡。"
+
+### If you proceed without this gate:
+
+`ags task compile` will block executable output with:
+- `executable_allowed: false`
+- `block_reason: task_card_not_requested`
+
+### What happens after the gate:
+
+1. User issues task-card instruction.
+2. Classify the task as Light/Medium/Heavy from the confirmed solution.
+3. Generate the task card using `protocol/task-card-template.md`.
+4. Validate with `ags_task_validate`.
+5. Resolve execution policy with `ags_policy_resolve`.
+6. Dispatch to the appropriate executor.
+
+Wait for the task-card instruction. Do not generate the task card yet.

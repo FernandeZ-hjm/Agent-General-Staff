@@ -7,7 +7,7 @@
 
 **多 Agent 工程化治理内核 CLI。**
 
-AGS 是一套面向本地开发环境的多 Agent 工程治理 CLI。它把本地 `skills`、hooks、MCP、任务记忆，以及 Codex、Claude Code、Cursor 等不同 AI Agent 框架，纳入同一套可验证、可审计、可持续协作的开发体系。
+AGS 是一套面向本地开发环境的多 Agent 工程治理内核。公开版同时提供 `ags` CLI、`ags mcp serve` 内核桥、Claude Code 的 `/ags` 入口，以及 Codex 可见的 `$ags-setup`、`$ags-init`、`$ags-skill`、`$ags-doctor` 命令技能。它把本地 `skills`、hooks、MCP、任务记忆，以及 Codex、Claude Code、Cursor 等不同 AI Agent 框架，纳入同一套可验证、可审计、可持续协作的开发体系。
 
 AGS 不是新的 Agent，也不是简单的工具集合。它解决的是多 Agent 参与真实项目开发时的治理问题：谁可以做什么，什么时候必须停下，任务如何交接，执行如何验证，上下文如何延续。
 
@@ -161,12 +161,19 @@ cd agent-governance-suite
 bash scripts/install.sh
 ```
 
-安装后执行：
+安装脚本会安装 `ags`，然后执行 `ags setup --yes --force`。这一步只写入公开安全的本机入口和 MCP 片段，不会安装第三方技能，也不会引入任何私有运行时。
+
+安装后可以使用：
 
 ```bash
+/ags setup
+/ags init
+ags mcp serve --transport stdio
 ags doctor
 ags verify --scope local
 ```
+
+`/ags` 是 Claude Code 的公开入口；Codex 中对应的可见入口是 `$ags-setup`、`$ags-init`、`$ags-skill`、`$ags-doctor`。这些入口的共同约束是：凡是 AGS 相关任务，都必须优先通过 AGS MCP 显式调用 `ags_preflight`，CLI 只作为 MCP 不可用时的降级路径。
 
 更新 AGS：
 
@@ -256,6 +263,11 @@ ags receipt verify examples/receipts/sample-receipt.json
 
 | 命令 | 作用 |
 |---|---|
+| `ags setup` | 写入公开安全的本机 AGS runtime、MCP 片段和 Agent 入口 |
+| `/ags setup` | Claude Code 公开入口，内部仍要求 AGS MCP 预检优先 |
+| `$ags-setup` / `$ags-init` | Codex 可见入口技能，要求先调用 AGS MCP `ags_preflight` |
+| `ags init` | 对用户项目执行 AGS managed-block 接入 |
+| `ags mcp serve` | 启动 AGS MCP stdio 服务 |
 | `ags session preflight` | 执行任务前项目预检 |
 | `ags task validate` | 校验任务卡格式与语义 |
 | `ags policy resolve` | 解析任务执行策略 |

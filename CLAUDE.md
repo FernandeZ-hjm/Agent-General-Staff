@@ -1,9 +1,11 @@
 # Agent Governance Suite 2.0 — Public Edition
 
 This is the **2.0 public distributable edition** of the Agent Governance Suite (`ags`).
-It provides a Rust-native CLI toolchain for task-card validation, execution policy
-resolution, protocol drift checking, suite health diagnostics, bootstrap simulation,
-project discovery, agent instructions, session preflight, and scoped verification.
+It provides a Rust-native CLI toolchain, an AGS MCP stdio server, Claude Code
+`/ags` entry commands, and Codex-visible AGS command skills for task-card
+validation, execution policy resolution, protocol drift checking, suite health
+diagnostics, bootstrap simulation, project discovery, agent instructions, session
+preflight, and scoped verification.
 
 ## Execution Protocol
 
@@ -57,6 +59,14 @@ Use the command matching the current agent runtime. The report is read-only and
 aggregates project identity, protocol status, agent instructions, memory paths,
 stop conditions, warnings, failures, and next steps.
 
+When AGS MCP is available, AGS-related tasks must call the MCP `ags_preflight`
+tool first and treat CLI preflight as a fallback path only. The public MCP server
+entry point is:
+
+```bash
+ags mcp serve --transport stdio
+```
+
 ## Role Boundaries
 
 Codex and Cursor own preflight, diagnosis, solution formation, user confirmation,
@@ -108,6 +118,8 @@ cargo build --release
 export PATH="$PWD/target/release:$PATH"
 
 # Verify installation
+/ags setup
+ags setup --yes --force
 ags doctor
 ags verify --scope local
 ```
@@ -116,6 +128,9 @@ ags verify --scope local
 
 | Command | Description |
 |---|---|
+| `ags setup` | Write public-safe local AGS runtime snippets, MCP config snippets, Claude `/ags`, and Codex AGS command skills |
+| `ags init` | Integrate AGS managed blocks into a target project |
+| `ags mcp serve` | Start the public AGS MCP stdio server |
 | `ags task validate` | Validate task cards against the canonical format |
 | `ags policy resolve` | Resolve execution policy from a task card |
 | `ags policy explain` | Explain each policy decision with rule IDs |

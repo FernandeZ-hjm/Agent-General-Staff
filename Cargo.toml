@@ -7,16 +7,17 @@ members = [
     "crates/bootstrap-dry-run",
     "crates/execution-policy",
     "crates/project-discovery",
-    "crates/ags-verify",
     "crates/task-compiler",
-    "crates/runner",
-    "crates/receipt",
-    "crates/skill-governance",
     "crates/capability-registry",
+    "crates/receipt",
+    "crates/ags-verify",
+    "crates/runner",
+    "crates/skill-governance",
+    "crates/ags-mcp",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "2.0.0"
+version = "2.4.0"
 edition = "2021"
 license = "MIT"

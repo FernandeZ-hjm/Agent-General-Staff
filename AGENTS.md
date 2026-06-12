@@ -9,10 +9,16 @@ Before responding or executing tasks in this repository, also read and follow:
 ## AGS: Standing Engineering Hub
 
 Agent Governance Suite (AGS) is a standing engineering hub for development work,
-not a CLI toolbox you invoke separately. When a development request arrives, AGS
-governance engages automatically: ambient preflight → solution formation → user
-confirmation ("方案 OK") → user task-card instruction ("生成任务卡") → execution
-contract → task routing → gate / execution / receipt.
+not a CLI toolbox you invoke separately. Public AGS exposes Claude Code `/ags`,
+Codex `$ags-setup` / `$ags-init` / `$ags-skill` / `$ags-doctor`, and the
+`ags mcp serve --transport stdio` kernel bridge. When a development request
+arrives, AGS governance engages automatically: ambient preflight → solution
+formation → user confirmation ("方案 OK") → user task-card instruction
+("生成任务卡") → execution contract → task routing → gate / execution / receipt.
+
+When AGS MCP is available, every AGS-related task must explicitly call the MCP
+`ags_preflight` tool first. CLI preflight is a fallback path only when MCP is not
+available.
 
 Do not jump to Light / Medium / Heavy classification from raw user requests.
 Always complete preflight and solution formation first. "方案 OK" only ends the
@@ -32,6 +38,7 @@ required to build, run, or use AGS.
 ## Kernel Activation — Session Preflight
 
 `ags session preflight` is the default kernel activation wake-up entry point.
+`ags mcp serve --transport stdio` is the public MCP server entry point.
 `ags verify --scope local|full|release` is the structured verification entry point
 with stable `CheckItem` model and machine-readable JSON output. `scripts/verify.sh`
 is a compatibility wrapper that delegates to `ags verify --scope full`.

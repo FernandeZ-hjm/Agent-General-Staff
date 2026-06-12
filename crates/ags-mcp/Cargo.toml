@@ -1,0 +1,13 @@
+[package]
+name = "ags-mcp"
+version.workspace = true
+edition.workspace = true
+description = "AGS MCP Server — governance kernel exposed as MCP tools/resources/prompts over stdio"
+
+[dependencies]
+task-card-validator = { path = "../task-card-validator" }
+execution-policy = { path = "../execution-policy" }
+project-discovery = { path = "../project-discovery" }
+ags-verify = { path = "../ags-verify" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

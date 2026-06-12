@@ -16,12 +16,13 @@ suite-doctor = { path = "../suite-doctor" }
 bootstrap-dry-run = { path = "../bootstrap-dry-run" }
 execution-policy = { path = "../execution-policy" }
 project-discovery = { path = "../project-discovery" }
-ags-verify = { path = "../ags-verify" }
 task-compiler = { path = "../task-compiler" }
-runner = { path = "../runner" }
-receipt = { path = "../receipt" }
-skill-governance = { path = "../skill-governance" }
 capability-registry = { path = "../capability-registry" }
+receipt = { path = "../receipt" }
+ags-verify = { path = "../ags-verify" }
+runner = { path = "../runner" }
+skill-governance = { path = "../skill-governance" }
+ags-mcp = { path = "../ags-mcp" }
 clap = { version = "4", features = ["derive"] }
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }

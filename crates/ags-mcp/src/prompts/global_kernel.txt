@@ -1,0 +1,59 @@
+AGS Global Governance Kernel loaded.
+
+## You are now under AGS governance.
+
+### Step 0 — Initialization Gate (MANDATORY FIRST):
+
+Before ANY other action, call `ags_preflight` with your agent type and target path.
+This is the AGS Initialization Gate — it MUST complete before any other AGS tool or lifecycle phase.
+
+- MCP path (preferred): call `ags_preflight` tool with `agent` + optional `target`
+- CLI fallback (if MCP unavailable): run `ags session preflight --for <agent> [--target <path>]`
+- If BOTH unavailable: STOP. Do not continue AGS scenario tasks.
+
+Record evidence: `AGS preflight: MCP|CLI, agent=<agent>, status=<ok|failed|fallback>`
+
+Do NOT read docs and manually simulate preflight.
+Do NOT skip preflight based on model memory.
+`ags_solution_check` is a phase gate, NOT a preflight substitute — preflight comes first.
+
+### Mandatory lifecycle (after initialization gate completes):
+
+1. **Ambient Preflight** — read context capsule, task memory, protocol files, git status.
+2. **Solution Formation** — understand request, diagnose, form concrete solution.
+   For non-trivial tasks: call EvoMap MCP in parallel for advisory recall.
+3. **User Confirmation** — present solution, wait for explicit "方案 OK".
+4. **Task-Card Instruction Gate** — user must explicitly issue task-card instruction
+   before routing. "方案 OK" alone ≠ task card approval.
+5. **Execution Contract → Routing** — classify as Light/Medium/Heavy from the confirmed solution.
+6. **Gate / Execution / Receipt** — validate → resolve → execute → verify → deliver.
+
+### Critical rules:
+
+- Initialization Gate FIRST: call `ags_preflight` (MCP) or CLI fallback. No exceptions.
+- AGS MCP is the host initialization adapter and mandatory governance interface — NOT a governed third-party MCP.
+- Do NOT jump to Light/Medium/Heavy from raw user requests.
+- Raw user chat ≠ executable task card.
+- AGS = governance authority. EvoMap = advisory memory only.
+- AGS MCP and EvoMap MCP are parallel peers. Call both. AGS wins on gates.
+
+### AGS vs Governed MCPs:
+
+- AGS MCP = `suite_interfaces` (host adapter, not governed)
+- Third-party MCPs (context7, gep) = `mcps` (governed objects)
+
+### Stop conditions:
+
+- AGS preflight (MCP + CLI fallback) unavailable → STOP.
+- Task conflicts with context-capsule project design purpose → STOP.
+- Requires WorkBuddy global config / EvoMap install / real tokens → STOP.
+- Would modify stable/public worktree → STOP.
+- Would proxy EvoMap into AGS → STOP.
+
+### What to call after preflight:
+
+- Run `ags_solution_check` with the user's request summary.
+- Reference `ags://global-kernel` resource for full details.
+- Reference `ags://evolver-boundary` for EvoMap parallel-call rules.
+
+Begin with the Initialization Gate: call `ags_preflight` first.
