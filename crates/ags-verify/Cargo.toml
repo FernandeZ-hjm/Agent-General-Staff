@@ -2,6 +2,7 @@
 name = "ags-verify"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "AGS verification core — structured check items, scoped verification, and machine-readable reports"
 
 [dependencies]

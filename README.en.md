@@ -1,5 +1,8 @@
 # Agent Governance Suite (AGS)
 
+[![CI](https://github.com/FernandeZ-hjm/Agent-Governance-Suite/actions/workflows/ci.yml/badge.svg)](https://github.com/FernandeZ-hjm/Agent-Governance-Suite/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
 [中文](README.md) | [English](README.en.md)
 
 **A governance-kernel CLI for multi-agent engineering workflows.**
@@ -270,7 +273,7 @@ More examples at [examples/](examples/). Eval scenarios at [evals/](evals/).
 - [docs/architecture.md](docs/architecture.md) — AGS architecture: lifecycle, crate dependency graph, execution pipeline, memory capsule mechanism
 - [examples/](examples/) — Public-safe examples: demo project, task cards, sample outputs, synthetic receipts
 - [evals/](evals/) — Reproducible experiment scenarios: authority escalation, unverified delivery, solution-as-execution
-- [COMMERCIAL.md](COMMERCIAL.md) — Commercial use boundaries and authorization requests (based on LICENSE, not expanding its legal scope)
+- [COMMERCIAL.md](COMMERCIAL.md) — Commercial use, attribution, and brand notes under the MIT License
 
 ## Verification
 
@@ -308,10 +311,14 @@ Superpowers-related skills and methodology are third-party work. AGS preserves a
 
 ## License
 
-AGS 2.0 Public Edition uses the `Agent Governance Suite Public License 2.0`.
+AGS 2.0 Public Edition uses the MIT License.
 
-You may download, read, modify, and use it for personal or internal company engineering work.
+You may download, read, copy, modify, distribute, use commercially, and create
+derivative works from AGS.
 
-Without permission, you may not package AGS itself, a lightly modified AGS fork, or an AGS-compatible wrapper product as a paid product, subscription service, commercial template, plugin pack, or consulting deliverable.
-
-AGS can be used to improve your own engineering efficiency, but it cannot be repackaged as another paid agent-governance product.
+The required condition is preserving the MIT license text and copyright notice.
+`NOTICE.md` and `THIRD_PARTY_NOTICES.md` record project attribution and
+third-party materials and should be preserved when distributing AGS. The names
+"Agent Governance Suite" and "AGS" may be used for truthful attribution and
+compatibility statements, but they do not grant brand endorsement or trademark
+rights.

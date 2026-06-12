@@ -2,6 +2,7 @@
 name = "ags-cli"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "Agent Governance Suite unified CLI"
 
 [[bin]]

@@ -217,5 +217,4 @@ ags verify --scope release
 
 ## License
 
-Agent Governance Suite Public License 2.0. See `LICENSE`, `NOTICE.md`, and
-`THIRD_PARTY_NOTICES.md`.
+MIT License. See `LICENSE`, `NOTICE.md`, and `THIRD_PARTY_NOTICES.md`.

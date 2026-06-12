@@ -24,9 +24,8 @@ verification, memory-capsule templates, and public skill-governance workflows.
   governance framework, while excluding build output, installed third-party
   skills, private memory, private task archives, secrets, and local machine
   state.
-- Source-available license: AGS may be used for personal and internal
-  engineering work, but may not be repackaged or sold as a paid wrapper product
-  without permission.
+- MIT license: AGS may be used, copied, modified, distributed, and used
+  commercially under the standard MIT terms.
 
 ## Rust And CLI Conversion
 
@@ -52,6 +51,6 @@ AGS_PUBLIC_ROOT="$PWD" ags verify --scope release
 
 ## License And Attribution
 
-AGS 2.0 Public Edition is distributed under the Agent Governance Suite Public
-License 2.0. Superpowers-related workflow inspiration and optional skill
-references are attributed separately in THIRD_PARTY_NOTICES.md.
+AGS 2.0 Public Edition is distributed under the MIT License.
+Superpowers-related workflow inspiration and optional skill references are
+attributed separately in THIRD_PARTY_NOTICES.md.

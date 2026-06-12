@@ -2,6 +2,7 @@
 name = "project-discovery"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "AGS project discovery, protocol status, and agent instructions library"
 
 [dependencies]
