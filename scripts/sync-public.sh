@@ -140,9 +140,9 @@ sort -u "$INCLUDED_LIST" -o "$INCLUDED_LIST"
 #       paths in detection/validation logic, and
 #   (d) B's EvoMap-debranded copies of files the stable suite ships
 #       EvoMap/GEP-branded.
-# Everything else (workflow-sync-check, receipt, execution-policy, the rest of
-# ags-verify, crate Cargo.toml manifests, etc.) flows from stable so the public
-# core no longer drifts behind.
+# Everything else (workflow-sync-check, execution-policy, the rest of
+# ags-verify, most crate Cargo.toml manifests, etc.) flows from stable so the
+# public core no longer drifts behind.
 should_skip_public_overlay() {
   local rel="$1"
   case "$rel" in
@@ -160,7 +160,7 @@ should_skip_public_overlay() {
       return 0 ;;
     # (c) private-path-sanitized crate sources (stable embeds real /Users and the
     #     private suite path in detection/validation logic)
-    crates/ags-cli/src/main.rs|crates/project-discovery/src/lib.rs|crates/task-compiler/src/lib.rs|crates/task-card-validator/src/*|crates/skill-governance/src/*)
+    crates/ags-cli/Cargo.toml|crates/ags-cli/src/main.rs|crates/project-discovery/src/lib.rs|crates/receipt/src/*|crates/task-compiler/src/lib.rs|crates/task-card-validator/src/*|crates/skill-governance/src/*)
       return 0 ;;
     # (d) EvoMap forbidden-resource overlays: B drops the two boundary resources whose backing
     #     files the stable gate forbids; EvoMap *references* elsewhere are product form.

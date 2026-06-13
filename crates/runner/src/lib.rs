@@ -275,7 +275,7 @@ fn resolve_adapter(policy: &ResolvedExecutionPolicy, _task_card_path: &str) -> A
         "claude-code" => {
             let binary = "claude".to_string();
             let cmd = if launch_args.is_empty() {
-                format!("claude -p - < <task-card>")
+                "claude -p - < <task-card>".to_string()
             } else {
                 format!("claude {} -p - < <task-card>", launch_args.join(" "))
             };

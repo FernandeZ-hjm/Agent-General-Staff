@@ -12,7 +12,7 @@
 //!     render_json, render_text, CheckStatus, Finding, HealthReport, Severity,
 //! };
 //!
-//! let mut report = HealthReport::new("Suite Doctor v2.4.0");
+//! let mut report = HealthReport::new("Suite Doctor v2.5.0");
 //! report.add(Finding::pass("cargo-fmt", "cargo fmt --check passed"));
 //! report.add(Finding::fail("cargo-test", "2 tests failed",
 //!     "Run `cargo test` for details."));
@@ -99,7 +99,7 @@ pub fn repair_plan(target: &Path) -> RepairPlan {
         if let Ok(entries) = std::fs::read_dir(&scripts_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().map_or(false, |e| e == "sh") {
+                if path.extension().is_some_and(|e| e == "sh") {
                     // Simple check — we don't do full POSIX permission checks
                     // in MVP; just report what we'd fix
                     items.push(RepairItem {
@@ -250,11 +250,8 @@ pub fn repair(target: &Path) -> RepairResult {
 
 impl RepairPlan {
     pub fn exit_code(&self) -> i32 {
-        if self.items.is_empty() {
-            0
-        } else {
-            0
-        }
+        // Repair plans are advisory and never set a non-zero exit code.
+        0
     }
 }
 

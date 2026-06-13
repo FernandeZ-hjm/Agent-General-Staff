@@ -24,12 +24,23 @@ ignore / rollback 仍保持协议门禁，不自动执行。
 
 Rust CLI 当前支持：
 
+- `ags skill` — 第三方技能 / MCP / CLI-backed 统一纳管 inventory（只读）
 - `ags skill scan`
 - `ags skill check`
-- `ags skill propose`
+- `ags skill propose --action <adopt|update|remove|uninstall|repair|verify> --skill <name> [--apply]`
+- `ags skill verify --host <claude-code|codex|cursor>` — 宿主可见性复核（只读）
+- `ags skill inventory`
 
-写入型 `adopt/apply/rollback` 后续若实现，仍必须先 dry-run、展示 diff、等待人工确认，
-并遵守 `protocol/skill-governance.md` 的硬门禁。
+写入型 `adopt/update/remove/uninstall/repair` 现已实现为**受确认保护的 apply 路径**，
+并采用 **canonical 本体 + per-host thin index** 模型：AGS 只保留一套技能本体，apply
+只为每个支持宿主（claude-code + codex）在 `<host>/skills/<name>` 写入指回 canonical
+目录的 **symlink thin index**（覆盖前把旧入口 rename 到 `.bak`），绝不复制本体——
+`references/` 等依赖文件随本体一起可达。默认 dry-run；只有显式 `--apply` 才经单一
+guard 执行写入，且写入目标必经 containment 断言。AGS 永不运行 `npx skills
+add/remove/update`、`lark-cli update`、`claude mcp add/remove`、`codex mcp
+add/remove`——外部安装/注册命令只 advise。完整链路与控制台模型见
+`protocol/skill-governance.md` 的"第三方技能与 MCP 纳管控制台"章。`rollback`
+后续若实现，仍必须先 dry-run、展示 diff、等待人工确认。
 
 ## 阶段概览
 

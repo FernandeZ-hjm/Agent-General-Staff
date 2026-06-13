@@ -122,7 +122,7 @@ fn scan_protocol(root: &Path) -> Vec<Capability> {
     if let Ok(entries) = std::fs::read_dir(&protocol_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map_or(false, |e| e == "md") {
+            if path.extension().is_some_and(|e| e == "md") {
                 if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                     caps.push(Capability {
                         id: format!("policy:{}", stem),
