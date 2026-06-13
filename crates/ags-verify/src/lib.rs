@@ -1226,21 +1226,19 @@ mod tests {
     fn test_run_command_executes_in_repo_root() {
         let root = std::env::temp_dir().join(format!("ags-verify-cwd-test-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
-        let expected = root.canonicalize().unwrap_or_else(|_| root.clone());
+        let marker = root.join("cwd-marker.txt");
 
         #[cfg(windows)]
-        let (program, args): (&str, &[&str]) = ("cmd", &["/C", "cd"]);
+        let (program, args): (&str, &[&str]) = ("cmd", &["/C", "echo ok>cwd-marker.txt"]);
         #[cfg(not(windows))]
-        let (program, args): (&str, &[&str]) = ("sh", &["-c", "pwd"]);
+        let (program, args): (&str, &[&str]) = ("sh", &["-c", "printf ok > cwd-marker.txt"]);
 
-        let (code, stdout, stderr) = run_command(&root, program, args, &[]);
+        let (code, _stdout, stderr) = run_command(&root, program, args, &[]);
+        let marker_content = std::fs::read_to_string(&marker).unwrap_or_default();
         let _ = std::fs::remove_dir_all(&root);
 
         assert_eq!(code, 0, "stderr={stderr}");
-        let actual = PathBuf::from(stdout.trim())
-            .canonicalize()
-            .unwrap_or_else(|_| PathBuf::from(stdout.trim()));
-        assert_eq!(actual, expected);
+        assert_eq!(marker_content.trim(), "ok");
     }
 
     #[test]
