@@ -1,6 +1,6 @@
-# Agent Governance Suite 2.0 — Public Edition Workspace
+# Agent General Staff 2.0 — Public Edition Workspace
 
-This is the **public distributable edition** of the Agent Governance Suite.
+This is the **public distributable edition** of the Agent General Staff.
 It contains the public-safe Rust `ags` CLI core, AGS MCP host initialization
 adapter, canonical protocols, templates, and documentation.
 

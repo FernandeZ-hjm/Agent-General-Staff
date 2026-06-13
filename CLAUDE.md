@@ -1,6 +1,6 @@
-# Agent Governance Suite 2.0 — Public Edition
+# Agent General Staff 2.0 — Public Edition
 
-This is the **2.0 public distributable edition** of the Agent Governance Suite (`ags`).
+This is the **2.0 public distributable edition** of the Agent General Staff (`ags`).
 It provides a Rust-native CLI toolchain, an AGS MCP stdio server, Claude Code
 `/ags` entry commands, and Codex-visible AGS command skills for task-card
 validation, execution policy resolution, protocol drift checking, suite health
@@ -223,10 +223,7 @@ Run `cat docs/skill-recommendations.md` after installation to review.
 # Local checks: fmt, test, build, fixtures, YAML, preflight
 ags verify --scope local
 
-# Full checks: local + drift (requires AGS_STABLE_ROOT env var)
-ags verify --scope full
-
-# Release checks: boundary verification (requires AGS_PUBLIC_ROOT env var)
+# Release checks: public manifest + tracked-source leak scan + bootstrap payload
 ags verify --scope release
 ```
 

@@ -8,7 +8,7 @@ Before responding or executing tasks in this repository, also read and follow:
 
 ## AGS: Standing Engineering Hub
 
-Agent Governance Suite (AGS) is a standing engineering hub for development work,
+Agent General Staff (AGS) is a standing engineering hub for development work,
 not a CLI toolbox you invoke separately. Public AGS exposes Claude Code `/ags`,
 Codex `$ags-setup` / `$ags-init` / `$ags-skill` / `$ags-doctor`, and the
 `ags mcp serve --transport stdio` kernel bridge. When a development request
@@ -41,7 +41,7 @@ required to build, run, or use AGS.
 `ags mcp serve --transport stdio` is the public MCP server entry point.
 `ags verify --scope local|full|release` is the structured verification entry point
 with stable `CheckItem` model and machine-readable JSON output. `scripts/verify.sh`
-is a compatibility wrapper that delegates to `ags verify --scope full`.
+is a compatibility wrapper that delegates to `ags verify --scope local`.
 
 Before executing any task, agents should run:
 

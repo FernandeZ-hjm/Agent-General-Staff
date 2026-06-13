@@ -2,7 +2,7 @@
 # verify.sh — AGS public edition verification gate (compatibility wrapper).
 #
 # Canonical verification authority is `ags verify`. This script:
-#   1. Runs `ags verify --scope full --format text` as the primary gate.
+#   1. Runs `ags verify --scope local --format text` as the primary gate.
 #   2. Runs remaining shell-only smoke tests that have not yet been
 #      migrated to Rust check items.
 #   3. Exits with the combined result.
@@ -38,10 +38,10 @@ echo "Repo: $REPO_ROOT"
 echo ""
 
 # ── Primary gate: ags verify (Rust structured verification) ─────────────────
-echo "--- Primary Gate: ags verify --scope full ---"
+echo "--- Primary Gate: ags verify --scope local ---"
 echo ""
 set +e
-cargo run -q -p ags-cli -- verify --scope full --format text
+cargo run -q -p ags-cli -- verify --scope local --format text
 ags_verify_rc=$?
 set -e
 echo ""

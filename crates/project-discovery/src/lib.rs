@@ -1,4 +1,4 @@
-//! Project discovery — Agent Governance Suite M2 Agent Awareness library.
+//! Project discovery — Agent General Staff M2 Agent Awareness library.
 //!
 //! Provides three read-only capabilities for `ags` CLI:
 //!

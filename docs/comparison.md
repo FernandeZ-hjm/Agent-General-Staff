@@ -1,6 +1,6 @@
 # AGS 与相关工具的关系
 
-本文件说明 Agent Governance Suite（AGS）与 CrewAI、LangGraph、Claude Code Skills、
+本文件说明 Agent General Staff（AGS）与 CrewAI、LangGraph、Claude Code Skills、
 Cursor Rules 等工具的定位差异与协作关系。
 
 **核心定位：AGS 不替代这些工具，而是治理它们进入工程执行流程的方式。**

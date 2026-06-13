@@ -5,6 +5,8 @@
 
 use crate::types::ProjectKind;
 use std::collections::BTreeSet;
+use std::path::Path;
+use std::process::Command;
 
 // ── Manifest definition ────────────────────────────────────────────────
 
@@ -182,11 +184,11 @@ pub fn verify_release_manifest(target: &std::path::Path) -> ManifestVerifyResult
         }
     }
 
-    // Check for forbidden payload. Ignored build output inside a local worktree
-    // is not considered part of the release payload.
+    // Check for forbidden payload. In a git worktree, the release payload is the
+    // tracked source set, so ignored build output is not scanned as releasable
+    // content.
     for relative in &target_files {
-        if is_public_forbidden_payload(relative) && !is_git_ignored(target, &target.join(relative))
-        {
+        if is_public_forbidden_payload(relative) {
             forbidden_found.push(relative.clone());
         }
     }
@@ -195,9 +197,6 @@ pub fn verify_release_manifest(target: &std::path::Path) -> ManifestVerifyResult
     let manifest_files: std::collections::BTreeSet<&str> =
         PUBLIC_MANIFEST.required_files.iter().copied().collect();
     for relative in &target_files {
-        if is_git_ignored(target, &target.join(relative)) {
-            continue;
-        }
         if !manifest_files.contains(relative.as_str()) && !is_public_forbidden_payload(relative) {
             extra_files.push(relative.clone());
         }
@@ -215,22 +214,6 @@ pub fn verify_release_manifest(target: &std::path::Path) -> ManifestVerifyResult
     }
 }
 
-fn is_git_ignored(root: &std::path::Path, candidate: &std::path::Path) -> bool {
-    if !root.join(".git").exists() {
-        return false;
-    }
-
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .arg("check-ignore")
-        .arg("-q")
-        .arg(candidate)
-        .status();
-
-    matches!(output, Ok(status) if status.success())
-}
-
 /// Recursively list all files in a directory as relative paths.
 fn list_files(root: &std::path::Path) -> Vec<String> {
     let mut files = Vec::new();
@@ -239,11 +222,42 @@ fn list_files(root: &std::path::Path) -> Vec<String> {
     } else {
         return files;
     };
+    if let Some(tracked) = list_git_tracked_files(&root_canonical) {
+        return tracked;
+    }
     list_files_recursive(&root_canonical, &root_canonical, &mut files);
     files
 }
 
-fn list_files_recursive(root: &std::path::Path, dir: &std::path::Path, files: &mut Vec<String>) {
+fn list_git_tracked_files(root: &Path) -> Option<Vec<String>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("ls-files")
+        .arg("-z")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let files = output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|entry| !entry.is_empty())
+        .filter_map(|entry| {
+            let relative = String::from_utf8_lossy(entry).replace('\\', "/");
+            if root.join(&relative).is_file() {
+                Some(relative)
+            } else {
+                None
+            }
+        })
+        .collect();
+    Some(files)
+}
+
+fn list_files_recursive(root: &Path, dir: &Path, files: &mut Vec<String>) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -444,6 +458,56 @@ mod tests {
             result.forbidden_found.is_empty(),
             "gitignored build output should not count as release payload: {:?}",
             result.forbidden_found
+        );
+    }
+
+    #[test]
+    fn verify_release_manifest_uses_tracked_payload_in_git_worktree() {
+        let dir = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir.path())
+            .arg("init")
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        std::fs::write(dir.path().join(".gitignore"), "/target/\n").unwrap();
+        for idx in 0..200 {
+            let path = dir
+                .path()
+                .join("target")
+                .join("debug")
+                .join(format!("artifact-{idx}.o"));
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "build artifact\n").unwrap();
+        }
+
+        let result = verify_release_manifest(dir.path());
+        assert!(
+            result.forbidden_found.is_empty(),
+            "ignored target files should not be part of tracked release payload: {:?}",
+            result.forbidden_found
+        );
+
+        let tracked_forbidden = dir.path().join("target").join("release").join("ags");
+        std::fs::create_dir_all(tracked_forbidden.parent().unwrap()).unwrap();
+        std::fs::write(&tracked_forbidden, "tracked binary\n").unwrap();
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir.path())
+            .arg("add")
+            .arg("-f")
+            .arg("target/release/ags")
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let result = verify_release_manifest(dir.path());
+        assert_eq!(
+            result.forbidden_found,
+            vec!["target/release/ags".to_string()],
+            "tracked forbidden payload must still fail release manifest"
         );
     }
 

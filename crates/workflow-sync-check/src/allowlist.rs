@@ -371,7 +371,7 @@ mod tests {
         assert!(is_allowed(
             &al,
             "CLAUDE.md",
-            &["Agent Governance Suite 2.0 — Public Edition".to_string()],
+            &["Agent General Staff 2.0 — Public Edition".to_string()],
             &DriftKind::ExtraSection
         ));
         assert!(is_allowed(

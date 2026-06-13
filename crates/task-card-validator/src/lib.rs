@@ -1,4 +1,4 @@
-//! Task card validator — validates Agent Governance Suite task cards.
+//! Task card validator — validates Agent General Staff task cards.
 //!
 //! Rules enforced:
 //! - First non-empty line must be `## 任务卡`

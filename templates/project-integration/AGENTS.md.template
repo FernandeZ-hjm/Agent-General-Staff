@@ -5,7 +5,7 @@ Keep project-specific agent instructions outside the AGS managed block. Run
 `ags project integrate --confirm` to merge or update it.
 
 <!-- AGS:BEGIN managed-entry v2 -->
-## Agent Governance Suite
+## Agent General Staff
 
 This project is governed by AGS. Preserve project-specific instructions above
 and below this managed block; only AGS should update the block itself.

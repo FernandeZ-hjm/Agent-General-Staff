@@ -22,7 +22,7 @@ Under the MIT License, you may:
 Copies or substantial portions of AGS must retain:
 
 - `LICENSE` — the MIT License text;
-- the copyright notice: `Copyright (c) 2025-2026 Agent Governance Suite
+- the copyright notice: `Copyright (c) 2025-2026 Agent General Staff
   Contributors`;
 - `NOTICE.md`, when present;
 - `THIRD_PARTY_NOTICES.md`, when present.
@@ -35,9 +35,9 @@ responsible for complying with dependency and attribution requirements.
 The MIT License grants copyright permissions. It does not grant brand
 endorsement.
 
-You may use "Agent Governance Suite" or "AGS" for truthful attribution and
+You may use "Agent General Staff" or "AGS" for truthful attribution and
 compatibility statements, such as "compatible with AGS task cards" or "based on
-Agent Governance Suite".
+Agent General Staff".
 
 Do not imply that your product, service, fork, or hosted offering is officially
 endorsed by the AGS maintainers unless you have separate written permission.

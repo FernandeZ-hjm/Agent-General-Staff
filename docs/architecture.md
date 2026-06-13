@@ -1,6 +1,6 @@
 # AGS Architecture
 
-This document describes the internal architecture of Agent Governance Suite 2.0
+This document describes the internal architecture of Agent General Staff 2.0
 Public Edition. It covers the lifecycle phases, the Rust CLI crate dependency
 graph, the AGS MCP host initialization adapter, the task-card-to-execution
 pipeline, and the memory capsule mechanism.

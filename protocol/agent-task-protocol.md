@@ -1,6 +1,6 @@
 # Agent Task Protocol
 
-Agent Governance Suite 三方代理协作协议。定义 Cursor / Codex / Claude Code 如何交接任务，并通过 runtime adapter 支持不同执行器。
+Agent General Staff 三方代理协作协议。定义 Cursor / Codex / Claude Code 如何交接任务，并通过 runtime adapter 支持不同执行器。
 
 **这是唯一 canonical 协议文件。不得为 Cursor、Codex、Claude Code 各自创建独立协议。**
 

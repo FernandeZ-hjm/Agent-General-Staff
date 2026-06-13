@@ -5,7 +5,7 @@ Run `ags project integrate --dry-run` to preview the block and
 `ags project integrate --confirm` to merge or update it.
 
 <!-- AGS:BEGIN managed-entry v2 -->
-## Agent Governance Suite Execution Rules
+## Agent General Staff Execution Rules
 
 This project is AGS-governed. Keep user-authored Claude instructions outside
 this managed block. AGS may update only the marked block.

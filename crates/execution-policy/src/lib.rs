@@ -1,4 +1,4 @@
-//! Execution-policy resolver for Agent Governance Suite.
+//! Execution-policy resolver for Agent General Staff.
 //!
 //! Policy M1-M10 rule IDs used below are distinct from Roadmap M0-M8 milestone
 //! IDs — they live in separate namespaces.
@@ -1517,14 +1517,14 @@ mod tests {
     fn gate_check_failed_produces_structured_stop_json() {
         let output = gate_check_failed(
             "protected_path_violation",
-            vec!["Cannot modify agent-governance-suite-stable".to_string()],
+            vec!["Cannot modify protected-suite-stable".to_string()],
         );
         assert_eq!(output.decision, GateDecision::Stop);
         assert_eq!(output.error_kind, "protected_path_violation");
         let json = serde_json::to_string(&output).unwrap();
         assert!(json.contains("\"decision\":\"stop\""));
         assert!(json.contains("\"error_kind\":\"protected_path_violation\""));
-        assert!(json.contains("agent-governance-suite-stable"));
+        assert!(json.contains("protected-suite-stable"));
     }
 
     #[test]

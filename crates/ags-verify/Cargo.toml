@@ -9,3 +9,4 @@ description = "AGS verification core — structured check items, scoped verifica
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
+workflow-sync-check = { path = "../workflow-sync-check" }

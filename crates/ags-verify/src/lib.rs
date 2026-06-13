@@ -13,11 +13,9 @@
 //! `VerificationReport` with summary statistics.
 //!
 //! Checks in `local` scope run entirely within the current repository.
-//! `full` adds drift checks against stable and public targets. Public edition
-//! worktrees skip the private↔stable full-manifest drift gate because their
-//! entry files intentionally differ from stable and are verified by the
-//! public-full sanitized boundary gate instead.
-//! `release` focuses on public-full sanitized boundary checks.
+//! `full` is retained as a compatibility alias for `local` in the public
+//! edition. `release` adds public manifest, tracked-source leak, and bootstrap
+//! payload boundary checks.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -31,7 +29,7 @@ use std::process::Command;
 pub enum Scope {
     /// Local-only checks: fmt, test, build, fixtures, YAML, preflight.
     Local,
-    /// Local + drift checks against stable and public targets.
+    /// Compatibility alias for local checks in the public edition.
     Full,
     /// Release-focused: public-full sanitized boundary checks.
     Release,
@@ -558,265 +556,47 @@ fn check_session_preflight(repo_root: &Path) -> CheckItem {
     }
 }
 
-fn check_private_vs_stable_drift(repo_root: &Path) -> CheckItem {
-    if is_public_edition_worktree(repo_root) {
-        return CheckItem::skip(
-            "drift-private-vs-stable",
-            "full",
-            "Public edition worktree: private↔stable full-manifest drift gate is not applicable; public-full sanitized boundary gate covers release safety.",
-        );
-    }
-
-    let stable_root = "/Volumes/AI Project/agent-governance-suite-stable";
-    if !Path::new(stable_root).exists() {
-        return CheckItem::skip(
-            "drift-private-vs-stable",
-            "full",
-            &format!("Stable root not found: {}", stable_root),
-        );
-    }
-
-    let (code, stdout, stderr) = run_command(
-        repo_root,
-        "cargo",
-        &[
-            "run",
-            "-q",
-            "-p",
-            "ags-cli",
-            "--",
-            "sync",
-            "check",
-            "--source",
-            &repo_root.to_string_lossy(),
-            "--target",
-            stable_root,
-            "--target-name",
-            "stable",
-            "--format",
-            "json",
-        ],
-        &[],
-    );
-
-    let output = format!("{}\n{}", stdout, stderr);
-    if code == 0 {
-        CheckItem::pass(
-            "drift-private-vs-stable",
-            "full",
-            "No protocol drift detected between private and stable.",
-        )
-    } else {
-        // Parse JSON to extract structured drift info
-        let evidence = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
-            let drift_count = json
-                .get("projects")
-                .and_then(|p| p.get(0))
-                .and_then(|p| p.get("drift_count"))
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-            format!(
-                "Protocol drift detected: {} drift item(s) between private and stable.",
-                drift_count
-            )
-        } else {
-            format!(
-                "Drift check failed (exit {}): {}",
-                code,
-                truncate(&output, 400)
-            )
-        };
-
-        CheckItem::warn(
-            "drift-private-vs-stable",
-            "full",
-            &evidence,
-            "Sync protocol files from A to A1 via scripts/push-a1.sh, then fast-forward S.",
-        )
-        .with_command(&format!(
-            "ags sync check --source {} --target {} --target-name stable",
-            repo_root.display(),
-            stable_root
-        ))
-        .with_exit_code(code)
-    }
-}
-
-fn is_public_edition_worktree(repo_root: &Path) -> bool {
-    let workspace = repo_root.join("WORKSPACE.md");
-    if let Ok(content) = std::fs::read_to_string(workspace) {
-        let normalized = content.to_ascii_lowercase();
-        if normalized.contains("public edition workspace")
-            || normalized.contains("public distributable edition")
-        {
-            return true;
-        }
-    }
-
-    let protocol = repo_root.join("AGENT_SUITE_PROTOCOL.md");
-    if let Ok(content) = std::fs::read_to_string(protocol) {
-        let normalized = content.to_ascii_lowercase();
-        if normalized.contains("agent governance suite 2.0 public edition")
-            || normalized.contains("public-full sanitized")
-        {
-            return true;
-        }
-    }
-
-    false
-}
-
-fn check_private_vs_public_boundary(repo_root: &Path) -> CheckItem {
-    let public_root = "/Volumes/AI Project/ai-dev-env-bootstrap";
-    if !Path::new(public_root).exists() {
-        return CheckItem::skip(
-            "drift-private-vs-public",
-            "full",
-            &format!("Public root not found: {}", public_root),
-        );
-    }
-
-    let (code, stdout, stderr) = run_command(
-        repo_root,
-        "cargo",
-        &[
-            "run",
-            "-q",
-            "-p",
-            "ags-cli",
-            "--",
-            "sync",
-            "check",
-            "--source",
-            &repo_root.to_string_lossy(),
-            "--target",
-            public_root,
-            "--target-name",
-            "public-full-sanitized",
-            "--format",
-            "json",
-        ],
-        &[],
-    );
-
-    let output = format!("{}\n{}", stdout, stderr);
-
-    // Check for hard boundary violations first
-    let has_violation = output.contains("INVARIANT_MISSING")
-        || output.contains("INVARIANT_CONTRADICTED")
-        || output.contains("PUBLIC_FORBIDDEN_PAYLOAD");
-
-    if code == 0 {
-        CheckItem::pass(
-            "drift-private-vs-public",
-            "full",
-            "No public-full sanitized boundary violations detected.",
-        )
-    } else if has_violation {
-        CheckItem::fail(
-            "drift-private-vs-public",
-            "full",
-            &format!(
-                "Public-full sanitized boundary violation detected (exit {}): {}",
-                code,
-                truncate(&output, 500)
-            ),
-            "Review public-full sanitized boundary: INVARIANT or PUBLIC_FORBIDDEN_PAYLOAD violation.",
-        )
-        .with_command(&format!(
-            "ags sync check --source {} --target {} --target-name public-full-sanitized",
-            repo_root.display(),
-            public_root
-        ))
-        .with_exit_code(code)
-    } else {
-        // Allowlist gap — warn but don't hard-fail
-        CheckItem::warn(
-            "drift-private-vs-public",
-            "full",
-            &format!(
-                "Public-full sanitized allowlist gap (exit {}): content drift within PUBLIC_MANIFEST files.",
-                code
-            ),
-            "Review public promotion allowlist and update public manifest.",
-        )
-        .with_command(&format!(
-            "ags sync check --source {} --target {} --target-name public-full-sanitized",
-            repo_root.display(),
-            public_root
-        ))
-        .with_exit_code(code)
-    }
-}
-
 fn check_release_boundary(repo_root: &Path) -> Vec<CheckItem> {
-    let public_root = "/Volumes/AI Project/ai-dev-env-bootstrap";
     let mut items = Vec::new();
 
-    if !Path::new(public_root).exists() {
-        items.push(CheckItem::skip(
-            "release-public-root",
-            "release",
-            &format!("Public root not found: {}", public_root),
-        ));
-        return items;
-    }
-
-    // Check 1: Run sync check with public target
-    let (code, stdout, stderr) = run_command(
-        repo_root,
-        "cargo",
-        &[
-            "run",
-            "-q",
-            "-p",
-            "ags-cli",
-            "--",
-            "sync",
-            "check",
-            "--source",
-            &repo_root.to_string_lossy(),
-            "--target",
-            public_root,
-            "--target-name",
-            "public-full-sanitized",
-            "--format",
-            "json",
-        ],
-        &[],
-    );
-
-    let output = format!("{}\n{}", stdout, stderr);
-    let has_violation = output.contains("INVARIANT_MISSING")
-        || output.contains("INVARIANT_CONTRADICTED")
-        || output.contains("PUBLIC_FORBIDDEN_PAYLOAD");
-
-    if code == 0 {
+    // Check 1: Public release manifest — verify the current repo against the
+    // public manifest itself (required files present, no forbidden payload). This
+    // is a self-contained check on the public tree, not a source↔target sync
+    // comparison.
+    let manifest = workflow_sync_check::manifest::verify_release_manifest(repo_root);
+    if manifest.passed {
         items.push(CheckItem::pass(
-            "release-boundary-sync",
+            "release-manifest",
             "release",
-            "Public-full sanitized sync check passed — no boundary violations.",
-        ));
-    } else if has_violation {
-        items.push(CheckItem::fail(
-            "release-boundary-sync",
-            "release",
-            &format!(
-                "Public-full sanitized boundary violation: {}",
-                truncate(&output, 500)
-            ),
-            "Fix boundary violations before release. Check INVARIANT and PUBLIC_FORBIDDEN_PAYLOAD.",
+            "Public release manifest satisfied — required files present, no forbidden payload.",
         ));
     } else {
-        items.push(CheckItem::warn(
-            "release-boundary-sync",
+        let mut parts = Vec::new();
+        if !manifest.required_missing.is_empty() {
+            parts.push(format!(
+                "missing required: {}",
+                manifest.required_missing.join(", ")
+            ));
+        }
+        if !manifest.forbidden_found.is_empty() {
+            parts.push(format!(
+                "forbidden payload present: {}",
+                manifest.forbidden_found.join(", ")
+            ));
+        }
+        items.push(CheckItem::fail(
+            "release-manifest",
             "release",
-            "Public-full sanitized allowlist gap — review before release.",
-            "Update public promotion allowlist.",
+            &format!("Public release manifest violation: {}", parts.join("; ")),
+            "Add missing required files or remove forbidden payload before release.",
         ));
     }
 
-    // Check 2: Verify bootstrap --apply produces a sanitized public payload
+    // Check 2: Tracked-source leak scan — no maintainer-private paths or runtime
+    // markers in git-tracked files.
+    items.push(check_tracked_source_leaks(repo_root));
+
+    // Check 3: Verify bootstrap --apply produces a sanitized public payload
     let tmpdir = std::env::temp_dir().join(format!("ags-verify-release-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&tmpdir);
 
@@ -889,6 +669,78 @@ fn check_release_boundary(repo_root: &Path) -> Vec<CheckItem> {
     let _ = std::fs::remove_dir_all(&tmpdir);
 
     items
+}
+
+/// Scan every git-tracked file for maintainer-private paths or runtime markers
+/// that must not appear in the public edition. The private markers are assembled
+/// at runtime with `concat!` so this scanner's own source never contains the full
+/// literals it searches for (same convention as the `receipt` crate), which
+/// prevents the scan from flagging itself.
+fn check_tracked_source_leaks(repo_root: &Path) -> CheckItem {
+    let markers: [String; 8] = [
+        concat!("agent-governance-suite", "-stable").to_string(),
+        concat!("agent-governance-suite", "-private").to_string(),
+        concat!("/Users/", "hujiaming").to_string(),
+        concat!("EVOLVER", "_PROXY_MCP").to_string(),
+        concat!("evolver", "-token").to_string(),
+        concat!("with", "-evomap").to_string(),
+        concat!("gep", "-mcp-server").to_string(),
+        concat!("@", "evomap").to_string(),
+    ];
+
+    let (code, stdout, _stderr) = run_command(repo_root, "git", &["ls-files"], &[]);
+    if code != 0 {
+        return CheckItem::skip(
+            "release-tracked-leak",
+            "release",
+            "git ls-files unavailable (not a git worktree?) — tracked-source leak scan skipped.",
+        );
+    }
+
+    let mut leaks: Vec<String> = Vec::new();
+    for file in stdout.lines() {
+        let file = file.trim();
+        if file.is_empty() {
+            continue;
+        }
+        // A maintainer-private sync tool tracked in the public edition is itself a leak.
+        if file == "scripts/sync-public.sh" || file.ends_with("/sync-public.sh") {
+            leaks.push(format!(
+                "{file}: maintainer-private sync tool must not be tracked in the public edition"
+            ));
+        }
+        let content = match std::fs::read_to_string(repo_root.join(file)) {
+            Ok(c) => c,
+            Err(_) => continue, // binary or unreadable — skip
+        };
+        for (idx, line) in content.lines().enumerate() {
+            for marker in &markers {
+                if line.contains(marker.as_str()) {
+                    leaks.push(format!("{file}:{}: private marker `{marker}`", idx + 1));
+                }
+            }
+        }
+    }
+
+    if leaks.is_empty() {
+        CheckItem::pass(
+            "release-tracked-leak",
+            "release",
+            "No maintainer-private paths or runtime markers found in git-tracked files.",
+        )
+    } else {
+        let shown = leaks.len().min(20);
+        CheckItem::fail(
+            "release-tracked-leak",
+            "release",
+            &format!(
+                "Maintainer-private leak in tracked source ({} hit(s)): {}",
+                leaks.len(),
+                leaks[..shown].join("; ")
+            ),
+            "Remove the private path/marker, or move the file out of the public edition (git rm --cached + .gitignore).",
+        )
+    }
 }
 
 /// Detect patterns in template content that indicate REAL leaked secrets or
@@ -988,15 +840,11 @@ pub fn run_verify(scope: Scope, repo_root: &Path) -> VerificationReport {
     items.extend(check_governance_yaml(&repo_root));
     items.push(check_session_preflight(&repo_root));
 
-    // Full scope — compare long-running suite lines. Release scope is checked
-    // against the public boundary below and should not fail because a private or
-    // stable working tree has extra internal sections.
-    if matches!(scope, Scope::Full) {
-        items.push(check_private_vs_stable_drift(&repo_root));
-        items.push(check_private_vs_public_boundary(&repo_root));
-    }
+    // `full` is retained as a compatibility alias for `local`. The private↔stable
+    // and private↔public drift gates are maintainer-only and are not part of the
+    // public edition.
 
-    // Release scope — add release-specific checks
+    // Release scope — current-repo self-checks (public manifest + tracked leak scan)
     if matches!(scope, Scope::Release) {
         items.extend(check_release_boundary(&repo_root));
     }
@@ -1415,61 +1263,6 @@ mod tests {
             item.remediation.unwrap_or_default().contains("--target"),
             "preflight remediation must preserve target authority"
         );
-    }
-
-    #[test]
-    fn test_public_edition_worktree_detection_from_workspace() {
-        let root = std::env::temp_dir().join(format!(
-            "ags-verify-public-worktree-test-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(
-            root.join("WORKSPACE.md"),
-            "# Agent Governance Suite 2.0 — Public Edition Workspace\n\nThis is the public distributable edition.\n",
-        )
-        .unwrap();
-
-        assert!(is_public_edition_worktree(&root));
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn test_private_vs_stable_drift_skips_public_worktree() {
-        let root = std::env::temp_dir().join(format!(
-            "ags-verify-public-drift-skip-test-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(
-            root.join("WORKSPACE.md"),
-            "# Agent Governance Suite 2.0 — Public Edition Workspace\n\nThis is the public distributable edition.\n",
-        )
-        .unwrap();
-
-        let item = check_private_vs_stable_drift(&root);
-        let _ = std::fs::remove_dir_all(&root);
-
-        assert_eq!(item.status, CheckStatus::Skip);
-        assert_eq!(item.id, "drift-private-vs-stable");
-        assert!(item.evidence.contains("not applicable"));
-    }
-
-    #[test]
-    fn test_non_public_worktree_detection_does_not_match_stable() {
-        let root = std::env::temp_dir().join(format!(
-            "ags-verify-stable-worktree-test-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(
-            root.join("WORKSPACE.md"),
-            "# Agent Governance Suite Workspace\n\n| Code | Role | Path |\n|---|---|---|\n| S | Stable private suite | /tmp/stable |\n",
-        )
-        .unwrap();
-
-        assert!(!is_public_edition_worktree(&root));
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     // ── Template leak detection tests ──────────────────────────────────

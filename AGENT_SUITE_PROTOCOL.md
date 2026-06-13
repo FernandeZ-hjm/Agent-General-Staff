@@ -1,13 +1,13 @@
 # Agent Suite Protocol
 
-本文件是 Agent Governance Suite 公开版协议概述。Canonical 协议文件位于本仓库
+本文件是 Agent General Staff 公开版协议概述。Canonical 协议文件位于本仓库
 `protocol/` 目录下，自包含，不依赖私有基础设施或私有仓库。
 
-Release line: **Agent Governance Suite 2.0 Public Edition**.
+Release line: **Agent General Staff 2.0 Public Edition**.
 
 ## 本仓角色
 
-此仓库是 Agent Governance Suite 公开可分发版本，提供 Rust 原生 CLI 工具链 (`ags`)，包含：
+此仓库是 Agent General Staff 公开可分发版本，提供 Rust 原生 CLI 工具链 (`ags`)，包含：
 
 - `ags task validate`（别名：`task-card-validator`） — 任务卡格式与语义校验
 - `ags policy resolve`（别名：`resolve-policy`） — 执行策略解析
@@ -124,7 +124,7 @@ marker 或发现与 AGS 治理冲突的入口规则，则停止并报告 conflic
 
 ## Skill Governance
 
-Agent Governance Suite 在公开版中提供完整的技能治理框架，但不预装第三方技能或
+Agent General Staff 在公开版中提供完整的技能治理框架，但不预装第三方技能或
 用户本地技能。`protocol/skill-governance.md` 定义推荐、扫描、检查、提案、确认安装、
 审计记录和回滚边界。公开版用户如需安装第三方开发技能，可以使用
 `ags skill install --skill <name> --confirm` 或参考 `docs/skill-recommendations.md`。

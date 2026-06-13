@@ -1,6 +1,6 @@
 # Notices
 
-Agent Governance Suite (AGS) 2.0 Public Edition is an MIT-licensed
+Agent General Staff (AGS) 2.0 Public Edition is an MIT-licensed
 engineering-governance framework for multi-agent development workflows.
 
 AGS is free to download, inspect, copy, modify, distribute, and use for

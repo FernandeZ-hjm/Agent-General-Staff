@@ -1,6 +1,6 @@
-# Agent Governance Suite 2.0 Public Edition
+# Agent General Staff 2.0 Public Edition
 
-Agent Governance Suite (AGS) 2.0 is the first public edition of the Rust-native
+Agent General Staff (AGS) 2.0 is the first public edition of the Rust-native
 AGS governance kernel and CLI.
 
 This release turns AGS from a protocol-and-script kit into a full public
@@ -28,6 +28,39 @@ safety while preserving the 2.0 governance product surface:
 - Public release boundary: the public-full sanitized payload strips EvoMap/GEP
   capability-plugin runtime and the two EvoMap boundary backing resources; the
   AGS↔EvoMap integration itself is unchanged as product form.
+- Skill governance console: `ags skill` now exposes a management console on top
+  of the existing `scan` / `check` / `install` flow — `ags skill inventory`
+  (audit on-disk skill assets, optionally writing `governance/skills-inventory.md`),
+  `ags skill verify --host <host>` (read-only host-visibility check), and
+  `ags skill propose --action adopt|update|remove|uninstall|repair|verify --skill <name>`
+  dry-run proposals,
+  plus confirmed `ags skill adopt --skill <name> --apply` / `ags skill ignore
+  --skill <name> --apply` writes. `scripts/verify.sh` gained smoke coverage
+  for the skill console command surface.
+
+### Windows support
+
+Verified on Windows in 2.5.0:
+
+- The Rust-native `ags` CLI core builds, tests, and runs on `windows-latest` in
+  CI. The Windows and macOS CI legs run the Rust-native `ags verify --scope
+  local`; the Linux leg additionally runs the Bash gate (`scripts/verify.sh`)
+  and `cargo deny`.
+- `ags-platform` resolves the Windows home directory (`USERPROFILE`, then
+  `HOMEDRIVE`+`HOMEPATH`, then `APPDATA`) and performs `PATH` lookups that honor
+  `PATHEXT`, so the CLI never depends on a Unix `$HOME` or an external `which`.
+
+Not claimed in 2.5.0:
+
+- The `scripts/*.sh` helpers (`install.sh`, `update.sh`, `verify.sh`,
+  `validate.sh`, …) are Bash/Unix paths. They are not promised to run natively
+  under Windows PowerShell or `cmd`; run them under Linux, macOS, WSL, or Git
+  Bash.
+- No pre-built Windows binary ships with this release. Native Windows users
+  should build the CLI from source with Cargo (PowerShell: `cargo build
+  --release`, then `$env:Path = "$PWD\target\release;$env:Path"`, then
+  `.\target\release\ags.exe verify --scope local`) rather than expecting a
+  downloadable `ags.exe` artifact.
 
 ## Highlights
 
@@ -67,7 +100,7 @@ cargo fmt --check
 RUSTFLAGS="-D warnings" cargo test
 cargo build --release
 bash scripts/verify.sh
-AGS_PUBLIC_ROOT="$PWD" ags verify --scope release
+ags verify --scope release
 ```
 
 ## License And Attribution

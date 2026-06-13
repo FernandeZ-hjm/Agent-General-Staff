@@ -1,4 +1,4 @@
-//! Agent Governance Suite — Public CLI binary entry point (full-blood edition).
+//! Agent General Staff — Public CLI binary entry point (full-blood edition).
 //!
 //! ## M1 Object Commands
 //!
@@ -67,7 +67,7 @@ const AGS_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[derive(Parser)]
 #[command(
     name = "ags",
-    about = "Agent Governance Suite CLI",
+    about = "Agent General Staff CLI",
     version = env!("CARGO_PKG_VERSION"),
 )]
 struct Cli {
@@ -1981,7 +1981,7 @@ enum ManagedBlockOutcome {
 fn render_agents_managed_block() -> String {
     format!(
         "{AGS_ENTRY_BEGIN}\n\
-## Agent Governance Suite\n\
+## Agent General Staff\n\
 \n\
 This project is governed by AGS. Preserve project-specific instructions above\n\
 and below this managed block; only AGS should update the block itself.\n\
@@ -2008,7 +2008,7 @@ Canonical references:\n\
 fn render_claude_managed_block() -> String {
     format!(
         "{AGS_ENTRY_BEGIN}\n\
-## Agent Governance Suite Execution Rules\n\
+## Agent General Staff Execution Rules\n\
 \n\
 This project is AGS-governed. Keep user-authored Claude instructions outside\n\
 this managed block. AGS may update only the marked block.\n\

@@ -1083,7 +1083,7 @@ const evidence = latestTaskArchiveEvidence(process.cwd());
         std::fs::create_dir_all(&tmp).unwrap();
         std::fs::write(
             tmp.join("WORKSPACE.md"),
-            "# Agent Governance Suite 2.0 — Public Edition Workspace\n",
+            "# Agent General Staff 2.0 — Public Edition Workspace\n",
         )
         .unwrap();
 
