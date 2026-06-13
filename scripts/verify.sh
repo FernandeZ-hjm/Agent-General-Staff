@@ -164,8 +164,20 @@ else
     fi
 fi
 
-run_check "ags skill propose" \
-    cargo run -q -p ags-cli -- skill propose --action adopt --skill test-skill --format text
+run_check "ags skill propose remove" \
+    cargo run -q -p ags-cli -- skill propose --action remove --skill auto-brainstorm --format text
+
+run_check "ags skill overview --fix" \
+    cargo run -q -p ags-cli -- skill --fix --format text
+
+run_check "ags skill inventory" \
+    cargo run -q -p ags-cli -- skill inventory --format text
+
+run_check "ags skill verify codex" \
+    cargo run -q -p ags-cli -- skill verify --host codex --format text
+
+run_check "ags skill propose verify" \
+    cargo run -q -p ags-cli -- skill propose --action verify --skill auto-brainstorm --format text
 
 run_check "ags capability list" \
     cargo run -q -p ags-cli -- capability list --format text

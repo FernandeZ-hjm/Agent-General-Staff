@@ -109,7 +109,8 @@ PLAN_JSON="$(mktemp)"
 INCLUDED_LIST="$(mktemp)"
 COPIED_LIST="$(mktemp)"
 SKIPPED_LIST="$(mktemp)"
-trap 'rm -f "$PLAN_JSON" "$INCLUDED_LIST" "$COPIED_LIST" "$SKIPPED_LIST"' EXIT
+UNWIRED_RUST_LIST="$(mktemp)"
+trap 'rm -f "$PLAN_JSON" "$INCLUDED_LIST" "$COPIED_LIST" "$SKIPPED_LIST" "$UNWIRED_RUST_LIST"' EXIT
 
 info "reading stable public-full package plan"
 (
@@ -136,13 +137,18 @@ sort -u "$INCLUDED_LIST" -o "$INCLUDED_LIST"
 #   (a) public-only release files B owns,
 #   (b) B-owned governance skeletons (never import the stable suite's real
 #       skill inventory / adoption records),
-#   (c) B's sanitized forks of crates where the stable source embeds private
-#       paths in detection/validation logic, and
+#   (c) B's explicit sanitized source-file overlays where the stable source embeds
+#       private paths in detection/validation logic, and
 #   (d) B's EvoMap-debranded copies of files the stable suite ships
 #       EvoMap/GEP-branded.
 # Everything else (workflow-sync-check, execution-policy, the rest of
 # ags-verify, most crate Cargo.toml manifests, etc.) flows from stable so the
 # public core no longer drifts behind.
+#
+# Do not add broad Rust source-directory overlays here. If stable adds a new
+# public-safe feature file, the file must flow or the script must fail with an
+# explicit manual-merge warning. Silent feature drops are worse than a failed
+# projection.
 should_skip_public_overlay() {
   local rel="$1"
   case "$rel" in
@@ -158,9 +164,8 @@ should_skip_public_overlay() {
     # (b) B-owned governance skeletons / public manifests
     manifests/skill-recommendations.yaml|manifests/suite.yaml|governance/skill-adoption-log.yaml|governance/skill-ignore-list.yaml|governance/skills-inventory.md|governance/mcp-adoption-log.yaml)
       return 0 ;;
-    # (c) private-path-sanitized crate sources (stable embeds real /Users and the
-    #     private suite path in detection/validation logic)
-    crates/ags-cli/Cargo.toml|crates/ags-cli/src/main.rs|crates/project-discovery/src/lib.rs|crates/receipt/src/*|crates/task-compiler/src/lib.rs|crates/task-card-validator/src/*|crates/skill-governance/src/*)
+    # (c) explicit private-path-sanitized crate source overlays.
+    crates/ags-cli/Cargo.toml|crates/ags-cli/src/main.rs|crates/project-discovery/src/lib.rs|crates/receipt/src/*|crates/task-compiler/src/lib.rs|crates/task-card-validator/src/*|crates/skill-governance/src/lib.rs)
       return 0 ;;
     # (d) EvoMap forbidden-resource overlays: B drops the two boundary resources whose backing
     #     files the stable gate forbids; EvoMap *references* elsewhere are product form.
@@ -188,6 +193,33 @@ contains_private_payload() {
   grep -Eq '(/Volumes/AI Project/agent-governance-suite-private|/Users/hujiaming|node_secret|-----BEGIN [A-Z]+ PRIVATE KEY-----|EVOLVER_PROXY_MCP|evolver-token|with-evomap|gep-mcp-server|@evomap)' "$source_file"
 }
 
+is_top_level_rust_module() {
+  local rel="$1"
+  [[ "$rel" == crates/*/src/*.rs ]] || return 1
+  [[ "$rel" != */lib.rs && "$rel" != */main.rs && "$rel" != */mod.rs ]] || return 1
+  [[ "$(basename "$(dirname "$rel")")" == "src" ]] || return 1
+}
+
+rust_module_is_wired() {
+  local rel="$1"
+  local dir="${rel%/*}"
+  local module="${rel##*/}"
+  module="${module%.rs}"
+
+  [[ "$module" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 0
+
+  local roots=("$PUBLIC_ROOT/$dir/lib.rs" "$PUBLIC_ROOT/$dir/main.rs")
+  local root
+  for root in "${roots[@]}"; do
+    if [[ -f "$root" ]] && grep -Eq "(^|[[:space:]])(pub[[:space:]]+)?mod[[:space:]]+$module[[:space:]]*;" "$root"; then
+      return 0
+    fi
+  done
+
+  echo "$rel -> missing \`mod $module;\` / \`pub mod $module;\` in $dir/{lib.rs,main.rs}" >> "$UNWIRED_RUST_LIST"
+  return 1
+}
+
 while IFS= read -r rel; do
   [[ -n "$rel" ]] || continue
   src="$STABLE_ROOT/$rel"
@@ -201,6 +233,13 @@ while IFS= read -r rel; do
   if contains_private_payload "$rel" "$src"; then
     echo "private-content $rel" >> "$SKIPPED_LIST"
     continue
+  fi
+
+  if is_top_level_rust_module "$rel"; then
+    if ! rust_module_is_wired "$rel"; then
+      echo "unwired-rust $rel" >> "$SKIPPED_LIST"
+      continue
+    fi
   fi
 
   echo "$rel" >> "$COPIED_LIST"
@@ -221,6 +260,13 @@ echo "Skipped public overlays / private-content guards:"
 sed -n '1,120p' "$SKIPPED_LIST" || true
 if [[ "$(wc -l < "$SKIPPED_LIST" | tr -d ' ')" -gt 120 ]]; then
   echo "... truncated"
+fi
+
+if [[ -s "$UNWIRED_RUST_LIST" ]]; then
+  echo
+  echo "Unwired Rust modules blocked:"
+  sed -n '1,120p' "$UNWIRED_RUST_LIST"
+  die "stable introduced public-safe Rust module(s) that are not wired into public module roots; merge the module root/CLI overlay explicitly before applying"
 fi
 
 if [[ "$MODE" == "dry-run" ]]; then

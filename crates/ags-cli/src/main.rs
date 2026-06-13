@@ -332,7 +332,7 @@ enum HookAction {
     },
 }
 
-/// Skill governance operations — read-only inventory, dry-run proposal,
+/// Skill governance operations — management console, dry-run proposals,
 /// and confirmed install.
 #[derive(Subcommand)]
 enum SkillAction {
@@ -348,17 +348,41 @@ enum SkillAction {
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
     },
-    /// Propose skill changes — dry-run ONLY, no files modified.
+    /// Propose a management action on a capability — dry-run unless `--apply`.
     Propose {
-        /// Action: adopt, enable, or disable
-        #[arg(long, value_parser = ["adopt", "enable", "disable"])]
+        /// Action: adopt, update, remove, uninstall, repair, or verify
+        #[arg(long, value_parser = ["adopt", "update", "remove", "uninstall", "repair", "verify"])]
         action: String,
-        /// Skill name to act on
-        #[arg(long)]
+        /// Capability name to act on (skill / MCP / CLI-backed)
+        #[arg(long = "skill")]
         skill: String,
+        /// Confirm and perform AGS-owned writes. Without it, dry-run only.
+        #[arg(long)]
+        apply: bool,
         /// Output format: text (default) or json
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
+    },
+    /// Verify host visibility for a host (read-only).
+    Verify {
+        /// Host to verify: claude-code | codex (cursor reserved)
+        #[arg(long, default_value = "claude-code")]
+        host: String,
+        /// Gate mode: exit nonzero unless status is "ok"
+        #[arg(long)]
+        strict: bool,
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Inventory skill assets on disk (global-skills/ and skill-packs/).
+    Inventory {
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+        /// Also write a Markdown report to governance/skills-inventory.md
+        #[arg(long)]
+        write: bool,
     },
     /// Install a recommended skill (requires explicit --confirm).
     ///
@@ -689,10 +713,16 @@ enum Commands {
     },
 
     // ── Skill governance ─────────────────────────────────────────────
-    /// Skill governance — scan, check, propose, and confirmed install
+    /// Review local skills and update advice.
     Skill {
+        /// Output format for overview mode: text (default) or json
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+        /// Show safe update guidance. Skill writes still require explicit approval.
+        #[arg(long)]
+        fix: bool,
         #[command(subcommand)]
-        action: SkillAction,
+        action: Option<SkillAction>,
     },
 
     // ── MCP host adapter ─────────────────────────────────────────────
@@ -2813,13 +2843,68 @@ fn cmd_skill_check(format: &str) {
     }
 }
 
-/// Dispatch: `skill propose`
-fn cmd_skill_propose(action: &str, skill: &str, format: &str) {
+/// Dispatch: `skill propose` — management console proposal.
+fn cmd_skill_propose(action: &str, skill_name: &str, apply: bool, format: &str) {
+    use skill_governance::console;
     let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let result = skill_governance::propose_skills(&root, action, skill);
+    let Some(parsed) = console::ConsoleAction::from_str(action) else {
+        eprintln!("skill propose: unknown action '{action}'");
+        std::process::exit(2);
+    };
+    let ctx = console::ConsoleContext::system(root);
+    let result = console::propose_action(&ctx, parsed, skill_name, apply);
     match format {
-        "json" => println!("{}", skill_governance::render_proposal_json(&result)),
-        _ => println!("{}", skill_governance::render_proposal_text(&result)),
+        "json" => println!("{}", console::render_proposal_json(&result)),
+        _ => println!("{}", console::render_proposal_text(&result)),
+    }
+
+    let apply_unfulfilled = apply && matches!(result.apply_status.as_str(), "advised-only");
+    if !result.blocked_reasons.is_empty() || !result.apply_errors.is_empty() || apply_unfulfilled {
+        std::process::exit(1);
+    }
+}
+
+/// Dispatch: `skill verify --host <host>` — read-only host visibility.
+fn cmd_skill_verify(host: &str, strict: bool, format: &str) {
+    use skill_governance::console;
+    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let ctx = console::ConsoleContext::system(root);
+    let result = console::verify_host(&ctx, host);
+    let status = result.status.clone();
+
+    match format {
+        "json" => println!("{}", console::render_verify_json(&result)),
+        _ => println!("{}", console::render_verify_text(&result)),
+    }
+
+    if strict && status != "ok" {
+        std::process::exit(1);
+    }
+}
+
+/// Dispatch: `skill inventory`.
+fn cmd_skill_inventory(format: &str, write: bool) {
+    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let result = skill_governance::scan_skill_inventory(&root);
+
+    match format {
+        "json" => println!("{}", skill_governance::render_inventory_json(&result)),
+        _ => println!("{}", skill_governance::render_inventory_text(&result)),
+    }
+
+    if write {
+        let report_dir = root.join("governance");
+        let report_path = report_dir.join("skills-inventory.md");
+        let markdown = skill_governance::render_inventory_markdown(&result);
+        match std::fs::create_dir_all(&report_dir)
+            .and_then(|_| std::fs::write(&report_path, markdown))
+        {
+            Ok(_) => println!("\nWrote {}", report_path.display()),
+            Err(e) => {
+                eprintln!("Failed to write {}: {e}", report_path.display());
+                std::process::exit(1);
+            }
+        }
     }
 }
 
@@ -3005,6 +3090,73 @@ fn cmd_skill_ignore(skill: &str, reason: Option<&str>, apply: bool, format: &str
             skill,
             log_path.display()
         );
+    }
+}
+
+fn cmd_skill_overview(format: &str, fix: bool) {
+    use skill_governance::console;
+    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let scan = skill_governance::scan_skills(&root);
+    let check = skill_governance::check_skills(&root);
+    let ctx = console::ConsoleContext::system(root);
+    let inventory = console::build_inventory(&ctx, &["claude-code", "codex"]);
+
+    match format {
+        "json" => {
+            let output = serde_json::json!({
+                "schema_version": "2.5-skill-console-overview",
+                "inventory": inventory,
+                "scan": scan,
+                "check": check,
+                "fix_requested": fix,
+                "update_policy": "no_silent_writes_user_confirmation_required",
+                "next_steps": if fix {
+                    serde_json::json!([
+                        "Review the inventory: managed_status, host_visibility, health_status, risk_notes.",
+                        "Dry-run a change: `ags skill propose --action <adopt|update|remove|uninstall|repair|verify> --skill <name>`.",
+                        "Confirm with `--apply` (writes only AGS-owned host entries; never runs external installers).",
+                        "After apply, restart the host and run `ags skill verify --host claude-code`."
+                    ])
+                } else {
+                    serde_json::json!([
+                        "Run `ags skill verify --host claude-code` to check host visibility.",
+                        "Run `ags skill --fix` for update guidance. No files are modified by overview."
+                    ])
+                }
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&output).unwrap_or_default()
+            );
+        }
+        _ => {
+            println!("{}", console::render_inventory_text(&inventory));
+            println!();
+            println!("{}", skill_governance::render_scan_text(&scan));
+            println!();
+            println!("{}", skill_governance::render_check_text(&check));
+            println!();
+            if fix {
+                println!("Skill Update Guidance");
+                println!("=====================");
+                println!("No skill files were modified.");
+                println!("Review the inventory above, then use:");
+                println!("  ags skill propose --action adopt --skill <name>          # dry-run");
+                println!("  ags skill propose --action adopt --skill <name> --apply  # confirm");
+                println!("  ags skill verify  --host claude-code                     # post-restart check");
+                println!(
+                    "Apply writes only AGS-owned host entries (with backup) and never runs external installers."
+                );
+            } else {
+                println!(
+                    "Next: `ags skill verify --host claude-code` for host visibility, or `ags skill --fix` for update guidance. No files were modified."
+                );
+            }
+        }
+    }
+
+    if !check.passed && !fix {
+        std::process::exit(1);
     }
 }
 
@@ -3681,15 +3833,26 @@ fn main() {
         },
 
         // ── Skill ──
-        Commands::Skill { action } => match action {
-            SkillAction::Scan { format } => cmd_skill_scan(&format),
-            SkillAction::Check { format } => cmd_skill_check(&format),
-            SkillAction::Propose {
+        Commands::Skill {
+            action,
+            format,
+            fix,
+        } => match action {
+            Some(SkillAction::Scan { format }) => cmd_skill_scan(&format),
+            Some(SkillAction::Check { format }) => cmd_skill_check(&format),
+            Some(SkillAction::Propose {
                 action,
                 skill,
+                apply,
                 format,
-            } => cmd_skill_propose(&action, &skill, &format),
-            SkillAction::Install {
+            }) => cmd_skill_propose(&action, &skill, apply, &format),
+            Some(SkillAction::Verify {
+                host,
+                strict,
+                format,
+            }) => cmd_skill_verify(&host, strict, &format),
+            Some(SkillAction::Inventory { format, write }) => cmd_skill_inventory(&format, write),
+            Some(SkillAction::Install {
                 skill,
                 confirm,
                 dry_run,
@@ -3697,7 +3860,7 @@ fn main() {
                 mode,
                 source_dir,
                 format,
-            } => cmd_skill_install(
+            }) => cmd_skill_install(
                 &skill,
                 confirm,
                 dry_run,
@@ -3706,17 +3869,18 @@ fn main() {
                 source_dir.as_ref(),
                 &format,
             ),
-            SkillAction::Adopt {
+            Some(SkillAction::Adopt {
                 skill,
                 apply,
                 format,
-            } => cmd_skill_adopt(&skill, apply, &format),
-            SkillAction::Ignore {
+            }) => cmd_skill_adopt(&skill, apply, &format),
+            Some(SkillAction::Ignore {
                 skill,
                 reason,
                 apply,
                 format,
-            } => cmd_skill_ignore(&skill, reason.as_deref(), apply, &format),
+            }) => cmd_skill_ignore(&skill, reason.as_deref(), apply, &format),
+            None => cmd_skill_overview(&format, fix),
         },
         Commands::Mcp { action } => match action {
             McpAction::Serve { transport } => cmd_mcp_serve(&transport),

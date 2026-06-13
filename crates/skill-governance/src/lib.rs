@@ -16,6 +16,9 @@
 //! - `install`: Real skill installation — creates directory structure with
 //!   SKILL.md frontmatter, writes install receipt.
 
+/// Third-party skill & MCP management console (unified inventory, host
+/// visibility, confirmation-protected proposal/apply).
+pub mod console;
 pub mod install;
 
 use serde::{Deserialize, Serialize};
@@ -891,6 +894,329 @@ pub fn render_proposal_text(result: &SkillProposalResult) -> String {
 pub fn render_proposal_json(result: &SkillProposalResult) -> String {
     serde_json::to_string_pretty(result)
         .unwrap_or_else(|e| format!(r#"{{"error":"JSON serialization failed: {}"}}"#, e))
+}
+
+// ── Skill asset inventory ───────────────────────────────────────────────────
+//
+// On-disk inventory of skill assets under `global-skills/` and `skill-packs/`.
+// Distinct from `scan_skills` (which reads the suite manifest): the inventory
+// walks the actual skill directories and reads each `SKILL.md` front-matter.
+// It is strictly read-only over `SKILL.md` files and never reads `.env`,
+// credentials, caches, or runtime state.
+
+/// A single skill discovered on disk.
+#[derive(Debug, Clone, Serialize)]
+pub struct SkillInventoryEntry {
+    pub name: String,
+    pub path: String,
+    /// "global" | "optional" | "personal"
+    pub source_category: String,
+    pub has_skill_md: bool,
+    pub description_present: bool,
+    pub risk_hints: Vec<String>,
+    pub public_allowed_guess: bool,
+    /// SKILL.md last-modified marker (`epoch:<secs>`), when available.
+    pub last_seen: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SkillInventorySummary {
+    pub total: usize,
+    pub global: usize,
+    pub optional: usize,
+    pub personal: usize,
+    pub with_skill_md: usize,
+    pub with_description: usize,
+    pub public_allowed: usize,
+    pub flagged_risk: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SkillInventoryResult {
+    pub schema_version: String,
+    pub roots_scanned: Vec<String>,
+    pub entries: Vec<SkillInventoryEntry>,
+    pub summary: SkillInventorySummary,
+}
+
+/// High-signal substrings hinting a skill may carry elevated risk or be
+/// unsuitable for public distribution. Scanned only against SKILL.md text.
+const RISK_HINT_KEYWORDS: &[&str] = &[
+    "secret",
+    "token",
+    "credential",
+    "password",
+    "api key",
+    "api_key",
+    "bearer",
+    "node_secret",
+    "rm -rf",
+    "sudo ",
+    "git reset --hard",
+    "--force",
+    "force push",
+    "drop table",
+];
+
+/// Scan `global-skills/` and `skill-packs/{optional,personal}/` for skill
+/// assets, reading each `SKILL.md` front-matter. Read-only over SKILL.md.
+pub fn scan_skill_inventory(root: &Path) -> SkillInventoryResult {
+    let roots: [(&str, std::path::PathBuf); 3] = [
+        ("global", root.join("global-skills")),
+        ("optional", root.join("skill-packs/optional")),
+        ("personal", root.join("skill-packs/personal")),
+    ];
+
+    let mut entries: Vec<SkillInventoryEntry> = Vec::new();
+    let mut roots_scanned: Vec<String> = Vec::new();
+
+    for (category, dir) in &roots {
+        if !dir.is_dir() {
+            continue;
+        }
+        roots_scanned.push(dir.display().to_string());
+        let mut skill_dirs: Vec<std::path::PathBuf> = match std::fs::read_dir(dir) {
+            Ok(rd) => rd
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.is_dir())
+                .collect(),
+            Err(_) => continue,
+        };
+        skill_dirs.sort();
+        for skill_dir in skill_dirs {
+            entries.push(inventory_entry(category, &skill_dir));
+        }
+    }
+
+    let summary = SkillInventorySummary {
+        total: entries.len(),
+        global: entries
+            .iter()
+            .filter(|e| e.source_category == "global")
+            .count(),
+        optional: entries
+            .iter()
+            .filter(|e| e.source_category == "optional")
+            .count(),
+        personal: entries
+            .iter()
+            .filter(|e| e.source_category == "personal")
+            .count(),
+        with_skill_md: entries.iter().filter(|e| e.has_skill_md).count(),
+        with_description: entries.iter().filter(|e| e.description_present).count(),
+        public_allowed: entries.iter().filter(|e| e.public_allowed_guess).count(),
+        flagged_risk: entries.iter().filter(|e| !e.risk_hints.is_empty()).count(),
+    };
+
+    SkillInventoryResult {
+        schema_version: SCHEMA_VERSION.to_string(),
+        roots_scanned,
+        entries,
+        summary,
+    }
+}
+
+fn inventory_entry(category: &str, skill_dir: &Path) -> SkillInventoryEntry {
+    let dir_name = skill_dir
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "unnamed".to_string());
+    let skill_md = skill_dir.join("SKILL.md");
+    let has_skill_md = skill_md.is_file();
+
+    let mut name = dir_name;
+    let mut description_present = false;
+    let mut risk_hints: Vec<String> = Vec::new();
+    let mut last_seen: Option<String> = None;
+
+    if has_skill_md {
+        if let Ok(meta) = std::fs::metadata(&skill_md) {
+            if let Ok(modified) = meta.modified() {
+                last_seen = format_system_time(modified);
+            }
+        }
+        // Read ONLY SKILL.md — never other files in the skill directory.
+        if let Ok(text) = std::fs::read_to_string(&skill_md) {
+            let (fm_name, fm_desc) = parse_front_matter(&text);
+            if let Some(n) = fm_name {
+                if !n.trim().is_empty() {
+                    name = n.trim().to_string();
+                }
+            }
+            description_present = fm_desc.map(|d| !d.trim().is_empty()).unwrap_or(false);
+            let lower = text.to_lowercase();
+            for kw in RISK_HINT_KEYWORDS {
+                if lower.contains(kw) {
+                    risk_hints.push((*kw).trim().to_string());
+                }
+            }
+        }
+    }
+
+    let public_allowed_guess = category != "personal" && risk_hints.is_empty();
+
+    SkillInventoryEntry {
+        name,
+        path: skill_dir.display().to_string(),
+        source_category: category.to_string(),
+        has_skill_md,
+        description_present,
+        risk_hints,
+        public_allowed_guess,
+        last_seen,
+    }
+}
+
+/// Extract `name:` and `description:` from a leading `--- ... ---` YAML
+/// front-matter block. Returns (name, description); robust to absent fields.
+pub(crate) fn parse_front_matter(text: &str) -> (Option<String>, Option<String>) {
+    let trimmed = text.trim_start();
+    let Some(after_open) = trimmed.strip_prefix("---") else {
+        return (None, None);
+    };
+    let Some(end) = after_open.find("\n---") else {
+        return (None, None);
+    };
+    let yaml = &after_open[..end];
+    match serde_yaml::from_str::<serde_yaml::Value>(yaml) {
+        Ok(value) => {
+            let name = value
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let description = value
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            (name, description)
+        }
+        Err(_) => (None, None),
+    }
+}
+
+/// Format a SystemTime as an epoch-seconds marker (avoids extra date deps).
+fn format_system_time(t: std::time::SystemTime) -> Option<String> {
+    t.duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| format!("epoch:{}", d.as_secs()))
+}
+
+/// Render inventory as human-readable text.
+pub fn render_inventory_text(result: &SkillInventoryResult) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    lines.push("Skill Asset Inventory".to_string());
+    lines.push("=====================".to_string());
+    lines.push(format!("Schema:  {}", result.schema_version));
+    lines.push(format!("Roots:   {}", result.roots_scanned.join(", ")));
+    lines.push(String::new());
+    lines.push(format!(
+        "Summary: total {} (global {}, optional {}, personal {}); with SKILL.md {}, with description {}, public-allowed guess {}, risk-flagged {}",
+        result.summary.total,
+        result.summary.global,
+        result.summary.optional,
+        result.summary.personal,
+        result.summary.with_skill_md,
+        result.summary.with_description,
+        result.summary.public_allowed,
+        result.summary.flagged_risk,
+    ));
+    lines.push(String::new());
+    for e in &result.entries {
+        let md = if e.has_skill_md { "md" } else { "NO-md" };
+        let desc = if e.description_present {
+            "desc"
+        } else {
+            "no-desc"
+        };
+        let public = if e.public_allowed_guess {
+            "public?"
+        } else {
+            "private"
+        };
+        lines.push(format!(
+            "  [{}] {} ({}, {}, {})",
+            e.source_category, e.name, md, desc, public
+        ));
+        if !e.risk_hints.is_empty() {
+            lines.push(format!("      risk hints: {}", e.risk_hints.join(", ")));
+        }
+    }
+    lines.join("\n")
+}
+
+/// Render inventory as JSON.
+pub fn render_inventory_json(result: &SkillInventoryResult) -> String {
+    serde_json::to_string_pretty(result)
+        .unwrap_or_else(|e| format!(r#"{{"error":"JSON serialization failed: {}"}}"#, e))
+}
+
+/// Render inventory as a Markdown report (for governance/skills-inventory.md).
+pub fn render_inventory_markdown(result: &SkillInventoryResult) -> String {
+    let mut out: Vec<String> = Vec::new();
+    out.push("# Skill Asset Inventory".to_string());
+    out.push(String::new());
+    out.push(format!(
+        "_Generated by `ags skill inventory --write`. Schema `{}`. Read-only scan of `SKILL.md` files; no secrets, tokens, or runtime files are read._",
+        result.schema_version
+    ));
+    out.push(String::new());
+    out.push("## Summary".to_string());
+    out.push(String::new());
+    out.push("| Metric | Count |".to_string());
+    out.push("|---|---|".to_string());
+    out.push(format!("| Total skills | {} |", result.summary.total));
+    out.push(format!("| global-skills | {} |", result.summary.global));
+    out.push(format!(
+        "| skill-packs/optional | {} |",
+        result.summary.optional
+    ));
+    out.push(format!(
+        "| skill-packs/personal | {} |",
+        result.summary.personal
+    ));
+    out.push(format!(
+        "| With SKILL.md | {} |",
+        result.summary.with_skill_md
+    ));
+    out.push(format!(
+        "| With description | {} |",
+        result.summary.with_description
+    ));
+    out.push(format!(
+        "| Public-allowed (guess) | {} |",
+        result.summary.public_allowed
+    ));
+    out.push(format!(
+        "| Risk-flagged | {} |",
+        result.summary.flagged_risk
+    ));
+    out.push(String::new());
+    out.push("## Skills".to_string());
+    out.push(String::new());
+    out.push(
+        "| Category | Name | SKILL.md | Description | Public-allowed (guess) | Risk hints |"
+            .to_string(),
+    );
+    out.push("|---|---|---|---|---|---|".to_string());
+    for e in &result.entries {
+        let risk = if e.risk_hints.is_empty() {
+            "-".to_string()
+        } else {
+            e.risk_hints.join(", ")
+        };
+        out.push(format!(
+            "| {} | {} | {} | {} | {} | {} |",
+            e.source_category,
+            e.name,
+            if e.has_skill_md { "yes" } else { "no" },
+            if e.description_present { "yes" } else { "no" },
+            if e.public_allowed_guess { "yes" } else { "no" },
+            risk,
+        ));
+    }
+    out.push(String::new());
+    out.join("\n")
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
