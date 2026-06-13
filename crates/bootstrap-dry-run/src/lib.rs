@@ -355,6 +355,16 @@ pub fn verify(target: &Path) -> HealthReport {
     for script in &["scripts/validate.sh", "scripts/run-task-card.sh"] {
         let full = target.join(script);
         if full.exists() {
+            #[cfg(windows)]
+            {
+                report.add(Finding::warn(
+                    &format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
+                    format!("native Windows verification skips Bash syntax check for {script}"),
+                    String::new(),
+                ));
+                continue;
+            }
+
             if !ags_platform::is_on_path("bash") {
                 report.add(Finding::warn(
                     &format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
@@ -586,7 +596,7 @@ mod tests {
         let protocol_actions: Vec<_> = plan
             .actions
             .iter()
-            .filter(|a| a.path.contains("protocol/"))
+            .filter(|a| a.description.starts_with("copy protocol/"))
             .collect();
         assert!(
             !protocol_actions.is_empty(),
@@ -597,7 +607,7 @@ mod tests {
         let script_actions: Vec<_> = plan
             .actions
             .iter()
-            .filter(|a| a.path.contains("scripts/"))
+            .filter(|a| a.description.starts_with("copy scripts/"))
             .collect();
         assert!(!script_actions.is_empty(), "should include script files");
         for a in &script_actions {
@@ -702,6 +712,18 @@ mod tests {
         let report = verify(&target);
         assert!(report.passed(), "verify should pass: {:?}", report.findings);
         for finding in &report.findings {
+            #[cfg(windows)]
+            if finding.check_name.starts_with("bootstrap-verify-bash-n-") {
+                assert_eq!(
+                    finding.status,
+                    suite_doctor::CheckStatus::Warn,
+                    "Windows should skip Bash syntax check: {} — {}",
+                    finding.check_name,
+                    finding.message
+                );
+                continue;
+            }
+
             assert_eq!(
                 finding.status,
                 suite_doctor::CheckStatus::Pass,
