@@ -1226,17 +1226,21 @@ mod tests {
     fn test_run_command_executes_in_repo_root() {
         let root = std::env::temp_dir().join(format!("ags-verify-cwd-test-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
-        let expected = root
-            .canonicalize()
-            .unwrap_or_else(|_| root.clone())
-            .to_string_lossy()
-            .to_string();
+        let expected = root.canonicalize().unwrap_or_else(|_| root.clone());
 
-        let (code, stdout, stderr) = run_command(&root, "sh", &["-c", "pwd"], &[]);
+        #[cfg(windows)]
+        let (program, args): (&str, &[&str]) = ("cmd", &["/C", "cd"]);
+        #[cfg(not(windows))]
+        let (program, args): (&str, &[&str]) = ("sh", &["-c", "pwd"]);
+
+        let (code, stdout, stderr) = run_command(&root, program, args, &[]);
         let _ = std::fs::remove_dir_all(&root);
 
         assert_eq!(code, 0, "stderr={stderr}");
-        assert_eq!(stdout.trim(), expected);
+        let actual = PathBuf::from(stdout.trim())
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(stdout.trim()));
+        assert_eq!(actual, expected);
     }
 
     #[test]
