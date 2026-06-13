@@ -355,55 +355,52 @@ pub fn verify(target: &Path) -> HealthReport {
     for script in &["scripts/validate.sh", "scripts/run-task-card.sh"] {
         let full = target.join(script);
         if full.exists() {
-            #[cfg(windows)]
-            {
-                report.add(Finding::warn(
-                    &format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
-                    format!("native Windows verification skips Bash syntax check for {script}"),
-                    String::new(),
-                ));
-                continue;
-            }
-
-            if !ags_platform::is_on_path("bash") {
-                report.add(Finding::warn(
-                    &format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
-                    format!("bash not on PATH, skipped syntax check for {script}"),
-                    String::new(),
-                ));
-                continue;
-            }
-            let output = std::process::Command::new("bash")
-                .arg("-n")
-                .arg(&full)
-                .output();
-            match output {
-                Ok(o) if o.status.success() => {
-                    report.add(Finding::pass(
-                        &format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
-                        format!("bash -n {script} OK"),
-                    ));
-                }
-                Ok(o) => {
-                    let stderr = String::from_utf8_lossy(&o.stderr);
-                    report.add(Finding::fail(
-                        &format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
-                        format!("bash -n {script} FAILED"),
-                        format!("{}", stderr.trim()),
-                    ));
-                }
-                Err(e) => {
-                    report.add(Finding::warn(
-                        &format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
-                        format!("bash not available, skipped syntax check for {script}"),
-                        format!("{e}"),
-                    ));
-                }
-            }
+            report.add(bash_syntax_check(script, &full));
         }
     }
 
     report
+}
+
+#[cfg(windows)]
+fn bash_syntax_check(script: &str, _full: &Path) -> Finding {
+    Finding::warn(
+        format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
+        format!("native Windows verification skips Bash syntax check for {script}"),
+        String::new(),
+    )
+}
+
+#[cfg(not(windows))]
+fn bash_syntax_check(script: &str, full: &Path) -> Finding {
+    if !ags_platform::is_on_path("bash") {
+        return Finding::warn(
+            format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
+            format!("bash not on PATH, skipped syntax check for {script}"),
+            String::new(),
+        );
+    }
+
+    let output = Command::new("bash").arg("-n").arg(full).output();
+    match output {
+        Ok(o) if o.status.success() => Finding::pass(
+            format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
+            format!("bash -n {script} OK"),
+        ),
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            Finding::fail(
+                format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
+                format!("bash -n {script} FAILED"),
+                format!("{}", stderr.trim()),
+            )
+        }
+        Err(e) => Finding::warn(
+            format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
+            format!("bash not available, skipped syntax check for {script}"),
+            format!("{e}"),
+        ),
+    }
 }
 
 /// Render a BootstrapPlan as human-readable text.
