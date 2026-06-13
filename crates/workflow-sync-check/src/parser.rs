@@ -76,7 +76,7 @@ pub fn parse(relative_path: &str, source: &str) -> ParsedFile {
             );
 
             // Pop stack to the right depth
-            while stack.last().map_or(false, |(l, _)| *l >= level) {
+            while stack.last().is_some_and(|(l, _)| *l >= level) {
                 stack.pop();
             }
             stack.push((level, heading));

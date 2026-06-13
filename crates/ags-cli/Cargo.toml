@@ -10,6 +10,7 @@ name = "ags"
 path = "src/main.rs"
 
 [dependencies]
+ags-platform = { path = "../ags-platform" }
 task-card-validator = { path = "../task-card-validator" }
 workflow-sync-check = { path = "../workflow-sync-check" }
 suite-doctor = { path = "../suite-doctor" }

@@ -2,6 +2,7 @@
 name = "runner"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "AGS runner — gate-first task card execution planner"
 
 [dependencies]

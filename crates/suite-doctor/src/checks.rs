@@ -499,17 +499,17 @@ pub fn workspace_structure_check(repo_root: &Path) -> Vec<Finding> {
 /// Fail — only Skip or Warn.  Output is sanitized: the token value is
 /// never printed.
 pub fn evolver_proxy_health_check() -> Finding {
-    let home = match std::env::var("HOME") {
-        Ok(h) => h,
-        Err(_) => {
+    let home = match ags_platform::home_dir() {
+        Some(h) => h,
+        None => {
             return Finding::skip(
                 "evolver_proxy_health",
-                "HOME not set — cannot locate ~/.evolver/settings.json",
+                "home directory not set — cannot locate ~/.evolver/settings.json",
             );
         }
     };
 
-    let settings_path = std::path::Path::new(&home).join(".evolver/settings.json");
+    let settings_path = home.join(".evolver/settings.json");
     if !settings_path.exists() {
         return Finding::skip(
             "evolver_proxy_health",

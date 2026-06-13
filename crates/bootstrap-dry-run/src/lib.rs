@@ -355,6 +355,14 @@ pub fn verify(target: &Path) -> HealthReport {
     for script in &["scripts/validate.sh", "scripts/run-task-card.sh"] {
         let full = target.join(script);
         if full.exists() {
+            if !ags_platform::is_on_path("bash") {
+                report.add(Finding::warn(
+                    &format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
+                    format!("bash not on PATH, skipped syntax check for {script}"),
+                    String::new(),
+                ));
+                continue;
+            }
             let output = std::process::Command::new("bash")
                 .arg("-n")
                 .arg(&full)

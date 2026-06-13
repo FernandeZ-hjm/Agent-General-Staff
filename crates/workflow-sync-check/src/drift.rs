@@ -42,7 +42,7 @@ pub fn check_target(
                 Severity::Warn,
                 &extra,
                 vec![],
-                format!("protocol file not in sync manifest"),
+                "protocol file not in sync manifest".to_string(),
                 "review whether this file should be added to the manifest or removed",
             ));
         }
@@ -257,7 +257,7 @@ fn compare_sections(
         // Check if the section order matches (structure drift)
         let source_pos = source.section_order.iter().position(|p| p == path);
         let target_pos = target.section_order.iter().position(|p| p == path);
-        let same_order = source_pos.zip(target_pos).map_or(true, |(s, t)| s == t);
+        let same_order = source_pos.zip(target_pos).is_none_or(|(s, t)| s == t);
 
         let (kind, severity) = if same_order {
             (DriftKind::ContentDrift, Severity::Fail)

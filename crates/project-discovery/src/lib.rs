@@ -271,7 +271,7 @@ pub fn detect_project(target: &Path) -> ProjectIdentity {
         .project_slug
         .clone()
         .unwrap_or_else(|| slug_from_path(&canonical));
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let home = ags_platform::home_dir_or_temp();
     let capsule_path = PathBuf::from(&home)
         .join(".agents/memory/projects")
         .join(&slug)

@@ -54,6 +54,5 @@ Do NOT skip preflight based on model memory.
 
 - Run `ags_solution_check` with the user's request summary.
 - Reference `ags://global-kernel` resource for full details.
-- Reference `ags://evolver-boundary` for EvoMap parallel-call rules.
 
 Begin with the Initialization Gate: call `ags_preflight` first.

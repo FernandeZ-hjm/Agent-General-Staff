@@ -2,8 +2,10 @@
 name = "task-compiler"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "M4 Task Compiler — rule-based intent-to-task-card compiler"
 
 [dependencies]
+ags-platform = { path = "../ags-platform" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

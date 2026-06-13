@@ -1485,12 +1485,9 @@ mod tests {
 
     #[test]
     fn template_leak_detection_flags_real_user_path() {
-        let content = "proxy_url: \"/Users/hujiaming/.evolver/settings.json\"";
+        let content = "proxy_url: \"/Users/example/.evolver/settings.json\"";
         let leaks = detect_template_leaks(content, "test.yaml");
-        assert!(
-            !leaks.is_empty(),
-            "should detect /Users/hujiaming path leak"
-        );
+        assert!(!leaks.is_empty(), "should detect /Users/example path leak");
     }
 
     #[test]
@@ -1502,7 +1499,7 @@ mod tests {
 
     #[test]
     fn template_leak_detection_flags_node_command_with_real_user_path() {
-        let content = "node /Users/hujiaming/.evolver/run-hook.js";
+        let content = "node /Users/example/.evolver/run-hook.js";
         let leaks = detect_template_leaks(content, "test.md");
         assert!(
             !leaks.is_empty(),
@@ -1512,7 +1509,7 @@ mod tests {
 
     #[test]
     fn template_leak_detection_flags_python_command_with_real_user_path() {
-        let content = "python3 /Users/hujiaming/scripts/evolver.py";
+        let content = "python3 /Users/example/scripts/evolver.py";
         let leaks = detect_template_leaks(content, "test.md");
         assert!(
             !leaks.is_empty(),
@@ -1523,7 +1520,7 @@ mod tests {
     #[test]
     fn template_leak_detection_flags_comments_with_paths() {
         // Real /Users/<name> paths in comments ARE now detected.
-        let content = "# /Users/hujiaming/.evolver/settings.json";
+        let content = "# /Users/example/.evolver/settings.json";
         let leaks = detect_template_leaks(content, "test.yaml");
         assert!(
             !leaks.is_empty(),
@@ -1541,7 +1538,7 @@ mod tests {
 
     #[test]
     fn template_leak_detection_ignores_replace_slots() {
-        let content = "\"REPLACE: path/to/evolver-recall-script\"";
+        let content = "\"REPLACE: path/to/advisory-recall-script\"";
         let leaks = detect_template_leaks(content, "test.json");
         assert!(leaks.is_empty(), "should ignore REPLACE slot lines");
     }

@@ -12,8 +12,12 @@ env:
 
 jobs:
   rust:
-    name: Rust
-    runs-on: ubuntu-latest
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       - name: Checkout
@@ -43,13 +47,25 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --all-features
 
+      # RUSTFLAGS set via env (not inline) so it works on the Windows PowerShell shell too.
       - name: Test
-        run: RUSTFLAGS="-D warnings" cargo test --all
+        run: cargo test --all
+        env:
+          RUSTFLAGS: "-D warnings"
 
       - name: Build release
         run: cargo build --release
 
-      - name: Verify public worktree
-        run: |
-          echo "$PWD/target/release" >> "$GITHUB_PATH"
-          cargo run -q -p ags-cli -- verify --scope local --format text
+      # Rust-native local verify — canonical cross-platform gate. Windows and macOS
+      # run this Rust entry (NOT the Bash verify.sh) so portability is exercised off Linux.
+      - name: Verify (Rust-native local)
+        run: cargo run -q -p ags-cli -- verify --scope local --format text
+
+      # Supply-chain gate (repo-local deny.toml) + full Bash verify — Ubuntu only.
+      - name: Install cargo-deny
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo install cargo-deny --locked
+
+      - name: Supply-chain + full verify (Bash)
+        if: matrix.os == 'ubuntu-latest'
+        run: bash scripts/verify.sh

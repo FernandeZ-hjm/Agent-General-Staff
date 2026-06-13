@@ -120,52 +120,72 @@ info "reading stable public-full package plan"
 ruby -rjson -e 'JSON.parse(File.read(ARGV[0])).fetch("included_files").each { |f| puts f }' "$PLAN_JSON" \
   > "$INCLUDED_LIST"
 
-# The stable release planner intentionally strips private runtime payload, but
-# AGS MCP needs these public-safe boundary resources at compile/runtime. They
-# describe authority and recall boundaries; they do not ship private runtime
-# state, credentials, or installed EvoMap/GEP services.
-for rel in \
-  crates/ags-mcp/src/resources/evolver_boundary.md \
-  protocol/evolution-memory.md
-do
-  if [[ -f "$STABLE_ROOT/$rel" ]] && ! grep -Fxq "$rel" "$INCLUDED_LIST"; then
-    echo "$rel" >> "$INCLUDED_LIST"
-  fi
-done
+# public-full-sanitized: B no longer force-adds the EvoMap boundary docs.
+# The stable 2.5 release planner forbids both
+# crates/ags-mcp/src/resources/evolver_boundary.md and
+# protocol/evolution-memory.md (PUBLIC_FORBIDDEN_PAYLOAD). B simply does not
+# serve those two MCP boundary resources in the public edition.
+# Re-adding the forbidden files here would re-introduce the
+# drift-private-vs-public PUBLIC_FORBIDDEN_PAYLOAD failure that this script exists
+# to prevent.
 sort -u "$INCLUDED_LIST" -o "$INCLUDED_LIST"
 
+# public-full-sanitized overlay policy.
+#
+# Default principle: keep the stable 2.5 public-safe core; protect only
+#   (a) public-only release files B owns,
+#   (b) B-owned governance skeletons (never import the stable suite's real
+#       skill inventory / adoption records),
+#   (c) B's sanitized forks of crates where the stable source embeds private
+#       paths in detection/validation logic, and
+#   (d) B's EvoMap-debranded copies of files the stable suite ships
+#       EvoMap/GEP-branded.
+# Everything else (workflow-sync-check, receipt, execution-policy, the rest of
+# ags-verify, crate Cargo.toml manifests, etc.) flows from stable so the public
+# core no longer drifts behind.
 should_skip_public_overlay() {
   local rel="$1"
   case "$rel" in
+    # (a) public-only release files
     .gitignore|.github/*|LICENSE|COMMERCIAL.md|NOTICE.md|README.md|README.en.md|RELEASE_NOTES.md|THIRD_PARTY_NOTICES.md)
       return 0 ;;
     AGENTS.md|CLAUDE.md|WORKSPACE.md|AGENT_SUITE_PROTOCOL.md)
       return 0 ;;
     docs/*|evals/*|examples/*|templates/*|config/*)
       return 0 ;;
-    scripts/sync-public.sh|scripts/update.sh|scripts/verify.sh|scripts/push-a1.sh)
+    scripts/sync-public.sh|scripts/update.sh|scripts/verify.sh|scripts/push-a1.sh|scripts/context-memory.sh|scripts/stop-archive-hook.sh)
       return 0 ;;
-    manifests/skill-recommendations.yaml|governance/skill-adoption-log.yaml|governance/skill-ignore-list.yaml)
+    # (b) B-owned governance skeletons / public manifests
+    manifests/skill-recommendations.yaml|manifests/suite.yaml|governance/skill-adoption-log.yaml|governance/skill-ignore-list.yaml|governance/skills-inventory.md|governance/mcp-adoption-log.yaml)
       return 0 ;;
-    crates/ags-cli/Cargo.toml|crates/ags-verify/*|crates/receipt/*|crates/skill-governance/*|crates/workflow-sync-check/*)
+    # (c) private-path-sanitized crate sources (stable embeds real /Users and the
+    #     private suite path in detection/validation logic)
+    crates/ags-cli/src/main.rs|crates/project-discovery/src/lib.rs|crates/task-compiler/src/lib.rs|crates/task-card-validator/src/*|crates/skill-governance/src/*)
+      return 0 ;;
+    # (d) EvoMap forbidden-resource overlays: B drops the two boundary resources whose backing
+    #     files the stable gate forbids; EvoMap *references* elsewhere are product form.
+    crates/ags-mcp/src/resources.rs|crates/ags-mcp/src/resources/*|crates/ags-mcp/src/tools.rs|crates/ags-mcp/src/prompts.rs|crates/ags-mcp/src/prompts/*|crates/ags-mcp/src/lib.rs|crates/suite-doctor/src/checks.rs|crates/ags-verify/src/lib.rs|protocol/mcp-server.md)
       return 0 ;;
   esac
   return 1
 }
 
+# Content-level private-payload guard. EvoMap/GEP runtime DIRECTORIES are
+# stripped by the stable denylist planner and the forbidden-payload preflight
+# below; this guard additionally blocks any file whose CONTENT embeds:
+#   (a) private info — the private suite path, a real local user path, a node
+#       secret, or a private-key literal; or
+#   (b) EvoMap/GEP capability-plugin runtime markers — install commands, proxy
+#       and MCP-server identifiers, or auth tokens — that must not enter the
+#       public edition even when they appear in a text file outside the overlay
+#       skip list and carry no exact /Users path.
 contains_private_payload() {
   local rel="$1"
   local source_file="$2"
   [[ -f "$source_file" ]] || return 1
   grep -Iq . "$source_file" || return 1
 
-  case "$rel" in
-    protocol/mcp-server.md|protocol/evolution-memory.md|crates/ags-mcp/src/resources/*.md)
-      grep -Eq '(/Volumes/AI Project/agent-governance-suite-private|/Users/hujiaming/git-remotes/agent-governance-suite-private\.git|EVOLVER_PROXY_MCP|evolver-token|with-evomap|gep-mcp-server|@evomap)' "$source_file"
-      return ;;
-  esac
-
-  grep -Eq '(/Volumes/AI Project/agent-governance-suite-private|/Users/hujiaming/git-remotes/agent-governance-suite-private\.git|node_secret|EVOLVER_PROXY_MCP|evolver-token|with-evomap|gep-mcp-server|@evomap)' "$source_file"
+  grep -Eq '(/Volumes/AI Project/agent-governance-suite-private|/Users/hujiaming|node_secret|-----BEGIN [A-Z]+ PRIVATE KEY-----|EVOLVER_PROXY_MCP|evolver-token|with-evomap|gep-mcp-server|@evomap)' "$source_file"
 }
 
 while IFS= read -r rel; do

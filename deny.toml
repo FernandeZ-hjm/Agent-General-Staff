@@ -1,0 +1,45 @@
+# Supply-chain policy for the Agent Governance Suite (cargo-deny).
+#
+# First-landing posture: runnable and able to surface real problems
+# (security advisories, disallowed licenses, untrusted sources) without
+# blocking the suite's existing, well-known dependencies. Tighten over time.
+#
+# Run locally with:  cargo deny check
+# CI (public edition) runs the same gate across the OS matrix.
+
+[advisories]
+# RustSec advisory database. Fail on yanked crates and any unignored advisory.
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+# Permissive licenses used across the suite's dependency tree. A dependency
+# whose license is not listed here will fail the gate (surfacing the problem)
+# rather than being silently accepted.
+version = 2
+# Licenses currently present in the dependency tree. cargo-deny fails the gate
+# on any license not listed here, so a new dependency that introduces a
+# different license (even a permissive one such as BSD/ISC/MPL) surfaces for an
+# explicit decision rather than being silently accepted.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+# Duplicate versions are reported but not fatal at first landing.
+multiple-versions = "warn"
+# Workspace crates reference each other by path with no semver requirement.
+# cargo-deny treats those as wildcards; since these crates are internal and
+# never published to crates.io, they are not a supply-chain risk, so wildcard
+# dependencies are allowed at first landing.
+wildcards = "allow"
+
+[sources]
+# Only crates.io is trusted by default; unknown registries/git sources fail.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

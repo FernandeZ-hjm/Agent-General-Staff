@@ -2,9 +2,11 @@
 name = "bootstrap-dry-run"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "Bootstrap dry run — simulated readiness checks, no real bootstrap"
 
 [dependencies]
+ags-platform = { path = "../ags-platform" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 suite-doctor = { path = "../suite-doctor" }

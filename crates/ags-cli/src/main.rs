@@ -2234,7 +2234,7 @@ fn project_memory_base() -> PathBuf {
     if let Ok(dir) = std::env::var("AGS_MEMORY_DIR") {
         PathBuf::from(dir)
     } else {
-        let home = std::env::var("HOME").unwrap_or_default();
+        let home = ags_platform::home_dir_or_temp();
         PathBuf::from(home).join(".agents/memory/projects")
     }
 }
@@ -2837,7 +2837,7 @@ fn cmd_skill_install(
     format: &str,
 ) {
     let skills_dir = target.cloned().unwrap_or_else(|| {
-        let home = std::env::var("HOME").unwrap_or_default();
+        let home = ags_platform::home_dir_or_temp();
         PathBuf::from(home).join(".agents/skills")
     });
 
@@ -3132,7 +3132,7 @@ fn cmd_archive(
     let memory_base = if let Ok(dir) = std::env::var("AGS_MEMORY_DIR") {
         PathBuf::from(dir)
     } else {
-        let home = std::env::var("HOME").unwrap_or_default();
+        let home = ags_platform::home_dir_or_temp();
         let slug = std::env::current_dir()
             .ok()
             .and_then(|p| {

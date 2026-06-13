@@ -57,27 +57,10 @@ pub fn list_resources() -> ResourceListResult {
                 description: Some("Light/Medium/Heavy task routing criteria and escalation rules.".to_string()),
                 mimeType: Some("text/markdown".to_string()),
             },
-            ResourceDef {
-                uri: "ags://protocol/evolution-memory".to_string(),
-                name: "Evolution Memory".to_string(),
-                description: Some(
-                    "Evolver advisory recall boundary, method capture rules, and recall documentation requirements."
-                        .to_string(),
-                ),
-                mimeType: Some("text/markdown".to_string()),
-            },
-            ResourceDef {
-                uri: "ags://evolver-boundary".to_string(),
-                name: "EvoMap MCP Parallel-Call Boundary".to_string(),
-                description: Some(
-                    "Defines the parallel relationship between AGS MCP and EvoMap MCP. \
-                     AGS is the governance authority; EvoMap provides advisory method \
-                     recall during solution formation only. AGS MCP does NOT proxy, \
-                     wrap, or broker EvoMap MCP."
-                        .to_string(),
-                ),
-                mimeType: Some("text/markdown".to_string()),
-            },
+            // EvoMap boundary resources (ags://evolver-boundary,
+            // ags://protocol/evolution-memory) are not served in the public
+            // edition: their backing files are EvoMap-capability boundary specs
+            // that the stable release gate forbids from the public payload.
         ],
     }
 }
@@ -98,10 +81,6 @@ pub fn read_resource(uri: &str) -> Result<ResourceReadResult, String> {
         "ags://protocol/task-routing" => {
             read_protocol_file("protocol/task-routing.md", "Task Routing")
         }
-        "ags://protocol/evolution-memory" => {
-            read_protocol_file("protocol/evolution-memory.md", "Evolution Memory")
-        }
-        "ags://evolver-boundary" => read_evolver_boundary(),
         other => Err(format!("Unknown resource URI: {}", other)),
     }
 }
@@ -166,17 +145,6 @@ fn read_protocol_file(rel_path: &str, _display_name: &str) -> Result<ResourceRea
                 "<!-- Source: {} -->\n<!-- Protocol file: {} -->\n\n{}",
                 source, rel_path, text
             ),
-        }],
-    })
-}
-
-fn read_evolver_boundary() -> Result<ResourceReadResult, String> {
-    let text = include_str!("resources/evolver_boundary.md");
-    Ok(ResourceReadResult {
-        contents: vec![ResourceContent {
-            uri: "ags://evolver-boundary".to_string(),
-            mimeType: Some("text/markdown".to_string()),
-            text: text.to_string(),
         }],
     })
 }

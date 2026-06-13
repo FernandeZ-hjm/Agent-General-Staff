@@ -8,6 +8,27 @@ governance runtime for multi-agent engineering work. It ships the `ags` CLI,
 canonical task-card protocols, execution-policy checks, release-boundary
 verification, memory-capsule templates, and public skill-governance workflows.
 
+## Release 2.5.0
+
+AGS 2.5.0 hardens the public edition for cross-platform use and supply-chain
+safety while preserving the 2.0 governance product surface:
+
+- Supply-chain gate: repo-local `deny.toml` (RustSec advisories; MIT / Apache-2.0
+  / Unicode-3.0 licenses; crates.io-only sources), wired fail-closed into
+  `scripts/verify.sh` and the CI matrix.
+- Cross-platform portability: new std-only, zero-dependency `ags-platform` crate
+  (`home_dir` / `temp_root` / `find_in_path` / `is_on_path`, aware of Windows
+  `USERPROFILE` and `PATHEXT`); core crates route `$HOME` and command-lookup
+  assumptions through it instead of Unix-only `std::env::var("HOME")` / `which`.
+- CI matrix: GitHub Actions now runs on `ubuntu-latest`, `macos-latest`, and
+  `windows-latest`; Windows and macOS run the Rust-native `ags verify --scope
+  local`, Ubuntu additionally runs the Bash gate and `cargo deny`.
+- Pre-push verifier: `templates/hooks/pre-push.verify.sh` (repo-local-first,
+  fail-closed; opt-in install, never automatic).
+- Public release boundary: the public-full sanitized payload strips EvoMap/GEP
+  capability-plugin runtime and the two EvoMap boundary backing resources; the
+  AGS↔EvoMap integration itself is unchanged as product form.
+
 ## Highlights
 
 - Rust governance kernel: task-card validation, execution policy resolution,

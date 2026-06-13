@@ -156,8 +156,6 @@ Future transports (SSE, WebSocket) may be added in later versions.
 | `ags://protocol/task-card-template` | Fixed task-card skeleton |
 | `ags://protocol/runtime-adapters` | Runtime adapter definitions and rules |
 | `ags://protocol/task-routing` | Light/Medium/Heavy routing criteria |
-| `ags://protocol/evolution-memory` | Evolver advisory recall boundary and method capture |
-| `ags://evolver-boundary` | EvoMap MCP parallel-call boundary definition |
 
 ### Prompts (4)
 
@@ -211,7 +209,7 @@ adoption log. It is the governance authority, not a governed entity.
 
 ```json
 → {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"...","version":"..."}}}
-← {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{"listChanged":false},"resources":{"listChanged":false,"subscribe":false},"prompts":{"listChanged":false}},"serverInfo":{"name":"ags-mcp","version":"2.4.0"}}}
+← {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{"listChanged":false},"resources":{"listChanged":false,"subscribe":false},"prompts":{"listChanged":false}},"serverInfo":{"name":"ags-mcp","version":"2.5.0"}}}
 ```
 
 ### Tools
@@ -293,6 +291,7 @@ The AGS MCP implementation must stop and report when asked to:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.5.0 | 2026-06-13 | Public edition no longer serves the two EvoMap boundary resources (`ags://evolver-boundary`, `ags://protocol/evolution-memory`) whose backing files the public release gate forbids; `serverInfo.version` bumped to 2.5.0. AGS tool / resource / prompt product surface otherwise unchanged |
 | 2.4.0 | 2026-06-12 | Added human command facade (`setup`, `init`, `doctor`, `skill`, `help`), one-command host initialization, visible Codex command skills (`AGS Setup`, `AGS Init`, `AGS Skill`, `AGS Doctor`) with Chinese descriptions, retired visible Codex hub/preflight/verify entries, project onboarding `.gitignore` management, soft-coded host agent compatibility, and schema-safe MCP tool names |
 | 2.1.0 | 2026-06-10 | Added AGS Initialization Gate; repositioned as host initialization adapter; structural separation from governed MCPs |
 | 1.0.0 | 2026-06-10 | Initial release — 7 tools, 7 resources, 4 prompts, stdio transport only |

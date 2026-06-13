@@ -128,7 +128,7 @@ fn prompt_solution_phase(arguments: &serde_json::Value) -> PromptGetResult {
          3. **For non-trivial tasks** (Medium/Heavy, development, architecture, refactoring, \
          release, governance change): call EvoMap MCP in parallel for advisory method recall. \
          AGS MCP does NOT call EvoMap MCP — you must call it yourself. Document recall state \
-         in the solution text per `ags://protocol/evolution-memory`.\n\
+         in the solution text.\n\
          4. **Form a concrete solution** — not a task card. Include: approach, impact scope, \
          risks, alternatives considered.\n\
          5. **Present the solution to the user** and wait for explicit confirmation (\"方案 OK\").\n\

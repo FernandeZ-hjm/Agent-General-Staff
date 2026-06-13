@@ -1,0 +1,8 @@
+[package]
+name = "ags-platform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cross-platform path and command-lookup helpers for the AGS suite (std-only, zero dependencies)"
+
+[dependencies]

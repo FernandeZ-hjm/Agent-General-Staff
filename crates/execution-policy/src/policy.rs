@@ -19,6 +19,7 @@ pub enum PermissionMode {
 
 impl PermissionMode {
     /// Parse from the canonical task-card string value.
+    #[allow(clippy::should_implement_trait)] // inherent infallible parser returning Self, not std::str::FromStr
     pub fn from_str(s: &str) -> Self {
         match s {
             "read-only" => Self::ReadOnly,
@@ -71,6 +72,7 @@ impl Parallelism {
     /// Values `limited` and `parallel` (legacy validator tokens) are mapped
     /// to `None` because they are not in the runtime-adapters parallelism
     /// set and do not carry delegation semantics.
+    #[allow(clippy::should_implement_trait)] // inherent infallible parser returning Self, not std::str::FromStr
     pub fn from_str(s: &str) -> Self {
         match s {
             "none" | "limited" | "parallel" => Self::None,

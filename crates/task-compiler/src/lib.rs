@@ -418,7 +418,9 @@ fn detect_workspace_identity(root: &Path) -> (Option<String>, Option<String>) {
 /// Expand `~` and `$HOME` in a path string.
 fn shellexpand_path(s: &str) -> PathBuf {
     let s = s.trim();
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = ags_platform::home_dir_or_temp()
+        .to_string_lossy()
+        .into_owned();
     if s.starts_with("~/") {
         PathBuf::from(s.replacen("~", &home, 1))
     } else if s.starts_with("$HOME/") {
@@ -459,7 +461,7 @@ fn resolve_memory_base() -> PathBuf {
             return PathBuf::from(dir);
         }
     }
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = ags_platform::home_dir_or_temp();
     PathBuf::from(home).join(".agents/memory/projects")
 }
 

@@ -51,6 +51,26 @@ fi
 echo "--- End Primary Gate ---"
 echo ""
 
+# ── Supply-chain gate: cargo-deny (repo-local deny.toml) ────────────────────
+# Fail-closed: a missing cargo-deny is a gate FAILURE (not skipped), so a
+# minimal CI image or fresh box cannot pass verification without the
+# advisory/license/source checks running. Install: cargo install cargo-deny --locked.
+echo "--- Supply-chain Gate: cargo deny check ---"
+if command -v cargo-deny >/dev/null 2>&1; then
+    if cargo deny check >/tmp/ags-deny.log 2>&1; then
+        echo "[OK] cargo deny check"
+    else
+        echo "[FAIL] cargo deny check (supply-chain policy violation)"
+        tail -10 /tmp/ags-deny.log || true
+        failures=$((failures + 1))
+    fi
+else
+    echo "[FAIL] cargo-deny not installed — supply-chain gate cannot run (fail-closed)."
+    echo "       Install with: cargo install cargo-deny --locked"
+    failures=$((failures + 1))
+fi
+echo ""
+
 # ── Shell-only smoke tests (pending migration to Rust check items) ──────────
 # These tests create temporary task cards, run policy resolution, parse JSON
 # output, and check for specific patterns. They are integration-level smoke

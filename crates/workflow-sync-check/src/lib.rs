@@ -160,6 +160,7 @@ fn group_drifts_by_code(drifts: &[Drift]) -> std::collections::BTreeMap<String, 
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_dir(name: &str) -> (PathBuf, PathBuf) {
@@ -176,7 +177,7 @@ mod tests {
         (source, target)
     }
 
-    fn write_file(root: &PathBuf, relative: &str, content: &str) {
+    fn write_file(root: &Path, relative: &str, content: &str) {
         let path = root.join(relative);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).unwrap();
@@ -184,7 +185,7 @@ mod tests {
         fs::write(path, content).unwrap();
     }
 
-    fn write_manifest(root: &PathBuf) {
+    fn write_manifest(root: &Path) {
         let safety = "protocol/runtime-adapters.md\n# Test\n\n\
             ultracode is thinking intensity only — it does not change permission mode.\n\
             Heavy tasks need explicit approval, plan-only downgrade, and confirmation gate.\n\
@@ -202,7 +203,7 @@ mod tests {
         }
     }
 
-    fn write_public_manifest(source: &PathBuf, target: &PathBuf) {
+    fn write_public_manifest(source: &Path, target: &Path) {
         for relative in crate::manifest::PUBLIC_MANIFEST.required_files {
             let source_path = source.join(relative);
             if !source_path.exists() {
@@ -225,8 +226,8 @@ mod tests {
         }
     }
 
-    fn cleanup(source: &PathBuf, target: &PathBuf) {
-        for root in [source.as_path(), target.as_path()] {
+    fn cleanup(source: &Path, target: &Path) {
+        for root in [source, target] {
             if let Some(base) = root.parent() {
                 let _ = fs::remove_dir_all(base);
             }
