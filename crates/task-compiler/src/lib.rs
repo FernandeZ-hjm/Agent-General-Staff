@@ -9,8 +9,11 @@
 //!   protocol files, known workspace identity, and local memory paths.
 //! - **Missing-slot enforcement** — if a required slot cannot be filled the
 //!   compiler reports `missing_slots` and exits 1 instead of guessing.
-//! - **Single canonical format** — the compiled output is the compact task
-//!   card skeleton; the compiler never invents a third task-card format.
+//! - **Single canonical format** — the compiled output is the classic
+//!   task-card skeleton defined in `protocol/task-card-template.md`. The
+//!   compiler never emits the removed compact format and never invents a
+//!   third task-card format. Output is validated by the real
+//!   `task_card_validator` in tests, not just a heuristic self-check.
 //! - **Input semantics** — the canonical input is an approved execution
 //!   contract (the confirmed solution), not raw user chat. The compiler
 //!   accepts flexible intent files for backward compatibility, but
@@ -59,7 +62,8 @@ use std::path::{Path, PathBuf};
 pub const SCHEMA_VERSION: &str = "2.0-m4";
 
 /// Known task-card field headers that the compiler can fill.
-/// Ordered to match the canonical compact skeleton.
+/// Legacy compact headers (路径/读取/关键路径/停止条件) are retained only for
+/// lenient intent parsing; they are never emitted in the rendered output.
 const FIELD_HEADERS: &[(&str, bool)] = &[
     // inline fields
     ("Executor:", true),
@@ -90,23 +94,28 @@ const FIELD_HEADERS: &[(&str, bool)] = &[
     ("交付：", false),
 ];
 
-/// Fields that are REQUIRED in a compact task card.
+/// Fields that are REQUIRED in the canonical classic task card.
 /// The compiler must fill these or report them as missing.
-const REQUIRED_COMPACT_FIELDS: &[&str] = &[
-    "路径：",
+const REQUIRED_FIELDS: &[&str] = &[
+    "读取并遵守：",
     "Executor:",
     "Runtime adapter:",
     "Execution surface:",
     "Permission mode:",
     "Parallelism:",
     "任务级别：",
-    "读取：",
+    "Review gate:",
     "任务：",
+    "背景：",
+    "项目画像：",
+    "记忆胶囊：",
+    "任务存档：",
+    "相关路径：",
+    "本次任务相关文件：",
     "目标：",
     "非目标：",
-    "关键路径：",
     "验证：",
-    "停止条件：",
+    "Verification gate:",
     "交付：",
 ];
 
@@ -580,16 +589,20 @@ pub fn compile(
 
     // ── Phase 2: project-aware slot filling ────────────────────────
 
-    // 路径：— from workspace identity
-    if !has_field(&fields, "路径：") {
-        let path_val = ctx.project_root.to_string_lossy().to_string();
-        fields.insert("路径：".to_string(), format!("- {}", path_val));
+    // 读取并遵守：— the read-and-obey list, built from project context
+    if !has_field(&fields, "读取并遵守：") {
+        let reads = build_reads_section(&ctx);
+        let reads = if reads.is_empty() {
+            "- 本任务卡".to_string()
+        } else {
+            reads
+        };
+        fields.insert("读取并遵守：".to_string(), reads.clone());
         slot_sources.push(SlotEntry {
-            field: "路径：".to_string(),
-            value: path_val.clone(),
-            source: SlotSource::WorkspaceIdentity,
+            field: "读取并遵守：".to_string(),
+            value: reads,
+            source: SlotSource::ProjectContext,
         });
-        assumptions.push(format!("路径：filled from project root ({})", path_val));
     }
 
     // Executor: — default Claude Code
@@ -661,6 +674,18 @@ pub fn compile(
         });
     }
 
+    // Review gate: — default referencing the protocol
+    if !has_field(&fields, "Review gate:") {
+        let rg =
+            "- 按 protocol/agent-task-protocol.md 的 Review Gate 规则执行当前任务级别".to_string();
+        fields.insert("Review gate:".to_string(), rg.clone());
+        slot_sources.push(SlotEntry {
+            field: "Review gate:".to_string(),
+            value: rg,
+            source: SlotSource::Default,
+        });
+    }
+
     // 任务：— from intent free text if not in fields
     if !has_field(&fields, "任务：") && !parsed.free_text.is_empty() {
         fields.insert("任务：".to_string(), parsed.free_text.clone());
@@ -671,56 +696,81 @@ pub fn compile(
         });
     }
 
-    // 读取：— build from project context
-    if !has_field(&fields, "读取：") {
-        let reads = build_reads_section(&ctx);
-        if !reads.is_empty() {
-            fields.insert("读取：".to_string(), reads.clone());
-            slot_sources.push(SlotEntry {
-                field: "读取：".to_string(),
-                value: reads,
-                source: SlotSource::ProjectContext,
-            });
-        }
-    }
-
-    // 记忆胶囊：— from memory path
-    if !has_field(&fields, "记忆胶囊：") {
-        if let Some(ref cap_path) = ctx.capsule_path {
-            let val = format!("- {}", cap_path.display());
-            fields.insert("记忆胶囊：".to_string(), val);
-            slot_sources.push(SlotEntry {
-                field: "记忆胶囊：".to_string(),
-                value: cap_path.display().to_string(),
-                source: SlotSource::MemoryPath,
-            });
-        }
-    }
-
-    // 任务存档：— from memory path
-    if !has_field(&fields, "任务存档：") {
-        if let Some(ref tm_path) = ctx.task_memory_path {
-            let val = format!("- {}", tm_path.display());
-            fields.insert("任务存档：".to_string(), val);
-            slot_sources.push(SlotEntry {
-                field: "任务存档：".to_string(),
-                value: tm_path.display().to_string(),
-                source: SlotSource::MemoryPath,
-            });
-        }
-    }
-
-    // 关键路径：— from intent or project context
-    if !has_field(&fields, "关键路径：") {
-        let default_paths = if ctx.is_ags_suite {
-            "- crates/\n- scripts/\n- tests/"
-        } else {
-            "- ."
-        };
-        fields.insert("关键路径：".to_string(), default_paths.to_string());
+    // 背景：— default if absent
+    if !has_field(&fields, "背景：") {
+        let bg = "本次任务差异见目标与实施要求".to_string();
+        fields.insert("背景：".to_string(), bg.clone());
         slot_sources.push(SlotEntry {
-            field: "关键路径：".to_string(),
-            value: default_paths.to_string(),
+            field: "背景：".to_string(),
+            value: bg,
+            source: SlotSource::Default,
+        });
+    }
+
+    // 项目画像：— default 无
+    if !has_field(&fields, "项目画像：") {
+        fields.insert("项目画像：".to_string(), "无".to_string());
+        slot_sources.push(SlotEntry {
+            field: "项目画像：".to_string(),
+            value: "无".to_string(),
+            source: SlotSource::Default,
+        });
+    }
+
+    // 记忆胶囊：— from memory path, fallback 无
+    if !has_field(&fields, "记忆胶囊：") {
+        let (val, source) = match ctx.capsule_path {
+            Some(ref cap_path) => (format!("- {}", cap_path.display()), SlotSource::MemoryPath),
+            None => ("无".to_string(), SlotSource::Default),
+        };
+        fields.insert("记忆胶囊：".to_string(), val.clone());
+        slot_sources.push(SlotEntry {
+            field: "记忆胶囊：".to_string(),
+            value: val,
+            source,
+        });
+    }
+
+    // 任务存档：— from memory path, fallback 无
+    if !has_field(&fields, "任务存档：") {
+        let (val, source) = match ctx.task_memory_path {
+            Some(ref tm_path) => (format!("- {}", tm_path.display()), SlotSource::MemoryPath),
+            None => ("无".to_string(), SlotSource::Default),
+        };
+        fields.insert("任务存档：".to_string(), val.clone());
+        slot_sources.push(SlotEntry {
+            field: "任务存档：".to_string(),
+            value: val,
+            source,
+        });
+    }
+
+    // 相关路径：— from intent or project context
+    if !has_field(&fields, "相关路径：") {
+        let default_paths = if ctx.is_ags_suite {
+            "- crates/\n- scripts/\n- tests/".to_string()
+        } else {
+            format!("- {}", ctx.project_root.to_string_lossy())
+        };
+        fields.insert("相关路径：".to_string(), default_paths.clone());
+        slot_sources.push(SlotEntry {
+            field: "相关路径：".to_string(),
+            value: default_paths,
+            source: SlotSource::ProjectContext,
+        });
+    }
+
+    // 本次任务相关文件：— default if absent
+    if !has_field(&fields, "本次任务相关文件：") {
+        let files = if ctx.is_ags_suite {
+            "- Cargo.toml".to_string()
+        } else {
+            "- .".to_string()
+        };
+        fields.insert("本次任务相关文件：".to_string(), files.clone());
+        slot_sources.push(SlotEntry {
+            field: "本次任务相关文件：".to_string(),
+            value: files,
             source: SlotSource::ProjectContext,
         });
     }
@@ -747,15 +797,15 @@ pub fn compile(
         });
     }
 
-    // 停止条件：— default if absent
-    if !has_field(&fields, "停止条件：") {
-        fields.insert(
-            "停止条件：".to_string(),
-            "- 验证失败时停止并报告".to_string(),
-        );
+    // Verification gate: — default if absent
+    if !has_field(&fields, "Verification gate:") {
+        let vg =
+            "- commands:\n  - 按任务卡验证门禁执行\n- stop condition:\n  - 验证失败时停止并报告"
+                .to_string();
+        fields.insert("Verification gate:".to_string(), vg.clone());
         slot_sources.push(SlotEntry {
-            field: "停止条件：".to_string(),
-            value: "- 验证失败时停止并报告".to_string(),
+            field: "Verification gate:".to_string(),
+            value: vg,
             source: SlotSource::Default,
         });
     }
@@ -798,7 +848,7 @@ pub fn compile(
     }
 
     // ── Phase 4: detect missing required slots ──────────────────────
-    let missing_slots: Vec<String> = REQUIRED_COMPACT_FIELDS
+    let missing_slots: Vec<String> = REQUIRED_FIELDS
         .iter()
         .filter(|h| !has_field(&fields, h))
         .map(|h| h.to_string())
@@ -820,10 +870,10 @@ pub fn compile(
 
     // ── Phase 5: build the canonical task card ──────────────────────
     let compiled_card = if missing_slots.is_empty() {
-        render_compact_task_card(&fields)
+        render_task_card(&fields)
     } else {
         // Still render what we have, but it won't pass validation
-        render_compact_task_card(&fields)
+        render_task_card(&fields)
     };
 
     // ── Phase 6: validate against task card validator ───────────────
@@ -1033,15 +1083,16 @@ fn build_reads_section(ctx: &ProjectContext) -> String {
     lines.join("\n")
 }
 
-/// Render a compact task card from a field map.
-fn render_compact_task_card(fields: &HashMap<String, String>) -> String {
+/// Render the canonical classic task card from a field map.
+fn render_task_card(fields: &HashMap<String, String>) -> String {
     let mut lines: Vec<String> = Vec::new();
     lines.push("## 任务卡".to_string());
     lines.push(String::new());
 
-    // Field order matching canonical compact skeleton:
+    // Field order matching protocol/task-card-template.md. Removed compact
+    // fields (路径/读取/关键路径/停止条件) are intentionally never rendered.
     let order: &[&str] = &[
-        "路径：",
+        "读取并遵守：",
         "Executor:",
         "Runtime adapter:",
         "Execution surface:",
@@ -1050,7 +1101,7 @@ fn render_compact_task_card(fields: &HashMap<String, String>) -> String {
         "Execution effort:",
         "Workflow authority:",
         "任务级别：",
-        "读取：",
+        "Review gate:",
         "任务：",
         "背景：",
         "项目画像：",
@@ -1062,9 +1113,8 @@ fn render_compact_task_card(fields: &HashMap<String, String>) -> String {
         "目标：",
         "非目标：",
         "实施要求：",
-        "关键路径：",
         "验证：",
-        "停止条件：",
+        "Verification gate:",
         "交付：",
     ];
 
@@ -1079,7 +1129,6 @@ fn render_compact_task_card(fields: &HashMap<String, String>) -> String {
             // inline fields stay on the same line
             if is_inline_field(header) {
                 // Inline — replace the header line with "Header: value"
-                // Actually for compact cards, inline fields have value on same line
                 let last = lines.last_mut().unwrap();
                 *last = format!("{} {}", header, val);
             } else {
@@ -1098,7 +1147,7 @@ fn render_compact_task_card(fields: &HashMap<String, String>) -> String {
     }
 
     // Trim trailing blank lines
-    while lines.last().map_or(false, |l| l.is_empty()) {
+    while lines.last().is_some_and(|l| l.is_empty()) {
         lines.pop();
     }
 
@@ -1785,6 +1834,44 @@ mod tests {
             card_text.starts_with("## 任务卡"),
             "Plain card output must start with '## 任务卡', got: {:?}",
             &card_text[..30.min(card_text.len())]
+        );
+    }
+
+    #[test]
+    fn compiled_card_passes_real_validator() {
+        let intent = "任务：测试编译器输出能通过实际校验器\n\
+                      目标：验证 ags task compile 产出经典骨架并通过 validator";
+        let project_root = Path::new(".");
+        let (card, report) = compile(intent, project_root, false, true);
+
+        assert!(
+            report.executable_allowed,
+            "card should be executable: {:?}",
+            report.block_reason
+        );
+        assert!(card.starts_with("## 任务卡"));
+        assert!(
+            !card.contains("AGENT_SUITE_COMPACT_TASK_CARD_V1"),
+            "compiled card must not contain the removed compact marker"
+        );
+
+        let second = card
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .nth(1)
+            .unwrap_or("");
+        assert!(
+            second.starts_with("读取并遵守："),
+            "second non-empty line must be 读取并遵守：, got: {}",
+            second
+        );
+
+        let errors = task_card_validator::validate(&card);
+        assert!(
+            errors.is_empty(),
+            "compiled card must pass the real validator, errors: {:?}\ncard:\n{}",
+            errors,
+            card
         );
     }
 }

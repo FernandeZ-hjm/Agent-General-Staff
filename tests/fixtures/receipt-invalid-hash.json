@@ -3,7 +3,7 @@
   "receipt_id": "receipt-00deadbeef00",
   "timestamp": "unix-0",
   "task_card_hash": "00deadbeef000000000000000000000000000000000000000000000000000000",
-  "task_card_path": "tests/fixtures/valid-compact.md",
+  "task_card_path": "tests/fixtures/valid-full.md",
   "gate_result": {
     "decision": "allow"
   },

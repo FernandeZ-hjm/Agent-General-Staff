@@ -87,7 +87,7 @@ enum TaskAction {
     /// Compile an execution intent into a canonical task card (M4).
     ///
     /// Reads a flexible intent file (or stdin with "-") and deterministically
-    /// compiles it into the canonical compact task-card skeleton. This is a
+    /// compiles it into the canonical classic task-card skeleton. This is a
     /// rule engine only — no AI calls, no free-form prompt generation.
     Compile {
         /// Intent file (use "-" for stdin)
@@ -106,10 +106,10 @@ enum TaskAction {
         #[arg(long, default_value_t = false)]
         task_card_requested: bool,
     },
-    /// Generate an empty task card template (compact or full).
+    /// Generate an empty task card template.
     New {
-        /// Card type: compact or full
-        #[arg(long, default_value = "compact", value_parser = ["compact", "full"])]
+        /// Card type. `full` is the only supported value; compact was removed.
+        #[arg(long, default_value = "full", value_parser = ["compact", "full"])]
         card_type: String,
         /// Write to file instead of stdout
         #[arg(long)]
@@ -2631,11 +2631,12 @@ fn cmd_task_compile(
 
 /// Dispatch: `task new`
 fn cmd_task_new(card_type: &str, output: Option<&PathBuf>) {
-    let template = if card_type == "full" {
-        "## 任务卡\n读取并遵守：\n- AGENTS.md\n- CLAUDE.md\n- protocol/agent-task-protocol.md\nExecutor: Claude Code\nRuntime adapter: claude-code\nExecution surface: cli\nPermission mode: edit-with-confirmation\nParallelism: none\n任务级别：Medium\nReview gate:\n- Medium Codex review\n任务：\n背景：\n项目画像：\n记忆胶囊：\n任务存档：\n相关路径：\n- .\n本次任务相关文件：\n目标：\n非目标：\n验证：\nVerification gate:\n- commands:\n  - echo done\n- expected evidence:\n  - test passes\n- stop condition:\n  - any failure\n交付：\n按协议输出交付报告\n"
-    } else {
-        "## 任务卡\n路径：\n- .\nExecutor: Claude Code\nRuntime adapter: claude-code\nExecution surface: cli\nPermission mode: edit-with-confirmation\nParallelism: none\n任务级别：Medium\n读取：\n- .\n任务：\n目标：\n非目标：\n关键路径：\n- .\n验证：\n停止条件：\n交付：\n"
-    };
+    if card_type == "compact" {
+        eprintln!("task new: compact task-card format has been removed; use --card-type full");
+        std::process::exit(1);
+    }
+
+    let template = "## 任务卡\n读取并遵守：\n- AGENTS.md\n- CLAUDE.md\n- protocol/agent-task-protocol.md\nExecutor: Claude Code\nRuntime adapter: claude-code\nExecution surface: cli\nPermission mode: edit-with-confirmation\nParallelism: none\n任务级别：Medium\nReview gate:\n- Medium Codex review\n任务：\n背景：\n项目画像：\n记忆胶囊：\n任务存档：\n相关路径：\n- .\n本次任务相关文件：\n目标：\n非目标：\n验证：\nVerification gate:\n- commands:\n  - echo done\n- expected evidence:\n  - test passes\n- stop condition:\n  - any failure\n交付：\n按协议输出交付报告\n";
 
     match output {
         Some(p) => {

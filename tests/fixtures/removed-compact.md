@@ -1,7 +1,9 @@
 ## 任务卡
 
+AGENT_SUITE_COMPACT_TASK_CARD_V1
+
 路径：
-- /Volumes/Projects/my-protected-suite-rust
+- .
 
 Executor: Claude Code
 
@@ -13,10 +15,6 @@ Permission mode: execute-and-verify
 
 Parallelism: none
 
-Execution effort: normal
-
-Workflow authority: none
-
 任务级别：Medium
 
 读取：
@@ -24,7 +22,7 @@ Workflow authority: none
 
 任务：运行 cargo test 验证所有测试通过
 
-目标：验证 task-card-validator 能正确识别合法的 compact 任务卡
+目标：验证 task-card-validator 拒绝已删除的 compact 任务卡格式
 
 非目标：不修改任何文件
 

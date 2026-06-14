@@ -114,7 +114,7 @@ Verification gate:
 
 ## 使用说明
 
-- **Cursor / Codex**：先完成 ambient preflight → solution phase → user confirmation，形成 execution contract。然后等待用户明确发出任务卡指令（"生成任务卡"、"按这个方案出任务卡"、"交给 Claude Code 执行"等）。只有收到任务卡指令后，才调用 `ags task compile --task-card-requested` 或手动将 execution contract 填入此模板。对话前台默认可输出压缩执行卡，以 `## 任务卡` 作为统一抬头；固定规则通过协议路径引用，不把整套骨架全文展开给用户确认。不得把原始用户自然语言请求直接当作任务卡输入。不得在用户仅说"方案 OK"而未发出任务卡指令时生成可执行任务卡。
+- **Cursor / Codex**：先完成 ambient preflight → solution phase → user confirmation，形成 execution contract。然后等待用户明确发出任务卡指令（"生成任务卡"、"按这个方案出任务卡"、"交给 Claude Code 执行"等）。只有收到任务卡指令后，才调用 `ags task compile --task-card-requested` 或手动将 execution contract 填入此模板。对话前台输出任务卡时，以 `## 任务卡` 作为统一抬头，并保持本文件固定槽位顺序；固定规则通过协议路径引用。不得把原始用户自然语言请求直接当作任务卡输入。不得在用户仅说"方案 OK"而未发出任务卡指令时生成可执行任务卡。
 - **Executor**：读取任务卡 + 引用的协议文件，执行并交付。
 - 固定规则（安全、分级、runtime adapter、Review gate、验证、交付格式）在协议文件中，任务卡不再重复。
 - 为了保持执行稳定性和缓存友好性，任务卡必须使用固定骨架：标题、字段顺序、基础措辞保持不变；只在固定槽位填写动态任务内容。
@@ -122,10 +122,10 @@ Verification gate:
 - `记忆胶囊` 是人工项目宪章入口。存在本地 capsule 时只引用路径，不粘贴长记忆；没有 capsule 时填写 `无`。Executor 开始任务前必须读取 capsule；如同目录存在 `task-memory.md`，也必须读取。若任务目标与 capsule 的 `## 项目设计目的` 冲突，停止并报告。
 - `任务存档` 是自动任务记忆入口。存在本地 `task-memory.md` 时填写该路径；没有任务记忆时填写 `无`。使用 runner 执行后，最终交付报告会先沉淀到本机 `task-memory.md` / `task-archive/`，再打印到前台；完整证据保存在 `$HOME/.agents/memory/projects/<project-slug>/task-archive/`。
 - 默认不生成 `.md` 文件产物；只有用户明确要求落盘或需要 runner 直接消费文件时，才创建任务卡文件。
-- 对话交付给 Claude Code 的任务卡必须是一个连续 fenced `markdown` block，不按环节拆成多个片段，便于用户一次复制。默认输出可执行的压缩任务卡；“可粘贴”“可复制给 Claude Code”“直接发给 CC 执行”仍然必须编译成 canonical compact task card，不是自由 prompt 或长 runbook；只有用户明确要求“完整骨架”“完整任务卡”“full prompt/self-contained prompt”或 runner/file artifact 需要时，才展开完整模板。
+- 对话交付给 Claude Code 的任务卡必须保持本文件定义的经典固定骨架，不按环节拆成多个片段，便于用户一次复制。“可粘贴”“可复制给 Claude Code”“直接发给 CC 执行”只是展示偏好，仍然必须编译成本文件的唯一 canonical task card，不是自由 prompt、短 runbook 或第三种格式。
 - 对话最终输出只要包含 `Executor: Claude Code`，就必须输出一个可执行任务卡块，且任务卡内容第一条非空行必须是 `## 任务卡`；若生成结果不是这个形态，必须丢弃并重写，不得把自由 runbook、`text` fence 或 prose-first prompt 交给用户粘贴。
-- 压缩执行卡固定字段顺序为：`## 任务卡`、`路径`、`Executor`、`Runtime adapter`、`Execution surface`、`Permission mode`、`Parallelism`、`任务级别`、`读取`、`任务`、`目标`、`非目标`、`关键路径`、`验证`、`停止条件`、`交付`、技能标记。
-- 压缩执行卡的可读性格式必须稳定：`任务：` 只写一句话；如任务需要拆分条目，把条目放入 `目标：`。`目标：`、`非目标：`、`关键路径：`、`验证：`、`停止条件：`、`交付：` 只要包含多项，就必须把字段名单独成行，后续每项单独换行；不得写成 `目标：1. ... 2. ...`、`验证：- ... - ...` 这种 inline list。推荐格式：
+- 经典固定骨架字段顺序以本文件模板为准：`## 任务卡`、`读取并遵守`、runtime 字段、`任务级别`、`Review gate`、任务上下文、路径、目标、验证、交付、技能标记。
+- 任务卡可读性格式必须稳定：`任务：` 只写一句话；如任务需要拆分条目，把条目放入 `目标：`。`目标：`、`非目标：`、`相关路径：`、`本次任务相关文件：`、`验证：`、`交付：` 只要包含多项，就必须把字段名单独成行，后续每项单独换行；不得写成 `目标：1. ... 2. ...`、`验证：- ... - ...` 这种 inline list。推荐格式：
   ```markdown
   目标：
   1. goal_1

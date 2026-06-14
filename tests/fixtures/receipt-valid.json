@@ -3,7 +3,7 @@
   "receipt_id": "receipt-c2a37a0e9201",
   "timestamp": "unix-0",
   "task_card_hash": "c2a37a0e920166ad5e9a3f05ad95b1a42accd5db27392b9c39414e0424104c23",
-  "task_card_path": "tests/fixtures/valid-compact.md",
+  "task_card_path": "tests/fixtures/valid-full.md",
   "gate_result": {
     "decision": "allow"
   },

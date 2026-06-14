@@ -578,6 +578,7 @@ dependencies = [
  "ags-platform",
  "serde",
  "serde_json",
+ "task-card-validator",
 ]
 
 [[package]]

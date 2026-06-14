@@ -9,3 +9,8 @@ description = "M4 Task Compiler — rule-based intent-to-task-card compiler"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ags-platform = { path = "../ags-platform" }
+
+[dev-dependencies]
+# Test-only: assert compiled cards pass the real validator. No runtime
+# dependency edge is introduced.
+task-card-validator = { path = "../task-card-validator" }

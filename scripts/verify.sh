@@ -30,6 +30,78 @@ run_check() {
     fi
 }
 
+write_smoke_card() {
+    local path="$1"
+    local execution_surface="$2"
+    local permission_mode="$3"
+    local parallelism="$4"
+    local workflow_authority="$5"
+    local task_level="$6"
+    local task="$7"
+    local goal="$8"
+    local non_goal="$9"
+    local stop_condition="${10}"
+    local expected_evidence="${11}"
+    local delivery="${12}"
+
+    cat > "$path" << TASKEOF
+## 任务卡
+
+读取并遵守：
+- AGENTS.md
+
+Executor: Claude Code
+
+Runtime adapter: claude-code
+
+Execution surface: $execution_surface
+
+Permission mode: $permission_mode
+
+Parallelism: $parallelism
+
+Execution effort: normal
+
+Workflow authority: $workflow_authority
+
+任务级别：$task_level
+
+Review gate:
+- Smoke test review
+
+任务：$task
+
+背景：verify.sh resolver smoke test uses the canonical classic task-card skeleton.
+
+项目画像：Agent Governance Suite public Rust workspace.
+
+记忆胶囊：无
+
+任务存档：verify.sh shell-only smoke regression.
+
+相关路径：
+- .
+
+本次任务相关文件：
+- scripts/verify.sh
+
+目标：$goal
+
+非目标：$non_goal
+
+验证：
+echo done
+
+Verification gate:
+- commands: echo done
+- expected evidence: $expected_evidence
+- stop condition: $stop_condition
+
+交付：
+$delivery
+TASKEOF
+}
+
 cd "$REPO_ROOT"
 export PATH="$REPO_ROOT/target/debug:$PATH"
 
@@ -83,23 +155,20 @@ echo ""
 # ── Public Command Surface Smoke Tests ─────────────────────────────────────
 echo "--- Public Command Surface Smoke Tests ---"
 
-run_check "ags task validate valid fixture" \
-    cargo run -q -p ags-cli -- task validate "$REPO_ROOT/tests/fixtures/valid-compact.md"
-
 run_check "ags task validate valid full fixture" \
     cargo run -q -p ags-cli -- task validate "$REPO_ROOT/tests/fixtures/valid-full.md"
 
-run_check "ags policy resolve valid compact (text)" \
-    cargo run -q -p ags-cli -- policy resolve "$REPO_ROOT/tests/fixtures/valid-compact.md" --format text
+run_check "ags policy resolve valid full (text)" \
+    cargo run -q -p ags-cli -- policy resolve "$REPO_ROOT/tests/fixtures/valid-full.md" --format text
 
 run_check "ags policy resolve valid full (json)" \
     cargo run -q -p ags-cli -- policy resolve "$REPO_ROOT/tests/fixtures/valid-full.md" --format json
 
-run_check "ags policy explain valid compact (text)" \
-    cargo run -q -p ags-cli -- policy explain "$REPO_ROOT/tests/fixtures/valid-compact.md" --format text
+run_check "ags policy explain valid full (text)" \
+    cargo run -q -p ags-cli -- policy explain "$REPO_ROOT/tests/fixtures/valid-full.md" --format text
 
-run_check "ags policy check valid compact (json)" \
-    cargo run -q -p ags-cli -- policy check "$REPO_ROOT/tests/fixtures/valid-compact.md" --format json
+run_check "ags policy check valid full (json)" \
+    cargo run -q -p ags-cli -- policy check "$REPO_ROOT/tests/fixtures/valid-full.md" --format json
 
 # ags sync check is tested by Rust unit tests (workflow-sync-check crate).
 # The shell-level smoke test requires a properly configured multi-target
@@ -133,18 +202,28 @@ run_check "ags verify --scope release --format text" \
 # ── Full-Blood Command Surface (new commands) ────────────────────────────────
 echo "--- Full-Blood Command Surface Smoke Tests ---"
 
-run_check "ags task new compact" \
-    cargo run -q -p ags-cli -- task new --card-type compact
+echo -n "[....] ags task new removed card type rejects "
+removed_card_type="compact"
+if cargo run -q -p ags-cli -- task new --card-type "$removed_card_type" > /tmp/ags-smoke-task-new-removed.out 2>&1; then
+    echo "FAIL (removed card type unexpectedly generated)"
+    failures=$((failures + 1))
+elif grep -q "compact task-card format has been removed" /tmp/ags-smoke-task-new-removed.out; then
+    echo "OK"
+else
+    echo "FAIL (missing removed-format error)"
+    cat /tmp/ags-smoke-task-new-removed.out
+    failures=$((failures + 1))
+fi
 
 run_check "ags task compile (stdin, request)" \
     bash -c 'echo "任务：test compile
 目标：verify smoke test" | cargo run -q -p ags-cli -- task compile - --task-card-requested --output card --format text'
 
 run_check "ags gate check" \
-    cargo run -q -p ags-cli -- gate check "$REPO_ROOT/tests/fixtures/valid-compact.md" --format text
+    cargo run -q -p ags-cli -- gate check "$REPO_ROOT/tests/fixtures/valid-full.md" --format text
 
 run_check "ags run --dry-run" \
-    cargo run -q -p ags-cli -- run "$REPO_ROOT/tests/fixtures/valid-compact.md" --dry-run --format text
+    cargo run -q -p ags-cli -- run "$REPO_ROOT/tests/fixtures/valid-full.md" --dry-run --format text
 
 run_check "ags skill scan" \
     cargo run -q -p ags-cli -- skill scan --format text
@@ -209,7 +288,7 @@ fi
 
 # receipt generate + verify smoke
 echo -n "[....] ags receipt generate + verify "
-if cargo run -q -p ags-cli -- receipt generate --task-card "$REPO_ROOT/tests/fixtures/valid-compact.md" --gate-result allow --format json > /tmp/ags-smoke-receipt.json 2>&1; then
+if cargo run -q -p ags-cli -- receipt generate --task-card "$REPO_ROOT/tests/fixtures/valid-full.md" --gate-result allow --format json > /tmp/ags-smoke-receipt.json 2>&1; then
     if cargo run -q -p ags-cli -- receipt verify /tmp/ags-smoke-receipt.json --format text > /tmp/ags-smoke-verify.log 2>&1; then
         if grep -q "VALID" /tmp/ags-smoke-verify.log; then
             echo "OK"
@@ -229,7 +308,7 @@ fi
 # compliance check smoke — pass --review-gate-status directly, no jq/sed
 echo -n "[....] ags compliance check "
 # Copy test fixture to /tmp to avoid /Volumes/AI Project/ path in receipt
-cp "$REPO_ROOT/tests/fixtures/valid-compact.md" /tmp/ags-smoke-task-card.md
+cp "$REPO_ROOT/tests/fixtures/valid-full.md" /tmp/ags-smoke-task-card.md
 if cargo run -q -p ags-cli -- receipt generate \
     --task-card /tmp/ags-smoke-task-card.md \
     --gate-result allow \
@@ -389,7 +468,7 @@ fi
 
 # archive smoke
 echo -n "[....] ags archive "
-if cargo run -q -p ags-cli -- archive --summary "verify.sh smoke test" --task-card "$REPO_ROOT/tests/fixtures/valid-compact.md" --format text > /tmp/ags-smoke-archive.log 2>&1; then
+if cargo run -q -p ags-cli -- archive --summary "verify.sh smoke test" --task-card "$REPO_ROOT/tests/fixtures/valid-full.md" --format text > /tmp/ags-smoke-archive.log 2>&1; then
     if grep -q "Archive complete" /tmp/ags-smoke-archive.log; then
         echo "OK"
     else
@@ -404,7 +483,7 @@ fi
 # ── Resolve-Policy Smoke Tests ──────────────────────────────────────────────
 echo "--- Resolve-Policy Smoke Tests ---"
 
-echo -n "[....] resolve-policy invalid fixture (expected FAIL) "
+echo -n "[....] resolve-policy invalid full fixture (expected FAIL) "
 if cargo run -q -p ags-cli -- policy resolve "$REPO_ROOT/tests/fixtures/invalid-ultracode-authority-abuse.md" --format text > /tmp/verify-resolve-invalid.log 2>&1; then
     echo "FAIL (expected non-zero exit)"
     failures=$((failures + 1))
@@ -417,7 +496,7 @@ else
 fi
 
 echo -n "[....] resolve-policy illegal format (expected FAIL) "
-if cargo run -q -p ags-cli -- policy resolve "$REPO_ROOT/tests/fixtures/valid-compact.md" --format yaml > /tmp/verify-resolve-format.log 2>&1; then
+if cargo run -q -p ags-cli -- policy resolve "$REPO_ROOT/tests/fixtures/valid-full.md" --format yaml > /tmp/verify-resolve-format.log 2>&1; then
     echo "FAIL (expected non-zero exit)"
     failures=$((failures + 1))
 elif ! grep -qE 'invalid value|possible values' /tmp/verify-resolve-format.log; then
@@ -429,7 +508,7 @@ else
 fi
 
 echo -n "[....] resolve-policy stdin (json) "
-if cat "$REPO_ROOT/tests/fixtures/valid-compact.md" | cargo run -q -p ags-cli -- policy resolve - --format json > /tmp/verify-resolve-stdin.log 2>&1; then
+if cat "$REPO_ROOT/tests/fixtures/valid-full.md" | cargo run -q -p ags-cli -- policy resolve - --format json > /tmp/verify-resolve-stdin.log 2>&1; then
     echo "OK"
 else
     echo "FAIL"
@@ -442,7 +521,7 @@ echo "--- Resolver Hardening Smoke Tests (F1-F7) ---"
 
 # F5: JSON uses canonical protocol values, not Rust variant names
 echo -n "[....] JSON permission_mode uses canonical values "
-if cargo run -q -p ags-cli -- policy resolve "$REPO_ROOT/tests/fixtures/valid-compact.md" --format json > /tmp/verify-json-canonical.log 2>&1; then
+if cargo run -q -p ags-cli -- policy resolve "$REPO_ROOT/tests/fixtures/valid-full.md" --format json > /tmp/verify-json-canonical.log 2>&1; then
     json=$(cat /tmp/verify-json-canonical.log)
     if echo "$json" | grep -q '"ReadOnly"\|"PlanOnly"\|"ExecuteAndVerify"\|"EditWithConfirmation"'; then
         echo "FAIL (Rust variant names found in JSON)"
@@ -458,26 +537,13 @@ fi
 
 # F1: read-only + worktree must NOT output --parallel / --worktree
 echo -n "[....] read-only+worktree must not output --parallel "
-cat > /tmp/test-readonly-worktree.md << 'TASKEOF'
-## 任务卡
-路径：- .
-Executor: Claude Code
-Runtime adapter: claude-code
-Execution surface: cli
-Permission mode: read-only
-Parallelism: worktree
-Execution effort: normal
-Workflow authority: plan-only
-任务级别：Light
-读取：- 本任务卡
-任务：Test read-only + worktree gate.
-目标：Verify --parallel is not output.
-非目标：None.
-关键路径：- .
-停止条件：- 字段验证失败时停止
-验证：Verification gate: - commands: - echo done - expected evidence: - test passes - stop condition: - any failure
-交付：Delivery report.
-TASKEOF
+write_smoke_card /tmp/test-readonly-worktree.md cli read-only worktree plan-only Light \
+    "Test read-only + worktree gate." \
+    "Verify --parallel is not output." \
+    "不执行写操作。" \
+    "any failure" \
+    "test passes" \
+    "Delivery report."
 if cargo run -q -p ags-cli -- policy resolve /tmp/test-readonly-worktree.md --format json > /tmp/verify-ro-wt.log 2>&1; then
     if grep -q -- '--parallel\|--worktree' /tmp/verify-ro-wt.log; then
         echo "FAIL (--parallel or --worktree found in read-only output)"
@@ -494,26 +560,13 @@ fi
 
 # F1: plan-only + worktree must NOT output --parallel
 echo -n "[....] plan-only+worktree must not output --parallel "
-cat > /tmp/test-plan-only-worktree.md << 'TASKEOF'
-## 任务卡
-路径：- .
-Executor: Claude Code
-Runtime adapter: claude-code
-Execution surface: cli
-Permission mode: plan-only
-Parallelism: worktree
-Execution effort: normal
-Workflow authority: plan-only
-任务级别：Medium
-读取：- 本任务卡
-任务：Test plan-only + worktree gate.
-目标：Verify --parallel is not output in plan-only.
-非目标：None.
-关键路径：- .
-停止条件：- 字段验证失败时停止
-验证：Verification gate: - commands: - echo done - expected evidence: - no --parallel - stop condition: - any failure
-交付：Delivery report.
-TASKEOF
+write_smoke_card /tmp/test-plan-only-worktree.md cli plan-only worktree plan-only Medium \
+    "Test plan-only + worktree gate." \
+    "Verify --parallel is not output in plan-only." \
+    "不执行写操作。" \
+    "any failure" \
+    "no --parallel" \
+    "Delivery report."
 if cargo run -q -p ags-cli -- policy resolve /tmp/test-plan-only-worktree.md --format json > /tmp/verify-po-wt.log 2>&1; then
     if grep -q -- '--parallel\|--worktree' /tmp/verify-po-wt.log; then
         echo "FAIL (--parallel or --worktree found in plan-only output)"
@@ -530,26 +583,13 @@ fi
 
 # F4: --approve-writes flag preserves Heavy write mode
 echo -n "[....] Heavy + --approve-writes preserves write mode "
-cat > /tmp/test-heavy-approve.md << 'TASKEOF'
-## 任务卡
-路径：- .
-Executor: Claude Code
-Runtime adapter: claude-code
-Execution surface: cli
-Permission mode: edit-with-confirmation
-Parallelism: none
-Execution effort: normal
-Workflow authority: none
-任务级别：Heavy
-读取：- 本任务卡
-任务：Test Heavy with approval.
-目标：Verify Heavy + --approve-writes keeps edit-with-confirmation.
-非目标：None.
-关键路径：- .
-停止条件：- 字段验证失败时停止
-验证：Verification gate: - commands: - echo done - expected evidence: - write mode preserved - stop condition: - any
-交付：Delivery report.
-TASKEOF
+write_smoke_card /tmp/test-heavy-approve.md cli edit-with-confirmation none none Heavy \
+    "Test Heavy with approval." \
+    "Verify Heavy + --approve-writes keeps edit-with-confirmation." \
+    "无。" \
+    "any failure" \
+    "write mode preserved" \
+    "Delivery report."
 if cargo run -q -p ags-cli -- policy resolve /tmp/test-heavy-approve.md --format json --approve-writes > /tmp/verify-heavy-approve.log 2>&1; then
     json=$(cat /tmp/verify-heavy-approve.log)
     if echo "$json" | grep -q '"edit-with-confirmation"'; then
@@ -572,26 +612,13 @@ fi
 
 # F6: background-agent execution surface passes validator
 echo -n "[....] background-agent execution surface passes "
-cat > /tmp/test-bg-agent.md << 'TASKEOF'
-## 任务卡
-路径：- .
-Executor: Claude Code
-Runtime adapter: claude-code
-Execution surface: background-agent
-Permission mode: execute-and-verify
-Parallelism: none
-Execution effort: normal
-Workflow authority: none
-任务级别：Light
-读取：- 本任务卡
-任务：Test background-agent surface.
-目标：Verify background-agent passes validation.
-非目标：None.
-关键路径：- .
-停止条件：- 字段验证失败时停止
-验证：Verification gate: - commands: - echo done - expected evidence: - surface accepted - stop condition: - any failure
-交付：Delivery report.
-TASKEOF
+write_smoke_card /tmp/test-bg-agent.md background-agent execute-and-verify none none Light \
+    "Test background-agent surface." \
+    "Verify background-agent passes validation." \
+    "无。" \
+    "any failure" \
+    "surface accepted" \
+    "Delivery report."
 if cargo run -q -p ags-cli -- policy resolve /tmp/test-bg-agent.md --format json > /tmp/verify-bg-agent.log 2>&1; then
     json=$(cat /tmp/verify-bg-agent.log)
     if echo "$json" | grep -q '"--headless"'; then
@@ -612,26 +639,13 @@ echo "--- Resolver Hardening Smoke Tests (F8-F10) ---"
 
 # F8: Heavy edit-with-confirmation without --approve-writes → stop_before_launch
 echo -n "[....] Heavy edit-with-confirmation without approve → stop_before_launch "
-cat > /tmp/test-heavy-stop.md << 'TASKEOF'
-## 任务卡
-路径：- .
-Executor: Claude Code
-Runtime adapter: claude-code
-Execution surface: cli
-Permission mode: edit-with-confirmation
-Parallelism: none
-Execution effort: normal
-Workflow authority: none
-任务级别：Heavy
-读取：- 本任务卡
-任务：Test Heavy stop gate.
-目标：Verify Heavy without --approve-writes sets stop_before_launch=true.
-非目标：None.
-关键路径：- .
-停止条件：- 字段验证失败时停止
-验证：Verification gate: - commands: - echo done - expected evidence: - stop_before_launch=true - stop condition: - any failure
-交付：Delivery report.
-TASKEOF
+write_smoke_card /tmp/test-heavy-stop.md cli edit-with-confirmation none none Heavy \
+    "Test Heavy stop gate." \
+    "Verify Heavy without --approve-writes sets stop_before_launch=true." \
+    "无。" \
+    "any failure" \
+    "stop_before_launch=true" \
+    "Delivery report."
 if cargo run -q -p ags-cli -- policy resolve /tmp/test-heavy-stop.md --format json > /tmp/verify-heavy-stop.log 2>&1; then
     json=$(cat /tmp/verify-heavy-stop.log)
     if echo "$json" | grep -q '"stop_before_launch": true'; then
@@ -655,26 +669,13 @@ fi
 
 # F8: Heavy plan-only without --approve-writes → no stop (it's a plan card)
 echo -n "[....] Heavy plan-only without approve → no stop "
-cat > /tmp/test-heavy-plan.md << 'TASKEOF'
-## 任务卡
-路径：- .
-Executor: Claude Code
-Runtime adapter: claude-code
-Execution surface: cli
-Permission mode: plan-only
-Parallelism: none
-Execution effort: normal
-Workflow authority: none
-任务级别：Heavy
-读取：- 本任务卡
-任务：Test Heavy plan-only gate.
-目标：Verify Heavy plan-only does NOT trigger stop_before_launch.
-非目标：不执行写操作。
-关键路径：- .
-停止条件：- 方案完成后返回用户审阅，等待明确批准
-验证：Verification gate: - commands: - echo done - expected evidence: - no stop - stop condition: - any failure
-交付：返回审计方案供 review，等待明确批准。
-TASKEOF
+write_smoke_card /tmp/test-heavy-plan.md cli plan-only none none Heavy \
+    "Test Heavy plan-only gate." \
+    "Verify Heavy plan-only does NOT trigger stop_before_launch." \
+    "不执行写操作。" \
+    "方案完成后返回用户审阅，等待明确批准" \
+    "no stop" \
+    "返回审计方案供 review，等待明确批准。"
 if cargo run -q -p ags-cli -- policy resolve /tmp/test-heavy-plan.md --format json > /tmp/verify-heavy-plan.log 2>&1; then
     json=$(cat /tmp/verify-heavy-plan.log)
     if echo "$json" | grep -q '"stop_before_launch": false'; then
@@ -697,26 +698,13 @@ fi
 
 # F9: plan-only + worktree → effective_parallelism is "none" in JSON
 echo -n "[....] plan-only+worktree → effective_parallelism=none "
-cat > /tmp/test-po-wt-none.md << 'TASKEOF'
-## 任务卡
-路径：- .
-Executor: Claude Code
-Runtime adapter: claude-code
-Execution surface: cli
-Permission mode: plan-only
-Parallelism: worktree
-Execution effort: normal
-Workflow authority: plan-only
-任务级别：Medium
-读取：- 本任务卡
-任务：Test effective_parallelism consistency.
-目标：Verify effective_parallelism is none when plan-only strips worktree.
-非目标：None.
-关键路径：- .
-停止条件：- 字段验证失败时停止
-验证：Verification gate: - commands: - echo done - expected evidence: - effective_parallelism is none - stop condition: - any failure
-交付：Delivery report.
-TASKEOF
+write_smoke_card /tmp/test-po-wt-none.md cli plan-only worktree plan-only Medium \
+    "Test effective_parallelism consistency." \
+    "Verify effective_parallelism is none when plan-only strips worktree." \
+    "不执行写操作。" \
+    "any failure" \
+    "effective_parallelism is none" \
+    "Delivery report."
 if cargo run -q -p ags-cli -- policy resolve /tmp/test-po-wt-none.md --format json > /tmp/verify-po-wt-none.log 2>&1; then
     json=$(cat /tmp/verify-po-wt-none.log)
     if echo "$json" | grep -q '"effective_parallelism": "none"'; then
@@ -739,26 +727,13 @@ fi
 
 # F9: read-only + worktree → effective_parallelism is "none" in JSON
 echo -n "[....] read-only+worktree → effective_parallelism=none "
-cat > /tmp/test-ro-wt-none.md << 'TASKEOF'
-## 任务卡
-路径：- .
-Executor: Claude Code
-Runtime adapter: claude-code
-Execution surface: cli
-Permission mode: read-only
-Parallelism: worktree
-Execution effort: normal
-Workflow authority: plan-only
-任务级别：Light
-读取：- 本任务卡
-任务：Test read-only effective_parallelism.
-目标：Verify effective_parallelism=none when read-only strips worktree.
-非目标：None.
-关键路径：- .
-停止条件：- 字段验证失败时停止
-验证：Verification gate: - commands: - echo done - expected evidence: - effective_parallelism=none - stop condition: - any
-交付：Delivery report.
-TASKEOF
+write_smoke_card /tmp/test-ro-wt-none.md cli read-only worktree plan-only Light \
+    "Test read-only effective_parallelism." \
+    "Verify effective_parallelism=none when read-only strips worktree." \
+    "不执行写操作。" \
+    "any failure" \
+    "effective_parallelism=none" \
+    "Delivery report."
 if cargo run -q -p ags-cli -- policy resolve /tmp/test-ro-wt-none.md --format json > /tmp/verify-ro-wt-none.log 2>&1; then
     json=$(cat /tmp/verify-ro-wt-none.log)
     if echo "$json" | grep -q '"effective_parallelism": "none"'; then
@@ -779,26 +754,13 @@ echo "--- Resolver Hardening Smoke Tests (F10: background-agent audit) ---"
 
 # F10: background-agent + read-only → stop_before_launch + stop_reasons + downgrade
 echo -n "[....] background-agent+read-only → stop and audit "
-cat > /tmp/test-bg-ro-audit.md << 'TASKEOF'
-## 任务卡
-路径：- .
-Executor: Claude Code
-Runtime adapter: claude-code
-Execution surface: background-agent
-Permission mode: read-only
-Parallelism: none
-Execution effort: normal
-Workflow authority: none
-任务级别：Light
-读取：- 本任务卡
-任务：Test background-agent audit trail.
-目标：Verify background-agent+read-only sets stop_before_launch.
-非目标：不执行写操作。
-关键路径：- .
-停止条件：- 字段验证失败时停止
-验证：Verification gate: - commands: - echo done - expected evidence: - stop_before_launch=true - stop condition: - any failure
-交付：Delivery report.
-TASKEOF
+write_smoke_card /tmp/test-bg-ro-audit.md background-agent read-only none none Light \
+    "Test background-agent audit trail." \
+    "Verify background-agent+read-only sets stop_before_launch." \
+    "不执行写操作。" \
+    "any failure" \
+    "stop_before_launch=true" \
+    "Delivery report."
 if cargo run -q -p ags-cli -- policy resolve /tmp/test-bg-ro-audit.md --format json > /tmp/verify-bg-ro-audit.log 2>&1; then
     json=$(cat /tmp/verify-bg-ro-audit.log)
     if echo "$json" | grep -q '"stop_before_launch": true'; then
@@ -822,26 +784,13 @@ fi
 
 # F10: background-agent + plan-only → stop_before_launch
 echo -n "[....] background-agent+plan-only → stop and audit "
-cat > /tmp/test-bg-po-audit.md << 'TASKEOF'
-## 任务卡
-路径：- .
-Executor: Claude Code
-Runtime adapter: claude-code
-Execution surface: background-agent
-Permission mode: plan-only
-Parallelism: none
-Execution effort: normal
-Workflow authority: none
-任务级别：Medium
-读取：- 本任务卡
-任务：Test background-agent + plan-only audit.
-目标：Verify plan-only + background-agent sets stop_before_launch.
-非目标：不执行写操作。
-关键路径：- .
-停止条件：- 字段验证失败时停止
-验证：Verification gate: - commands: - echo done - expected evidence: - stop_before_launch=true - stop condition: - any failure
-交付：Delivery report.
-TASKEOF
+write_smoke_card /tmp/test-bg-po-audit.md background-agent plan-only none none Medium \
+    "Test background-agent + plan-only audit." \
+    "Verify plan-only + background-agent sets stop_before_launch." \
+    "不执行写操作。" \
+    "any failure" \
+    "stop_before_launch=true" \
+    "Delivery report."
 if cargo run -q -p ags-cli -- policy resolve /tmp/test-bg-po-audit.md --format json > /tmp/verify-bg-po-audit.log 2>&1; then
     json=$(cat /tmp/verify-bg-po-audit.log)
     if echo "$json" | grep -q '"stop_before_launch": true'; then
@@ -869,26 +818,13 @@ fi
 
 # F10: background-agent + execute-and-verify → still allows --headless
 echo -n "[....] background-agent+execute-and-verify → still --headless "
-cat > /tmp/test-bg-ev-ok.md << 'TASKEOF'
-## 任务卡
-路径：- .
-Executor: Claude Code
-Runtime adapter: claude-code
-Execution surface: background-agent
-Permission mode: execute-and-verify
-Parallelism: none
-Execution effort: normal
-Workflow authority: none
-任务级别：Light
-读取：- 本任务卡
-任务：Test background-agent + execute-and-verify still works.
-目标：Verify execute-and-verify allows --headless.
-非目标：无.
-关键路径：- .
-停止条件：- 字段验证失败时停止
-验证：Verification gate: - commands: - echo done - expected evidence: - --headless present - stop condition: - any
-交付：Delivery report.
-TASKEOF
+write_smoke_card /tmp/test-bg-ev-ok.md background-agent execute-and-verify none none Light \
+    "Test background-agent + execute-and-verify still works." \
+    "Verify execute-and-verify allows --headless." \
+    "无。" \
+    "any failure" \
+    "--headless present" \
+    "Delivery report."
 if cargo run -q -p ags-cli -- policy resolve /tmp/test-bg-ev-ok.md --format json > /tmp/verify-bg-ev-ok.log 2>&1; then
     json=$(cat /tmp/verify-bg-ev-ok.log)
     if echo "$json" | grep -q '"stop_before_launch": false'; then
@@ -910,26 +846,13 @@ fi
 
 # F10/P3: combined worktree + background-agent must preserve BOTH stop reasons
 echo -n "[....] worktree+background-agent → two stop reasons "
-cat > /tmp/test-combined-stop-reasons.md << 'TASKEOF'
-## 任务卡
-路径：- .
-Executor: Claude Code
-Runtime adapter: claude-code
-Execution surface: background-agent
-Permission mode: read-only
-Parallelism: worktree
-Execution effort: normal
-Workflow authority: plan-only
-任务级别：Light
-读取：- 本任务卡
-任务：Test combined stop reasons.
-目标：Verify combined blocked worktree and background-agent preserve both stop reasons.
-非目标：不执行写操作。
-关键路径：- .
-停止条件：- 字段验证失败时停止
-验证：Verification gate: - commands: - echo done - expected evidence: - two stop reasons - stop condition: - any failure
-交付：Delivery report.
-TASKEOF
+write_smoke_card /tmp/test-combined-stop-reasons.md background-agent read-only worktree plan-only Light \
+    "Test combined stop reasons." \
+    "Verify combined blocked worktree and background-agent preserve both stop reasons." \
+    "不执行写操作。" \
+    "any failure" \
+    "two stop reasons" \
+    "Delivery report."
 if cargo run -q -p ags-cli -- policy resolve /tmp/test-combined-stop-reasons.md --format json > /tmp/verify-combined-stop-reasons.log 2>&1; then
     json=$(cat /tmp/verify-combined-stop-reasons.log)
     if ! echo "$json" | grep -q '"stop_reasons": \['; then

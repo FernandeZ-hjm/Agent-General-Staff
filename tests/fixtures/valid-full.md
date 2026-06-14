@@ -30,7 +30,7 @@ Review gate:
 
 记忆胶囊：暂无相关记忆
 
-任务存档：参考此前 compact card 校验通过记录
+任务存档：参考 full card 校验通过记录
 
 相关路径：
 - crates/

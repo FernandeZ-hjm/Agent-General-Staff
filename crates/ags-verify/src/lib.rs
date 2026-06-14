@@ -100,7 +100,7 @@ impl std::fmt::Display for Severity {
 /// A single verification check item — the stable unit of verification evidence.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckItem {
-    /// Stable identifier for this check (e.g. "cargo-fmt", "fixture-valid-compact").
+    /// Stable identifier for this check (e.g. "cargo-fmt", "fixture-valid-full").
     pub id: String,
     /// Which scope(s) this check belongs to.
     pub scope: String,
@@ -355,10 +355,7 @@ fn check_cargo_build(repo_root: &Path) -> CheckItem {
 }
 
 fn check_valid_fixtures(repo_root: &Path) -> Vec<CheckItem> {
-    let fixtures = [
-        "tests/fixtures/valid-compact.md",
-        "tests/fixtures/valid-full.md",
-    ];
+    let fixtures = ["tests/fixtures/valid-full.md"];
     let mut items = Vec::new();
 
     for fixture in &fixtures {
