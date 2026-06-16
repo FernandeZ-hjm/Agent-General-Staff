@@ -170,7 +170,7 @@ impl CheckItem {
             evidence: evidence.to_string(),
             remediation: Some(remediation.to_string()),
             command: None,
-            exit_code: Some(1),
+            exit_code: Some(0),
         }
     }
 }
@@ -197,12 +197,12 @@ pub struct VerificationSummary {
 }
 
 impl VerificationReport {
-    /// Whether all non-skipped checks passed (no failures).
+    /// Whether all blocking checks passed. Advisory WARN items do not fail the report.
     pub fn passed(&self) -> bool {
-        self.summary.failed == 0
+        self.summary.errors == 0
     }
 
-    /// Exit code: 0 if all passed, 1 if any failed.
+    /// Exit code: 0 if all blocking checks passed, 1 if any ERROR failed.
     pub fn exit_code(&self) -> i32 {
         if self.passed() {
             0
@@ -1084,6 +1084,29 @@ mod tests {
         };
         assert!(!report.passed());
         assert_eq!(report.exit_code(), 1);
+    }
+
+    #[test]
+    fn test_report_with_only_warnings_passes() {
+        let report = VerificationReport {
+            schema_version: "2.0-verify".to_string(),
+            scope: Scope::Full,
+            repo_root: "/tmp".to_string(),
+            items: vec![
+                CheckItem::pass("a", "local", "ok"),
+                CheckItem::warn("b", "full", "advisory", "review"),
+            ],
+            summary: VerificationSummary {
+                total: 2,
+                passed: 1,
+                failed: 1,
+                skipped: 0,
+                errors: 0,
+                warnings: 1,
+            },
+        };
+        assert!(report.passed());
+        assert_eq!(report.exit_code(), 0);
     }
 
     #[test]

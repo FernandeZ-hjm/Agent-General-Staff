@@ -34,6 +34,7 @@ fn card_body(fields: &str) -> String {
         ("项目画像：", "项目画像：无\n"),
         ("记忆胶囊：", "记忆胶囊：无\n"),
         ("任务存档：", "任务存档：无\n"),
+        ("目标文件夹路径：", "目标文件夹路径：\n- .\n"),
         ("相关路径：", "相关路径：\n- .\n"),
         ("本次任务相关文件：", "本次任务相关文件：\n- .\n"),
         (
@@ -67,6 +68,7 @@ fn valid_card_fields() -> String {
              项目画像：无\n\
              记忆胶囊：无\n\
              任务存档：无\n\
+             目标文件夹路径：\n- .\n\
              相关路径：\n- .\n\
              本次任务相关文件：\n- .\n\
              目标：验证任务卡校验器能正确识别合法输入\n\
@@ -95,6 +97,7 @@ fn other_generic_card() -> String {
              项目画像：无\n\
              记忆胶囊：无\n\
              任务存档：无\n\
+             目标文件夹路径：\n- .\n\
              相关路径：\n- .\n\
              本次任务相关文件：\n- .\n\
              目标：由人工执行器处理\n\
@@ -341,6 +344,7 @@ fn classic_card_mentioning_marker_in_prose_passes() {
              项目画像：无\n\
              记忆胶囊：无\n\
              任务存档：无\n\
+             目标文件夹路径：\n- .\n\
              相关路径：\n- .\n\
              本次任务相关文件：\n- .\n\
              目标：让 AGENT_SUITE_COMPACT_TASK_CARD_V1 不再是合法结构判别符\n\
@@ -2939,6 +2943,7 @@ Review gate:\n- 按协议执行\n\n\
 项目画像：\n- 无\n\n\
 记忆胶囊：\n- 无\n\n\
 任务存档：\n- 无\n\n\
+目标文件夹路径：\n- .\n\n\
 相关路径：\n- docs/agent-workflow/runtime-adapters.md\n\n\
 本次任务相关文件：\n- docs/agent-workflow/agent-task-protocol.md\n\n\
 目标：\n1. 增加 dry-run 摘要并保持默认行为不变。\n\n\
@@ -3000,6 +3005,7 @@ Review gate:\n- Heavy review\n\n\
 项目画像：\n- 无\n\n\
 记忆胶囊：\n- 无\n\n\
 任务存档：\n- 无\n\n\
+目标文件夹路径：\n- .\n\n\
 相关路径：\n- docs/agent-workflow/runtime-adapters.md\n\n\
 本次任务相关文件：\n- docs/agent-workflow/task-routing.md\n\n\
 目标：\n1. 说明当前管线结构和风险点。\n2. 给出 root cause / design / implementation plan / verification plan。\n3. 明确哪些文件或数据必须保持只读。\n\n\
@@ -3225,6 +3231,7 @@ fn heavy_plan_only_full_card_with_verification_gate_handoff_passes() {
              项目画像：\n- 无\n\
              记忆胶囊：\n- 无\n\
              任务存档：\n- 无\n\
+             目标文件夹路径：\n- .\n\
              相关路径：\n- docs/\n\
              本次任务相关文件：\n- docs/agent-workflow/task-routing.md\n\
              目标：\n1. 说明当前管线结构和风险点。\n2. 给出 design / implementation plan。\n\

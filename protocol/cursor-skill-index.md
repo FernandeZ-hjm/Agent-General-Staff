@@ -43,7 +43,7 @@ When a task references a skill, open only the relevant SKILL.md. When a task doe
 
 ## Continuation prompt template
 
-**This is a state-carrying handoff wrapper, not a task execution card.** It carries session context across boundaries (agent handoffs, truncated sessions, continuation requests). When actual task execution is required, the continuation context must be rewrapped into either a project task card or a global fallback task card — never executed directly from this template.
+**This is a state-carrying handoff wrapper, not a task execution card.** It carries session context across boundaries (agent handoffs, truncated sessions, continuation requests). When actual task execution is required, the continuation context must be rewrapped into the single canonical task-card skeleton (`protocol/task-card-template.md`) — never executed directly from this template.
 
 Use this when Cursor needs to hand work to Claude Code CLI, another agent, or a later session:
 

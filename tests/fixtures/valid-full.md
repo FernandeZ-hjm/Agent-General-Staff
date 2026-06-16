@@ -32,6 +32,9 @@ Review gate:
 
 任务存档：参考 full card 校验通过记录
 
+目标文件夹路径：
+- /Volumes/AI Project/ai-dev-env-bootstrap
+
 相关路径：
 - crates/
 

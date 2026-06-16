@@ -84,6 +84,10 @@ pub(crate) const FIELD_DEFS: &[FieldDef] = &[
         is_inline: false,
     },
     FieldDef {
+        name: "目标文件夹路径：",
+        is_inline: false,
+    },
+    FieldDef {
         name: "相关路径：",
         is_inline: false,
     },

@@ -18,7 +18,7 @@
 //! ```rust
 //! use task_card_validator::validate;
 //!
-//! let input = "## 任务卡\n读取并遵守：\n- AGENTS.md\nExecutor: Claude Code\nRuntime adapter: claude-code\nExecution surface: cli\nPermission mode: execute-and-verify\nParallelism: none\n任务级别：Medium\nReview gate:\n- Medium review\n任务：运行测试验证校验器\n背景：验证校验器功能\n项目画像：无\n记忆胶囊：无\n任务存档：无\n相关路径：\n- .\n本次任务相关文件：\n- .\n目标：验证校验器功能\n非目标：不修改文件\n验证：\ncargo test\nVerification gate:\n- commands: cargo test\n交付：\n返回结果\n";
+//! let input = "## 任务卡\n读取并遵守：\n- AGENTS.md\nExecutor: Claude Code\nRuntime adapter: claude-code\nExecution surface: cli\nPermission mode: execute-and-verify\nParallelism: none\n任务级别：Medium\nReview gate:\n- Medium review\n任务：运行测试验证校验器\n背景：验证校验器功能\n项目画像：无\n记忆胶囊：无\n任务存档：无\n目标文件夹路径：\n- .\n相关路径：\n- .\n本次任务相关文件：\n- .\n目标：验证校验器功能\n非目标：不修改文件\n验证：\ncargo test\nVerification gate:\n- commands: cargo test\n交付：\n返回结果\n";
 //! let errors = validate(input);
 //! assert!(errors.is_empty());
 //! ```

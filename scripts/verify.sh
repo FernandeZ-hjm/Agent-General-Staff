@@ -79,6 +79,9 @@ Review gate:
 
 任务存档：verify.sh shell-only smoke regression.
 
+目标文件夹路径：
+- $REPO_ROOT
+
 相关路径：
 - .
 
@@ -218,6 +221,26 @@ fi
 run_check "ags task compile (stdin, request)" \
     bash -c 'echo "任务：test compile
 目标：verify smoke test" | cargo run -q -p ags-cli -- task compile - --task-card-requested --output card --format text'
+
+echo -n "[....] no generatable fallback/compact task-card template files remain "
+stray_templates=$(find "$REPO_ROOT" -type f \
+    \( -name '*-task-template.md' -o -path '*templates/fallback-task-cards/*' \) \
+    -not -path '*/target/*' -not -path '*/.git/*' -not -path '*/.codegraph/*' 2>/dev/null)
+marker_files=$(grep -rl --exclude-dir=target --exclude-dir=.git --exclude-dir=.codegraph \
+    "AGENT_SUITE_COMPACT_TASK_CARD_V1" "$REPO_ROOT" 2>/dev/null \
+    | grep -v -E 'tests/fixtures/(invalid-compact|removed-compact)\.md$|task-card-validator/src/(validate|tests)\.rs$|task-compiler/src/lib\.rs$|ags-verify/src/lib\.rs$|scripts/verify\.sh$' \
+    || true)
+if [ -n "$stray_templates" ]; then
+    echo "FAIL (stray fallback/per-level task-card template files found)"
+    echo "$stray_templates"
+    failures=$((failures + 1))
+elif [ -n "$marker_files" ]; then
+    echo "FAIL (compact marker outside fixture/rejection code)"
+    echo "$marker_files"
+    failures=$((failures + 1))
+else
+    echo "OK (single canonical task-card template; no fallback/compact sources)"
+fi
 
 run_check "ags gate check" \
     cargo run -q -p ags-cli -- gate check "$REPO_ROOT/tests/fixtures/valid-full.md" --format text

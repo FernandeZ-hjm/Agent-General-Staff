@@ -83,6 +83,7 @@ const FIELD_HEADERS: &[(&str, bool)] = &[
     ("记忆胶囊：", false),
     ("任务存档：", false),
     ("适用治理文档：", false),
+    ("目标文件夹路径：", false),
     ("相关路径：", false),
     ("本次任务相关文件：", false),
     ("目标：", false),
@@ -110,6 +111,7 @@ const REQUIRED_FIELDS: &[&str] = &[
     "项目画像：",
     "记忆胶囊：",
     "任务存档：",
+    "目标文件夹路径：",
     "相关路径：",
     "本次任务相关文件：",
     "目标：",
@@ -147,6 +149,7 @@ fn normalise_key(raw: &str) -> Option<&'static str> {
         "记忆胶囊" => Some("记忆胶囊："),
         "任务存档" => Some("任务存档："),
         "适用治理文档" => Some("适用治理文档："),
+        "目标文件夹路径" => Some("目标文件夹路径："),
         "相关路径" => Some("相关路径："),
         "本次任务相关文件" => Some("本次任务相关文件："),
         "目标" => Some("目标："),
@@ -345,15 +348,16 @@ pub struct ProjectContext {
 /// Gather project context from the given root directory.
 /// This is a pure read-only function — no files are written.
 pub fn gather_project_context(root: &Path) -> ProjectContext {
+    let root = absolute_project_root(root);
     let is_ags_suite = root.join("CLAUDE.md").exists()
         && root.join("protocol").is_dir()
         && root.join("crates").is_dir();
 
     // Workspace identity from WORKSPACE.md
-    let (workspace_code, workspace_role) = detect_workspace_identity(root);
+    let (workspace_code, workspace_role) = detect_workspace_identity(&root);
 
     // Memory paths — public edition: AGS_MEMORY_DIR env or ~/.agents/memory/projects/<slug>
-    let memory_slug = detect_memory_slug(root);
+    let memory_slug = detect_memory_slug(&root);
     let memory_base = resolve_memory_base();
     let capsule_path = memory_slug.as_ref().and_then(|slug| {
         let p = memory_base.join(slug).join("context-capsule.md");
@@ -373,10 +377,10 @@ pub fn gather_project_context(root: &Path) -> ProjectContext {
     });
 
     // Extract CLAUDE.md protocol references
-    let claude_md_protocol_refs = extract_claude_md_refs(root);
+    let claude_md_protocol_refs = extract_claude_md_refs(&root);
 
     ProjectContext {
-        project_root: root.to_path_buf(),
+        project_root: root,
         workspace_code,
         workspace_role,
         capsule_path,
@@ -385,6 +389,18 @@ pub fn gather_project_context(root: &Path) -> ProjectContext {
         is_ags_suite,
         claude_md_protocol_refs,
     }
+}
+
+fn absolute_project_root(root: &Path) -> PathBuf {
+    if let Ok(path) = root.canonicalize() {
+        return path;
+    }
+    if root.is_absolute() {
+        return root.to_path_buf();
+    }
+    std::env::current_dir()
+        .map(|cwd| cwd.join(root))
+        .unwrap_or_else(|_| root.to_path_buf())
 }
 
 /// Detect workspace identity from WORKSPACE.md or known paths.
@@ -775,6 +791,17 @@ pub fn compile(
         });
     }
 
+    // 目标文件夹路径：— actual target/workspace root for this task
+    if !has_field(&fields, "目标文件夹路径：") {
+        let target_folder = format!("- {}", ctx.project_root.to_string_lossy());
+        fields.insert("目标文件夹路径：".to_string(), target_folder.clone());
+        slot_sources.push(SlotEntry {
+            field: "目标文件夹路径：".to_string(),
+            value: target_folder,
+            source: SlotSource::ProjectContext,
+        });
+    }
+
     // ── Phase 3: defaults for remaining optional fields ─────────────
 
     // 非目标：— default if absent
@@ -1108,6 +1135,7 @@ fn render_task_card(fields: &HashMap<String, String>) -> String {
         "记忆胶囊：",
         "任务存档：",
         "适用治理文档：",
+        "目标文件夹路径：",
         "相关路径：",
         "本次任务相关文件：",
         "目标：",
@@ -1871,6 +1899,16 @@ mod tests {
             errors.is_empty(),
             "compiled card must pass the real validator, errors: {:?}\ncard:\n{}",
             errors,
+            card
+        );
+        assert!(
+            card.contains("目标文件夹路径：\n- /"),
+            "compiled card must render an absolute target folder path:\n{}",
+            card
+        );
+        assert!(
+            !card.contains("目标文件夹路径：\n- ."),
+            "compiled card must not render a relative target folder path:\n{}",
             card
         );
     }
