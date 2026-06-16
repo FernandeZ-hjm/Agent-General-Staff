@@ -10,10 +10,7 @@ pub fn validate(input: &str) -> Vec<String> {
     // ── Phase 1: format checks ──
 
     // Rule 1: first non-empty line must be `## 任务卡`
-    let first = input
-        .lines()
-        .map(|l| l.trim_end_matches('\r'))
-        .find(|l| !l.trim().is_empty());
+    let first = first_nonempty_line(input);
 
     match first {
         Some("## 任务卡") => {}
@@ -88,6 +85,25 @@ pub fn validate(input: &str) -> Vec<String> {
     check_execution_authority_gate(&fields, &mut errors);
 
     errors
+}
+
+// ── Output-shape helpers (shared with `ags gate output`) ────────────────
+
+/// The first non-empty line of `input` with any trailing `\r` stripped, or
+/// `None` when the input has no non-empty line.
+pub fn first_nonempty_line(input: &str) -> Option<&str> {
+    input
+        .lines()
+        .map(|l| l.trim_end_matches('\r'))
+        .find(|l| !l.trim().is_empty())
+}
+
+/// Frontstage output-shape gate: `true` iff the first non-empty line is exactly
+/// `## 任务卡`. This is the canonical task-card foreground-output discriminator,
+/// shared by the validator (Rule 1 above) and the `ags gate output` check so the
+/// two never drift.
+pub fn output_is_canonical_header(input: &str) -> bool {
+    first_nonempty_line(input) == Some("## 任务卡")
 }
 
 // ── Multi-file entry point ─────────────────────────────────────────────

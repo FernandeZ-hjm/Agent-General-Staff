@@ -2,6 +2,7 @@
 members = [
     "crates/ags-cli",
     "crates/task-card-validator",
+    "crates/prompt-request-classifier",
     "crates/workflow-sync-check",
     "crates/suite-doctor",
     "crates/bootstrap-dry-run",

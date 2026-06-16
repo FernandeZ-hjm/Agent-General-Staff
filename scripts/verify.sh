@@ -242,6 +242,64 @@ else
     echo "OK (single canonical task-card template; no fallback/compact sources)"
 fi
 
+# ── Prompt Request / Output Gate Smoke (entry intent-recognition) ───────────
+echo "--- Prompt Request / Output Gate Smoke ---"
+
+# Positive: a task-card/prompt request must be detected and require a card.
+echo -n "[....] gate prompt-request detects '给我提示词' (require_task_card) "
+if cargo run -q -p ags-cli -- gate prompt-request "给我提示词" --no-preflight --format json > /tmp/verify-gate-pr-pos.log 2>&1 \
+    && grep -q '"decision": "require_task_card"' /tmp/verify-gate-pr-pos.log \
+    && grep -q '"is_task_card_request": true' /tmp/verify-gate-pr-pos.log; then
+    echo "OK"
+else
+    echo "FAIL (task-card request not detected)"
+    cat /tmp/verify-gate-pr-pos.log
+    failures=$((failures + 1))
+fi
+
+# Negative: ordinary prose must NOT be classified as a task-card request.
+echo -n "[....] gate prompt-request lets prose through (allow) "
+if cargo run -q -p ags-cli -- gate prompt-request "解释这段代码是做什么的" --no-preflight --format json > /tmp/verify-gate-pr-neg.log 2>&1 \
+    && grep -q '"decision": "allow"' /tmp/verify-gate-pr-neg.log \
+    && grep -q '"is_task_card_request": false' /tmp/verify-gate-pr-neg.log; then
+    echo "OK"
+else
+    echo "FAIL (prose misclassified as task-card request)"
+    cat /tmp/verify-gate-pr-neg.log
+    failures=$((failures + 1))
+fi
+
+# Positive end-to-end: request → compiled canonical card → gate output ALLOW.
+echo -n "[....] '给我提示词' → compile → gate output ALLOW + validator-clean "
+pr_intent=$'任务：verify.sh prompt-request e2e smoke\n目标：确认触发词请求经编译产出经典骨架并通过 output gate'
+if printf '%s' "$pr_intent" | cargo run -q -p ags-cli -- task compile - --task-card-requested --output card > /tmp/verify-gate-card.md 2>/dev/null \
+    && cargo run -q -p ags-cli -- gate output /tmp/verify-gate-card.md --format json > /tmp/verify-gate-out-pos.log 2>&1 \
+    && grep -q '"decision": "allow"' /tmp/verify-gate-out-pos.log \
+    && cargo run -q -p ags-cli -- task validate /tmp/verify-gate-card.md > /dev/null 2>&1; then
+    echo "OK"
+else
+    echo "FAIL (canonical card rejected by output gate or validator)"
+    cat /tmp/verify-gate-out-pos.log
+    failures=$((failures + 1))
+fi
+
+# Negative end-to-end (fail-closed): a non-canonical foreground answer for a
+# detected task-card request must be BLOCKED with a governance_miss event.
+echo -n "[....] non-'## 任务卡' output for a request is BLOCKED + governance_miss "
+if printf 'This is a normal prose answer, not a task card.\n' \
+    | cargo run -q -p ags-cli -- gate output - --for-request "给我提示词" --format json > /tmp/verify-gate-out-neg.log 2>&1; then
+    echo "FAIL (non-canonical output was allowed — gate not fail-closed)"
+    cat /tmp/verify-gate-out-neg.log
+    failures=$((failures + 1))
+elif grep -q '"block_reason": "bad_output_shape"' /tmp/verify-gate-out-neg.log \
+    && grep -q '"event": "governance_miss"' /tmp/verify-gate-out-neg.log; then
+    echo "OK (blocked, governance_miss emitted)"
+else
+    echo "FAIL (blocked, but missing bad_output_shape/governance_miss — fail closed)"
+    cat /tmp/verify-gate-out-neg.log
+    failures=$((failures + 1))
+fi
+
 run_check "ags gate check" \
     cargo run -q -p ags-cli -- gate check "$REPO_ROOT/tests/fixtures/valid-full.md" --format text
 

@@ -140,12 +140,32 @@ Future transports (SSE, WebSocket) may be added in later versions.
 | `ags_task_validate` | Validate a task card against the canonical format gate |
 | `ags_policy_resolve` | Resolve execution policy for a validated task card |
 | `ags_verify_local` | Run local-scope verification (fmt, test, build, fixtures, YAML, preflight) |
-| `ags_solution_check` | Check whether solution formation phase allows an executable task card |
+| `ags_solution_check` | Check whether solution formation phase allows an executable task card. Also runs the deterministic prompt-request classifier over `summary` and returns `detected_task_card_request` + `detected_triggers` (advisory — detection does NOT authorize a card) |
 
 > **Initialization gate rule**: `ags_preflight` is the mandatory first call.
 > All other tools (including `ags_solution_check`, `ags_task_validate`, etc.) must only
 > be called after preflight completes. Hosts should reject calls to other AGS
 > tools before preflight is done.
+
+### Entry intent recognition (deterministic)
+
+`ags_solution_check` runs the deterministic `prompt-request-classifier` over the
+`summary` argument and returns two advisory fields:
+
+- `detected_task_card_request` (bool) — the summary matches a prompt/task-card
+  request ("给我提示词", "生成任务卡", "交给 Claude Code", "给 CC 执行",
+  "写个 prompt", "handoff", "让 Claude 做", ...).
+- `detected_triggers` (string array) — the matched trigger phrases.
+
+This is **advisory only**: detection does NOT change `executable_allowed`. The
+three-gate threshold (方案 OK → 任务卡指令 → 任务分级路由) still requires an
+explicit user task-card instruction. The classifier exists so the host
+recognizes prompt/task-card intent instead of treating it as prose — closing the
+pre-entry bypass.
+
+The frontstage **output-shape gate** and the `governance_miss` event live on the
+CLI side (`ags gate output`), NOT in MCP — AGS MCP stays read-only and never
+emits or persists `governance_miss`. See `protocol/agent-task-protocol.md` §3.6.
 
 ### Resources (7)
 

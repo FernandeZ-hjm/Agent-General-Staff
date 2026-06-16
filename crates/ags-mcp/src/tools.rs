@@ -153,7 +153,7 @@ pub fn list_tools() -> ToolListResult {
             ),
             tool_def(
                 TOOL_SOLUTION_CHECK,
-                "Check whether the current phase allows an executable task card. Returns: whether solution formation is still required, whether a task-card instruction is needed (task_card_requested=false blocks executable output with block_reason=task_card_not_requested), and whether EvoMap MCP recall should be called in parallel for non-trivial tasks. This is a phase gate, NOT a preflight substitute — preflight must complete first. AGS MCP does NOT call EvoMap MCP — hosts must call both MCPs in parallel. Read-only.",
+                "Check whether the current phase allows an executable task card. Returns: whether solution formation is still required, whether a task-card instruction is needed (task_card_requested=false blocks executable output with block_reason=task_card_not_requested), and whether EvoMap MCP recall should be called in parallel for non-trivial tasks. It also runs a deterministic prompt-request classifier over `summary` and returns `detected_task_card_request` + `detected_triggers` so the host recognizes \"give me a prompt / generate a task card / hand off to Claude Code\" intent instead of treating it as prose — advisory only: detection alone does NOT authorize a card (the three-gate threshold still requires an explicit task-card instruction). This is a phase gate, NOT a preflight substitute — preflight must complete first. AGS MCP does NOT call EvoMap MCP — hosts must call both MCPs in parallel. Read-only.",
                 serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -591,12 +591,28 @@ fn tool_solution_check(args: &serde_json::Value) -> Result<String, String> {
         block_reason: Option<String>,
         phase: String,
         task_card_requested: bool,
+        /// Deterministic classifier signal: the `summary` text matches a
+        /// prompt/task-card request. Advisory only — it does NOT authorize a
+        /// task card. The three-gate threshold still requires an explicit
+        /// user task-card instruction (`task_card_requested`).
+        detected_task_card_request: bool,
+        detected_triggers: Vec<String>,
         evomap_recall_recommended: bool,
         recall_status: String,
         evomap_boundary: String,
         next_step: String,
         trivial_possible: bool,
     }
+
+    // Deterministic entry intent classification of the summary text. This is
+    // advisory: it surfaces when the request *looks like* a task-card/prompt
+    // request so the host follows the three-gate threshold instead of treating
+    // it as ordinary prose. It does NOT change `executable_allowed` — only an
+    // explicit user task-card instruction (`task_card_requested`) authorizes a
+    // card.
+    let classification = prompt_request_classifier::classify(&summary);
+    let detected_task_card_request = classification.is_task_card_request;
+    let detected_triggers = classification.matched_triggers.clone();
 
     // Determine if task sounds trivial (simple typo, trivial fix, etc.)
     let trivial_keywords = ["typo", "typo fix", "missing comma", "fix spelling"];
@@ -618,9 +634,18 @@ fn tool_solution_check(args: &serde_json::Value) -> Result<String, String> {
     };
 
     let next_step = if !task_card_requested {
-        "Solution phase is active. If solution is confirmed, user must explicitly issue a task-card instruction (\"生成任务卡\", \"按这个方案出任务卡\", \"交给 Claude Code 执行\", etc.) before an executable task card can be produced. \"方案 OK\" alone is NOT sufficient — the three-gate threshold is: 方案 OK → 任务卡指令 → 任务分级路由.".to_string()
+        let base = "Solution phase is active. If solution is confirmed, user must explicitly issue a task-card instruction (\"生成任务卡\", \"按这个方案出任务卡\", \"交给 Claude Code 执行\", etc.) before an executable task card can be produced. \"方案 OK\" alone is NOT sufficient — the three-gate threshold is: 方案 OK → 任务卡指令 → 任务分级路由.".to_string();
+        if detected_task_card_request {
+            format!(
+                "NOTE: the summary text matches a prompt/task-card request (triggers: {}). This deterministic detection does NOT authorize a card — the user must still issue an explicit task-card instruction. {}",
+                detected_triggers.join(", "),
+                base
+            )
+        } else {
+            base
+        }
     } else {
-        "Task card instruction received. Proceed to task routing (Light/Medium/Heavy) and task card compilation via `ags task compile --task-card-requested`.".to_string()
+        "Task card instruction received. Proceed to task routing (Light/Medium/Heavy) and task card compilation via `ags task compile --task-card-requested`. The final foreground answer must be a canonical `## 任务卡` — self-check with `ags gate output`.".to_string()
     };
 
     let output = SolutionCheckOutput {
@@ -628,6 +653,8 @@ fn tool_solution_check(args: &serde_json::Value) -> Result<String, String> {
         block_reason,
         phase: phase.to_string(),
         task_card_requested,
+        detected_task_card_request,
+        detected_triggers,
         evomap_recall_recommended,
         recall_status: "unavailable_or_not_called — AGS MCP does not proxy EvoMap MCP. Host must call EvoMap MCP in parallel for recall.".to_string(),
         evomap_boundary: "AGS MCP and EvoMap MCP are parallel peers. AGS is the governance authority (lifecycle, gates, task level, permission mode, review gate, verification gate). EvoMap provides advisory method recall during solution formation only. AGS MCP does NOT proxy, wrap, or broker EvoMap MCP calls. If the host has no EvoMap MCP configured, recall_status stays 'unavailable_or_not_called'.".to_string(),
@@ -652,4 +679,58 @@ fn get_target(args: &serde_json::Value) -> PathBuf {
         .and_then(|v| v.as_str())
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run_solution_check(summary: &str, task_card_requested: bool) -> serde_json::Value {
+        let args = serde_json::json!({
+            "summary": summary,
+            "task_card_requested": task_card_requested,
+        });
+        let out = call_tool(TOOL_SOLUTION_CHECK, &args).expect("solution_check ok");
+        serde_json::from_str(&out).expect("valid json")
+    }
+
+    #[test]
+    fn solution_check_detects_task_card_request_but_does_not_authorize() {
+        let v = run_solution_check("给我提示词", false);
+        assert_eq!(v["detected_task_card_request"], true);
+        assert!(v["detected_triggers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t == "给我提示词"));
+        // Detection alone must NOT authorize a card — three-gate threshold holds.
+        assert_eq!(v["executable_allowed"], false);
+        assert_eq!(v["block_reason"], "task_card_not_requested");
+    }
+
+    #[test]
+    fn solution_check_prose_not_detected() {
+        let v = run_solution_check("解释这段代码是做什么的", false);
+        assert_eq!(v["detected_task_card_request"], false);
+        assert!(v["detected_triggers"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn solution_check_requested_allows_and_detection_consistent() {
+        let v = run_solution_check("按这个方案出任务卡", true);
+        assert_eq!(v["executable_allowed"], true);
+        assert_eq!(v["detected_task_card_request"], true);
+    }
+
+    #[test]
+    fn solution_check_stays_read_only_and_does_not_proxy_evomap() {
+        let v = run_solution_check("重构这个模块的边界", false);
+        let recall = v["recall_status"].as_str().unwrap();
+        assert!(
+            recall.contains("AGS MCP does not proxy EvoMap"),
+            "recall_status must state AGS does not proxy EvoMap: {recall}"
+        );
+    }
 }

@@ -14,6 +14,7 @@ dependencies = [
  "clap",
  "execution-policy",
  "project-discovery",
+ "prompt-request-classifier",
  "receipt",
  "runner",
  "serde",
@@ -32,6 +33,7 @@ dependencies = [
  "ags-verify",
  "execution-policy",
  "project-discovery",
+ "prompt-request-classifier",
  "serde",
  "serde_json",
  "task-card-validator",
@@ -399,6 +401,14 @@ name = "project-discovery"
 version = "2.5.1"
 dependencies = [
  "ags-platform",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "prompt-request-classifier"
+version = "2.5.1"
+dependencies = [
  "serde",
  "serde_json",
 ]

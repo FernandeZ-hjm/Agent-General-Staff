@@ -71,4 +71,4 @@ pub(crate) use validate::read_input;
 // in-workspace consumer read `card_type`.
 pub use parse::parse_validated;
 pub use types::{error_code, ParsedTaskCard};
-pub use validate::{validate, validate_files};
+pub use validate::{first_nonempty_line, output_is_canonical_header, validate, validate_files};

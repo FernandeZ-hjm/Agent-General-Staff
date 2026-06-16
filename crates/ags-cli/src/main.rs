@@ -202,6 +202,46 @@ enum GateAction {
         #[arg(long, default_value_t = false)]
         approve_writes: bool,
     },
+
+    /// Entry intent gate: classify a user request for prompt / task-card intent.
+    ///
+    /// Deterministic (prompt-request-classifier). Decision `require_task_card`
+    /// when intent is detected — the host MUST route through preflight →
+    /// `task compile --task-card-requested` → `gate output`, and the foreground
+    /// answer MUST be a canonical `## 任务卡`. Otherwise `allow`. Runs AGS session
+    /// preflight as a fail-closed precondition unless `--no-preflight`; if
+    /// preflight reports should_stop, decision = `stop`.
+    PromptRequest {
+        /// User request text (use "-" for stdin).
+        request: String,
+        /// Target repository path for the preflight precondition.
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+        /// Skip the preflight precondition (pure classification only).
+        #[arg(long, default_value_t = false)]
+        no_preflight: bool,
+        /// Output format: text (human-readable) or json (machine-readable)
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+
+    /// Frontstage output-shape gate: verify a candidate foreground answer is a
+    /// canonical task card.
+    ///
+    /// Decision `allow` iff the first non-empty line is `## 任务卡` AND the content
+    /// passes the canonical validator; otherwise `stop` with block_reason
+    /// `bad_output_shape` or `validation_failed`, plus a `governance_miss` event
+    /// (AGS writes no file — the host persists the sample if it wants it).
+    Output {
+        /// Candidate output file (use "-" for stdin).
+        path: String,
+        /// Original user request, to correlate the governance_miss (optional).
+        #[arg(long)]
+        for_request: Option<String>,
+        /// Output format: text (human-readable) or json (machine-readable)
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
 }
 
 /// Capability registry operations (M5).
@@ -2676,6 +2716,202 @@ fn cmd_gate_check(path: &str, format: &str, approve_writes: bool) {
     }
 }
 
+/// Shared dispatch: `gate prompt-request` — deterministic entry intent gate.
+fn cmd_gate_prompt_request(request_arg: &str, target: &Path, no_preflight: bool, format: &str) {
+    use std::io::Read;
+
+    let request = if request_arg == "-" {
+        let mut buf = String::new();
+        if let Err(e) = std::io::stdin().read_to_string(&mut buf) {
+            eprintln!("gate prompt-request: 读取失败 — {}", e);
+            std::process::exit(1);
+        }
+        buf
+    } else {
+        request_arg.to_string()
+    };
+
+    let classification = prompt_request_classifier::classify(&request);
+
+    // Fail-closed precondition: project must be AGS-healthy (preflight should not
+    // stop) before we declare an executable routing requirement.
+    let (preflight_ran, preflight_should_stop, preflight_status) = if no_preflight {
+        (false, false, "skipped".to_string())
+    } else {
+        match project_discovery::AgentType::from_str("claude-code") {
+            Ok(agent) => {
+                let pf = project_discovery::run_session_preflight(target, &agent);
+                (true, pf.should_stop, format!("{:?}", pf.overall_status))
+            }
+            Err(_) => (false, false, "skipped".to_string()),
+        }
+    };
+
+    let (decision, block_reason): (&str, Option<&str>) = if preflight_should_stop {
+        ("stop", Some("preflight_failed"))
+    } else if classification.is_task_card_request {
+        ("require_task_card", None)
+    } else {
+        ("allow", None)
+    };
+
+    let next_step = match decision {
+        "stop" => {
+            "AGS preflight reports should_stop — resolve project/protocol health before generating any task card."
+        }
+        "require_task_card" => {
+            "Task-card/prompt request detected. Route through AGS preflight → `ags task compile --task-card-requested` → `ags gate output`; the foreground answer MUST be a canonical `## 任务卡`."
+        }
+        _ => "No task-card/prompt request detected. An ordinary prose answer is allowed.",
+    };
+
+    match format {
+        "json" => {
+            let out = serde_json::json!({
+                "gate": "prompt_request",
+                "decision": decision,
+                "block_reason": block_reason,
+                "is_task_card_request": classification.is_task_card_request,
+                "classification": serde_json::to_value(&classification)
+                    .unwrap_or(serde_json::Value::Null),
+                "preflight": {
+                    "ran": preflight_ran,
+                    "should_stop": preflight_should_stop,
+                    "status": preflight_status,
+                },
+                "next_step": next_step,
+            });
+            match serde_json::to_string_pretty(&out) {
+                Ok(s) => println!("{}", s),
+                Err(e) => {
+                    eprintln!("JSON serialization error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        _ => {
+            println!("Gate: prompt-request");
+            println!("Decision: {}", decision);
+            println!("Detected kind: {}", classification.kind.as_str());
+            println!("Task-card request: {}", classification.is_task_card_request);
+            if !classification.matched_triggers.is_empty() {
+                println!(
+                    "Matched triggers: {}",
+                    classification.matched_triggers.join(", ")
+                );
+            }
+            if preflight_ran {
+                println!(
+                    "Preflight: status={} should_stop={}",
+                    preflight_status, preflight_should_stop
+                );
+            }
+            if let Some(r) = block_reason {
+                println!("Block reason: {}", r);
+            }
+            println!("Next: {}", next_step);
+        }
+    }
+
+    if decision == "stop" {
+        std::process::exit(1);
+    }
+}
+
+/// Shared dispatch: `gate output` — frontstage output-shape gate.
+fn cmd_gate_output(path: &str, for_request: Option<&str>, format: &str) {
+    use std::io::Read;
+
+    let display_path = if path == "-" {
+        "(stdin)".to_string()
+    } else {
+        path.to_string()
+    };
+
+    let content = if path == "-" {
+        let mut buf = String::new();
+        if let Err(e) = std::io::stdin().read_to_string(&mut buf) {
+            eprintln!("{}: 读取失败 — {}", display_path, e);
+            std::process::exit(1);
+        }
+        buf
+    } else {
+        match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("{}: 读取失败 — {}", display_path, e);
+                std::process::exit(1);
+            }
+        }
+    };
+
+    // Distinguish a bad foreground shape (not even a `## 任务卡`) from a card that
+    // claims to be one but fails the canonical validator. Both are blocked; the
+    // block_reason differs so governance_miss samples are actionable.
+    let shape_ok = task_card_validator::output_is_canonical_header(&content);
+    let (decision, block_reason, stage, validation_errors): (
+        &str,
+        Option<&str>,
+        &str,
+        Vec<String>,
+    ) = if !shape_ok {
+        ("stop", Some("bad_output_shape"), "output_shape", Vec::new())
+    } else {
+        let errs = task_card_validator::validate(&content);
+        if errs.is_empty() {
+            ("allow", None, "", Vec::new())
+        } else {
+            ("stop", Some("validation_failed"), "validate", errs)
+        }
+    };
+
+    let governance_miss = block_reason.map(|reason| {
+        prompt_request_classifier::GovernanceMiss::new(reason, stage, &content, for_request)
+    });
+
+    match format {
+        "json" => {
+            let out = serde_json::json!({
+                "gate": "output",
+                "decision": decision,
+                "block_reason": block_reason,
+                "validation_errors": validation_errors,
+                "governance_miss": governance_miss
+                    .as_ref()
+                    .map(|m| serde_json::to_value(m).unwrap_or(serde_json::Value::Null)),
+            });
+            match serde_json::to_string_pretty(&out) {
+                Ok(s) => println!("{}", s),
+                Err(e) => {
+                    eprintln!("JSON serialization error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        _ => {
+            println!("Gate: output");
+            println!("Path: {}", display_path);
+            println!("Decision: {}", decision);
+            if let Some(r) = block_reason {
+                println!("Block reason: {}", r);
+            }
+            for e in &validation_errors {
+                println!("  - {}", e);
+            }
+            if let Some(m) = &governance_miss {
+                println!(
+                    "governance_miss: detected_kind={} reason={} stage={}",
+                    m.detected_kind, m.blocked_reason, m.stage
+                );
+            }
+        }
+    }
+
+    if decision == "stop" {
+        std::process::exit(1);
+    }
+}
+
 /// Dispatch: `run`
 fn cmd_run(path: &str, check_only: bool, dry_run: bool, approve_writes: bool, format: &str) {
     let _mode = if check_only {
@@ -3776,6 +4012,17 @@ fn main() {
                 format,
                 approve_writes,
             } => cmd_gate_check(&path, &format, approve_writes),
+            GateAction::PromptRequest {
+                request,
+                target,
+                no_preflight,
+                format,
+            } => cmd_gate_prompt_request(&request, &target, no_preflight, &format),
+            GateAction::Output {
+                path,
+                for_request,
+                format,
+            } => cmd_gate_output(&path, for_request.as_deref(), &format),
         },
 
         // ── M5 Capability ──

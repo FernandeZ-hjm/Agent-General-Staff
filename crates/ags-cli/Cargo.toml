@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 ags-platform = { path = "../ags-platform" }
 task-card-validator = { path = "../task-card-validator" }
+prompt-request-classifier = { path = "../prompt-request-classifier" }
 workflow-sync-check = { path = "../workflow-sync-check" }
 suite-doctor = { path = "../suite-doctor" }
 bootstrap-dry-run = { path = "../bootstrap-dry-run" }

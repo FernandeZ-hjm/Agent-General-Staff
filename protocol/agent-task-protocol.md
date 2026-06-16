@@ -56,6 +56,32 @@ Agent 收到开发相关请求时，自动执行：
 
 **三段门槛：方案 OK → 任务卡指令 → 任务分级路由。** 缺少中间的任务卡指令，不得进入路由。
 
+### 3.6. 入口意图识别与前台输出形态门禁（deterministic）
+
+任务卡请求"入口前绕过"的根因是入口意图识别依赖模型自由判断。AGS 提供确定性门禁，宿主必须使用，不得仅凭模型判断把"给我提示词"当成普通 prose：
+
+- **入口意图识别**：`ags gate prompt-request <request>`（或 MCP `ags_solution_check`
+  的 `detected_task_card_request` / `detected_triggers` 字段）对用户请求跑确定性
+  分类器（`prompt-request-classifier`）。命中"给我提示词""生成提示词""任务卡"
+  "交给 Claude Code""给 CC 执行""写个 prompt""handoff""让 Claude 做"等中英文
+  触发词时 `decision=require_task_card`，宿主必须进入任务卡生成闭环。检测只是
+  信号，不替代任务卡指令门槛——`executable_allowed` 仍要求显式任务卡指令。
+- **前台输出形态门禁**：任务卡请求命中、或最终输出包含 `Executor:` 字段时，
+  前台最终输出第一条非空行必须是 `## 任务卡`。`ags gate output <candidate>` 做
+  确定性校验：首行非 `## 任务卡` → `block_reason=bad_output_shape`；首行正确但
+  validator 不通过 → `block_reason=validation_failed`；两者都阻断（`decision=stop`，
+  退出码 1）并发出 `governance_miss` 事件。
+- **`governance_miss` 事件**：当任务卡请求即将以非 canonical 形态离开前台时，
+  `ags gate output` 在输出中发出 `governance_miss`（字段 `event`、`detected_kind`、
+  `matched_triggers`、`blocked_reason`、`stage`、`sample_redacted`）。AGS 自身不
+  落盘——由宿主决定是否持久化样本用于规则升级。AGS 写入边界不变（只读）。
+- **fail-closed 生成路径**：`gate prompt-request`（必须出卡）→ `task compile
+  --task-card-requested`（生成器，未被替换）→ `gate output`（校验 canonical，否则
+  stop + miss）。任一步失败都不得向前台输出可执行任务卡。
+
+此门禁不改变 AGS 权威边界：分类器是确定性信号源，不是新的授权层；任务级别、
+权限模式、Review gate、Verification gate 仍由协议与任务卡决定。
+
 ### 4. Routing Phase（任务分级路由）
 
 - 基于 execution contract（不是原始用户请求）进行 Light / Medium / Heavy 分级
