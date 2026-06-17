@@ -12,7 +12,7 @@
 //!     render_json, render_text, CheckStatus, Finding, HealthReport, Severity,
 //! };
 //!
-//! let mut report = HealthReport::new("Suite Doctor v2.5.1");
+//! let mut report = HealthReport::new("Suite Doctor v2.6.0");
 //! report.add(Finding::pass("cargo-fmt", "cargo fmt --check passed"));
 //! report.add(Finding::fail("cargo-test", "2 tests failed",
 //!     "Run `cargo test` for details."));
@@ -172,11 +172,11 @@ pub fn repair(target: &Path) -> RepairResult {
                     skipped.push(format!("{}: could not parse path", item.check_name));
                     continue;
                 }
+                let script_path = Path::new(path_str);
                 // Use std::fs::set_permissions to set executable bit on unix
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
-                    let script_path = Path::new(path_str);
                     if let Ok(meta) = std::fs::metadata(script_path) {
                         let mut perms = meta.permissions();
                         let mode = perms.mode();

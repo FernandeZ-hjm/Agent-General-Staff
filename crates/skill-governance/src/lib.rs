@@ -1,9 +1,8 @@
-//! AGS skill governance — inventory, proposal, and confirmed install.
+//! AGS skill governance — read-only inventory and proposal engine.
 //!
 //! Reads governance/skill-adoption-log.yaml, governance/skill-ignore-list.yaml,
-//! and manifests/suite.yaml to produce skill status reports. The install module
-//! provides real skill installation with directory structure and SKILL.md
-//! frontmatter.
+//! and manifests/suite.yaml to produce skill status reports. All operations
+//! are read-only — no adopt/apply/rollback writes are implemented.
 //!
 //! ## Operations
 //!
@@ -13,22 +12,13 @@
 //!   cross-referenced consistency (adoption log ↔ manifest ↔ ignore list).
 //! - `propose`: Dry-run proposal — show what WOULD change if a skill were
 //!   adopted/enabled/disabled. No files are modified.
-//! - `install`: Real skill installation — creates directory structure with
-//!   SKILL.md frontmatter, writes install receipt.
-
-/// Third-party skill & MCP management console (unified inventory, host
-/// visibility, confirmation-protected proposal/apply).
-pub mod console;
-pub mod install;
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-// Re-export install types for convenience
-pub use install::{
-    install_plan, install_skills, known_skills, render_install_json, render_install_text,
-    InstallMode, InstallResult, InstallStatus, SkillCategory, SkillDef,
-};
+/// Third-party skill & MCP management console (unified inventory, host
+/// visibility, confirmation-protected proposal/apply).
+pub mod console;
 
 // ── Public types ──────────────────────────────────────────────────────────
 
@@ -283,13 +273,18 @@ pub fn scan_skills(root: &Path) -> SkillScanResult {
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("active");
                             let is_active = status == "active";
+                            // Ignored skills always report as Disabled; the
+                            // active flag is read for potential future
+                            // divergence but does not currently change status.
+                            #[allow(clippy::if_same_then_else)]
+                            let skill_status = if is_active {
+                                SkillStatus::Disabled
+                            } else {
+                                SkillStatus::Disabled
+                            };
                             skills.push(SkillEntry {
                                 name: name.to_string(),
-                                status: if is_active {
-                                    SkillStatus::Disabled
-                                } else {
-                                    SkillStatus::Disabled
-                                },
+                                status: skill_status,
                                 profile: "ignored".to_string(),
                                 source: None,
                                 version: None,
@@ -417,12 +412,12 @@ pub fn check_skills(root: &Path) -> SkillCheckResult {
     if let Ok(content) = std::fs::read_to_string(&manifest_path) {
         if let Ok(manifest) = serde_yaml::from_str::<SuiteManifest>(&content) {
             if let Some(suite) = manifest.suite {
-                let mut manifest_skill_names: Vec<String> = Vec::new();
+                let mut required_skill_names: Vec<String> = Vec::new();
 
                 if let Some(required) = suite.required {
                     for entry in &required {
                         if let Some(ref name) = entry.name {
-                            manifest_skill_names.push(name.clone());
+                            required_skill_names.push(name.clone());
                             if entry.entry_ref.is_none() {
                                 issues.push(SkillIssue {
                                     severity: "warn".to_string(),
@@ -437,15 +432,9 @@ pub fn check_skills(root: &Path) -> SkillCheckResult {
                     }
                 }
 
-                if let Some(optional) = suite.optional {
-                    for entry in &optional {
-                        if let Some(ref name) = entry.name {
-                            manifest_skill_names.push(name.clone());
-                        }
-                    }
-                }
-
-                // Cross-reference: adoption log should contain all manifest skills
+                // Cross-reference: adoption log should contain required adopted
+                // skills. Optional public-edition recommendations are not
+                // adopted until a user explicitly confirms installation.
                 if let Ok(adoption_content) = std::fs::read_to_string(&adoption_path) {
                     if let Ok(adoption) = serde_yaml::from_str::<AdoptionLog>(&adoption_content) {
                         if let Some(entries) = adoption.entries {
@@ -454,7 +443,7 @@ pub fn check_skills(root: &Path) -> SkillCheckResult {
                                 .filter_map(|e| e.get("skill_name").and_then(|v| v.as_str()))
                                 .collect();
 
-                            let missing_from_adoption: Vec<&String> = manifest_skill_names
+                            let missing_from_adoption: Vec<&String> = required_skill_names
                                 .iter()
                                 .filter(|n| !adopted_names.contains(&n.as_str()))
                                 .collect();
@@ -463,10 +452,10 @@ pub fn check_skills(root: &Path) -> SkillCheckResult {
                                 name: "manifest-to-adoption-log".to_string(),
                                 passed: missing_from_adoption.is_empty(),
                                 detail: if missing_from_adoption.is_empty() {
-                                    "All manifest skills have adoption log entries".to_string()
+                                    "All required manifest skills have adoption log entries; optional recommendations may remain unadopted".to_string()
                                 } else {
                                     format!(
-                                        "{} manifest skill(s) missing from adoption log: {}",
+                                        "{} required manifest skill(s) missing from adoption log: {}",
                                         missing_from_adoption.len(),
                                         missing_from_adoption
                                             .iter()
@@ -481,7 +470,7 @@ pub fn check_skills(root: &Path) -> SkillCheckResult {
                 }
 
                 // Schema version consistency check
-                let versions = vec![
+                let versions = [
                     adoption_status.schema_version.clone(),
                     ignore_status.schema_version.clone(),
                     manifest_status.schema_version.clone(),
@@ -623,16 +612,15 @@ pub fn propose_skills(root: &Path, action: &str, skill_name: &str) -> SkillPropo
     let mut blocked_reasons: Vec<String> = Vec::new();
 
     // Check current state
-    let scan = scan_skills(&root);
+    let scan = scan_skills(root);
     let existing = scan.skills.iter().find(|s| s.name == skill_name);
 
     match action {
         "adopt" => {
-            if existing.is_some() {
+            if let Some(existing_skill) = existing {
                 proposed_changes.push(format!(
                     "Skill '{}' already exists with status: {:?}",
-                    skill_name,
-                    existing.unwrap().status
+                    skill_name, existing_skill.status
                 ));
                 blocked_reasons.push("Skill already known — no changes needed".to_string());
             } else {
@@ -899,10 +887,10 @@ pub fn render_proposal_json(result: &SkillProposalResult) -> String {
 // ── Skill asset inventory ───────────────────────────────────────────────────
 //
 // On-disk inventory of skill assets under `global-skills/` and `skill-packs/`.
-// Distinct from `scan_skills` (which reads the suite manifest): the inventory
+// Distinct from `scan_skills` (which reads the suite *manifest*): the inventory
 // walks the actual skill directories and reads each `SKILL.md` front-matter.
-// It is strictly read-only over `SKILL.md` files and never reads `.env`,
-// credentials, caches, or runtime state.
+// It is strictly read-only over `SKILL.md` files — it never reads `.env`,
+// tokens, credentials, caches, or runtime state.
 
 /// A single skill discovered on disk.
 #[derive(Debug, Clone, Serialize)]
@@ -1054,6 +1042,8 @@ fn inventory_entry(category: &str, skill_dir: &Path) -> SkillInventoryEntry {
         }
     }
 
+    // public_allowed guess: personal skills are never public; others are
+    // public-safe candidates only when no risk hints were detected.
     let public_allowed_guess = category != "personal" && risk_hints.is_empty();
 
     SkillInventoryEntry {
@@ -1201,7 +1191,7 @@ pub fn render_inventory_markdown(result: &SkillInventoryResult) -> String {
     out.push("|---|---|---|---|---|---|".to_string());
     for e in &result.entries {
         let risk = if e.risk_hints.is_empty() {
-            "-".to_string()
+            "—".to_string()
         } else {
             e.risk_hints.join(", ")
         };
@@ -1238,33 +1228,30 @@ mod tests {
 
     #[test]
     fn test_scan_public_manifest() {
-        // Scan the public suite manifest.
+        // Public edition ships optional skill recommendations only. It must not
+        // bundle private migrated or personal skill metadata.
         let root = repo_root();
         let result = scan_skills(&root);
         assert_eq!(result.schema_version, SCHEMA_VERSION);
-        // Public suite starts with 0 required skills — no third-party skills by default
-        assert_eq!(
-            result.summary.available, 0,
-            "public suite should start with 0 required skills"
-        );
-        // Optional skills may be present in the recommendations manifest
-        assert!(!result.suite_name.is_empty());
+        assert_eq!(result.summary.available, 0);
+        assert_eq!(result.summary.optional, 9);
+        assert_eq!(result.summary.personal, 0);
+        assert_eq!(result.summary.disabled, 0);
     }
 
     #[test]
-    fn test_scan_no_personal_skills_leak() {
-        // Personal skills must NOT appear in public edition scan results.
+    fn test_public_manifest_has_no_personal_skill_metadata() {
         let root = repo_root();
         let result = scan_skills(&root);
-        let personal_count = result
+        assert!(!result
             .skills
             .iter()
-            .filter(|s| s.status == SkillStatus::Personal)
-            .count();
-        assert_eq!(
-            personal_count, 0,
-            "public edition must not ship personal skills"
-        );
+            .any(|s| matches!(s.status, SkillStatus::Personal)));
+        assert!(!result.skills.iter().any(|s| s
+            .source
+            .as_deref()
+            .unwrap_or("")
+            .contains("skill-packs/")));
     }
 
     #[test]
@@ -1298,6 +1285,65 @@ mod tests {
         let result = propose_skills(&root, "unknown-action", "test-skill");
         assert!(result.target_skills.is_empty());
         assert!(!result.blocked_reasons.is_empty());
+    }
+
+    #[test]
+    fn test_inventory_on_fixture() {
+        // Temporary skill tree so the test is independent of the repo's actual
+        // skill directories (the public edition ships none).
+        let base = std::env::temp_dir().join(format!("ags-skill-inv-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let gs = base.join("global-skills/demo-skill");
+        std::fs::create_dir_all(&gs).unwrap();
+        std::fs::write(
+            gs.join("SKILL.md"),
+            "---\nname: demo-skill\ndescription: A demo skill.\n---\nbody\n",
+        )
+        .unwrap();
+        let personal = base.join("skill-packs/personal/secret-skill");
+        std::fs::create_dir_all(&personal).unwrap();
+        std::fs::write(
+            personal.join("SKILL.md"),
+            "---\nname: secret-skill\ndescription: manages an API token secret.\n---\n",
+        )
+        .unwrap();
+
+        let result = scan_skill_inventory(&base);
+        let _ = std::fs::remove_dir_all(&base);
+
+        assert_eq!(result.summary.total, 2);
+        assert_eq!(result.summary.global, 1);
+        assert_eq!(result.summary.personal, 1);
+
+        let demo = result
+            .entries
+            .iter()
+            .find(|e| e.name == "demo-skill")
+            .expect("demo-skill discovered via front-matter name");
+        assert!(demo.has_skill_md && demo.description_present);
+        assert!(demo.public_allowed_guess); // global, no risk hints
+
+        let secret = result
+            .entries
+            .iter()
+            .find(|e| e.name == "secret-skill")
+            .expect("secret-skill discovered");
+        assert!(!secret.public_allowed_guess); // personal + risk hints
+        assert!(!secret.risk_hints.is_empty());
+    }
+
+    #[test]
+    fn test_inventory_empty_tree_renders() {
+        // No skill dirs (mirrors the public edition) → total 0, still renders.
+        let base = std::env::temp_dir().join(format!("ags-skill-inv-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let result = scan_skill_inventory(&base);
+        let _ = std::fs::remove_dir_all(&base);
+        assert_eq!(result.summary.total, 0);
+        assert!(render_inventory_text(&result).contains("Skill Asset Inventory"));
+        assert!(render_inventory_markdown(&result).contains("# Skill Asset Inventory"));
+        assert!(render_inventory_json(&result).contains("\"total\": 0"));
     }
 
     #[test]

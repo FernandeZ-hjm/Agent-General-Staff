@@ -100,6 +100,26 @@ permission mode, review gate, and delegation rules.
 7. Select only the skill tags that directly apply.
 8. Define the narrowest meaningful verification command before editing.
 
+## Value Route (效价比路由)
+
+Before routing, AGS surfaces a Value Route recommendation — the minimal
+execution-path *form* that still covers the risk. This is the structured form of
+"choose the smallest workflow that still captures the risk" above. It is advisory
+and deterministic, and it shapes path form only: it does NOT replace or change the
+Light / Medium / Heavy level, permission mode, Review gate, or Verification gate.
+The canonical definition (path forms, exposed fields, evidence format) lives in
+`protocol/agent-task-protocol.md` §3.9.
+
+Path forms: `read-only-advisory`, `direct-edit`, `plan-first`,
+`claude-code-route`, `stop-for-scope`. Pick the lightest form that still covers
+the risk, and record why a lighter form would under-cover and a heavier form
+would over-spend.
+
+AGS exposes the recommendation in `ags_solution_check` (MCP) and `ags gate
+prompt-request` (CLI) as a `value_route` block. The planner owns the final path
+and records it as evidence; Light / Medium / Heavy routing then proceeds
+independently — Value Route is not a fourth task level.
+
 ## Task Card Compiler v2
 
 The compiler turns a confirmed execution contract into the fixed task-card

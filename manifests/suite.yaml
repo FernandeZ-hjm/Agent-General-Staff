@@ -16,9 +16,9 @@
 schema_version: "2.0-skill"
 suite:
   name: "agent-general-staff"
-  version: "2.5.1-public"
+  version: "2.6.0-public"
   description: >
-    Agent General Staff 2.5.1 public edition — Rust-native governance
+    Agent General Staff 2.6.0 public edition — Rust-native governance
     kernel and CLI for multi-agent engineering workflows. All core governance
     capabilities included. Optional third-party development skills available
     for confirmed install only.

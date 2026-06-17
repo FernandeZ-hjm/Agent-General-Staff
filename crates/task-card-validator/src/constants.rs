@@ -48,12 +48,12 @@ pub(crate) fn expected_adapter(executor: &str) -> Option<&'static str> {
 
 /// Full absolute paths that indicate protected assets.
 /// Matched with trailing-boundary check to avoid prefix confusion
-/// (e.g. `my-protected-suite` does NOT match
-/// `my-protected-suite-rust`).
+/// (e.g. `example-private-suite` does NOT match
+/// `example-private-suite-rust`).
 pub(crate) const PROTECTED_PATHS: &[&str] = &[
-    "/Volumes/Projects/my-protected-suite",
-    "/Volumes/Projects/my-stable-suite",
-    "/Users/user/.agents/memory/projects/my-project/context-capsule.md",
+    "/Volumes/Projects/example-private-suite",
+    "/Volumes/Projects/example-stable-suite",
+    "~/.agents/memory/projects/example-private-suite/context-capsule.md",
 ];
 
 /// Standalone boundary terms that identify protected assets.
@@ -61,8 +61,8 @@ pub(crate) const PROTECTED_PATHS: &[&str] = &[
 /// `hook` don't match `hooks` (which has its own entry) or `shook`.
 pub(crate) const PROTECTED_BOUNDARY_TERMS: &[&str] = &[
     // Short-form repo names (without /Volumes/AI Project/ prefix)
-    "my-protected-suite",
-    "my-stable-suite",
+    "example-private-suite",
+    "example-stable-suite",
     // Governance files
     "AGENTS.md",
     "CLAUDE.md",

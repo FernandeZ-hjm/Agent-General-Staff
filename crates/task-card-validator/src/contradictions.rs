@@ -471,8 +471,8 @@ pub(crate) fn check_contradictions(fields: &HashMap<String, String>, errors: &mu
         || non_goal.contains("不触碰 stable")
         || non_goal.contains("不修改 private")
         || non_goal.contains("不修改 stable")
-        || non_goal.contains("不修改 /Volumes/Projects/my-protected-suite")
-        || non_goal.contains("不修改 /Volumes/Projects/my-stable-suite");
+        || non_goal.contains("不修改 /Volumes/Projects/example-private-suite")
+        || non_goal.contains("不修改 /Volumes/Projects/example-stable-suite");
 
     if claims_no_touch {
         let action = action_context(fields);

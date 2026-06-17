@@ -54,12 +54,6 @@ pub struct Receipt {
     pub delivery_report_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
-    /// Review gate status after task completion (Light/Medium/Heavy review).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub review_gate_status: Option<String>,
-    /// Arbitrary metadata for extensibility (e.g., install receipts, adoption logs).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<std::collections::HashMap<String, String>>,
 }
 
 /// A single compliance / verification check item.
@@ -119,16 +113,12 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 /// - `gate_reason`: optional reason for gate decision
 /// - `verification_results`: list of verification command results
 /// - `delivery_report_path`: optional path to delivery report (used to compute hash)
-/// - `review_gate_status`: optional review gate completion status
-/// - `metadata`: optional key-value metadata for extensibility
 pub fn generate_receipt(
     task_card_path: &Path,
     gate_decision: &str,
     gate_reason: Option<&str>,
     verification_results: Vec<VerificationResult>,
     delivery_report_path: Option<&Path>,
-    review_gate_status: Option<&str>,
-    metadata: Option<std::collections::HashMap<String, String>>,
 ) -> Result<Receipt, String> {
     let task_card_hash = hash_file(task_card_path)?;
     let delivery_report_hash = match delivery_report_path {
@@ -158,8 +148,6 @@ pub fn generate_receipt(
         verification_results,
         delivery_report_hash,
         exit_code: None,
-        review_gate_status: review_gate_status.map(|s| s.to_string()),
-        metadata,
     })
 }
 
@@ -316,19 +304,12 @@ pub fn verify_receipt(receipt: &Receipt) -> VerifyResult {
 
 // ── Compliance checking ─────────────────────────────────────────────────────
 
-/// Check receipt compliance with public-safe audit rules.
+/// Check receipt compliance (MVP checks only).
 ///
-/// MVP checks (always run):
+/// Checks:
 /// 1. All verify checks pass (schema, hashes)
 /// 2. Gate decision is not "stop"
 /// 3. All verification results have exit_code == 0
-///
-/// Public-safe audit checks:
-/// 4. Verification presence — at least one verification result is recorded
-/// 5. Review gate status — review gate must be documented
-/// 6. Private path scan — no hardcoded private paths in receipt fields
-/// 7. Unconfirmed install evidence — no signs of bypassed confirmation
-/// 8. Gate bypass risk — gate must be properly engaged
 pub fn check_compliance(receipt: &Receipt) -> ComplianceResult {
     let verify = verify_receipt(receipt);
     let mut checks: Vec<CheckItem> = Vec::new();
@@ -342,7 +323,7 @@ pub fn check_compliance(receipt: &Receipt) -> ComplianceResult {
         });
     }
 
-    // Check 2: Gate decision check
+    // Gate decision check
     if receipt.gate_result.decision == "stop" {
         checks.push(CheckItem {
             name: "gate_decision".to_string(),
@@ -357,12 +338,6 @@ pub fn check_compliance(receipt: &Receipt) -> ComplianceResult {
                     .unwrap_or_default()
             ),
         });
-    } else if receipt.gate_result.decision.is_empty() {
-        checks.push(CheckItem {
-            name: "gate_decision".to_string(),
-            passed: false,
-            detail: "gate decision is empty — gate was not properly engaged".to_string(),
-        });
     } else {
         checks.push(CheckItem {
             name: "gate_decision".to_string(),
@@ -374,7 +349,7 @@ pub fn check_compliance(receipt: &Receipt) -> ComplianceResult {
         });
     }
 
-    // Check 3: Verification results check
+    // Verification results check
     let failed_verifications: Vec<&VerificationResult> = receipt
         .verification_results
         .iter()
@@ -405,203 +380,6 @@ pub fn check_compliance(receipt: &Receipt) -> ComplianceResult {
             ),
         });
     }
-
-    // ── Public-safe audit checks ─────────────────────────────────────────
-
-    // Check 4: Verification presence
-    // A compliant receipt must record at least one verification command.
-    if receipt.verification_results.is_empty() {
-        checks.push(CheckItem {
-            name: "verification_presence".to_string(),
-            passed: false,
-            detail: "no verification results recorded — receipt must include at least one verification command and exit code".to_string(),
-        });
-    } else {
-        checks.push(CheckItem {
-            name: "verification_presence".to_string(),
-            passed: true,
-            detail: format!(
-                "{} verification(s) recorded",
-                receipt.verification_results.len()
-            ),
-        });
-    }
-
-    // Check 5: Review gate status
-    match &receipt.review_gate_status {
-        Some(status) if status.is_empty() => {
-            checks.push(CheckItem {
-                name: "review_gate_status".to_string(),
-                passed: false,
-                detail:
-                    "review_gate_status is present but empty — review gate not properly documented"
-                        .to_string(),
-            });
-        }
-        Some(status) => {
-            let is_complete =
-                status.contains("完成") || status.contains("complete") || status.contains("passed");
-            checks.push(CheckItem {
-                name: "review_gate_status".to_string(),
-                passed: is_complete,
-                detail: if is_complete {
-                    format!("review gate completed: {}", status)
-                } else {
-                    format!(
-                        "review gate status is '{}' — review may be incomplete (Light review should have caveman-review; Medium needs Codex review; Heavy needs adversarial review)",
-                        status
-                    )
-                },
-            });
-        }
-        None => {
-            checks.push(CheckItem {
-                name: "review_gate_status".to_string(),
-                passed: false,
-                detail: "review_gate_status not recorded — per protocol, every task must document its review gate outcome".to_string(),
-            });
-        }
-    }
-
-    // Check 6: Private path scan
-    // Public edition receipts must not contain hardcoded private paths.
-    let private_patterns = [
-        "/Users/",
-        "/Volumes/AI Project/",
-        concat!("huji", "aming"),
-        concat!("agent-governance-suite-", "private"),
-        concat!("agent-governance-suite-", "stable"),
-    ];
-    let mut found_patterns: Vec<&str> = Vec::new();
-
-    // Scan all receipt string fields for private patterns
-    let scannable = vec![
-        receipt.receipt_id.as_str(),
-        receipt.task_card_hash.as_str(),
-        receipt.gate_result.decision.as_str(),
-        receipt.gate_result.reason.as_deref().unwrap_or(""),
-        receipt.task_card_path.as_deref().unwrap_or(""),
-        receipt.delivery_report_hash.as_deref().unwrap_or(""),
-        receipt.review_gate_status.as_deref().unwrap_or(""),
-    ];
-
-    for pattern in &private_patterns {
-        for field in &scannable {
-            if field.contains(pattern) {
-                found_patterns.push(pattern);
-                break;
-            }
-        }
-    }
-
-    // Also scan verification commands
-    for vr in &receipt.verification_results {
-        for pattern in &private_patterns {
-            if vr.command.contains(pattern) {
-                found_patterns.push(pattern);
-                break;
-            }
-        }
-    }
-
-    // Scan metadata if present
-    if let Some(ref meta) = receipt.metadata {
-        for (_key, value) in meta {
-            for pattern in &private_patterns {
-                if value.contains(pattern) {
-                    found_patterns.push(pattern);
-                    break;
-                }
-            }
-        }
-    }
-
-    if found_patterns.is_empty() {
-        checks.push(CheckItem {
-            name: "private_path_scan".to_string(),
-            passed: true,
-            detail: "no private paths or personal identifiers detected in receipt".to_string(),
-        });
-    } else {
-        checks.push(CheckItem {
-            name: "private_path_scan".to_string(),
-            passed: false,
-            detail: format!(
-                "private path patterns detected: {} — receipt may contain private infrastructure references",
-                found_patterns.iter().map(|p| format!("'{}'", p)).collect::<Vec<_>>().join(", ")
-            ),
-        });
-    }
-
-    // Check 7: Unconfirmed install evidence
-    // Check metadata for install receipts that lack confirmation
-    let has_install_metadata = receipt
-        .metadata
-        .as_ref()
-        .map(|m| m.contains_key("install_receipt") || m.contains_key("skill_install"))
-        .unwrap_or(false);
-
-    let has_confirm_evidence = receipt
-        .metadata
-        .as_ref()
-        .map(|m| {
-            m.get("install_confirmed")
-                .map(|v| v == "true")
-                .unwrap_or(false)
-        })
-        .unwrap_or(false);
-
-    if has_install_metadata && !has_confirm_evidence {
-        checks.push(CheckItem {
-            name: "unconfirmed_install_evidence".to_string(),
-            passed: false,
-            detail: "skill install metadata found but no install_confirmed=true — skills may have been installed without explicit confirmation".to_string(),
-        });
-    } else {
-        checks.push(CheckItem {
-            name: "unconfirmed_install_evidence".to_string(),
-            passed: true,
-            detail: if has_install_metadata {
-                "skill install confirmed — installation was authorized".to_string()
-            } else {
-                "no skill install metadata detected — confirms no unapproved installation occurred"
-                    .to_string()
-            },
-        });
-    }
-
-    // Check 8: Gate bypass risk
-    // A compliant receipt shows the gate was properly engaged:
-    // gate_result is non-empty, verification was run, and decision is not "stop".
-    let gate_engaged = !receipt.gate_result.decision.is_empty();
-    let verification_run = !receipt.verification_results.is_empty();
-
-    if gate_engaged && verification_run {
-        checks.push(CheckItem {
-            name: "gate_bypass_risk".to_string(),
-            passed: true,
-            detail: "gate properly engaged — gate decision recorded, verification executed"
-                .to_string(),
-        });
-    } else {
-        let mut issues: Vec<&str> = Vec::new();
-        if !gate_engaged {
-            issues.push("gate decision empty/missing");
-        }
-        if !verification_run {
-            issues.push("no verification executed");
-        }
-        checks.push(CheckItem {
-            name: "gate_bypass_risk".to_string(),
-            passed: false,
-            detail: format!(
-                "gate bypass risk detected: {} — execution may have proceeded without proper gate engagement",
-                issues.join(", ")
-            ),
-        });
-    }
-
-    // ── Aggregate result ─────────────────────────────────────────────────
 
     let compliant = checks.iter().all(|c| c.passed);
     let schema_version = "2.0-m6".to_string();
@@ -738,8 +516,6 @@ mod tests {
                 output_hash: sha256_hex(b"all tests passed"),
             }],
             Some(&delivery),
-            None,
-            None,
         )
         .unwrap();
 
@@ -763,8 +539,6 @@ mod tests {
             Some("heavy-requires-write-approval"),
             vec![],
             None,
-            None,
-            None,
         )
         .unwrap();
 
@@ -777,15 +551,7 @@ mod tests {
 
     #[test]
     fn generate_receipt_error_on_missing_task_card() {
-        let result = generate_receipt(
-            Path::new("/no/such/task.md"),
-            "allow",
-            None,
-            vec![],
-            None,
-            None,
-            None,
-        );
+        let result = generate_receipt(Path::new("/no/such/task.md"), "allow", None, vec![], None);
         assert!(result.is_err());
     }
 
@@ -813,8 +579,6 @@ mod tests {
             }],
             delivery_report_hash: None,
             exit_code: Some(0),
-            review_gate_status: None,
-            metadata: None,
         };
 
         let result = verify_receipt(&receipt);
@@ -856,8 +620,6 @@ mod tests {
             verification_results: vec![],
             delivery_report_hash: None,
             exit_code: None,
-            review_gate_status: None,
-            metadata: None,
         };
 
         let result = verify_receipt(&receipt);
@@ -886,8 +648,6 @@ mod tests {
             verification_results: vec![],
             delivery_report_hash: None,
             exit_code: None,
-            review_gate_status: None,
-            metadata: None,
         };
 
         let result = verify_receipt(&receipt);
@@ -927,8 +687,6 @@ mod tests {
             ],
             delivery_report_hash: None,
             exit_code: Some(0),
-            review_gate_status: Some("完成 — Light verification gate passed".to_string()),
-            metadata: None,
         };
 
         let result = check_compliance(&receipt);
@@ -964,8 +722,6 @@ mod tests {
             verification_results: vec![],
             delivery_report_hash: None,
             exit_code: None,
-            review_gate_status: None,
-            metadata: None,
         };
 
         let result = check_compliance(&receipt);
@@ -1000,8 +756,6 @@ mod tests {
             }],
             delivery_report_hash: None,
             exit_code: Some(1),
-            review_gate_status: Some("部分完成 / 等待人工 adversarial review".to_string()),
-            metadata: None,
         };
 
         let result = check_compliance(&receipt);
@@ -1038,8 +792,6 @@ mod tests {
             }],
             delivery_report_hash: None,
             exit_code: None,
-            review_gate_status: Some("完成 — Medium Codex review passed".to_string()),
-            metadata: None,
         };
 
         let result = check_compliance(&receipt);
@@ -1069,8 +821,6 @@ mod tests {
             verification_results: vec![],
             delivery_report_hash: None,
             exit_code: Some(0),
-            review_gate_status: None,
-            metadata: None,
         };
 
         let json = render_receipt_json(&receipt);

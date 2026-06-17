@@ -1,12 +1,51 @@
-# Agent General Staff 2.0 Public Edition
+# Agent General Staff Public Edition Release Notes
 
-Agent General Staff (AGS) 2.0 is the first public edition of the Rust-native
-AGS governance kernel and CLI.
+Agent General Staff (AGS) is the public Rust-native AGS governance kernel and
+CLI.
 
-This release turns AGS from a protocol-and-script kit into a full public
-governance runtime for multi-agent engineering work. It ships the `ags` CLI,
-canonical task-card protocols, execution-policy checks, release-boundary
-verification, memory-capsule templates, and public skill-governance workflows.
+The 2.0 release turned AGS from a protocol-and-script kit into a full public
+governance runtime for multi-agent engineering work. Current releases continue
+to ship the `ags` CLI, canonical task-card protocols, execution-policy checks,
+release-boundary verification, memory-capsule templates, and public
+skill-governance workflows.
+
+## Release 2.6.0
+
+AGS 2.6.0 is the quiet-governance public release. It keeps the public-full
+sanitized boundary while bringing the public runtime up to the 2.6 protocol
+surface:
+
+- Advisory-intent no-mutation gate: consultation requests such as "是否需要",
+  "你觉得", or "should we" are classified as advisory and block mutation until
+  explicit execution authorization is present.
+- Quiet foreground status: MCP responses expose `visible_status` summaries while
+  retaining full traceable evidence in the structured report.
+- Value Route: `ags_solution_check` and `ags gate prompt-request` expose an
+  advisory `value_route` block that recommends the lightest execution-path form
+  that still covers the risk.
+- Tencent Agent host recognition: WorkBuddy and CodeBuddy-Code are recognized as
+  Tencent Agent host clients with governed-host preflight behavior.
+- Verification routing: `ags verify lane` and the shell lane-decision helper
+  classify diffs into minimal, standard, full, and release verification profiles.
+- Public boundary retained: EvoMap/GEP runtime assets, backing EvoMap resources,
+  local memory, build output, and machine-local overlays remain excluded from
+  the public-full payload.
+
+## Release 2.5.1
+
+AGS 2.5.1 is the local-overlay maintenance release. It keeps the 2.5 public
+surface while making project onboarding safer for repositories that should not
+commit AGS-managed local entry files:
+
+- `ags init` defaults to a local overlay that writes AGS-managed files to
+  `.git/info/exclude` through an idempotent managed block.
+- `--mode shared|tracked` remains available when a project intentionally wants
+  committed AGS entry files.
+- `--migrate-tracked-overlay` safely untracks previously committed AGS-owned
+  overlay files with `git rm --cached`, without deleting the working copy.
+- Task-card template sources are collapsed to the single canonical
+  `protocol/task-card-template.md`; per-level fallback templates are removed
+  and compact task cards are rejected.
 
 ## Release 2.5.0
 
@@ -105,6 +144,6 @@ ags verify --scope release
 
 ## License And Attribution
 
-AGS 2.0 Public Edition is distributed under the MIT License.
+AGS Public Edition is distributed under the MIT License.
 Superpowers-related workflow inspiration and optional skill references are
 attributed separately in THIRD_PARTY_NOTICES.md.

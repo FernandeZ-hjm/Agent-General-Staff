@@ -11,6 +11,6 @@ serde_json = "1"
 ags-platform = { path = "../ags-platform" }
 
 [dev-dependencies]
-# Test-only: assert compiled cards pass the real validator. No runtime
-# dependency edge is introduced.
+# Test-only: assert compiled cards pass the REAL validator (not just the
+# compiler's heuristic self-check). No runtime dependency edge is introduced.
 task-card-validator = { path = "../task-card-validator" }

@@ -60,7 +60,7 @@ pub fn list_resources() -> ResourceListResult {
             // EvoMap boundary resources (ags://evolver-boundary,
             // ags://protocol/evolution-memory) are not served in the public
             // edition: their backing files are EvoMap-capability boundary specs
-            // that the stable release gate forbids from the public payload.
+            // that the release gate forbids from the public payload.
         ],
     }
 }
@@ -136,7 +136,7 @@ fn read_protocol_file(rel_path: &str, _display_name: &str) -> Result<ResourceRea
         }
     };
 
-    let uri = format!("ags://{}", rel_path.replace("protocol/", "protocol/"));
+    let uri = format!("ags://{}", rel_path);
     Ok(ResourceReadResult {
         contents: vec![ResourceContent {
             uri,

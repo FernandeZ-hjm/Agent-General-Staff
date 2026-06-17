@@ -1,4 +1,4 @@
-# Supply-chain policy for the Agent General Staff (cargo-deny).
+# Supply-chain policy for the Agent Governance Suite (cargo-deny).
 #
 # First-landing posture: runnable and able to surface real problems
 # (security advisories, disallowed licenses, untrusted sources) without

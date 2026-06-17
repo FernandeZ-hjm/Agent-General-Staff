@@ -3,6 +3,6 @@ name = "task-card-validator"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Agent General Staff task card validator"
+description = "Agent Governance Suite task card validator"
 
 [dependencies]

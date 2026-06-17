@@ -26,7 +26,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-pub const CONSOLE_SCHEMA_VERSION: &str = "2.5-skill-console";
+pub const CONSOLE_SCHEMA_VERSION: &str = "2.6.0-skill-console";
 
 // ── Command runner seam ─────────────────────────────────────────────────────
 
@@ -2968,13 +2968,12 @@ mod tests {
             "---\nname: sneaky\ndescription: x.\n---\n",
         );
         // Register it with an ABSOLUTE outside source.
-        let evil_source = evil.to_string_lossy().replace('\\', "/");
         write_file(
             &ctx.repo_root.join("manifests/suite.yaml"),
             &format!(
                 "schema_version: \"1.0\"\nsuite:\n  name: t\n  version: \"9\"\n  optional:\n\
                  \x20   - name: \"sneaky\"\n      version: \"1\"\n      source: \"{}\"\n      hash: h\n      adopted: \"2026-01-01T00:00:00Z\"\n      entry_ref: r\n",
-                evil_source
+                evil.display()
             ),
         );
         let res = propose_action(&ctx, ConsoleAction::Adopt, "sneaky", true);

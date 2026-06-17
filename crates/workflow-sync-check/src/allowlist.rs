@@ -71,6 +71,7 @@ pub fn default_public_allowlist() -> Allowlist {
             public_rewritten_doc("Cargo.lock"),
             public_rewritten_doc("protocol/2.0-baseline.md"),
             public_rewritten_doc("protocol/2.0-roadmap.md"),
+            public_rewritten_doc("protocol/mcp-server.md"),
             public_rewritten_doc("protocol/context-memory.md"),
             public_rewritten_doc("protocol/project-profile.md"),
             public_rewritten_doc("protocol/skill-governance.md"),
@@ -153,6 +154,7 @@ pub fn default_public_allowlist() -> Allowlist {
                     "Agent Task Protocol > Skill Governance 治理".to_string(),
                 ],
                 allowed_content_drift_sections: vec![
+                    "Agent Task Protocol".to_string(),
                     "Agent Task Protocol > Executor 入口规则".to_string(),
                     "Agent Task Protocol > Review Gate 规则".to_string(),
                     "Agent Task Protocol > Runtime Hook Policy".to_string(),
@@ -371,7 +373,7 @@ mod tests {
         assert!(is_allowed(
             &al,
             "CLAUDE.md",
-            &["Agent General Staff 2.0 — Public Edition".to_string()],
+            &["Agent Governance Suite 2.0 — Public Edition".to_string()],
             &DriftKind::ExtraSection
         ));
         assert!(is_allowed(

@@ -1,6 +1,6 @@
 # Skill Governance Protocol
 
-Agent General Staff 技能治理总协议。定义本地 Agent 技能的 source of truth、候选来源层级、
+Agent Governance Suite 技能治理总协议。定义本地 Agent 技能的 source of truth、候选来源层级、
 治理生命周期和写入规则。本文件是技能同步、adoption log、ignore list 和 suite manifest 的
 协议权威源。
 

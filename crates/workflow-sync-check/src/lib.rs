@@ -40,6 +40,12 @@ pub use types::{
     ProjectKind, SectionPath, Severity, TargetConfig,
 };
 
+/// Default stable suite root (used by CLI as default target).
+pub const DEFAULT_STABLE_ROOT: &str = "/Volumes/Projects/example-stable-suite";
+
+/// Default public-full sanitized suite root.
+pub const DEFAULT_PUBLIC_ROOT: &str = "/Volumes/AI Project/ai-dev-env-bootstrap";
+
 // ── Public API ─────────────────────────────────────────────────────────
 
 /// Run drift detection across multiple targets.

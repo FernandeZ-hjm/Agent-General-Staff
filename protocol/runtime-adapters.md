@@ -40,6 +40,27 @@ task-card instruction, and the task card is compiled do the runtime adapter
 fields take effect. The runner, resolver, and gate operate on the task card —
 they do not govern how Codex / Cursor reach the solution.
 
+**Value Route is not a runtime adapter field.** The Value Route recommendation
+(`read-only-advisory` / `direct-edit` / `plan-first` / `claude-code-route` /
+`stop-for-scope`; see `protocol/agent-task-protocol.md` §3.9) is an advisory
+solution-phase signal about the execution-path *form*. It is distinct from
+`Runtime adapter`, `Permission mode`, and `Execution surface`, and it never sets
+or changes them. WorkBuddy and CodeBuddy-Code are Tencent Agent host clients;
+like any host other than `codex` / `claude-code` / `cursor` they map to
+`Runtime adapter: generic` (M9 caps permission at `plan-only` without explicit
+approval). Value Route does not change that mapping.
+
+Two distinct layers must not be conflated. The `default_permission_mode` reported
+by `ags agent instructions` / `ags session preflight` (e.g. `edit-with-confirmation`
+for governed and generic hosts) is the host's **interactive discovery baseline** —
+descriptive metadata surfaced during preflight, not an enforced write gate (AGS
+MCP is read-only and stateless). The **enforced** write gate is the
+execution-policy resolver acting on a task card's `Runtime adapter` field: M9 caps
+`generic` at `plan-only` without explicit approval. A Tencent Agent client
+(WorkBuddy / CodeBuddy-Code) carried as a generic host therefore still has its
+actual task-card writes gated at `plan-only` by M9, regardless of the discovery
+baseline shown in agent instructions.
+
 **Task-card request gate**: Between "solution OK" and routing/task card generation
 there is a hard gate. `ags task compile` requires `--task-card-requested` before
 it will output an executable task card. Without this flag, `executable_allowed`

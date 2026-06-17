@@ -135,9 +135,9 @@ Third-party skills can be recommended, never installed for you by default. `ags 
 
 Let experience escape the chat log and become a project asset. After each task, AGS saves task snapshots, key decisions, verification results, and context summaries. A later agent reads the project profile and task memory before continuing, instead of re-explaining the requirement from scratch. The larger the project, the longer the task chain, the more agents involved — the more this matters.
 
-### Supply-Chain Gate (2.5)
+### Self-Check And Release Gate (2.6)
 
-The repository ships a `deny.toml` (RustSec advisories + MIT/Apache-2.0/Unicode-3.0 license allowlist + crates.io-only sources), wired into CI and `scripts/verify.sh` with a fail-closed policy. Dependencies pass security review before entering the project.
+The repository ships a `deny.toml` (RustSec advisories + MIT/Apache-2.0/Unicode-3.0 license allowlist + crates.io-only sources), wired into CI and `scripts/verify.sh` with a fail-closed policy. In 2.6, verification moves closer to the change itself: `ags verify lane` and the lane-decision helper classify diffs into minimal / standard / full / release paths, while release verification keeps the public-full boundary free of private runtime files, machine-local paths, and build output.
 
 ## How It Works
 
@@ -277,7 +277,7 @@ Think of it as fitting a budget model with an arc reactor: a small core that let
 
 ## Cross-Platform Support
 
-AGS 2.5 is verified on `ubuntu-latest`, `macos-latest`, and `windows-latest` in CI.
+AGS 2.6 continues to be verified on `ubuntu-latest`, `macos-latest`, and `windows-latest` in CI.
 
 - The **Rust core** builds, tests, and runs across all three platforms. The `ags-platform` crate handles home-directory resolution and PATH lookups uniformly (Windows uses `USERPROFILE` + `PATHEXT`; no dependency on Unix `$HOME` or external `which`).
 - **Bash scripts** (`scripts/*.sh`) target Linux / macOS / WSL / Git Bash and are not promised to run natively under Windows PowerShell or cmd.

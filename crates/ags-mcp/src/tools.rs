@@ -67,8 +67,8 @@ pub fn list_tools() -> ToolListResult {
                     "properties": {
                         "agent": {
                             "type": "string",
-                            "description": "Agent identifier. Known examples: codex, claude-code, cursor, workbuddy, cowork. Unknown non-empty identifiers use the generic governed-host profile.",
-                            "enum": ["codex", "claude-code", "cursor", "workbuddy", "generic"]
+                            "description": "Agent identifier. Known examples: codex, claude-code, cursor, tencent-agent, workbuddy, codebuddy-code, cowork. WorkBuddy and CodeBuddy-Code are Tencent Agent host clients. Unknown non-empty identifiers use the generic governed-host profile.",
+                            "enum": ["codex", "claude-code", "cursor", "tencent-agent", "workbuddy", "codebuddy-code", "generic"]
                         },
                         "target": {
                             "type": "string",
@@ -93,14 +93,14 @@ pub fn list_tools() -> ToolListResult {
             ),
             tool_def(
                 TOOL_AGENT_INSTRUCTIONS,
-                "Export agent-specific project instructions. For Codex/Claude Code/Cursor, returns project-tailored instructions including required reads, stop conditions, and verification commands. For WorkBuddy, returns AGS global kernel instructions: all development, debugging, review, commit, and task-card work must go through the AGS lifecycle first.",
+                "Export agent-specific project instructions. For Codex/Claude Code/Cursor, returns project-tailored instructions including required reads, stop conditions, and verification commands. For Tencent Agent hosts (WorkBuddy, CodeBuddy-Code), returns AGS global kernel instructions: all development, debugging, review, commit, and task-card work must go through the AGS lifecycle first.",
                 serde_json::json!({
                     "type": "object",
                     "properties": {
                         "agent": {
                             "type": "string",
-                            "description": "Agent identifier. Known examples: codex, claude-code, cursor, workbuddy, cowork. Unknown non-empty identifiers use the generic governed-host profile.",
-                            "enum": ["codex", "claude-code", "cursor", "workbuddy", "generic"]
+                            "description": "Agent identifier. Known examples: codex, claude-code, cursor, tencent-agent, workbuddy, codebuddy-code, cowork. WorkBuddy and CodeBuddy-Code are Tencent Agent host clients. Unknown non-empty identifiers use the generic governed-host profile.",
+                            "enum": ["codex", "claude-code", "cursor", "tencent-agent", "workbuddy", "codebuddy-code", "generic"]
                         },
                         "target": {
                             "type": "string",
@@ -140,7 +140,7 @@ pub fn list_tools() -> ToolListResult {
             ),
             tool_def(
                 TOOL_VERIFY_LOCAL,
-                "Run AGS local-scope verification checks for a repository. Includes cargo fmt, cargo test, cargo build, fixture validation, YAML checks, and session preflight. Returns structured CheckItem results with pass/fail/skip status. Read-only.",
+                "Run AGS local-scope verification checks for a repository. Includes cargo fmt, cargo test, cargo build, fixture validation, YAML checks, and session preflight. Returns structured CheckItem results with pass/fail/skip status. The local gate is fixed-scope and cannot be downgraded by caller input. Read-only.",
                 serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -254,6 +254,10 @@ fn tool_preflight(args: &serde_json::Value) -> Result<String, String> {
         failures: Vec<String>,
         next_steps: Vec<String>,
         exit_code: i32,
+        /// Quiet-by-default foreground decision state. Full preflight detail
+        /// above stays as audit evidence regardless of this summary.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        visible_status: Option<String>,
     }
 
     let (from_agent, note) = if agent_str != agent_str_normalized {
@@ -293,6 +297,14 @@ fn tool_preflight(args: &serde_json::Value) -> Result<String, String> {
         failures: preflight.failures,
         next_steps: preflight.next_steps,
         exit_code: preflight.exit_code,
+        visible_status: Some(
+            ags_verify::derive_visible_status(&ags_verify::StatusSignals {
+                needs_user_decision: preflight.should_stop,
+                ..Default::default()
+            })
+            .as_str()
+            .to_string(),
+        ),
     };
 
     serde_json::to_string_pretty(&output).map_err(|e| format!("JSON serialize error: {}", e))
@@ -532,6 +544,10 @@ fn tool_policy_resolve(args: &serde_json::Value) -> Result<String, String> {
         execution_effort: String,
         is_exhaustive_mode: bool,
         approval_source: String,
+        /// Quiet-by-default foreground decision state. The full downgrade /
+        /// stop-reason audit trail above is preserved regardless.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        visible_status: Option<String>,
     }
 
     // Serialize StopReason enum variants to JSON values
@@ -564,6 +580,15 @@ fn tool_policy_resolve(args: &serde_json::Value) -> Result<String, String> {
         execution_effort: policy.execution_effort,
         is_exhaustive_mode: policy.is_exhaustive_mode,
         approval_source: policy.approval_source.to_string(),
+        visible_status: Some(
+            ags_verify::derive_visible_status(&ags_verify::StatusSignals {
+                blocked_by_policy: policy.stop_before_launch,
+                needs_user_decision: policy.requires_confirmation_gate,
+                ..Default::default()
+            })
+            .as_str()
+            .to_string(),
+        ),
     };
 
     serde_json::to_string_pretty(&output).map_err(|e| format!("JSON serialize error: {}", e))
@@ -572,6 +597,11 @@ fn tool_policy_resolve(args: &serde_json::Value) -> Result<String, String> {
 fn tool_verify_local(args: &serde_json::Value) -> Result<String, String> {
     let target = get_target(args);
 
+    // Fixed local scope. The local verification gate is NOT downgradable by
+    // caller input — a caller must never be able to pick a weaker profile and
+    // get a "passing" report for source/protocol changes. Diff-aware lane
+    // routing is a read-only concern of the push gate's own trusted shell
+    // classification, never of this verification endpoint.
     let report = ags_verify::run_verify(ags_verify::Scope::Local, &target);
 
     serde_json::to_string_pretty(&report).map_err(|e| format!("JSON serialize error: {}", e))
@@ -597,11 +627,30 @@ fn tool_solution_check(args: &serde_json::Value) -> Result<String, String> {
         /// user task-card instruction (`task_card_requested`).
         detected_task_card_request: bool,
         detected_triggers: Vec<String>,
+        /// `true` when advisory/consultation intent is detected in the summary.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        detected_advisory_intent: Option<bool>,
+        /// `false` when advisory intent is active and no execution override
+        /// clears it. Host must NOT perform write-type tool calls.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        mutation_allowed: Option<bool>,
+        /// Block reason when advisory intent blocks mutation.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        advisory_block_reason: Option<String>,
         evomap_recall_recommended: bool,
         recall_status: String,
         evomap_boundary: String,
         next_step: String,
         trivial_possible: bool,
+        /// Value Route (效价比路由): the minimal execution-path form that still
+        /// covers the task's risk, with rejected lighter/heavier alternatives.
+        /// Advisory and deterministic — it shapes the path form only and never
+        /// changes the Light/Medium/Heavy level, permission mode, Review gate, or
+        /// Verification gate. The planner owns the final path.
+        value_route: prompt_request_classifier::ValueRoute,
+        /// Quiet-by-default foreground decision state.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        visible_status: Option<String>,
     }
 
     // Deterministic entry intent classification of the summary text. This is
@@ -619,6 +668,15 @@ fn tool_solution_check(args: &serde_json::Value) -> Result<String, String> {
     let summary_lower = summary.to_lowercase();
     let trivial_possible =
         trivial_keywords.iter().any(|kw| summary_lower.contains(kw)) && summary.len() < 200;
+
+    // Value Route: minimal execution-path form for this solution. Deterministic
+    // and advisory — derived from the same classification signals as the entry
+    // gate; it does NOT change task level, permission mode, or gates.
+    let value_route = prompt_request_classifier::derive_value_route(
+        &classification,
+        task_card_requested,
+        trivial_possible,
+    );
 
     // Non-trivial tasks during solution formation should recall EvoMap
     let evomap_recall_recommended = !task_card_requested && !trivial_possible;
@@ -648,6 +706,21 @@ fn tool_solution_check(args: &serde_json::Value) -> Result<String, String> {
         "Task card instruction received. Proceed to task routing (Light/Medium/Heavy) and task card compilation via `ags task compile --task-card-requested`. The final foreground answer must be a canonical `## 任务卡` — self-check with `ags gate output`.".to_string()
     };
 
+    let (advisory_intent, advisory_mutation, advisory_reason) =
+        if classification.detected_advisory_intent {
+            (
+                Some(true),
+                Some(classification.mutation_allowed),
+                if !classification.mutation_allowed {
+                    Some("advisory_intent_no_mutation".to_string())
+                } else {
+                    None
+                },
+            )
+        } else {
+            (None, None, None)
+        };
+
     let output = SolutionCheckOutput {
         executable_allowed,
         block_reason,
@@ -655,11 +728,25 @@ fn tool_solution_check(args: &serde_json::Value) -> Result<String, String> {
         task_card_requested,
         detected_task_card_request,
         detected_triggers,
+        detected_advisory_intent: advisory_intent,
+        mutation_allowed: advisory_mutation,
+        advisory_block_reason: advisory_reason,
         evomap_recall_recommended,
         recall_status: "unavailable_or_not_called — AGS MCP does not proxy EvoMap MCP. Host must call EvoMap MCP in parallel for recall.".to_string(),
         evomap_boundary: "AGS MCP and EvoMap MCP are parallel peers. AGS is the governance authority (lifecycle, gates, task level, permission mode, review gate, verification gate). EvoMap provides advisory method recall during solution formation only. AGS MCP does NOT proxy, wrap, or broker EvoMap MCP calls. If the host has no EvoMap MCP configured, recall_status stays 'unavailable_or_not_called'.".to_string(),
         next_step,
         trivial_possible,
+        value_route,
+        visible_status: Some(
+            ags_verify::derive_visible_status(&ags_verify::StatusSignals {
+                advisory_no_mutation: classification.detected_advisory_intent
+                    && !classification.mutation_allowed,
+                needs_user_decision: !executable_allowed,
+                ..Default::default()
+            })
+            .as_str()
+            .to_string(),
+        ),
     };
 
     serde_json::to_string_pretty(&output).map_err(|e| format!("JSON serialize error: {}", e))
@@ -722,6 +809,90 @@ mod tests {
         let v = run_solution_check("按这个方案出任务卡", true);
         assert_eq!(v["executable_allowed"], true);
         assert_eq!(v["detected_task_card_request"], true);
+    }
+
+    #[test]
+    fn solution_check_exposes_value_route() {
+        // Prompt/handoff intent without an instruction → plan-first, with both
+        // rejected alternatives and an authority note that disclaims gate change.
+        let v = run_solution_check("给我提示词", false);
+        let vr = &v["value_route"];
+        assert_eq!(vr["recommended_path"], "plan-first");
+        assert_eq!(vr["rejected_lighter"]["path"], "direct-edit");
+        assert_eq!(vr["rejected_heavier"]["path"], "claude-code-route");
+        assert_eq!(vr["requires_user_confirmation"], true);
+        assert_eq!(vr["advisory"], true);
+        let note = vr["authority_note"]
+            .as_str()
+            .expect("authority_note string");
+        assert!(note.contains("permission mode") && note.contains("Verification gate"));
+
+        // With an explicit instruction → claude-code-route.
+        let v2 = run_solution_check("按这个方案出任务卡交给 Claude Code 执行", true);
+        assert_eq!(v2["value_route"]["recommended_path"], "claude-code-route");
+    }
+
+    #[test]
+    fn policy_resolve_emits_visible_status() {
+        let card = include_str!("../../../tests/fixtures/valid-full.md");
+        let args = serde_json::json!({ "task_card": card });
+        let out = call_tool(TOOL_POLICY_RESOLVE, &args).expect("policy resolve ok");
+        let v: serde_json::Value = serde_json::from_str(&out).expect("valid json");
+        let status = v["visible_status"]
+            .as_str()
+            .expect("policy resolve must emit visible_status");
+        assert!(
+            [
+                "OK",
+                "NEEDS_USER_DECISION",
+                "BLOCKED_BY_POLICY",
+                "RISK_ESCALATED",
+                "DONE_WITH_RECEIPT",
+                "ADVISORY_NO_MUTATION"
+            ]
+            .contains(&status),
+            "unexpected visible_status: {status}"
+        );
+    }
+
+    #[test]
+    fn solution_check_advisory_intent_detected() {
+        let v = run_solution_check("评估一下这个方案的风险", false);
+        assert_eq!(v["detected_advisory_intent"], true);
+        assert_eq!(v["mutation_allowed"], false);
+        assert_eq!(v["advisory_block_reason"], "advisory_intent_no_mutation");
+        assert_eq!(v["detected_task_card_request"], false);
+        assert_eq!(v["visible_status"], "ADVISORY_NO_MUTATION");
+    }
+
+    #[test]
+    fn solution_check_visible_status_needs_user_when_not_requested() {
+        let v = run_solution_check("解释这段代码是做什么的", false);
+        assert_eq!(v["visible_status"], "NEEDS_USER_DECISION");
+    }
+
+    #[test]
+    fn solution_check_visible_status_ok_when_requested() {
+        let v = run_solution_check("按这个方案出任务卡", true);
+        assert_eq!(v["executable_allowed"], true);
+        assert_eq!(v["visible_status"], "OK");
+    }
+
+    #[test]
+    fn solution_check_advisory_with_override() {
+        let v = run_solution_check("评估一下，然后按这个改", false);
+        assert_eq!(v["detected_advisory_intent"], true);
+        assert_eq!(v["mutation_allowed"], true);
+        assert!(v["advisory_block_reason"].is_null());
+    }
+
+    #[test]
+    fn solution_check_non_advisory_no_advisory_fields() {
+        let v = run_solution_check("解释这段代码是做什么的", false);
+        assert!(
+            v.get("detected_advisory_intent").is_none() || v["detected_advisory_intent"].is_null(),
+            "non-advisory should not emit detected_advisory_intent"
+        );
     }
 
     #[test]

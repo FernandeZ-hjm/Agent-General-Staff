@@ -96,7 +96,14 @@ Without this instruction, `ags task compile` blocks executable output with:
 
 **Three-gate threshold**: 方案 OK → 任务卡指令 → 任务分级路由.
 
-### 5. Execution Contract → Routing
+### 5. Execution Contract → Value Route → Routing
+
+Before classifying, AGS surfaces a **Value Route** (效价比路由) in
+`ags_solution_check` — the minimal execution-path form that still covers the
+risk (`read-only-advisory` / `direct-edit` / `plan-first` / `claude-code-route` /
+`stop-for-scope`), with rejected lighter/heavier alternatives. It is advisory and
+shapes path form only; it does NOT change the task level, permission mode, Review
+gate, or Verification gate (see `protocol/agent-task-protocol.md` §3.9).
 
 Based on the **confirmed solution** (not the raw user request),
 classify the task as Light, Medium, or Heavy per `protocol/task-routing.md`.
@@ -184,7 +191,7 @@ hook/runtime adapter changes, or ambiguous domain rules.
 Stop and report before proceeding when:
 - Task conflicts with context-capsule project design purpose.
 - AGS preflight (MCP + CLI fallback) is unavailable.
-- Requires writing WorkBuddy global config.
+- Requires writing Tencent Agent (WorkBuddy / CodeBuddy-Code) host config.
 - Requires installing or enabling EvoMap MCP.
 - Requires real tokens, node_secret, or `~/.evolver/settings.json`.
 - Requires modifying stable/public worktree.

@@ -1,0 +1,302 @@
+# MCP Registry (Public Edition)
+# Source-of-truth index for suite-reviewed MCP servers.
+#
+# MCP servers are external capabilities. This registry records whether they are
+# allowed, installed, and how they may be updated. It does not store secrets.
+#
+# ── Structural layers ──
+#
+#   suite_interfaces:  AGS self — host initialization adapter. NOT governed objects.
+#                      AGS is the governance authority; it is not in the mcps: list.
+#
+#   mcps:              Governed third-party MCP servers. Reviewed, registered,
+#                      and managed by AGS governance. Each entry has an adoption
+#                      record, trust level, risk assessment, and allowed/denied
+#                      authority rules.
+
+schema_version: "1.0"
+registry:
+  version: "1.0.0"
+  description: >
+    Public MCP registry for Agent General Staff. suite_interfaces lists AGS
+    own host adapters (not governed). mcps lists governed third-party MCP servers
+    that must not be copied into global-skills/.
+  default_policy: "deny_by_default"
+  update_policy: "pin_version_manual_review_no_latest"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Suite Interfaces — AGS self, NOT governed third-party MCPs
+# ═══════════════════════════════════════════════════════════════════════════════
+
+suite_interfaces:
+  - name: "ags"
+    role: "host_initialization_adapter"
+    governed: false
+    category: "governance_kernel"
+    trust_level: "suite_canonical"
+    description: >
+      AGS MCP Server — host initialization adapter and mandatory governance
+      interface over MCP stdio. Provides 7 governance tools, 7 protocol
+      resources, and 4 governance prompts. AGS is the governance authority;
+      it is NOT a governed third-party MCP. AGS MCP does NOT proxy, wrap,
+      or broker EvoMap MCP calls. All tools are read-only.
+    package:
+      manager: "cargo"
+      name: "ags-mcp"
+      version: "2.6.0"
+      repository: "this repository"
+      license: "MIT"
+    install:
+      transport: "stdio"
+      command: "ags"
+      args:
+        - "mcp"
+        - "serve"
+        - "--transport"
+        - "stdio"
+      installed_clients:
+        - "codex"
+        - "claude-code"
+      not_installed_clients:
+        # Tencent Agent host family (WorkBuddy, CodeBuddy-Code) and Cursor are
+        # recognized hosts but not wired by default. tencent-agent is the
+        # umbrella host id; workbuddy/codebuddy-code are its clients.
+        - "cursor"
+        - "tencent-agent"
+        - "workbuddy"
+        - "codebuddy-code"
+      local_config_refs:
+        - "source: crates/ags-mcp/"
+        - "cli: ags mcp serve --transport stdio"
+    authority:
+      allowed:
+        - "Run AGS governance preflight — mandatory first call for all AGS scenarios."
+        - "Check protocol status, export agent instructions, validate task cards."
+        - "Resolve execution policy for validated task cards."
+        - "Run local-scope verification checks."
+        - "Check solution formation phase and task-card instruction gate."
+        - "Return AGS protocol resources and governance prompts."
+      denied:
+        - "Write files, install hooks, or modify any configuration."
+        - "Proxy, wrap, or broker EvoMap MCP calls."
+        - "Decide task level, permission mode, review gate, or verification gate — these are already encoded in AGS protocol; the tools only enforce."
+        - "Read or write real tokens, node_secret, or ~/.evolver/settings.json."
+        - "Modify user worktrees without explicit authorization."
+        - "Change AGS lifecycle/gate semantics."
+    initialization_gate:
+      mandatory: true
+      entry_tool: "ags_preflight"
+      cli_fallback: "ags session preflight --for <agent>"
+      evidence_format: "AGS preflight: MCP|CLI, agent=<agent>, status=<ok|failed|fallback>"
+      rule: >
+        In any AGS scenario, the host MUST call ags_preflight (or CLI fallback)
+        before invoking any other AGS tool. All other AGS tools
+        (ags_solution_check, ags_task_validate, ags_policy_resolve,
+        ags_verify_local) require preflight to have completed first.
+        Hosts should reject calls to these tools before preflight.
+    boundary:
+      evomap: "parallel_peer_not_brokered"
+      evomap_rule: >
+        AGS MCP and EvoMap MCP are parallel peers. Hosts call both independently.
+        AGS is the governance authority (lifecycle, gates, task level, permission
+        mode, review gate, verification gate, release boundary). EvoMap provides
+        advisory method recall during solution formation only. AGS MCP does NOT
+        proxy, wrap, or broker EvoMap MCP calls. If EvoMap output conflicts with
+        AGS protocol or gates, AGS always wins.
+    risk:
+      level: "low"
+      findings:
+        - "Runs as a local stdio process with same user privileges as the host."
+        - "All operations are read-only — no filesystem mutation."
+        - "No external network calls — all tool implementations are local."
+      mitigations:
+        - "Read-only by design — no write paths exist."
+        - "Stdio transport only in v1 — no network exposure."
+        - "No secret handling — tools do not read tokens, credentials, or keychain."
+        - "EvoMap boundary is enforced in code — no proxy or broker paths exist."
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Governed MCPs — third-party, registered and managed by AGS governance
+# ═══════════════════════════════════════════════════════════════════════════════
+
+mcps:
+  - name: "context7"
+    profile: "optional"
+    status: "adopted"
+    category: "documentation_context"
+    trust_level: "reviewed_external"
+    package:
+      manager: "npm"
+      name: "@upstash/context7-mcp"
+      version: "3.1.0"
+      integrity: "sha512-bdlZ0dqSLG4XjNgHjgyToXRthTgc07nWeqpYMpkiCyuUlEiUABrzmtyj6JfBWDTYO1RN4eFkAqpaYcNqWjzTUA=="
+      repository: "https://github.com/upstash/context7/tree/main/packages/mcp"
+      license: "MIT"
+    install:
+      transport: "stdio"
+      command: "npx"
+      args:
+        - "-y"
+        - "@upstash/context7-mcp@3.1.0"
+      installed_clients:
+        - "codex"
+      not_installed_clients:
+        - "claude-code"
+        - "cursor"
+      local_config_refs:
+        - "codex:~/.codex/config.toml"
+    authority:
+      allowed:
+        - "Fetch version-aware library documentation."
+        - "Return code examples from Context7 documentation corpus."
+      denied:
+        - "Read or write local filesystem."
+        - "Access databases, secrets, keychains, SSH keys, or credentials."
+        - "Override AGS protocol, task-card, release, or review-gate authority."
+        - "Install or update packages without explicit human approval."
+    risk:
+      level: "low"
+      findings:
+        - "Runs local npm package through stdio with Codex user privileges."
+        - "External documentation corpus may be incomplete or stale."
+        - "Supporting backend, parsing, and crawling components are external to this repository."
+      mitigations:
+        - "Pin exact package version; do not use @latest."
+        - "Treat Context7 output as advisory documentation context, not protocol authority."
+        - "Require manual review before version bumps or enabling additional clients."
+    adoption_entry: "context7-mcp-adopted-20260607-optional"
+
+  - name: "gep"
+    profile: "optional"
+    status: "adopted"
+    category: "evolution_asset_recall"
+    trust_level: "reviewed_external"
+    protocol:
+      name: "gep-a2a"
+      version: "1.0.0"
+      schema_version: "1.8.0"
+      hub_url: "https://evomap.ai"
+      observed_mode: "remote"
+    package:
+      manager: "npm"
+      name: "@evomap/evolver"
+      version: "protocol-gep-a2a-1.0.0-schema-1.8.0"
+      integrity: "not_captured_existing_install"
+      repository: "https://github.com/EvoMap/evolver"
+      license: "not_recorded"
+    install:
+      transport: "mcp"
+      command: "configured-client-mcp"
+      args: []
+      installed_clients:
+        - "codex"
+        - "claude-code"
+      not_installed_clients:
+        - "cursor"
+      local_config_refs:
+        - "codex:mcp__gep__ active in current session"
+        - "claude-code:user-scope gep MCP entry"
+    authority:
+      allowed:
+        - "Return GEP protocol metadata for drift detection."
+        - "Search and list explicitly configured local GEP or skill assets."
+        - "Search and list EvoMap Hub assets as advisory external recall."
+        - "Run pre-solution evolution recall for Genes, Capsules, Skills, and method patterns."
+        - "Return source-tagged asset candidates with local, hub, or bundled provenance."
+        - "Submit validation reports only when explicitly authorized by the user or task card."
+      denied:
+        - "Read arbitrary local filesystem paths outside configured GEP or skill asset indexes."
+        - "Write project files, AGS memory, task cards, delivery reports, receipts, or verification results."
+        - "Install local Genes, Capsules, Skills, MCPs, or packages without explicit human approval."
+        - "Publish, revoke, or submit EvoMap assets without explicit human approval."
+        - "Override AGS protocol, project memory, task-card, execution-policy, release, review-gate, or verification authority."
+        - "Treat Hub or community assets as trusted project facts."
+    retrieval_policy:
+      default_sources:
+        - "local"
+        - "hub"
+      ranking:
+        - "Prefer AGS project memory, task evidence, and local user-owned assets over Hub assets."
+        - "Use Hub verified or featured assets as supplemental method recall."
+        - "Use ordinary community assets only as low-trust advisory references."
+      required_result_fields:
+        - "source"
+        - "type"
+        - "id"
+        - "summary"
+        - "provenance"
+        - "trust"
+        - "why_selected"
+    risk:
+      level: "medium"
+      findings:
+        - "Remote mode can query EvoMap Hub and may return community-provided assets."
+        - "Local asset listing may expose names or summaries of user-owned skills or GEP assets to the parent agent."
+        - "Install, publish, revoke, and validation-report tools can mutate local or Hub state if called."
+        - "Hub assets may be stale, incomplete, malicious, or misaligned with AGS boundaries."
+      mitigations:
+        - "Keep GEP as advisory recall only; AGS remains the authority layer."
+        - "Require source, trust, and provenance fields in recalled asset summaries."
+        - "Require explicit human approval before install, publish, revoke, or validation-report submission."
+        - "Do not send secrets, private task archives, receipts, or full project memory to Hub search."
+        - "Record adoption and future updates in the MCP adoption log."
+    adoption_entry: "gep-mcp-adopted-20260607-optional"
+
+  - name: "codegraph"
+    profile: "required"
+    status: "adopted"
+    category: "code_intelligence"
+    trust_level: "reviewed_external"
+    package:
+      manager: "external-cli"
+      name: "codegraph"
+      version: "not_pinned_existing_install"
+      integrity: "not_captured_existing_install"
+      repository: "not_recorded"
+      license: "not_recorded"
+    install:
+      transport: "stdio"
+      command: "codegraph"
+      args:
+        - "serve"
+        - "--mcp"
+      installed_clients:
+        - "codex"
+        - "claude-code"
+      not_installed_clients:
+        - "cursor"
+      local_config_refs:
+        - "codex:mcp__codegraph__ active in current session"
+        - "claude-code:user-scope codegraph MCP entry"
+        - "project:.codegraph/codegraph.db"
+    authority:
+      allowed:
+        - "Provide local code intelligence over the current project index."
+        - "Search symbols, callers, callees, impact radius, and indexed source context."
+        - "Serve existing project index data over stdio MCP."
+      denied:
+        - "Override AGS protocol, task-card, execution-policy, review-gate, verification, release, or project-memory authority."
+        - "Write project source files, task cards, receipts, governance logs, or AGS memory."
+        - "Install or update packages without explicit human approval."
+        - "Expose secrets, credentials, keychains, SSH keys, or private runtime tokens."
+        - "Treat indexed code context as a replacement for compiler, test, or verification results."
+    retrieval_policy:
+      default_sources:
+        - "local_project_index"
+      required_result_fields:
+        - "symbol"
+        - "path"
+        - "kind"
+        - "source_context"
+    risk:
+      level: "medium"
+      findings:
+        - "Runs local stdio MCP with the host user's privileges."
+        - "Can expose indexed source context from the active project to the parent agent."
+        - "Index freshness depends on the local .codegraph database and watcher state."
+      mitigations:
+        - "Use only for local code intelligence; AGS remains the governance authority."
+        - "Verify with `codegraph status .` before relying on index freshness."
+        - "Require manual review before version bumps or enabling additional clients."
+        - "Record adoption and future updates in the MCP adoption log."
+    adoption_entry: "codegraph-mcp-adopted-20260613-required"

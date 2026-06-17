@@ -102,7 +102,7 @@ fn bootstrap_structure_check(repo_root: &Path) -> Vec<Finding> {
 
 /// Sanitize a path fragment into a check-name token.
 fn sanitize_name(s: &str) -> String {
-    s.trim_end_matches('/').replace('/', "-").replace('.', "-")
+    s.trim_end_matches('/').replace(['/', '.'], "-")
 }
 
 // ── Public entry point ───────────────────────────────────────────────────
@@ -207,6 +207,42 @@ pub fn plan(source_repo: &Path, target: &Path) -> BootstrapPlan {
         }
     }
 
+    // ── Portable runtime profile / hook templates (public-safe) ──────────
+    // These templates are installation skeletons — they contain no real
+    // token, node_secret, API key, absolute $HOME path, task archive path,
+    // or memory capsule path.  They can safely enter public and bootstrap
+    // payloads.
+    let template_files: &[(&str, &str)] = &[
+        (
+            "manifests/templates/runtime-profiles.template.yaml",
+            "EvoMap runtime profiles (executor + planner) portable template",
+        ),
+        (
+            "manifests/templates/hooks/claude-code-executor-stop.template.js",
+            "Claude Code Stop hook for post-task method capture",
+        ),
+        (
+            "manifests/templates/hooks/codex-planner-recall.template.json",
+            "Codex/Cursor planner pre-solution advisory recall hook template",
+        ),
+        (
+            "manifests/templates/README.md",
+            "Template installation and migration boundary documentation",
+        ),
+    ];
+
+    for (rel_path, desc) in template_files {
+        let src = source_repo.join(rel_path);
+        let dst = target.join(rel_path);
+        if src.exists() {
+            actions.push(BootstrapAction {
+                action: "copy-template".into(),
+                path: dst.display().to_string(),
+                description: format!("copy {rel_path}: {desc}"),
+            });
+        }
+    }
+
     // ── Bootstrap log (generated, not copied) ───────────────────────────
     actions.push(BootstrapAction {
         action: "create".into(),
@@ -240,7 +276,7 @@ pub fn apply(source_repo: &Path, plan: &BootstrapPlan) -> HealthReport {
 
                 if dst_path.exists() {
                     report.add(Finding::pass(
-                        &sanitize_name_for_action(&action.path),
+                        sanitize_name_for_action(&action.path),
                         format!("skipped (exists): {}", action.path),
                     ));
                     continue;
@@ -250,8 +286,8 @@ pub fn apply(source_repo: &Path, plan: &BootstrapPlan) -> HealthReport {
                 if let Some(parent) = dst_path.parent() {
                     if let Err(e) = std::fs::create_dir_all(parent) {
                         report.add(Finding::fail(
-                            &sanitize_name_for_action(&action.path),
-                            &format!("cannot create directory: {}", parent.display()),
+                            sanitize_name_for_action(&action.path),
+                            format!("cannot create directory: {}", parent.display()),
                             format!("{}", e),
                         ));
                         continue;
@@ -262,14 +298,14 @@ pub fn apply(source_repo: &Path, plan: &BootstrapPlan) -> HealthReport {
                 match std::fs::copy(&src_path, dst_path) {
                     Ok(_) => {
                         report.add(Finding::pass(
-                            &sanitize_name_for_action(&action.path),
+                            sanitize_name_for_action(&action.path),
                             format!("copied: {} → {}", src_path.display(), dst_path.display()),
                         ));
                     }
                     Err(e) => {
                         report.add(Finding::fail(
-                            &sanitize_name_for_action(&action.path),
-                            &format!("copy failed: {}", action.path),
+                            sanitize_name_for_action(&action.path),
+                            format!("copy failed: {}", action.path),
                             format!("{}", e),
                         ));
                     }
@@ -292,14 +328,14 @@ pub fn apply(source_repo: &Path, plan: &BootstrapPlan) -> HealthReport {
                 ) {
                     Ok(_) => {
                         report.add(Finding::pass(
-                            &sanitize_name_for_action(&action.path),
+                            sanitize_name_for_action(&action.path),
                             format!("created: {}", action.path),
                         ));
                     }
                     Err(e) => {
                         report.add(Finding::fail(
-                            &sanitize_name_for_action(&action.path),
-                            &format!("create failed: {}", action.path),
+                            sanitize_name_for_action(&action.path),
+                            format!("create failed: {}", action.path),
                             format!("{}", e),
                         ));
                     }
@@ -307,8 +343,8 @@ pub fn apply(source_repo: &Path, plan: &BootstrapPlan) -> HealthReport {
             }
             other => {
                 report.add(Finding::warn(
-                    &sanitize_name_for_action(&action.path),
-                    &format!("unknown action type: {}", other),
+                    sanitize_name_for_action(&action.path),
+                    format!("unknown action type: {}", other),
                     &action.path,
                 ));
             }
@@ -355,52 +391,44 @@ pub fn verify(target: &Path) -> HealthReport {
     for script in &["scripts/validate.sh", "scripts/run-task-card.sh"] {
         let full = target.join(script);
         if full.exists() {
-            report.add(bash_syntax_check(script, &full));
+            if !ags_platform::is_on_path("bash") {
+                report.add(Finding::skip(
+                    format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
+                    format!("bash -n {script} skipped (bash not on PATH)"),
+                ));
+                continue;
+            }
+            let output = std::process::Command::new("bash")
+                .arg("-n")
+                .arg(&full)
+                .output();
+            match output {
+                Ok(o) if o.status.success() => {
+                    report.add(Finding::pass(
+                        format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
+                        format!("bash -n {script} OK"),
+                    ));
+                }
+                Ok(o) => {
+                    let stderr = String::from_utf8_lossy(&o.stderr);
+                    report.add(Finding::fail(
+                        format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
+                        format!("bash -n {script} FAILED"),
+                        stderr.trim().to_string(),
+                    ));
+                }
+                Err(e) => {
+                    report.add(Finding::warn(
+                        format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
+                        format!("bash not available, skipped syntax check for {script}"),
+                        format!("{e}"),
+                    ));
+                }
+            }
         }
     }
 
     report
-}
-
-#[cfg(windows)]
-fn bash_syntax_check(script: &str, _full: &Path) -> Finding {
-    Finding::warn(
-        format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
-        format!("native Windows verification skips Bash syntax check for {script}"),
-        String::new(),
-    )
-}
-
-#[cfg(not(windows))]
-fn bash_syntax_check(script: &str, full: &Path) -> Finding {
-    if !ags_platform::is_on_path("bash") {
-        return Finding::warn(
-            format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
-            format!("bash not on PATH, skipped syntax check for {script}"),
-            String::new(),
-        );
-    }
-
-    let output = Command::new("bash").arg("-n").arg(full).output();
-    match output {
-        Ok(o) if o.status.success() => Finding::pass(
-            format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
-            format!("bash -n {script} OK"),
-        ),
-        Ok(o) => {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            Finding::fail(
-                format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
-                format!("bash -n {script} FAILED"),
-                format!("{}", stderr.trim()),
-            )
-        }
-        Err(e) => Finding::warn(
-            format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
-            format!("bash not available, skipped syntax check for {script}"),
-            format!("{e}"),
-        ),
-    }
 }
 
 /// Render a BootstrapPlan as human-readable text.
@@ -593,7 +621,7 @@ mod tests {
         let protocol_actions: Vec<_> = plan
             .actions
             .iter()
-            .filter(|a| a.description.starts_with("copy protocol/"))
+            .filter(|a| a.path.contains("protocol/"))
             .collect();
         assert!(
             !protocol_actions.is_empty(),
@@ -604,7 +632,7 @@ mod tests {
         let script_actions: Vec<_> = plan
             .actions
             .iter()
-            .filter(|a| a.description.starts_with("copy scripts/"))
+            .filter(|a| a.path.contains("scripts/"))
             .collect();
         assert!(!script_actions.is_empty(), "should include script files");
         for a in &script_actions {
@@ -623,21 +651,34 @@ mod tests {
             "should include bootstrap log"
         );
 
-        // Private runtime overlays must stay outside the public bootstrap payload.
+        // Must include template file actions
         let template_actions: Vec<_> = plan
             .actions
             .iter()
             .filter(|a| a.action == "copy-template")
             .collect();
         assert!(
-            template_actions.is_empty(),
-            "public bootstrap payload must not include private runtime template actions, got {}",
+            template_actions.len() >= 3,
+            "should include at least 3 template actions (profile, js hook, json hook), got {}",
             template_actions.len()
         );
+        // All template action paths must be under manifests/templates/
+        for a in &template_actions {
+            assert!(
+                a.path.contains("manifests/templates/"),
+                "template action path must be under manifests/templates/: {}",
+                a.path
+            );
+            assert_eq!(
+                a.action, "copy-template",
+                "template action must use 'copy-template', got '{}' for {}",
+                a.action, a.path
+            );
+        }
     }
 
     #[test]
-    fn plan_does_not_publish_private_runtime_templates() {
+    fn plan_template_actions_are_public_safe() {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
@@ -652,10 +693,21 @@ mod tests {
             .filter(|a| a.action == "copy-template")
             .collect();
 
-        assert!(
-            template_actions.is_empty(),
-            "public bootstrap payload must not copy manifests/templates private overlay files"
-        );
+        for a in &template_actions {
+            // Template action descriptions must not contain real paths with /Users/
+            assert!(
+                !a.description.contains("/Users/"),
+                "template description must not leak /Users/ path: {}",
+                a.description
+            );
+            // Template action paths are target paths (not source paths)
+            // but they should still be relative, not absolute home dir paths
+            assert!(
+                !a.path.starts_with("/Users/"),
+                "template path must not be absolute /Users/ path: {}",
+                a.path
+            );
+        }
     }
 
     #[test]
@@ -709,18 +761,6 @@ mod tests {
         let report = verify(&target);
         assert!(report.passed(), "verify should pass: {:?}", report.findings);
         for finding in &report.findings {
-            #[cfg(windows)]
-            if finding.check_name.starts_with("bootstrap-verify-bash-n-") {
-                assert_eq!(
-                    finding.status,
-                    suite_doctor::CheckStatus::Warn,
-                    "Windows should skip Bash syntax check: {} — {}",
-                    finding.check_name,
-                    finding.message
-                );
-                continue;
-            }
-
             assert_eq!(
                 finding.status,
                 suite_doctor::CheckStatus::Pass,

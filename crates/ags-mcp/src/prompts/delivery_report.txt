@@ -1,8 +1,10 @@
 ## AGS Delivery Report
 
-You have completed task execution. Produce a delivery report in this format:
+You have completed task execution. Produce the final delivery report as one
+copyable Markdown fenced block. Use an outer four-backtick `markdown` fence and
+a matching closing four-backtick fence. Do not add prose outside the block.
 
-```markdown
+````markdown
 # 任务交付报告
 
 ## 任务状态
@@ -32,10 +34,12 @@ You have completed task execution. Produce a delivery report in this format:
 
 ## 下一步建议
 - 建议项
-```
+````
 
 ### Requirements:
 
+- The foreground output must be exactly one Markdown code block, so users can
+  copy the whole report into an `.md` file or chat message in one action.
 - Task status: "部分完成 / 等待 Codex review" or "部分完成 / 等待人工 adversarial review"
   if review gate has not passed. Only write "完成" when both verification AND review gate pass.
 - One-line conclusion: the single most important takeaway.

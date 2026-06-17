@@ -70,9 +70,9 @@ pub fn list_prompts() -> PromptListResult {
                 name: "ags_delivery_report".to_string(),
                 description: Some(
                     "Guide the executor to produce a valid AGS delivery report. \
-                     Required sections: task status, one-line conclusion, changed files, \
-                     new outputs, deleted files, verification results, risk notes, \
-                     next steps."
+                     Output must be one copyable Markdown fenced block. Required \
+                     sections: task status, one-line conclusion, changed files, new \
+                     outputs, deleted files, verification results, risk notes, next steps."
                         .to_string(),
                 ),
                 arguments: None,
@@ -128,7 +128,7 @@ fn prompt_solution_phase(arguments: &serde_json::Value) -> PromptGetResult {
          3. **For non-trivial tasks** (Medium/Heavy, development, architecture, refactoring, \
          release, governance change): call EvoMap MCP in parallel for advisory method recall. \
          AGS MCP does NOT call EvoMap MCP — you must call it yourself. Document recall state \
-         in the solution text.\n\
+         in the solution text per `ags://protocol/evolution-memory`.\n\
          4. **Form a concrete solution** — not a task card. Include: approach, impact scope, \
          risks, alternatives considered.\n\
          5. **Present the solution to the user** and wait for explicit confirmation (\"方案 OK\").\n\
@@ -195,7 +195,7 @@ fn prompt_delivery_report() -> PromptGetResult {
     PromptGetResult {
         description: Some(
             "Guide the executor to produce a valid AGS delivery report \
-             after task completion."
+             after task completion as one copyable Markdown fenced block."
                 .to_string(),
         ),
         messages: vec![PromptMessage {
@@ -205,5 +205,20 @@ fn prompt_delivery_report() -> PromptGetResult {
                 text: include_str!("prompts/delivery_report.txt").to_string(),
             },
         }],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delivery_report_prompt_requires_copyable_markdown_block() {
+        let prompt = prompt_delivery_report();
+        let text = &prompt.messages[0].content.text;
+
+        assert!(text.contains("copyable Markdown fenced block"));
+        assert!(text.contains("````markdown\n# 任务交付报告"));
+        assert!(text.contains("\n````\n\n### Requirements:"));
     }
 }

@@ -1,4 +1,4 @@
-# Skills Registry (Private Edition)
+# Skills Registry (Public Edition)
 # Source-of-truth index for suite-managed skills and their upstream crawl seeds.
 #
 # Local suite files remain canonical. Upstreams are read-only comparison sources:
@@ -7,7 +7,7 @@
 registry:
   version: 1.1.0
   description: >
-    Private skills registry for the Agent General Staff. This indexes the
+    Private skills registry for the Agent Governance Suite. This indexes the
     required global skills and records which existing skills should watch
     mattpocock/skills for future upstream changes.
   update_policy: read_only_crawl_then_diff_proposal

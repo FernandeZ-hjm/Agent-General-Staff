@@ -2,7 +2,7 @@
   "schema_version": "2.0-m6",
   "receipt_id": "receipt-noncompliant",
   "timestamp": "unix-0",
-  "task_card_hash": "c2a37a0e920166ad5e9a3f05ad95b1a42accd5db27392b9c39414e0424104c23",
+  "task_card_hash": "d568542eeaba086b8a48101374828e6c05fa1399a097ab67c63d9f301be96a02",
   "task_card_path": "tests/fixtures/valid-full.md",
   "gate_result": {
     "decision": "stop",

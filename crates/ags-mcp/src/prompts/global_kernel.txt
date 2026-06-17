@@ -25,7 +25,7 @@ Do NOT skip preflight based on model memory.
 3. **User Confirmation** — present solution, wait for explicit "方案 OK".
 4. **Task-Card Instruction Gate** — user must explicitly issue task-card instruction
    before routing. "方案 OK" alone ≠ task card approval.
-5. **Execution Contract → Routing** — classify as Light/Medium/Heavy from the confirmed solution.
+5. **Execution Contract → Value Route → Routing** — `ags_solution_check` surfaces a Value Route (效价比路由): the minimal execution-path form that still covers the risk (advisory; does NOT change level/permission/gates). Then classify as Light/Medium/Heavy from the confirmed solution.
 6. **Gate / Execution / Receipt** — validate → resolve → execute → verify → deliver.
 
 ### Critical rules:
@@ -46,7 +46,7 @@ Do NOT skip preflight based on model memory.
 
 - AGS preflight (MCP + CLI fallback) unavailable → STOP.
 - Task conflicts with context-capsule project design purpose → STOP.
-- Requires WorkBuddy global config / EvoMap install / real tokens → STOP.
+- Requires Tencent Agent (WorkBuddy / CodeBuddy-Code) host config / EvoMap install / real tokens → STOP.
 - Would modify stable/public worktree → STOP.
 - Would proxy EvoMap into AGS → STOP.
 
@@ -54,5 +54,6 @@ Do NOT skip preflight based on model memory.
 
 - Run `ags_solution_check` with the user's request summary.
 - Reference `ags://global-kernel` resource for full details.
+- Reference `ags://evolver-boundary` for EvoMap parallel-call rules.
 
 Begin with the Initialization Gate: call `ags_preflight` first.

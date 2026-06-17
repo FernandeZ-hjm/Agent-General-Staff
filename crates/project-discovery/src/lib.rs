@@ -1,4 +1,4 @@
-//! Project discovery — Agent General Staff M2 Agent Awareness library.
+//! Project discovery — Agent Governance Suite M2 Agent Awareness library.
 //!
 //! Provides three read-only capabilities for `ags` CLI:
 //!
@@ -56,9 +56,34 @@ pub struct WorkspaceIdentity {
     pub path: String,
 }
 
-/// Known workspace paths — empty in public version.
-/// Workspace identity is derived from WORKSPACE.md parsing only.
-const KNOWN_WORKSPACE_PATHS: &[(&str, &str, &str)] = &[];
+/// Known workspace paths that imply a role even without WORKSPACE.md.
+const KNOWN_WORKSPACE_PATHS: &[(&str, &str, &str)] = &[
+    (
+        "A",
+        "Development private suite",
+        "/Volumes/Projects/example-private-suite",
+    ),
+    (
+        "A1",
+        "Private bare repo",
+        "/Volumes/Projects/remotes/example-private-suite.git",
+    ),
+    (
+        "S",
+        "Stable private suite",
+        "/Volumes/Projects/example-stable-suite",
+    ),
+    (
+        "B",
+        "Public worktree",
+        "/Volumes/AI Project/ai-dev-env-bootstrap",
+    ),
+    (
+        "B1",
+        "Public bare repo",
+        "/Volumes/Projects/remotes/example-public-suite.git",
+    ),
+];
 
 /// Parse WORKSPACE.md content to extract the workspace identity table.
 ///
@@ -272,14 +297,14 @@ pub fn detect_project(target: &Path) -> ProjectIdentity {
         .clone()
         .unwrap_or_else(|| slug_from_path(&canonical));
     let home = ags_platform::home_dir_or_temp();
-    let capsule_path = PathBuf::from(&home)
+    let capsule_path = home
         .join(".agents/memory/projects")
         .join(&slug)
         .join("context-capsule.md");
     if capsule_path.exists() {
         identity.memory_capsule_path = Some(capsule_path.clone());
     }
-    let task_mem_path = PathBuf::from(&home)
+    let task_mem_path = home
         .join(".agents/memory/projects")
         .join(&slug)
         .join("task-memory.md");
@@ -596,7 +621,7 @@ pub fn check_protocol_status(target: &Path) -> ProtocolStatus {
             "Stable (S) direct modification from A".to_string(),
         ],
         destructive_actions_require_confirmation: true,
-        public_payload_boundary: "Public-full sanitized ships the Rust ags workspace and governance framework, but excludes target/, binaries, preinstalled skills, local agent config, private memory, private task archives, secrets, and machine-specific private paths.".to_string(),
+        public_payload_boundary: "Public-full sanitized payload may include the public Rust ags workspace (Cargo.toml, Cargo.lock, crates/) and public governance runtime, but must not include target/, release/debug ags binaries, build caches, preinstalled private skill packs, local agent config, real memory, real receipts, real task archives, secrets, or machine-specific private state.".to_string(),
     };
 
     // ── Review requirements ────────────────────────────────────────────
@@ -612,7 +637,7 @@ pub fn check_protocol_status(target: &Path) -> ProtocolStatus {
     // ── Receipt requirements ───────────────────────────────────────────
     let receipt_requirements = ReceiptRequirements {
         delivery_report_required: true,
-        format_reference: "See protocol/agent-task-protocol.md delivery report format: task status, one-line conclusion, changed files, new outputs, deleted files, verification results, risk notes, next steps.".to_string(),
+        format_reference: "See protocol/agent-task-protocol.md delivery report format: one copyable Markdown fenced block containing task status, one-line conclusion, changed files, new outputs, deleted files, verification results, risk notes, next steps.".to_string(),
         archive_location: "$HOME/.agents/memory/projects/<project-slug>/task-archive/".to_string(),
     };
 
@@ -694,27 +719,27 @@ pub fn check_protocol_status(target: &Path) -> ProtocolStatus {
 // ── Agent instructions ─────────────────────────────────────────────────────
 
 /// Agent type for instruction generation.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "kebab-case")]
+///
+/// Known hosts get tailored instructions. Unknown non-empty host identifiers
+/// fall back to a generic governed-host profile so new desktop modes do not
+/// fail just because their agent string is new.
+#[derive(Debug, Clone, PartialEq)]
 pub enum AgentType {
     Codex,
-    #[serde(rename = "claude-code")]
     ClaudeCode,
     Cursor,
-    Generic,
+    Generic(String),
 }
 
 impl AgentType {
+    #[allow(clippy::should_implement_trait)] // inherent parser with domain String error; intentionally not std::str::FromStr
     pub fn from_str(s: &str) -> Result<Self, String> {
-        match s {
+        let normalized = normalize_agent_id(s)?;
+        match normalized.as_str() {
             "codex" => Ok(AgentType::Codex),
-            "claude-code" => Ok(AgentType::ClaudeCode),
+            "claude" | "claude-code" | "claudecode" => Ok(AgentType::ClaudeCode),
             "cursor" => Ok(AgentType::Cursor),
-            "workbuddy" | "cowork" | "generic" => Ok(AgentType::Generic),
-            other => Err(format!(
-                "invalid agent type: '{}'. Valid values: codex, claude-code, cursor, workbuddy, generic",
-                other
-            )),
+            other => Ok(AgentType::Generic(other.to_string())),
         }
     }
 
@@ -723,17 +748,96 @@ impl AgentType {
             AgentType::Codex => "codex",
             AgentType::ClaudeCode => "claude-code",
             AgentType::Cursor => "cursor",
-            AgentType::Generic => "generic",
+            AgentType::Generic(agent) => agent.as_str(),
         }
     }
 
-    pub fn display_name(&self) -> &str {
+    pub fn display_name(&self) -> String {
         match self {
-            AgentType::Codex => "Codex",
-            AgentType::ClaudeCode => "Claude Code",
-            AgentType::Cursor => "Cursor",
-            AgentType::Generic => "Generic AGS Host",
+            AgentType::Codex => "Codex".to_string(),
+            AgentType::ClaudeCode => "Claude Code".to_string(),
+            AgentType::Cursor => "Cursor".to_string(),
+            AgentType::Generic(agent) => match recognized_host_display(agent) {
+                Some(name) => name.to_string(),
+                None => format!("Generic Agent ({agent})"),
+            },
         }
+    }
+
+    pub fn is_generic(&self) -> bool {
+        matches!(self, AgentType::Generic(_))
+    }
+}
+
+fn normalize_agent_id(input: &str) -> Result<String, String> {
+    let mut normalized = String::new();
+    let mut last_was_sep = false;
+
+    for ch in input.trim().chars() {
+        let lower = ch.to_ascii_lowercase();
+        if lower.is_ascii_alphanumeric() {
+            normalized.push(lower);
+            last_was_sep = false;
+        } else if matches!(lower, '-' | '_' | '.' | ' ' | '\t' | '\n') && !last_was_sep {
+            normalized.push('-');
+            last_was_sep = true;
+        }
+    }
+
+    while normalized.ends_with('-') {
+        normalized.pop();
+    }
+
+    if normalized.is_empty() {
+        Err("invalid agent type: empty or unsupported identifier".to_string())
+    } else {
+        Ok(normalized)
+    }
+}
+
+/// Recognized governed-host display names, keyed by normalized agent id.
+///
+/// These hosts are still carried as `AgentType::Generic` — they get a branded
+/// display name and are recognized as Tencent Agent host clients, but they add
+/// NO new canonical runtime adapter and do NOT change the generic fallback for
+/// unknown hosts. `normalize_agent_id` folds input casing/spacing into these
+/// keys (e.g. "WorkBuddy" → "workbuddy", "CodeBuddy-Code" → "codebuddy-code",
+/// "Tencent Agent" → "tencent-agent"). Tencent Agent is the umbrella adapter
+/// entry; WorkBuddy and CodeBuddy-Code are its host clients.
+const RECOGNIZED_HOST_DISPLAY: &[(&str, &str)] = &[
+    ("tencent-agent", "Tencent Agent"),
+    ("tencent", "Tencent Agent"),
+    ("workbuddy", "Tencent Agent (WorkBuddy)"),
+    ("codebuddy-code", "Tencent Agent (CodeBuddy-Code)"),
+    ("codebuddy", "Tencent Agent (CodeBuddy-Code)"),
+];
+
+/// Branded display name for a recognized governed host, or `None` for an unknown
+/// generic host (which keeps the plain `Generic Agent (x)` form). The input must
+/// already be normalized via `normalize_agent_id`.
+fn recognized_host_display(normalized: &str) -> Option<&'static str> {
+    RECOGNIZED_HOST_DISPLAY
+        .iter()
+        .find(|(key, _)| *key == normalized)
+        .map(|(_, name)| *name)
+}
+
+impl Serialize for AgentType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for AgentType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        AgentType::from_str(&value).map_err(serde::de::Error::custom)
     }
 }
 
@@ -982,27 +1086,28 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
                     },
                 ],
             ),
-            AgentType::Generic => (
-                "This host is AGS-compatible but not one of the named first-party runtimes. It must complete AGS initialization preflight before any AGS scenario work, then follow the governed lifecycle surfaced by the preflight report. Generic hosts may read project context and help form solutions, but they must not assume Codex, Claude Code, or Cursor-specific privileges from their agent name alone.\n\nCRITICAL — Task-Card Request Gate: do not generate executable task cards from raw user requests or solution-phase output. \"方案 OK\" only ends solution formation; a separate explicit task-card instruction is required before routing or execution."
-                    .to_string(),
+            AgentType::Generic(agent) => {
+                let host_label = recognized_host_display(agent)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("Generic Agent ({agent})"));
+                (
+                format!(
+                    "{host_label} is an AGS-compatible governed host (Tencent Agent hosts — WorkBuddy and CodeBuddy-Code — resolve to this governed-host profile; other unknown hosts use it too). It must complete AGS initialization preflight before any AGS scenario work, then follow the governed lifecycle surfaced by the preflight report. Governed hosts may read project context and help form solutions, but they must not assume Codex, Claude Code, or Cursor-specific privileges from their agent name alone.\n\nCRITICAL — Task-Card Request Gate: do not generate executable task cards from raw user requests or solution-phase output. \"方案 OK\" only ends solution formation; a separate explicit task-card instruction is required before routing or execution."
+                ),
                 AgentPermissions {
                     default_permission_mode: "edit-with-confirmation".to_string(),
                     default_parallelism: "none".to_string(),
                     may_edit_files: true,
-                    may_delegate: false,
+                    may_delegate: true,
                     may_install: false,
                 },
                 vec![
-                    "Call AGS MCP `ags_preflight` first for AGS scenarios; use CLI preflight only as fallback."
-                        .to_string(),
-                    "Do not perform Light/Medium/Heavy classification from raw user requests."
-                        .to_string(),
-                    "Do not generate executable task cards until the user explicitly issues a task-card instruction."
-                        .to_string(),
-                    "Do not install hooks, dependencies, runner adapters, MCP servers, or production wiring without explicit task-card authorization."
-                        .to_string(),
-                    "If host capability is unclear, stop and ask Codex/Cursor or the human operator to route the task."
-                        .to_string(),
+                    "Call `ags_preflight` first for AGS scenarios; do not call other AGS tools before preflight succeeds.".to_string(),
+                    "Use the explicit `target` project path supplied by the host; do not assume the desktop workspace folder is the governed project.".to_string(),
+                    "Do not perform Light/Medium/Heavy task classification from raw user requests.".to_string(),
+                    "Do not install hooks, runner adapters, dependencies, or production wiring without explicit task-card authorization.".to_string(),
+                    "Do not generate task cards or call `ags task compile --task-card-requested` until the user explicitly issues a task-card instruction.".to_string(),
+                    "If the host cannot identify the target project, stop and ask for the repository path instead of running `ags init` in the current desktop workspace.".to_string(),
                 ],
                 vec![
                     InstructionFile {
@@ -1021,27 +1126,18 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
                         priority: "required".to_string(),
                     },
                     InstructionFile {
-                        path: "protocol/mcp-server.md".to_string(),
-                        description: "AGS MCP mandatory initialization gate".to_string(),
-                        priority: "required".to_string(),
-                    },
-                    InstructionFile {
                         path: "protocol/agent-task-protocol.md".to_string(),
                         description: "Task card and review rules".to_string(),
                         priority: "required".to_string(),
                     },
                     InstructionFile {
-                        path: "protocol/runtime-adapters.md".to_string(),
-                        description: "Executor, permission, review, resume rules".to_string(),
-                        priority: "required".to_string(),
-                    },
-                    InstructionFile {
                         path: "protocol/task-routing.md".to_string(),
-                        description: "Light/medium/heavy task routing".to_string(),
+                        description: "Task routing lifecycle".to_string(),
                         priority: "required".to_string(),
                     },
                 ],
-            ),
+                )
+            }
         };
 
     let protocol_entry_points = required_reads
@@ -1120,7 +1216,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
             "Stable (S) direct modification from A".to_string(),
         ],
         destructive_actions_require_confirmation: true,
-        public_payload_boundary: "Public-full sanitized ships the Rust ags workspace and governance framework, but excludes target/, binaries, preinstalled skills, local agent config, private memory, private task archives, secrets, and machine-specific private paths.".to_string(),
+        public_payload_boundary: "Public-full sanitized payload may include the public Rust ags workspace (Cargo.toml, Cargo.lock, crates/) and public governance runtime, but must not include target/, release/debug ags binaries, build caches, preinstalled private skill packs, local agent config, real memory, real receipts, real task archives, secrets, or machine-specific private state.".to_string(),
     };
 
     let instructions_text = build_instructions_text(
@@ -1142,7 +1238,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
 
     AgentInstructions {
         agent_type: agent_type.as_str().to_string(),
-        agent_display_name: agent_type.display_name().to_string(),
+        agent_display_name: agent_type.display_name(),
         target: canonical,
         project_name,
         is_ags_suite: identity.is_ags_suite,
@@ -1165,6 +1261,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
 }
 
 /// Build the human-readable instructions text block.
+#[allow(clippy::too_many_arguments)] // cohesive instruction-rendering inputs; a parameter struct adds indirection without clarity
 fn build_instructions_text(
     agent_type: &AgentType,
     project_name: &str,
@@ -1231,7 +1328,9 @@ fn build_instructions_text(
         lines.push(
             "protocol/, task-card-validator) before executing tasks in this repo.".to_string(),
         );
-        lines.push("Use `ags bootstrap --apply` (M7) when available, or manually add".to_string());
+        lines.push(
+            "Use `ags init --target <dir>` to onboard the project, or manually add".to_string(),
+        );
         lines.push("the required protocol files from an AGS suite distribution.".to_string());
         lines.push(String::new());
         lines.push("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━".to_string());
@@ -1339,7 +1438,7 @@ fn build_instructions_text(
 
     // Delivery report
     lines.push("## Delivery Report".to_string());
-    lines.push("Every task completion must include a delivery report with:".to_string());
+    lines.push("Every task completion must include one copyable Markdown fenced-block delivery report with:".to_string());
     lines.push("- Task status (complete / partially complete / incomplete)".to_string());
     lines.push("- One-line conclusion".to_string());
     lines.push("- Changed files with change summaries".to_string());
@@ -1472,6 +1571,9 @@ pub fn run_session_preflight(target: &Path, agent_type: &AgentType) -> SessionPr
     }
 
     // ── Determine overall status ──────────────────────────────────────────
+    // Two distinct conditions (critical failures, agent-requested stop) both
+    // map to Stop; kept as separate arms for semantic clarity.
+    #[allow(clippy::if_same_then_else)]
     let overall_status =
         if !failures.is_empty() && failures.iter().any(|f| f.starts_with("CRITICAL:")) {
             PreflightStatus::Stop
@@ -1496,8 +1598,10 @@ pub fn run_session_preflight(target: &Path, agent_type: &AgentType) -> SessionPr
             }
             if !identity.is_ags_suite && !identity.is_ags_integrated {
                 next_steps.push(
-                    "  Consider: ags bootstrap --apply --target <dir> to install governance files"
-                        .to_string(),
+                    "  If this target is the intended project repo, run `ags init --target <dir>` to install governance files.".to_string(),
+                );
+                next_steps.push(
+                    "  If this is only a desktop/Cowork workspace, rerun preflight with `target` pointing at the real project repo instead of initializing the current directory.".to_string(),
                 );
             }
         }
@@ -1538,7 +1642,7 @@ pub fn run_session_preflight(target: &Path, agent_type: &AgentType) -> SessionPr
     SessionPreflight {
         target: canonical,
         for_agent: agent_type.as_str().to_string(),
-        agent_display_name: agent_type.display_name().to_string(),
+        agent_display_name: agent_type.display_name(),
 
         integration_status: identity.integration_status.clone(),
         is_ags_suite: identity.is_ags_suite,
@@ -1977,6 +2081,15 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
     }
 
+    fn expected_known_role_for_root(root: &Path) -> Option<(&'static str, &'static str)> {
+        let canonical = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+        let canonical_str = canonical.to_string_lossy();
+        KNOWN_WORKSPACE_PATHS
+            .iter()
+            .find(|(_, _, path)| *path == canonical_str)
+            .map(|(code, role, _)| (*code, *role))
+    }
+
     // ── Workspace table parsing ────────────────────────────────────────
 
     #[test]
@@ -1984,17 +2097,20 @@ mod tests {
         let content = "\
 | Code | Role | Path |
 |---|---|
-| A | Development private suite | /Volumes/Projects/my-protected-suite |
-| A1 | Private bare repo | /Users/user/git-remotes/my-protected-suite.git |
-| S | Stable private suite | /Volumes/Projects/my-stable-suite |
-| B | Public worktree | /Volumes/Projects/my-public-suite |
-| B1 | Public bare repo | /Users/user/git-remotes/my-public-suite.git |
+| A | Development private suite | /Volumes/Projects/example-private-suite |
+| A1 | Private bare repo | /Volumes/Projects/remotes/example-private-suite.git |
+| S | Stable private suite | /Volumes/Projects/example-stable-suite |
+| B | Public worktree | /Volumes/AI Project/ai-dev-env-bootstrap |
+| B1 | Public bare repo | /Volumes/Projects/remotes/example-public-suite.git |
 ";
         let identities = parse_workspace_table(content);
         assert_eq!(identities.len(), 5);
         assert_eq!(identities[0].code, "A");
         assert_eq!(identities[0].role, "Development private suite");
-        assert_eq!(identities[0].path, "/Volumes/Projects/my-protected-suite");
+        assert_eq!(
+            identities[0].path,
+            "/Volumes/Projects/example-private-suite"
+        );
         assert_eq!(identities[4].code, "B1");
     }
 
@@ -2051,13 +2167,35 @@ Some other text here.
             AgentType::ClaudeCode
         );
         assert_eq!(AgentType::from_str("cursor").unwrap(), AgentType::Cursor);
+        assert_eq!(
+            AgentType::from_str("workbuddy").unwrap(),
+            AgentType::Generic("workbuddy".to_string())
+        );
+        // Tencent Agent host clients normalize to recognized generic ids
+        // (no new canonical AgentType variant; casing/spacing folded by
+        // normalize_agent_id).
+        assert_eq!(
+            AgentType::from_str("WorkBuddy").unwrap(),
+            AgentType::Generic("workbuddy".to_string())
+        );
+        assert_eq!(
+            AgentType::from_str("CodeBuddy-Code").unwrap(),
+            AgentType::Generic("codebuddy-code".to_string())
+        );
+        assert_eq!(
+            AgentType::from_str("Tencent Agent").unwrap(),
+            AgentType::Generic("tencent-agent".to_string())
+        );
+        assert_eq!(
+            AgentType::from_str("Claude Desktop Cowork").unwrap(),
+            AgentType::Generic("claude-desktop-cowork".to_string())
+        );
     }
 
     #[test]
     fn test_agent_type_from_str_invalid() {
-        assert!(AgentType::from_str("gpt").is_err());
         assert!(AgentType::from_str("").is_err());
-        assert!(AgentType::from_str("CODEX").is_err());
+        assert!(AgentType::from_str("   ").is_err());
     }
 
     #[test]
@@ -2065,6 +2203,25 @@ Some other text here.
         assert_eq!(AgentType::Codex.display_name(), "Codex");
         assert_eq!(AgentType::ClaudeCode.display_name(), "Claude Code");
         assert_eq!(AgentType::Cursor.display_name(), "Cursor");
+        // Tencent Agent host family gets branded display names while still
+        // carried as Generic (no new AgentType variant).
+        assert_eq!(
+            AgentType::Generic("workbuddy".to_string()).display_name(),
+            "Tencent Agent (WorkBuddy)"
+        );
+        assert_eq!(
+            AgentType::Generic("codebuddy-code".to_string()).display_name(),
+            "Tencent Agent (CodeBuddy-Code)"
+        );
+        assert_eq!(
+            AgentType::Generic("tencent-agent".to_string()).display_name(),
+            "Tencent Agent"
+        );
+        // Unknown hosts keep the plain generic fallback — not broken.
+        assert_eq!(
+            AgentType::Generic("claude-desktop-cowork".to_string()).display_name(),
+            "Generic Agent (claude-desktop-cowork)"
+        );
     }
 
     #[test]
@@ -2072,6 +2229,10 @@ Some other text here.
         assert_eq!(AgentType::Codex.as_str(), "codex");
         assert_eq!(AgentType::ClaudeCode.as_str(), "claude-code");
         assert_eq!(AgentType::Cursor.as_str(), "cursor");
+        assert_eq!(
+            AgentType::Generic("workbuddy".to_string()).as_str(),
+            "workbuddy"
+        );
     }
 
     // ── Agent type serde ───────────────────────────────────────────────
@@ -2090,6 +2251,10 @@ Some other text here.
             serde_json::to_string(&AgentType::Cursor).unwrap(),
             "\"cursor\""
         );
+        assert_eq!(
+            serde_json::to_string(&AgentType::Generic("workbuddy".to_string())).unwrap(),
+            "\"workbuddy\""
+        );
     }
 
     #[test]
@@ -2100,6 +2265,8 @@ Some other text here.
         assert_eq!(a, AgentType::ClaudeCode);
         let a: AgentType = serde_json::from_str("\"cursor\"").unwrap();
         assert_eq!(a, AgentType::Cursor);
+        let a: AgentType = serde_json::from_str("\"workbuddy\"").unwrap();
+        assert_eq!(a, AgentType::Generic("workbuddy".to_string()));
     }
 
     // ── IntegrationStatus serde ────────────────────────────────────────
@@ -2135,8 +2302,9 @@ Some other text here.
             "Running from AGS repo — should detect as suite"
         );
         assert_eq!(identity.integration_status, IntegrationStatus::Suite);
-        assert!(!identity.workspace_identities.is_empty());
-        // Public edition has workspace identities from WORKSPACE.md table
+        // Public edition WORKSPACE.md may be a public role map rather than the
+        // private A/A1/S/B/B1 maintainer topology. Project detection must not
+        // require machine-local workspace identities to classify the suite.
         // Should have found root entry files
         assert!(identity
             .root_entry_files_found
@@ -2320,6 +2488,40 @@ Some other text here.
     }
 
     #[test]
+    fn test_generate_instructions_generic_agent() {
+        let instructions =
+            generate_agent_instructions(&repo_root(), &AgentType::Generic("workbuddy".to_string()));
+        assert_eq!(instructions.agent_type, "workbuddy");
+        assert_eq!(instructions.agent_display_name, "Tencent Agent (WorkBuddy)");
+        assert_eq!(
+            instructions.permissions.default_permission_mode,
+            "edit-with-confirmation"
+        );
+        assert!(instructions
+            .instructions_text
+            .contains("AGS-compatible governed host"));
+    }
+
+    #[test]
+    fn test_generate_instructions_codebuddy_code() {
+        let instructions = generate_agent_instructions(
+            &repo_root(),
+            &AgentType::Generic("codebuddy-code".to_string()),
+        );
+        assert_eq!(instructions.agent_type, "codebuddy-code");
+        assert_eq!(
+            instructions.agent_display_name,
+            "Tencent Agent (CodeBuddy-Code)"
+        );
+        // Recognized Tencent Agent clients keep the governed-host permission
+        // profile (no elevated privileges from the name).
+        assert_eq!(
+            instructions.permissions.default_permission_mode,
+            "edit-with-confirmation"
+        );
+    }
+
+    #[test]
     fn test_agent_instructions_json_output() {
         let instructions = generate_agent_instructions(&repo_root(), &AgentType::Codex);
         let json = render_json(&instructions);
@@ -2393,13 +2595,16 @@ Some other text here.
         let content = "\
 | Code | Role | Path |
 |---|---|
-| A | Dev suite | `/Volumes/Projects/my-protected-suite` |
-| S | Stable | `/Volumes/Projects/my-stable-suite` |
+| A | Dev suite | `/Volumes/Projects/example-private-suite` |
+| S | Stable | `/Volumes/Projects/example-stable-suite` |
 ";
         let identities = parse_workspace_table(content);
         assert_eq!(identities.len(), 2);
-        assert_eq!(identities[0].path, "/Volumes/Projects/my-protected-suite");
-        assert_eq!(identities[1].path, "/Volumes/Projects/my-stable-suite");
+        assert_eq!(
+            identities[0].path,
+            "/Volumes/Projects/example-private-suite"
+        );
+        assert_eq!(identities[1].path, "/Volumes/Projects/example-stable-suite");
         // Verify no backticks remain
         assert!(!identities[0].path.contains('`'));
         assert!(!identities[1].path.contains('`'));
@@ -2613,14 +2818,19 @@ Some other text here.
 
     #[test]
     fn test_known_workspace_path_detection() {
-        // Public edition: known paths are empty; role is inferred from
-        // WORKSPACE.md table parsing, not hardcoded paths.
+        // Test that the current repo path maps to a known workspace role
         let root = repo_root();
         let identity = detect_project(&root);
-        // In public edition, workspace identities come from WORKSPACE.md table,
-        // not from KNOWN_WORKSPACE_PATHS. The repo should still be detected as suite.
-        assert!(identity.is_ags_suite);
-        assert!(!identity.workspace_identities.is_empty());
+        assert!(
+            identity.inferred_role.is_some(),
+            "Running from AGS repo — should infer role"
+        );
+        let expected = expected_known_role_for_root(&root)
+            .expect("current AGS repo path should be a known workspace path");
+        if let Some(ref role) = identity.inferred_role {
+            assert_eq!(role.code, expected.0);
+            assert_eq!(role.role, expected.1);
+        }
     }
 
     // ── Session Preflight tests ───────────────────────────────────────
@@ -2660,6 +2870,31 @@ Some other text here.
         assert_eq!(preflight.for_agent, "cursor");
         assert_eq!(preflight.agent_display_name, "Cursor");
         assert!(preflight.is_ags_suite);
+    }
+
+    #[test]
+    fn test_session_preflight_generic_workbuddy() {
+        let root = repo_root();
+        let preflight = run_session_preflight(&root, &AgentType::from_str("workbuddy").unwrap());
+        assert_eq!(preflight.for_agent, "workbuddy");
+        assert_eq!(preflight.agent_display_name, "Tencent Agent (WorkBuddy)");
+        assert!(preflight.is_ags_suite);
+        assert_ne!(preflight.overall_status, PreflightStatus::Stop);
+    }
+
+    #[test]
+    fn test_session_preflight_tencent_agent_clients() {
+        let root = repo_root();
+        // CodeBuddy-Code resolves and triggers preflight with branded display.
+        let cb = run_session_preflight(&root, &AgentType::from_str("CodeBuddy-Code").unwrap());
+        assert_eq!(cb.for_agent, "codebuddy-code");
+        assert_eq!(cb.agent_display_name, "Tencent Agent (CodeBuddy-Code)");
+        assert!(cb.is_ags_suite);
+        assert_ne!(cb.overall_status, PreflightStatus::Stop);
+        // The Tencent Agent umbrella id itself resolves.
+        let ta = run_session_preflight(&root, &AgentType::from_str("Tencent Agent").unwrap());
+        assert_eq!(ta.for_agent, "tencent-agent");
+        assert_eq!(ta.agent_display_name, "Tencent Agent");
     }
 
     #[test]

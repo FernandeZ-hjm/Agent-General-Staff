@@ -2,8 +2,8 @@
 //! interface over MCP (Model Context Protocol).
 //!
 //! Exposes AGS governance tools, resources, and prompts via stdio JSON-RPC,
-//! enabling WorkBuddy, Codex, Cursor, Claude Code and other MCP hosts to
-//! call AGS governance gates as a global capability.
+//! enabling Tencent Agent (WorkBuddy, CodeBuddy-Code), Codex, Cursor, Claude
+//! Code and other MCP hosts to call AGS governance gates as a global capability.
 //!
 //! # Initialization Gate
 //!

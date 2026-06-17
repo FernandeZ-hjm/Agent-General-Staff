@@ -13,7 +13,7 @@
 //!   task-card skeleton defined in `protocol/task-card-template.md`. The
 //!   compiler never emits the removed compact format and never invents a
 //!   third task-card format. Output is validated by the real
-//!   `task_card_validator` in tests, not just a heuristic self-check.
+//!   `task_card_validator` (see tests), not just a heuristic self-check.
 //! - **Input semantics** — the canonical input is an approved execution
 //!   contract (the confirmed solution), not raw user chat. The compiler
 //!   accepts flexible intent files for backward compatibility, but
@@ -62,7 +62,7 @@ use std::path::{Path, PathBuf};
 pub const SCHEMA_VERSION: &str = "2.0-m4";
 
 /// Known task-card field headers that the compiler can fill.
-/// Legacy compact headers (路径/读取/关键路径/停止条件) are retained only for
+/// Legacy compact headers (路径/读取/关键路径/停止条件) are retained ONLY for
 /// lenient intent parsing; they are never emitted in the rendered output.
 const FIELD_HEADERS: &[(&str, bool)] = &[
     // inline fields
@@ -95,8 +95,9 @@ const FIELD_HEADERS: &[(&str, bool)] = &[
     ("交付：", false),
 ];
 
-/// Fields that are REQUIRED in the canonical classic task card.
-/// The compiler must fill these or report them as missing.
+/// Fields that are REQUIRED in the canonical (classic) task card.
+/// The compiler must fill these or report them as missing. This mirrors the
+/// validator's single required-field set (the classic fixed skeleton).
 const REQUIRED_FIELDS: &[&str] = &[
     "读取并遵守：",
     "Executor:",
@@ -258,7 +259,7 @@ fn find_header_start(line: &str) -> Option<(&'static str, usize, bool)> {
         }
     }
     // 2. Alias match: normalize the key before the first : or ：
-    if let Some(colon_pos) = line.find(|c| c == ':' || c == '：') {
+    if let Some(colon_pos) = line.find([':', '：']) {
         let key = line[..colon_pos].trim();
         if let Some(canonical) = normalise_key(key) {
             for (fh, is_inline) in FIELD_HEADERS {
@@ -356,11 +357,13 @@ pub fn gather_project_context(root: &Path) -> ProjectContext {
     // Workspace identity from WORKSPACE.md
     let (workspace_code, workspace_role) = detect_workspace_identity(&root);
 
-    // Memory paths — public edition: AGS_MEMORY_DIR env or ~/.agents/memory/projects/<slug>
+    // Memory paths
     let memory_slug = detect_memory_slug(&root);
-    let memory_base = resolve_memory_base();
     let capsule_path = memory_slug.as_ref().and_then(|slug| {
-        let p = memory_base.join(slug).join("context-capsule.md");
+        let p = PathBuf::from(format!(
+            "~/.agents/memory/projects/{}/context-capsule.md",
+            slug
+        ));
         if p.exists() {
             Some(p)
         } else {
@@ -368,7 +371,7 @@ pub fn gather_project_context(root: &Path) -> ProjectContext {
         }
     });
     let task_memory_path = memory_slug.as_ref().and_then(|slug| {
-        let p = memory_base.join(slug).join("task-memory.md");
+        let p = PathBuf::from(format!("~/.agents/memory/projects/{}/task-memory.md", slug));
         if p.exists() {
             Some(p)
         } else {
@@ -434,9 +437,44 @@ fn detect_workspace_identity(root: &Path) -> (Option<String>, Option<String>) {
         }
     }
 
-    // Fallback: no known hardcoded paths — workspace identity is derived
-    // from WORKSPACE.md parsing only.  Public edition does not ship private
-    // workspace coordinates.
+    // Fallback: try known paths
+    let canonical = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let canonical_str = canonical.to_string_lossy().to_string();
+
+    const KNOWN: &[(&str, &str, &str)] = &[
+        (
+            "A",
+            "Development private suite",
+            "/Volumes/Projects/example-private-suite",
+        ),
+        (
+            "A1",
+            "Private bare repo",
+            "/Volumes/Projects/remotes/example-private-suite.git",
+        ),
+        (
+            "S",
+            "Stable private suite",
+            "/Volumes/Projects/example-stable-suite",
+        ),
+        (
+            "B",
+            "Public worktree",
+            "/Volumes/AI Project/ai-dev-env-bootstrap",
+        ),
+        (
+            "B1",
+            "Public bare repo",
+            "/Volumes/Projects/remotes/example-public-suite.git",
+        ),
+    ];
+
+    for (code, role, known_path) in KNOWN {
+        if canonical_str == *known_path {
+            return (Some(code.to_string()), Some(role.to_string()));
+        }
+    }
+
     (None, None)
 }
 
@@ -463,31 +501,25 @@ fn paths_equal(a: &Path, b: &Path) -> bool {
 }
 
 /// Detect the memory slug for this project.
-///
-/// Public edition: derives from directory name only.  No hardcoded known-project
-/// mapping.  Set `AGS_MEMORY_SLUG` to override.
 fn detect_memory_slug(root: &Path) -> Option<String> {
-    if let Ok(slug) = std::env::var("AGS_MEMORY_SLUG") {
-        if !slug.is_empty() {
-            return Some(slug);
-        }
+    // For known projects, use known slugs
+    let canonical = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let s = canonical.to_string_lossy();
+
+    if s.contains("example-private-suite") {
+        return Some("example-private-suite".to_string());
     }
+    if s.contains("example-stable-suite") {
+        return Some("example-stable-suite".to_string());
+    }
+    if s.contains("ai-dev-env-bootstrap") {
+        return Some("ai-dev-env-bootstrap".to_string());
+    }
+
+    // Fallback: derive from directory name
     root.file_name()
         .and_then(|n| n.to_str())
         .map(|n| n.to_string())
-}
-
-/// Resolve the base memory directory.
-///
-/// Uses `AGS_MEMORY_DIR` env var, or defaults to `$HOME/.agents/memory/projects`.
-fn resolve_memory_base() -> PathBuf {
-    if let Ok(dir) = std::env::var("AGS_MEMORY_DIR") {
-        if !dir.is_empty() {
-            return PathBuf::from(dir);
-        }
-    }
-    let home = ags_platform::home_dir_or_temp();
-    PathBuf::from(home).join(".agents/memory/projects")
 }
 
 /// Extract protocol file references from CLAUDE.md.
@@ -502,10 +534,10 @@ fn extract_claude_md_refs(root: &Path) -> Vec<String> {
     let mut refs = Vec::new();
     for line in content.lines() {
         let line = line.trim();
-        if line.starts_with("- `") || line.starts_with("- ") {
-            if line.contains(".md") || line.contains("protocol/") {
-                refs.push(line.trim_start_matches("- ").to_string());
-            }
+        if (line.starts_with("- `") || line.starts_with("- "))
+            && (line.contains(".md") || line.contains("protocol/"))
+        {
+            refs.push(line.trim_start_matches("- ").to_string());
         }
     }
     refs
@@ -761,7 +793,18 @@ pub fn compile(
         });
     }
 
-    // 相关路径：— from intent or project context
+    // 目标文件夹路径：— actual target/workspace root for this task
+    if !has_field(&fields, "目标文件夹路径：") {
+        let target_folder = format!("- {}", ctx.project_root.to_string_lossy());
+        fields.insert("目标文件夹路径：".to_string(), target_folder.clone());
+        slot_sources.push(SlotEntry {
+            field: "目标文件夹路径：".to_string(),
+            value: target_folder,
+            source: SlotSource::ProjectContext,
+        });
+    }
+
+    // 相关路径：— from project context
     if !has_field(&fields, "相关路径：") {
         let default_paths = if ctx.is_ags_suite {
             "- crates/\n- scripts/\n- tests/".to_string()
@@ -791,17 +834,6 @@ pub fn compile(
         });
     }
 
-    // 目标文件夹路径：— actual target/workspace root for this task
-    if !has_field(&fields, "目标文件夹路径：") {
-        let target_folder = format!("- {}", ctx.project_root.to_string_lossy());
-        fields.insert("目标文件夹路径：".to_string(), target_folder.clone());
-        slot_sources.push(SlotEntry {
-            field: "目标文件夹路径：".to_string(),
-            value: target_folder,
-            source: SlotSource::ProjectContext,
-        });
-    }
-
     // ── Phase 3: defaults for remaining optional fields ─────────────
 
     // 非目标：— default if absent
@@ -824,7 +856,7 @@ pub fn compile(
         });
     }
 
-    // Verification gate: — default if absent
+    // Verification gate: — default if absent (carries the stop condition)
     if !has_field(&fields, "Verification gate:") {
         let vg =
             "- commands:\n  - 按任务卡验证门禁执行\n- stop condition:\n  - 验证失败时停止并报告"
@@ -882,26 +914,23 @@ pub fn compile(
         .collect();
 
     // Also check that 任务：and 目标：have meaningful content
-    if has_field(&fields, "任务：") && is_empty_or_placeholder(fields.get("任务：").unwrap())
+    if has_field(&fields, "任务：")
+        && is_empty_or_placeholder(fields.get("任务：").unwrap())
+        && !missing_slots.contains(&"任务：".to_string())
     {
-        if !missing_slots.contains(&"任务：".to_string()) {
-            // Don't add to missing_slots if it's there, but flag the weak content
-        }
+        // Don't add to missing_slots if it's there, but flag the weak content
     }
-    if has_field(&fields, "目标：") && is_empty_or_placeholder(fields.get("目标：").unwrap())
+    if has_field(&fields, "目标：")
+        && is_empty_or_placeholder(fields.get("目标：").unwrap())
+        && !missing_slots.contains(&"目标：".to_string())
     {
-        if !missing_slots.contains(&"目标：".to_string()) {
-            // Same — weak content in 目标：
-        }
+        // Same — weak content in 目标：
     }
 
     // ── Phase 5: build the canonical task card ──────────────────────
-    let compiled_card = if missing_slots.is_empty() {
-        render_task_card(&fields)
-    } else {
-        // Still render what we have, but it won't pass validation
-        render_task_card(&fields)
-    };
+    // Always render the classic skeleton. When slots are missing the card is
+    // still rendered for diagnostics but will not pass validation.
+    let compiled_card = render_task_card(&fields);
 
     // ── Phase 6: validate against task card validator ───────────────
     // We do a structural self-check here. The actual validation is done
@@ -1006,7 +1035,7 @@ pub fn compile(
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 fn has_field(fields: &HashMap<String, String>, key: &str) -> bool {
-    fields.get(key).map_or(false, |v| !v.is_empty())
+    fields.get(key).is_some_and(|v| !v.is_empty())
 }
 
 fn is_empty_or_placeholder(val: &str) -> bool {
@@ -1029,6 +1058,7 @@ fn executor_to_adapter(executor: &str) -> &'static str {
 }
 
 /// Infer task level from intent content.
+#[allow(clippy::if_same_then_else)] // "medium signals" and "default to Medium for safety" intentionally share a branch value
 fn infer_task_level(parsed: &ParsedIntent, fields: &HashMap<String, String>) -> String {
     let combined = format!(
         "{} {}",
@@ -1087,7 +1117,7 @@ fn infer_task_level(parsed: &ParsedIntent, fields: &HashMap<String, String>) -> 
     }
 }
 
-/// Build the `读取：` section from project context.
+/// Build the `读取并遵守：` read-and-obey section from project context.
 fn build_reads_section(ctx: &ProjectContext) -> String {
     let mut lines: Vec<String> = Vec::new();
     lines.push("- 本任务卡".to_string());
@@ -1110,14 +1140,15 @@ fn build_reads_section(ctx: &ProjectContext) -> String {
     lines.join("\n")
 }
 
-/// Render the canonical classic task card from a field map.
+/// Render the canonical (classic) task card from a field map.
 fn render_task_card(fields: &HashMap<String, String>) -> String {
     let mut lines: Vec<String> = Vec::new();
     lines.push("## 任务卡".to_string());
     lines.push(String::new());
 
-    // Field order matching protocol/task-card-template.md. Removed compact
-    // fields (路径/读取/关键路径/停止条件) are intentionally never rendered.
+    // Field order matching the canonical classic skeleton
+    // (protocol/task-card-template.md). The removed compact fields
+    // (路径/读取/关键路径/停止条件) are intentionally never rendered.
     let order: &[&str] = &[
         "读取并遵守：",
         "Executor:",
@@ -1156,7 +1187,7 @@ fn render_task_card(fields: &HashMap<String, String>) -> String {
             // Multi-line fields get their content on separate lines,
             // inline fields stay on the same line
             if is_inline_field(header) {
-                // Inline — replace the header line with "Header: value"
+                // Inline — replace the bare header line with "Header: value".
                 let last = lines.last_mut().unwrap();
                 *last = format!("{} {}", header, val);
             } else {
@@ -1201,6 +1232,7 @@ fn is_inline_field(header: &str) -> bool {
 /// Compile an intent and return only the compiled card text.
 /// Returns an error message if required slots are missing or if
 /// the task card was not requested.
+#[allow(clippy::result_large_err)] // CompileReport carries full diagnostics; boxing it would complicate the public API
 pub fn compile_simple(
     intent: &str,
     project_root: &Path,
@@ -1865,9 +1897,14 @@ mod tests {
         );
     }
 
+    // ── Hard validation: compiled card passes the REAL validator ───────
+
     #[test]
     fn compiled_card_passes_real_validator() {
-        let intent = "任务：测试编译器输出能通过实际校验器\n\
+        // The compiled card must pass the REAL task_card_validator, not just
+        // the compiler's heuristic self-check (closes the gap where compact
+        // output was never validated against the canonical gate).
+        let intent = "任务：测试编译器输出能通过真实校验器\n\
                       目标：验证 ags task compile 产出经典骨架并通过 validator";
         let project_root = Path::new(".");
         let (card, report) = compile(intent, project_root, false, true);
@@ -1877,12 +1914,15 @@ mod tests {
             "card should be executable: {:?}",
             report.block_reason
         );
-        assert!(card.starts_with("## 任务卡"));
+        assert!(
+            card.starts_with("## 任务卡"),
+            "card must start with ## 任务卡"
+        );
         assert!(
             !card.contains("AGENT_SUITE_COMPACT_TASK_CARD_V1"),
             "compiled card must not contain the removed compact marker"
         );
-
+        // The second non-empty line must be the classic discriminator.
         let second = card
             .lines()
             .filter(|l| !l.trim().is_empty())
@@ -1911,5 +1951,54 @@ mod tests {
             "compiled card must not render a relative target folder path:\n{}",
             card
         );
+    }
+
+    // ── Single canonical template: level is a field, not a template file ───
+
+    #[test]
+    fn compiler_always_emits_single_canonical_skeleton() {
+        // Light / Medium / Heavy-shaped intents must all compile to the SAME
+        // canonical skeleton (protocol/task-card-template.md). Task level is a
+        // `任务级别：` field value, never a different per-level template file,
+        // and the compiler must never emit a compact or fallback skeleton.
+        let project_root = Path::new(".");
+        let intents = [
+            "任务：改个变量名\n目标：把 foo 改成 bar",
+            "任务：跨文件重构共享模块\n目标：调整配置与共享 helper 行为",
+            "任务：数据库迁移与向量库 baseline 重建\n目标：执行不可逆迁移并保留 baseline",
+        ];
+        for intent in intents {
+            let (card, _report) = compile(intent, project_root, false, true);
+            assert!(
+                card.starts_with("## 任务卡"),
+                "must start with ## 任务卡 for intent {intent:?}"
+            );
+            let second = card
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .nth(1)
+                .unwrap_or("");
+            assert!(
+                second.starts_with("读取并遵守："),
+                "second non-empty line must be the single canonical discriminator \
+                 读取并遵守：, got {second:?} for intent {intent:?}"
+            );
+            assert!(
+                card.contains("任务级别："),
+                "canonical skeleton must carry the 任务级别： field for intent {intent:?}"
+            );
+            assert!(
+                !card.contains("AGENT_SUITE_COMPACT_TASK_CARD_V1"),
+                "compiled card must not contain the removed compact marker: {intent:?}"
+            );
+            assert!(
+                !card.contains("fallback-task-cards"),
+                "compiled card must not reference a fallback template set: {intent:?}"
+            );
+            assert!(
+                !card.contains("task-template.md"),
+                "compiled card must not reference a per-level template file: {intent:?}"
+            );
+        }
     }
 }

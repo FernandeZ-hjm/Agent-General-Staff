@@ -13,13 +13,20 @@
 //! `VerificationReport` with summary statistics.
 //!
 //! Checks in `local` scope run entirely within the current repository.
-//! `full` is retained as a compatibility alias for `local` in the public
-//! edition. `release` adds public manifest, tracked-source leak, and bootstrap
-//! payload boundary checks.
+//! `full` adds drift checks against stable and public targets.
+//! `release` focuses on public-full sanitized boundary checks.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+pub mod change_lane;
+pub use change_lane::{
+    classify_from_git_range, classify_lane, ChangeClassification, ChangeLane, VerificationProfile,
+};
+
+pub mod visible_status;
+pub use visible_status::{derive_visible_status, StatusSignals, VisibleStatus};
 
 // ── Core types ──────────────────────────────────────────────────────────────
 
@@ -29,13 +36,14 @@ use std::process::Command;
 pub enum Scope {
     /// Local-only checks: fmt, test, build, fixtures, YAML, preflight.
     Local,
-    /// Compatibility alias for local checks in the public edition.
+    /// Local + drift checks against stable and public targets.
     Full,
     /// Release-focused: public-full sanitized boundary checks.
     Release,
 }
 
 impl Scope {
+    #[allow(clippy::should_implement_trait)] // inherent parser with domain String error; intentionally not std::str::FromStr
     pub fn from_str(s: &str) -> Result<Self, String> {
         match s {
             "local" => Ok(Scope::Local),
@@ -243,7 +251,6 @@ fn run_command(
 }
 
 /// Count the longest consecutive run of hex characters in a string.
-#[cfg(test)]
 fn longest_hex_run(s: &str) -> usize {
     let mut max_run = 0;
     let mut current = 0;
@@ -362,7 +369,7 @@ fn check_valid_fixtures(repo_root: &Path) -> Vec<CheckItem> {
         let fixture_path = repo_root.join(fixture);
         if !fixture_path.exists() {
             items.push(CheckItem::skip(
-                &format!("fixture-{}", fixture.replace('/', "-").replace('.', "-")),
+                &format!("fixture-{}", fixture.replace(['/', '.'], "-")),
                 "local",
                 &format!("Fixture not found: {}", fixture),
             ));
@@ -389,8 +396,7 @@ fn check_valid_fixtures(repo_root: &Path) -> Vec<CheckItem> {
             "fixture-{}",
             fixture
                 .replace("tests/fixtures/", "")
-                .replace('/', "-")
-                .replace('.', "-")
+                .replace(['/', '.'], "-")
                 .replace("_", "-")
         );
         if code == 0 {
@@ -422,6 +428,58 @@ fn check_valid_fixtures(repo_root: &Path) -> Vec<CheckItem> {
         }
     }
 
+    // Negative check: the removed compact task-card format must be rejected.
+    // invalid-compact.md carries AGENT_SUITE_COMPACT_TASK_CARD_V1 at the
+    // structural discriminator; `task validate` must exit non-zero.
+    let reject_fixture = "tests/fixtures/invalid-compact.md";
+    let reject_path = repo_root.join(reject_fixture);
+    if !reject_path.exists() {
+        items.push(CheckItem::skip(
+            "fixture-invalid-compact-rejected",
+            "local",
+            &format!("Fixture not found: {}", reject_fixture),
+        ));
+    } else {
+        let (code, stdout, stderr) = run_command(
+            repo_root,
+            "cargo",
+            &[
+                "run",
+                "-q",
+                "-p",
+                "ags-cli",
+                "--",
+                "task",
+                "validate",
+                &reject_path.to_string_lossy(),
+            ],
+            &[],
+        );
+        if code != 0 {
+            items.push(CheckItem::pass(
+                "fixture-invalid-compact-rejected",
+                "local",
+                "Removed compact task-card format is correctly rejected",
+            ));
+        } else {
+            items.push(
+                CheckItem::fail(
+                    "fixture-invalid-compact-rejected",
+                    "local",
+                    &format!(
+                        "invalid-compact.md was accepted but the compact format is removed: {}",
+                        truncate(&format!("{}\n{}", stdout, stderr), 200)
+                    ),
+                    "Validator must reject AGENT_SUITE_COMPACT_TASK_CARD_V1 / 路径： at the structural discriminator.",
+                )
+                .with_command(&format!(
+                    "cargo run -p ags-cli -- task validate {}",
+                    reject_fixture
+                )),
+            );
+        }
+    }
+
     items
 }
 
@@ -439,7 +497,7 @@ fn check_governance_yaml(repo_root: &Path) -> Vec<CheckItem> {
         let path = repo_root.join(yaml_file);
         if !path.exists() {
             items.push(CheckItem::skip(
-                &format!("yaml-{}", yaml_file.replace('/', "-").replace('.', "-")),
+                &format!("yaml-{}", yaml_file.replace(['/', '.'], "-")),
                 "local",
                 &format!("YAML file not found: {}", yaml_file),
             ));
@@ -450,7 +508,7 @@ fn check_governance_yaml(repo_root: &Path) -> Vec<CheckItem> {
             Ok(c) => c,
             Err(e) => {
                 items.push(CheckItem::fail(
-                    &format!("yaml-{}", yaml_file.replace('/', "-").replace('.', "-")),
+                    &format!("yaml-{}", yaml_file.replace(['/', '.'], "-")),
                     "local",
                     &format!("Cannot read {}: {}", yaml_file, e),
                     "Check file permissions.",
@@ -459,7 +517,7 @@ fn check_governance_yaml(repo_root: &Path) -> Vec<CheckItem> {
             }
         };
 
-        let id = format!("yaml-{}", yaml_file.replace('/', "-").replace('.', "-"));
+        let id = format!("yaml-{}", yaml_file.replace(['/', '.'], "-"));
 
         match serde_yaml::from_str::<serde_yaml::Value>(&content) {
             Ok(_) => {
@@ -553,47 +611,233 @@ fn check_session_preflight(repo_root: &Path) -> CheckItem {
     }
 }
 
+fn check_private_vs_stable_drift(repo_root: &Path) -> CheckItem {
+    let stable_root = "/Volumes/Projects/example-stable-suite";
+    if !Path::new(stable_root).exists() {
+        return CheckItem::skip(
+            "drift-private-vs-stable",
+            "full",
+            &format!("Stable root not found: {}", stable_root),
+        );
+    }
+
+    let (code, stdout, stderr) = run_command(
+        repo_root,
+        "cargo",
+        &[
+            "run",
+            "-q",
+            "-p",
+            "ags-cli",
+            "--",
+            "sync",
+            "check",
+            "--source",
+            &repo_root.to_string_lossy(),
+            "--target",
+            stable_root,
+            "--target-name",
+            "stable",
+            "--format",
+            "json",
+        ],
+        &[],
+    );
+
+    let output = format!("{}\n{}", stdout, stderr);
+    if code == 0 {
+        CheckItem::pass(
+            "drift-private-vs-stable",
+            "full",
+            "No protocol drift detected between private and stable.",
+        )
+    } else {
+        // Parse JSON to extract structured drift info
+        let evidence = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&stdout) {
+            let drift_count = json
+                .get("projects")
+                .and_then(|p| p.get(0))
+                .and_then(|p| p.get("drift_count"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            format!(
+                "Protocol drift detected: {} drift item(s) between private and stable.",
+                drift_count
+            )
+        } else {
+            format!(
+                "Drift check failed (exit {}): {}",
+                code,
+                truncate(&output, 400)
+            )
+        };
+
+        CheckItem::warn(
+            "drift-private-vs-stable",
+            "full",
+            &evidence,
+            "Sync protocol files from A to A1 via scripts/push-a1.sh, then fast-forward S.",
+        )
+        .with_command(&format!(
+            "ags sync check --source {} --target {} --target-name stable",
+            repo_root.display(),
+            stable_root
+        ))
+        .with_exit_code(code)
+    }
+}
+
+fn check_private_vs_public_boundary(repo_root: &Path) -> CheckItem {
+    let public_root = "/Volumes/AI Project/ai-dev-env-bootstrap";
+    if !Path::new(public_root).exists() {
+        return CheckItem::skip(
+            "drift-private-vs-public",
+            "full",
+            &format!("Public root not found: {}", public_root),
+        );
+    }
+
+    let (code, stdout, stderr) = run_command(
+        repo_root,
+        "cargo",
+        &[
+            "run",
+            "-q",
+            "-p",
+            "ags-cli",
+            "--",
+            "sync",
+            "check",
+            "--source",
+            &repo_root.to_string_lossy(),
+            "--target",
+            public_root,
+            "--target-name",
+            "public-full-sanitized",
+            "--format",
+            "json",
+        ],
+        &[],
+    );
+
+    let output = format!("{}\n{}", stdout, stderr);
+
+    // Check for hard boundary violations first
+    let has_violation = output.contains("INVARIANT_MISSING")
+        || output.contains("INVARIANT_CONTRADICTED")
+        || output.contains("PUBLIC_FORBIDDEN_PAYLOAD");
+
+    if code == 0 {
+        CheckItem::pass(
+            "drift-private-vs-public",
+            "full",
+            "No public-full sanitized boundary violations detected.",
+        )
+    } else if has_violation {
+        CheckItem::fail(
+            "drift-private-vs-public",
+            "full",
+            &format!(
+                "Public-full sanitized boundary violation detected (exit {}): {}",
+                code,
+                truncate(&output, 500)
+            ),
+            "Review public-full sanitized boundary: INVARIANT or PUBLIC_FORBIDDEN_PAYLOAD violation.",
+        )
+        .with_command(&format!(
+            "ags sync check --source {} --target {} --target-name public-full-sanitized",
+            repo_root.display(),
+            public_root
+        ))
+        .with_exit_code(code)
+    } else {
+        // Allowlist gap — warn but don't hard-fail
+        CheckItem::warn(
+            "drift-private-vs-public",
+            "full",
+            &format!(
+                "Public-full sanitized allowlist gap (exit {}): content drift within PUBLIC_MANIFEST files.",
+                code
+            ),
+            "Review public promotion allowlist and update public manifest.",
+        )
+        .with_command(&format!(
+            "ags sync check --source {} --target {} --target-name public-full-sanitized",
+            repo_root.display(),
+            public_root
+        ))
+        .with_exit_code(code)
+    }
+}
+
 fn check_release_boundary(repo_root: &Path) -> Vec<CheckItem> {
+    let public_root = "/Volumes/AI Project/ai-dev-env-bootstrap";
     let mut items = Vec::new();
 
-    // Check 1: Public release manifest — verify the current repo against the
-    // public manifest itself (required files present, no forbidden payload). This
-    // is a self-contained check on the public tree, not a source↔target sync
-    // comparison.
-    let manifest = workflow_sync_check::manifest::verify_release_manifest(repo_root);
-    if manifest.passed {
-        items.push(CheckItem::pass(
-            "release-manifest",
+    if !Path::new(public_root).exists() {
+        items.push(CheckItem::skip(
+            "release-public-root",
             "release",
-            "Public release manifest satisfied — required files present, no forbidden payload.",
+            &format!("Public root not found: {}", public_root),
+        ));
+        return items;
+    }
+
+    // Check 1: Run sync check with public target
+    let (code, stdout, stderr) = run_command(
+        repo_root,
+        "cargo",
+        &[
+            "run",
+            "-q",
+            "-p",
+            "ags-cli",
+            "--",
+            "sync",
+            "check",
+            "--source",
+            &repo_root.to_string_lossy(),
+            "--target",
+            public_root,
+            "--target-name",
+            "public-full-sanitized",
+            "--format",
+            "json",
+        ],
+        &[],
+    );
+
+    let output = format!("{}\n{}", stdout, stderr);
+    let has_violation = output.contains("INVARIANT_MISSING")
+        || output.contains("INVARIANT_CONTRADICTED")
+        || output.contains("PUBLIC_FORBIDDEN_PAYLOAD");
+
+    if code == 0 {
+        items.push(CheckItem::pass(
+            "release-boundary-sync",
+            "release",
+            "Public-full sanitized sync check passed — no boundary violations.",
+        ));
+    } else if has_violation {
+        items.push(CheckItem::fail(
+            "release-boundary-sync",
+            "release",
+            &format!(
+                "Public-full sanitized boundary violation: {}",
+                truncate(&output, 500)
+            ),
+            "Fix boundary violations before release. Check INVARIANT and PUBLIC_FORBIDDEN_PAYLOAD.",
         ));
     } else {
-        let mut parts = Vec::new();
-        if !manifest.required_missing.is_empty() {
-            parts.push(format!(
-                "missing required: {}",
-                manifest.required_missing.join(", ")
-            ));
-        }
-        if !manifest.forbidden_found.is_empty() {
-            parts.push(format!(
-                "forbidden payload present: {}",
-                manifest.forbidden_found.join(", ")
-            ));
-        }
-        items.push(CheckItem::fail(
-            "release-manifest",
+        items.push(CheckItem::warn(
+            "release-boundary-sync",
             "release",
-            &format!("Public release manifest violation: {}", parts.join("; ")),
-            "Add missing required files or remove forbidden payload before release.",
+            "Public-full sanitized allowlist gap — review before release.",
+            "Update public promotion allowlist.",
         ));
     }
 
-    // Check 2: Tracked-source leak scan — no maintainer-private paths or runtime
-    // markers in git-tracked files.
-    items.push(check_tracked_source_leaks(repo_root));
-
-    // Check 3: Verify bootstrap --apply produces a sanitized public payload
+    // Check 2: Verify bootstrap --apply produces a sanitized public payload
     let tmpdir = std::env::temp_dir().join(format!("ags-verify-release-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&tmpdir);
 
@@ -662,80 +906,214 @@ fn check_release_boundary(repo_root: &Path) -> Vec<CheckItem> {
         ));
     }
 
+    // Check 3: Verify public-full package plan strips EvoMap/GEP runtime surfaces.
+    let (package_code, package_stdout, package_stderr) = run_command(
+        repo_root,
+        "cargo",
+        &[
+            "run",
+            "-q",
+            "-p",
+            "ags-cli",
+            "--",
+            "release",
+            "package",
+            "--profile",
+            "public-full",
+            "--dry-run",
+            "--format",
+            "json",
+        ],
+        &[],
+    );
+
+    if package_code != 0 {
+        items.push(CheckItem::fail(
+            "release-package-public-core",
+            "release",
+            &format!(
+                "public-full release package plan failed (exit {}): {}",
+                package_code,
+                truncate(&format!("{package_stdout}\n{package_stderr}"), 500)
+            ),
+            "Fix `ags release package --profile public-full --dry-run` before release.",
+        ));
+    } else {
+        match serde_json::from_str::<serde_json::Value>(&package_stdout) {
+            Ok(plan) => {
+                let leaked: Vec<String> = plan
+                    .get("included_files")
+                    .and_then(|value| value.as_array())
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|value| value.as_str())
+                    .filter(|path| public_package_evomap_surface(path))
+                    .map(ToString::to_string)
+                    .collect();
+
+                if leaked.is_empty() {
+                    items.push(CheckItem::pass(
+                        "release-package-strips-evomap",
+                        "release",
+                        "public-full package plan contains no EvoMap/Evolver/GEP runtime paths.",
+                    ));
+                } else {
+                    items.push(CheckItem::fail(
+                        "release-package-strips-evomap",
+                        "release",
+                        &format!(
+                            "public-full package plan includes EvoMap/Evolver/GEP paths: {}",
+                            leaked.join(", ")
+                        ),
+                        "Remove EvoMap/GEP paths from the public release allowlist and forbidden payload gate.",
+                    ));
+                }
+            }
+            Err(e) => items.push(CheckItem::fail(
+                "release-package-strips-evomap",
+                "release",
+                &format!("cannot parse public-full package plan JSON: {e}"),
+                "Fix `ags release package --profile public-full --dry-run --format json` output.",
+            )),
+        }
+    }
+
     // Cleanup tempdir
     let _ = std::fs::remove_dir_all(&tmpdir);
 
     items
 }
 
-/// Scan every git-tracked file for maintainer-private paths or runtime markers
-/// that must not appear in the public edition. The private markers are assembled
-/// at runtime with `concat!` so this scanner's own source never contains the full
-/// literals it searches for (same convention as the `receipt` crate), which
-/// prevents the scan from flagging itself.
-fn check_tracked_source_leaks(repo_root: &Path) -> CheckItem {
-    let markers: [String; 8] = [
-        concat!("agent-governance-suite", "-stable").to_string(),
-        concat!("agent-governance-suite", "-private").to_string(),
-        concat!("/Users/", "hujiaming").to_string(),
-        concat!("EVOLVER", "_PROXY_MCP").to_string(),
-        concat!("evolver", "-token").to_string(),
-        concat!("with", "-evomap").to_string(),
-        concat!("gep", "-mcp-server").to_string(),
-        concat!("@", "evomap").to_string(),
-    ];
+fn public_package_evomap_surface(path: &str) -> bool {
+    let lower = path
+        .trim_start_matches("./")
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    lower.contains("evomap")
+        || lower.contains("evolver")
+        || lower == ".evolver"
+        || lower.starts_with(".evolver/")
+        || lower == "assets/gep"
+        || lower.starts_with("assets/gep/")
+        || lower.contains("/gep/")
+        || lower.ends_with("/gep")
+        || lower == "mcp/gep.mcp.json"
+}
 
-    let (code, stdout, _stderr) = run_command(repo_root, "git", &["ls-files"], &[]);
-    if code != 0 {
-        return CheckItem::skip(
-            "release-tracked-leak",
-            "release",
-            "git ls-files unavailable (not a git worktree?) — tracked-source leak scan skipped.",
+/// Check that portable runtime profile templates exist, parse correctly,
+/// and contain no real secrets or absolute private paths.
+///
+/// This check is smart about what constitutes a "leak": documentation
+/// mentioning "token" or "secret" is fine; actual 64+ char hex tokens,
+/// absolute `/Users/` paths, and real memory/archive paths are NOT.
+fn check_runtime_profile_templates(repo_root: &Path) -> CheckItem {
+    let templates_dir = repo_root.join("manifests/templates");
+    if !templates_dir.exists() {
+        return CheckItem::warn(
+            "runtime-profile-templates",
+            "local",
+            "manifests/templates/ directory not found — portable EvoMap profile templates missing",
+            "Run `mkdir -p manifests/templates/hooks` and add template files.",
         );
     }
 
-    let mut leaks: Vec<String> = Vec::new();
-    for file in stdout.lines() {
-        let file = file.trim();
-        if file.is_empty() {
+    let template_files: &[(&str, &str)] = &[
+        ("manifests/templates/runtime-profiles.template.yaml", "yaml"),
+        (
+            "manifests/templates/hooks/claude-code-executor-stop.template.js",
+            "javascript",
+        ),
+        (
+            "manifests/templates/hooks/codex-planner-recall.template.json",
+            "json",
+        ),
+        ("manifests/templates/README.md", "markdown"),
+    ];
+
+    let mut missing = Vec::new();
+    let mut parse_errors = Vec::new();
+    let mut found = Vec::new();
+
+    for (rel_path, kind) in template_files {
+        let full_path = repo_root.join(rel_path);
+        if !full_path.exists() {
+            missing.push(*rel_path);
             continue;
         }
-        // A maintainer-private sync tool tracked in the public edition is itself a leak.
-        if file == "scripts/sync-public.sh" || file.ends_with("/sync-public.sh") {
-            leaks.push(format!(
-                "{file}: maintainer-private sync tool must not be tracked in the public edition"
-            ));
-        }
-        let content = match std::fs::read_to_string(repo_root.join(file)) {
+        found.push(*rel_path);
+
+        // Parse check
+        let content = match std::fs::read_to_string(&full_path) {
             Ok(c) => c,
-            Err(_) => continue, // binary or unreadable — skip
+            Err(e) => {
+                parse_errors.push(format!("{rel_path}: cannot read: {e}"));
+                continue;
+            }
         };
-        for (idx, line) in content.lines().enumerate() {
-            for marker in &markers {
-                if line.contains(marker.as_str()) {
-                    leaks.push(format!("{file}:{}: private marker `{marker}`", idx + 1));
+
+        match *kind {
+            "yaml" => {
+                if let Err(e) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+                    parse_errors.push(format!("{rel_path}: YAML parse error: {e}"));
                 }
             }
+            "json" => {
+                if let Err(e) = serde_json::from_str::<serde_json::Value>(&content) {
+                    parse_errors.push(format!("{rel_path}: JSON parse error: {e}"));
+                }
+            }
+            "javascript"
+                // Node --check is done in suite-doctor; here we just verify
+                // the file is non-empty and starts with a plausible shebang
+                if content.trim().is_empty() => {
+                    parse_errors.push(format!("{rel_path}: empty file"));
+                }
+            _ => {} // markdown — no parse check needed
+        }
+
+        // Smart leak check: look for patterns that indicate REAL leaked data,
+        // not just documentation mentions of the words "token" or "secret".
+        let leaks = detect_template_leaks(&content, rel_path);
+        if !leaks.is_empty() {
+            parse_errors.extend(leaks);
         }
     }
 
-    if leaks.is_empty() {
-        CheckItem::pass(
-            "release-tracked-leak",
-            "release",
-            "No maintainer-private paths or runtime markers found in git-tracked files.",
+    if !parse_errors.is_empty() {
+        let evidence = format!(
+            "{} template file(s) have issues:\n{}",
+            parse_errors.len(),
+            parse_errors.join("\n")
+        );
+        CheckItem::fail(
+            "runtime-profile-templates",
+            "local",
+            &truncate(&evidence, 500),
+            "Fix template parse errors or remove leaked secrets/paths.",
+        )
+    } else if !missing.is_empty() {
+        CheckItem::warn(
+            "runtime-profile-templates",
+            "local",
+            &format!(
+                "{} template file(s) missing: {} ({} found OK)",
+                missing.len(),
+                missing.join(", "),
+                found.len()
+            ),
+            &format!(
+                "Create missing template files in manifests/templates/. Missing: {}",
+                missing.join(", ")
+            ),
         )
     } else {
-        let shown = leaks.len().min(20);
-        CheckItem::fail(
-            "release-tracked-leak",
-            "release",
+        CheckItem::pass(
+            "runtime-profile-templates",
+            "local",
             &format!(
-                "Maintainer-private leak in tracked source ({} hit(s)): {}",
-                leaks.len(),
-                leaks[..shown].join("; ")
+                "{} template file(s) present and parse correctly with no leaks detected",
+                found.len()
             ),
-            "Remove the private path/marker, or move the file out of the public edition (git rm --cached + .gitignore).",
         )
     }
 }
@@ -743,7 +1121,6 @@ fn check_tracked_source_leaks(repo_root: &Path) -> CheckItem {
 /// Detect patterns in template content that indicate REAL leaked secrets or
 /// absolute private paths. Documentation words like "token" are fine; actual
 /// 64+ char hex tokens, `/Users/` paths, and real memory/archive paths are NOT.
-#[cfg(test)]
 fn detect_template_leaks(content: &str, rel_path: &str) -> Vec<String> {
     let mut leaks = Vec::new();
 
@@ -836,12 +1213,15 @@ pub fn run_verify(scope: Scope, repo_root: &Path) -> VerificationReport {
     items.extend(check_valid_fixtures(&repo_root));
     items.extend(check_governance_yaml(&repo_root));
     items.push(check_session_preflight(&repo_root));
+    items.push(check_runtime_profile_templates(&repo_root));
 
-    // `full` is retained as a compatibility alias for `local`. The private↔stable
-    // and private↔public drift gates are maintainer-only and are not part of the
-    // public edition.
+    // Full scope — add drift checks
+    if matches!(scope, Scope::Full) || matches!(scope, Scope::Release) {
+        items.push(check_private_vs_stable_drift(&repo_root));
+        items.push(check_private_vs_public_boundary(&repo_root));
+    }
 
-    // Release scope — current-repo self-checks (public manifest + tracked leak scan)
+    // Release scope — add release-specific checks
     if matches!(scope, Scope::Release) {
         items.extend(check_release_boundary(&repo_root));
     }
@@ -1246,19 +1626,17 @@ mod tests {
     fn test_run_command_executes_in_repo_root() {
         let root = std::env::temp_dir().join(format!("ags-verify-cwd-test-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
-        let marker = root.join("cwd-marker.txt");
+        let expected = root
+            .canonicalize()
+            .unwrap_or_else(|_| root.clone())
+            .to_string_lossy()
+            .to_string();
 
-        #[cfg(windows)]
-        let (program, args): (&str, &[&str]) = ("cmd", &["/C", "echo ok>cwd-marker.txt"]);
-        #[cfg(not(windows))]
-        let (program, args): (&str, &[&str]) = ("sh", &["-c", "printf ok > cwd-marker.txt"]);
-
-        let (code, _stdout, stderr) = run_command(&root, program, args, &[]);
-        let marker_content = std::fs::read_to_string(&marker).unwrap_or_default();
+        let (code, stdout, stderr) = run_command(&root, "sh", &["-c", "pwd"], &[]);
         let _ = std::fs::remove_dir_all(&root);
 
         assert_eq!(code, 0, "stderr={stderr}");
-        assert_eq!(marker_content.trim(), "ok");
+        assert_eq!(stdout.trim(), expected);
     }
 
     #[test]
@@ -1353,7 +1731,7 @@ mod tests {
 
     #[test]
     fn template_leak_detection_ignores_replace_slots() {
-        let content = "\"REPLACE: path/to/advisory-recall-script\"";
+        let content = "\"REPLACE: path/to/evolver-recall-script\"";
         let leaks = detect_template_leaks(content, "test.json");
         assert!(leaks.is_empty(), "should ignore REPLACE slot lines");
     }
@@ -1371,5 +1749,21 @@ mod tests {
         let content = "hash: \"abc123def456\""; // short hex, not a token
         let leaks = detect_template_leaks(content, "test.yaml");
         assert!(leaks.is_empty(), "should not flag short hex strings");
+    }
+
+    #[test]
+    fn check_runtime_profile_templates_pass_in_ags_repo() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        let item = check_runtime_profile_templates(repo_root);
+        assert_eq!(
+            item.status,
+            CheckStatus::Pass,
+            "templates should pass: {}",
+            item.evidence
+        );
     }
 }

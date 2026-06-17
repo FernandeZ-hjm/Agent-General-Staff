@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "ags-cli"
-version = "2.5.1"
+version = "2.6.0"
 dependencies = [
  "ags-mcp",
  "ags-platform",
@@ -17,7 +17,6 @@ dependencies = [
  "prompt-request-classifier",
  "receipt",
  "runner",
- "serde",
  "serde_json",
  "skill-governance",
  "suite-doctor",
@@ -28,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "ags-mcp"
-version = "2.5.1"
+version = "2.6.0"
 dependencies = [
  "ags-verify",
  "execution-policy",
@@ -41,16 +40,15 @@ dependencies = [
 
 [[package]]
 name = "ags-platform"
-version = "2.5.1"
+version = "2.6.0"
 
 [[package]]
 name = "ags-verify"
-version = "2.5.1"
+version = "2.6.0"
 dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "workflow-sync-check",
 ]
 
 [[package]]
@@ -126,7 +124,7 @@ dependencies = [
 
 [[package]]
 name = "bootstrap-dry-run"
-version = "2.5.1"
+version = "2.6.0"
 dependencies = [
  "ags-platform",
  "serde",
@@ -137,7 +135,7 @@ dependencies = [
 
 [[package]]
 name = "capability-registry"
-version = "2.5.1"
+version = "2.6.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -243,7 +241,7 @@ dependencies = [
 
 [[package]]
 name = "execution-policy"
-version = "2.5.1"
+version = "2.6.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -398,7 +396,7 @@ dependencies = [
 
 [[package]]
 name = "project-discovery"
-version = "2.5.1"
+version = "2.6.0"
 dependencies = [
  "ags-platform",
  "serde",
@@ -407,7 +405,7 @@ dependencies = [
 
 [[package]]
 name = "prompt-request-classifier"
-version = "2.5.1"
+version = "2.6.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -430,7 +428,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "receipt"
-version = "2.5.1"
+version = "2.6.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -440,7 +438,7 @@ dependencies = [
 
 [[package]]
 name = "runner"
-version = "2.5.1"
+version = "2.6.0"
 dependencies = [
  "execution-policy",
  "receipt",
@@ -543,7 +541,7 @@ dependencies = [
 
 [[package]]
 name = "skill-governance"
-version = "2.5.1"
+version = "2.6.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -558,7 +556,7 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "suite-doctor"
-version = "2.5.1"
+version = "2.6.0"
 dependencies = [
  "ags-platform",
  "serde",
@@ -579,11 +577,11 @@ dependencies = [
 
 [[package]]
 name = "task-card-validator"
-version = "2.5.1"
+version = "2.6.0"
 
 [[package]]
 name = "task-compiler"
-version = "2.5.1"
+version = "2.6.0"
 dependencies = [
  "ags-platform",
  "serde",
@@ -803,7 +801,7 @@ dependencies = [
 
 [[package]]
 name = "workflow-sync-check"
-version = "2.5.1"
+version = "2.6.0"
 dependencies = [
  "serde",
  "serde_json",

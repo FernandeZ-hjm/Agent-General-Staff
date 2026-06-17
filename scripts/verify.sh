@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
-# verify.sh — AGS public edition verification gate (compatibility wrapper).
+# verify.sh — AGS verification gate (compatibility wrapper).
 #
-# Canonical verification authority is `ags verify`. This script:
-#   1. Runs `ags verify --scope local --format text` as the primary gate.
+# Canonical verification authority is now `ags verify`. This script:
+#   1. Runs `ags verify --scope full --format text` as the primary gate.
 #   2. Runs remaining shell-only smoke tests that have not yet been
 #      migrated to Rust check items.
 #   3. Exits with the combined result.
 #
-# Full-blood public edition: tests all public commands (task validate/compile/new,
-# policy resolve/explain/check, sync check, gate check, doctor, bootstrap,
-# project detect, protocol status, agent instructions, session preflight,
-# verify, run, receipt, compliance, skill, capability, archive).
+# To add new checks, prefer adding Rust CheckItems in crates/ags-verify/
+# over extending this script.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -73,9 +71,9 @@ Review gate:
 
 背景：verify.sh resolver smoke test uses the canonical classic task-card skeleton.
 
-项目画像：Agent Governance Suite public Rust workspace.
+项目画像：Agent Governance Suite private Rust workspace.
 
-记忆胶囊：无
+记忆胶囊：暂无相关记忆。
 
 任务存档：verify.sh shell-only smoke regression.
 
@@ -108,36 +106,42 @@ TASKEOF
 cd "$REPO_ROOT"
 export PATH="$REPO_ROOT/target/debug:$PATH"
 
-echo "=== AGS Public Edition Verification Gate ==="
+echo "=== AGS Verification Gate ==="
 echo "Repo: $REPO_ROOT"
 echo ""
 
 # ── Primary gate: ags verify (Rust structured verification) ─────────────────
-echo "--- Primary Gate: ags verify --scope local ---"
+echo "--- Primary Gate: ags verify --scope full ---"
 echo ""
 set +e
-cargo run -q -p ags-cli -- verify --scope local --format text
+cargo run -q -p ags-cli -- verify --scope full --format text
 ags_verify_rc=$?
 set -e
 echo ""
 if [ "$ags_verify_rc" -ne 0 ]; then
+    # ags verify already printed the structured report.
+    # We count this as one aggregated failure for the exit code.
     failures=$((failures + 1))
 fi
 echo "--- End Primary Gate ---"
 echo ""
 
-# ── Supply-chain gate: cargo-deny (repo-local deny.toml) ────────────────────
-# Fail-closed: a missing cargo-deny is a gate FAILURE (not skipped), so a
-# minimal CI image or fresh box cannot pass verification without the
-# advisory/license/source checks running. Install: cargo install cargo-deny --locked.
+# ── Supply-chain gate: cargo-deny ───────────────────────────────────────────
+# Dependency advisory / license / source policy. Defined in deny.toml.
+# Fail-closed: a missing cargo-deny is treated as a gate FAILURE (not skipped),
+# so a minimal CI image or fresh box cannot pass verification without the
+# supply-chain checks actually running. Install: cargo install cargo-deny --locked.
 echo "--- Supply-chain Gate: cargo deny check ---"
 if command -v cargo-deny >/dev/null 2>&1; then
-    if cargo deny check >/tmp/ags-deny.log 2>&1; then
-        echo "[OK] cargo deny check"
-    else
+    set +e
+    cargo deny check 2>&1 | tail -3
+    deny_rc=${PIPESTATUS[0]}
+    set -e
+    if [ "$deny_rc" -ne 0 ]; then
         echo "[FAIL] cargo deny check (supply-chain policy violation)"
-        tail -10 /tmp/ags-deny.log || true
         failures=$((failures + 1))
+    else
+        echo "[OK] cargo deny check"
     fi
 else
     echo "[FAIL] cargo-deny not installed — supply-chain gate cannot run (fail-closed)."
@@ -150,85 +154,99 @@ echo ""
 # These tests create temporary task cards, run policy resolution, parse JSON
 # output, and check for specific patterns. They are integration-level smoke
 # tests that require the full CLI, stdin/stdout, and JSON parsing.
+# Migration status: candidates for future ags-verify check items, blocked on:
+#   - Complex inline task card generation (F1-F10, M3-M8, R1-R6, SP1-SP11)
+#   - Cross-command JSON field comparison (CLI compat)
+#   - Document text grep checks (L1-L11)
+#   - Temporary directory/bootstrap state management (M7)
 
 echo "--- Remaining Shell-Only Smoke Tests ---"
 echo "(These tests are candidates for future Rust migration.)"
 echo ""
 
-# ── Public Command Surface Smoke Tests ─────────────────────────────────────
-echo "--- Public Command Surface Smoke Tests ---"
+echo "--- Verify CLI Surface Smoke Tests ---"
+run_check "ags verify documented form accepts --scope" \
+    cargo run -q -p ags-cli -- verify --scope local --format json
+run_check "ags verify run compatibility alias accepts --scope" \
+    cargo run -q -p ags-cli -- verify run --scope local --format json
 
-run_check "ags task validate valid full fixture" \
-    cargo run -q -p ags-cli -- task validate "$REPO_ROOT/tests/fixtures/valid-full.md"
-
-run_check "ags policy resolve valid full (text)" \
+# ── Resolve-Policy Smoke Tests ──────────────────────────────────────────────
+echo "--- Resolve-Policy Smoke Tests ---"
+run_check "resolve-policy valid card (text)" \
     cargo run -q -p ags-cli -- policy resolve "$REPO_ROOT/tests/fixtures/valid-full.md" --format text
-
-run_check "ags policy resolve valid full (json)" \
+run_check "resolve-policy valid full (json)" \
     cargo run -q -p ags-cli -- policy resolve "$REPO_ROOT/tests/fixtures/valid-full.md" --format json
-
-run_check "ags policy explain valid full (text)" \
-    cargo run -q -p ags-cli -- policy explain "$REPO_ROOT/tests/fixtures/valid-full.md" --format text
-
-run_check "ags policy check valid full (json)" \
-    cargo run -q -p ags-cli -- policy check "$REPO_ROOT/tests/fixtures/valid-full.md" --format json
-
-# ags sync check is tested by Rust unit tests (workflow-sync-check crate).
-# The shell-level smoke test requires a properly configured multi-target
-# setup (source + target directories with manifest files), which is
-# covered by the Rust test suite.
-
-run_check "ags doctor" \
-    cargo run -q -p ags-cli -- doctor --format text
-
-run_check "ags bootstrap --dry-run" \
-    cargo run -q -p ags-cli -- bootstrap --dry-run --format text
-
-run_check "ags project detect" \
-    cargo run -q -p ags-cli -- project detect
-
-run_check "ags protocol status" \
-    cargo run -q -p ags-cli -- protocol status
-
-run_check "ags agent instructions --for claude-code" \
-    cargo run -q -p ags-cli -- agent instructions --for claude-code
-
-run_check "ags session preflight --for claude-code" \
-    cargo run -q -p ags-cli -- session preflight --for claude-code --format json --target "$REPO_ROOT"
-
-run_check "ags verify --scope local --format text" \
-    cargo run -q -p ags-cli -- verify --scope local --format text
-
-run_check "ags verify --scope release --format text" \
-    cargo run -q -p ags-cli -- verify --scope release --format text
-
-# ── Full-Blood Command Surface (new commands) ────────────────────────────────
-echo "--- Full-Blood Command Surface Smoke Tests ---"
-
-echo -n "[....] ags task new removed card type rejects "
-removed_card_type="compact"
-if cargo run -q -p ags-cli -- task new --card-type "$removed_card_type" > /tmp/ags-smoke-task-new-removed.out 2>&1; then
-    echo "FAIL (removed card type unexpectedly generated)"
+echo -n "[....] resolve-policy invalid fixture (expected FAIL) "
+if cargo run -q -p ags-cli -- policy resolve "$REPO_ROOT/tests/fixtures/invalid-ultracode-authority-abuse.md" --format text > /tmp/verify-resolve-invalid.log 2>&1; then
+    echo "FAIL (expected non-zero exit)"
     failures=$((failures + 1))
-elif grep -q "compact task-card format has been removed" /tmp/ags-smoke-task-new-removed.out; then
+elif ! grep -q "ULTRACODE_AUTHORITY_ABUSE" /tmp/verify-resolve-invalid.log; then
+    echo "FAIL (missing ULTRACODE_AUTHORITY_ABUSE)"
+    cat /tmp/verify-resolve-invalid.log
+    failures=$((failures + 1))
+else
+    echo "OK (correctly rejected: ULTRACODE_AUTHORITY_ABUSE)"
+fi
+echo -n "[....] resolve-policy illegal format (expected FAIL) "
+if cargo run -q -p ags-cli -- policy resolve "$REPO_ROOT/tests/fixtures/valid-full.md" --format yaml > /tmp/verify-resolve-format.log 2>&1; then
+    echo "FAIL (expected non-zero exit)"
+    failures=$((failures + 1))
+elif ! grep -qE 'invalid value|possible values' /tmp/verify-resolve-format.log; then
+    echo "FAIL (missing clap format error)"
+    cat /tmp/verify-resolve-format.log
+    failures=$((failures + 1))
+else
+    echo "OK (correctly rejected: clap format validation)"
+fi
+echo -n "[....] resolve-policy stdin (json) "
+if cat "$REPO_ROOT/tests/fixtures/valid-full.md" | cargo run -q -p ags-cli -- policy resolve - --format json > /tmp/verify-resolve-stdin.log 2>&1; then
     echo "OK"
 else
-    echo "FAIL (missing removed-format error)"
-    cat /tmp/ags-smoke-task-new-removed.out
+    echo "FAIL"
+    cat /tmp/verify-resolve-stdin.log
     failures=$((failures + 1))
 fi
 
-run_check "ags task compile (stdin, request)" \
-    bash -c 'echo "任务：test compile
-目标：verify smoke test" | cargo run -q -p ags-cli -- task compile - --task-card-requested --output card --format text'
-
+# ── Task-Card Format Gate Smoke (single canonical format) ───────────────────
+echo "--- Task-Card Format Gate Smoke ---"
+echo -n "[....] task validate rejects removed compact format (expected FAIL) "
+if cargo run -q -p ags-cli -- task validate "$REPO_ROOT/tests/fixtures/invalid-compact.md" > /tmp/verify-compact-reject.log 2>&1; then
+    echo "FAIL (compact format was accepted)"
+    cat /tmp/verify-compact-reject.log
+    failures=$((failures + 1))
+elif ! grep -q "compact 任务卡格式已删除" /tmp/verify-compact-reject.log; then
+    echo "FAIL (rejected, but not for compact-format removal — fail closed)"
+    cat /tmp/verify-compact-reject.log
+    failures=$((failures + 1))
+else
+    echo "OK (removed compact format correctly rejected)"
+fi
+echo -n "[....] task compile output is classic + passes real validator "
+compile_intent=$'任务：verify.sh e2e compile smoke\n目标：确认编译产物为经典骨架并通过真实校验器'
+if printf '%s' "$compile_intent" | cargo run -q -p ags-cli -- task compile - --task-card-requested --output card > /tmp/verify-compiled-card.md 2>/dev/null \
+    && ! grep -q "AGENT_SUITE_COMPACT_TASK_CARD_V1" /tmp/verify-compiled-card.md \
+    && head -n 1 /tmp/verify-compiled-card.md | grep -q "^## 任务卡" \
+    && cargo run -q -p ags-cli -- task validate /tmp/verify-compiled-card.md > /tmp/verify-compiled-validate.log 2>&1; then
+    echo "OK (compiled card is classic and validator-clean)"
+else
+    echo "FAIL (compiled card not classic or rejected by validator)"
+    cat /tmp/verify-compiled-card.md /tmp/verify-compiled-validate.log 2>/dev/null
+    failures=$((failures + 1))
+fi
 echo -n "[....] no generatable fallback/compact task-card template files remain "
+# Single canonical template: the only task-card skeleton is
+# protocol/task-card-template.md. Per-level fallback templates and any
+# templates/fallback-task-cards/ set must not exist. The compact marker
+# AGENT_SUITE_COMPACT_TASK_CARD_V1 may appear ONLY in the invalid fixture and
+# validator/compiler/verify rejection code — never in a usable template.
+# Skip generated/gitignored dirs (target/, .git/, .codegraph/): the CodeGraph
+# index is a binary cache that mirrors source text and is not a usable source.
 stray_templates=$(find "$REPO_ROOT" -type f \
     \( -name '*-task-template.md' -o -path '*templates/fallback-task-cards/*' \) \
     -not -path '*/target/*' -not -path '*/.git/*' -not -path '*/.codegraph/*' 2>/dev/null)
 marker_files=$(grep -rl --exclude-dir=target --exclude-dir=.git --exclude-dir=.codegraph \
     "AGENT_SUITE_COMPACT_TASK_CARD_V1" "$REPO_ROOT" 2>/dev/null \
-    | grep -v -E 'tests/fixtures/(invalid-compact|removed-compact)\.md$|task-card-validator/src/(validate|tests)\.rs$|task-compiler/src/lib\.rs$|ags-verify/src/lib\.rs$|scripts/verify\.sh$' \
+    | grep -v -E 'tests/fixtures/(invalid|removed)-compact\.md$|task-card-validator/src/(validate|tests)\.rs$|task-compiler/src/lib\.rs$|ags-verify/src/lib\.rs$|scripts/verify\.sh$' \
     || true)
 if [ -n "$stray_templates" ]; then
     echo "FAIL (stray fallback/per-level task-card template files found)"
@@ -269,6 +287,20 @@ else
     failures=$((failures + 1))
 fi
 
+# Value Route (效价比路由) is exposed on the entry gate (advisory — it never
+# changes the task level, permission mode, Review gate, or Verification gate).
+echo -n "[....] gate prompt-request exposes value_route (recommended_path) "
+if cargo run -q -p ags-cli -- gate prompt-request "给我提示词" --no-preflight --format json > /tmp/verify-gate-vr.log 2>&1 \
+    && grep -q '"value_route"' /tmp/verify-gate-vr.log \
+    && grep -q '"recommended_path"' /tmp/verify-gate-vr.log \
+    && grep -q '"authority_note"' /tmp/verify-gate-vr.log; then
+    echo "OK"
+else
+    echo "FAIL (value_route block missing from gate prompt-request)"
+    cat /tmp/verify-gate-vr.log
+    failures=$((failures + 1))
+fi
+
 # Positive end-to-end: request → compiled canonical card → gate output ALLOW.
 echo -n "[....] '给我提示词' → compile → gate output ALLOW + validator-clean "
 pr_intent=$'任务：verify.sh prompt-request e2e smoke\n目标：确认触发词请求经编译产出经典骨架并通过 output gate'
@@ -300,302 +332,111 @@ else
     failures=$((failures + 1))
 fi
 
-run_check "ags gate check" \
-    cargo run -q -p ags-cli -- gate check "$REPO_ROOT/tests/fixtures/valid-full.md" --format text
+# ── Change Lane Smoke Tests (diff-aware verification routing) ───────────────
+# Build a throwaway git repo and verify `ags verify lane` classifies real diffs
+# into the right lane + minimal-sufficient profile. Proves ignore-only takes the
+# minimal path while source/protocol take heavier profiles — the basis the push
+# gate relies on to avoid full/stable verification for hygiene changes.
+echo "--- Change Lane Smoke Tests ---"
+lane_tmp="$(mktemp -d)"
+git -C "$lane_tmp" init -q
+git -C "$lane_tmp" config user.email "verify@ags.test"
+git -C "$lane_tmp" config user.name "ags-verify"
+echo "init" > "$lane_tmp/README.md"
+git -C "$lane_tmp" add -A && git -C "$lane_tmp" commit -q -m "base"
 
-run_check "ags run --dry-run" \
-    cargo run -q -p ags-cli -- run "$REPO_ROOT/tests/fixtures/valid-full.md" --dry-run --format text
-
-run_check "ags skill scan" \
-    cargo run -q -p ags-cli -- skill scan --format text
-
-# skill check is expected to report manifest-to-adoption-log gap
-# when optional skills are recommended but not yet adopted
-echo -n "[....] ags skill check "
-if cargo run -q -p ags-cli -- skill check --format text > /tmp/ags-smoke-skill-check.log 2>&1; then
-    echo "OK (all governance files consistent)"
-else
-    if grep -q "manifest-to-adoption-log" /tmp/ags-smoke-skill-check.log; then
-        echo "OK (expected: optional skills not yet adopted)"
-    else
-        echo "FAIL"
-        cat /tmp/ags-smoke-skill-check.log
-        failures=$((failures + 1))
-    fi
-fi
-
-run_check "ags skill propose remove" \
-    cargo run -q -p ags-cli -- skill propose --action remove --skill auto-brainstorm --format text
-
-run_check "ags skill overview --fix" \
-    cargo run -q -p ags-cli -- skill --fix --format text
-
-run_check "ags skill inventory" \
-    cargo run -q -p ags-cli -- skill inventory --format text
-
-run_check "ags skill verify codex" \
-    cargo run -q -p ags-cli -- skill verify --host codex --format text
-
-run_check "ags skill propose verify" \
-    cargo run -q -p ags-cli -- skill propose --action verify --skill auto-brainstorm --format text
-
-run_check "ags capability list" \
-    cargo run -q -p ags-cli -- capability list --format text
-
-run_check "ags capability show" \
-    cargo run -q -p ags-cli -- capability show "policy:agent-task-protocol" --format text
-
-INTEGRATE_SMOKE_DIR="/tmp/ags-smoke-project-integrate"
-INTEGRATE_MEMORY_DIR="/tmp/ags-smoke-project-memory"
-rm -rf "$INTEGRATE_SMOKE_DIR" "$INTEGRATE_MEMORY_DIR"
-mkdir -p "$INTEGRATE_SMOKE_DIR"
-
-run_check "ags project integrate (dry-run)" \
-    cargo run -q -p ags-cli -- project integrate --target "$INTEGRATE_SMOKE_DIR" --dry-run --format text
-
-run_check "ags project integrate --confirm" \
-    env AGS_MEMORY_DIR="$INTEGRATE_MEMORY_DIR" cargo run -q -p ags-cli -- project integrate --target "$INTEGRATE_SMOKE_DIR" --confirm --format text
-
-echo -n "[....] ags project integrate initializes memory "
-if [ -f "$INTEGRATE_MEMORY_DIR/ags-smoke-project-integrate/context-capsule.md" ] \
-    && [ -f "$INTEGRATE_MEMORY_DIR/ags-smoke-project-integrate/task-memory.md" ] \
-    && [ -d "$INTEGRATE_MEMORY_DIR/ags-smoke-project-integrate/task-archive" ]; then
+# ignore-only → ignore_only / minimal
+ignore_base="$(git -C "$lane_tmp" rev-parse HEAD)"
+printf 'target/\n' >> "$lane_tmp/.gitignore"
+git -C "$lane_tmp" add -A && git -C "$lane_tmp" commit -q -m "ignore"
+echo -n "[....] verify lane: .gitignore-only → ignore_only/minimal "
+if cargo run -q -p ags-cli -- verify lane --range "${ignore_base}..HEAD" --target "$lane_tmp" --format json > /tmp/verify-lane-ignore.json 2>&1 \
+    && grep -q '"lane": "ignore_only"' /tmp/verify-lane-ignore.json \
+    && grep -q '"profile": "minimal"' /tmp/verify-lane-ignore.json; then
     echo "OK"
 else
-    echo "FAIL"
-    find "$INTEGRATE_MEMORY_DIR" -maxdepth 3 -type f -o -type d 2>/dev/null || true
+    echo "FAIL (expected ignore_only/minimal)"
+    cat /tmp/verify-lane-ignore.json
     failures=$((failures + 1))
 fi
 
-# receipt generate + verify smoke
-echo -n "[....] ags receipt generate + verify "
-if cargo run -q -p ags-cli -- receipt generate --task-card "$REPO_ROOT/tests/fixtures/valid-full.md" --gate-result allow --format json > /tmp/ags-smoke-receipt.json 2>&1; then
-    if cargo run -q -p ags-cli -- receipt verify /tmp/ags-smoke-receipt.json --format text > /tmp/ags-smoke-verify.log 2>&1; then
-        if grep -q "VALID" /tmp/ags-smoke-verify.log; then
-            echo "OK"
-        else
-            echo "FAIL (receipt verify did not report VALID)"
-            failures=$((failures + 1))
-        fi
-    else
-        echo "FAIL (receipt verify failed)"
-        failures=$((failures + 1))
-    fi
-else
-    echo "FAIL (receipt generate failed)"
-    failures=$((failures + 1))
-fi
-
-# compliance check smoke — pass --review-gate-status directly, no jq/sed
-echo -n "[....] ags compliance check "
-# Copy test fixture to /tmp to avoid /Volumes/AI Project/ path in receipt
-cp "$REPO_ROOT/tests/fixtures/valid-full.md" /tmp/ags-smoke-task-card.md
-if cargo run -q -p ags-cli -- receipt generate \
-    --task-card /tmp/ags-smoke-task-card.md \
-    --gate-result allow \
-    --verification "cargo test:0" \
-    --verification "cargo build:0" \
-    --review-gate-status "完成 — Light verification gate passed" \
-    --format json > /tmp/ags-smoke-receipt-compliance.json 2>&1; then
-    if cargo run -q -p ags-cli -- compliance check /tmp/ags-smoke-receipt-compliance.json --format text > /tmp/ags-smoke-compliance.log 2>&1; then
-        if grep -q "COMPLIANT" /tmp/ags-smoke-compliance.log; then
-            echo "OK"
-        else
-            echo "FAIL (compliance check did not report COMPLIANT)"
-            failures=$((failures + 1))
-        fi
-    else
-        echo "FAIL (compliance check failed)"
-        failures=$((failures + 1))
-    fi
-else
-    echo "FAIL (receipt generate failed)"
-    failures=$((failures + 1))
-fi
-
-# skill install: MUST block without --confirm
-echo -n "[....] ags skill install blocks without confirm "
-if cargo run -q -p ags-cli -- skill install --skill auto-brainstorm --format text > /tmp/ags-smoke-install.log 2>&1; then
-    echo "FAIL (skill install without --confirm should exit non-zero)"
-    failures=$((failures + 1))
-elif grep -q "blocked" /tmp/ags-smoke-install.log; then
+# source-code → source_code / standard
+src_base="$(git -C "$lane_tmp" rev-parse HEAD)"
+mkdir -p "$lane_tmp/src"
+echo "fn main() {}" > "$lane_tmp/src/main.rs"
+git -C "$lane_tmp" add -A && git -C "$lane_tmp" commit -q -m "src"
+echo -n "[....] verify lane: src/main.rs → source_code/standard "
+if cargo run -q -p ags-cli -- verify lane --range "${src_base}..HEAD" --target "$lane_tmp" --format json > /tmp/verify-lane-src.json 2>&1 \
+    && grep -q '"lane": "source_code"' /tmp/verify-lane-src.json \
+    && grep -q '"profile": "standard"' /tmp/verify-lane-src.json; then
     echo "OK"
 else
-    echo "FAIL (missing block message)"
+    echo "FAIL (expected source_code/standard)"
+    cat /tmp/verify-lane-src.json
     failures=$((failures + 1))
 fi
 
-# skill install: --confirm installs (directory structure with SKILL.md)
-echo -n "[....] ags skill install --confirm "
-if cargo run -q -p ags-cli -- skill install --skill auto-brainstorm --confirm --target /tmp/ags-smoke-skills --format text > /tmp/ags-smoke-install2.log 2>&1; then
-    if [ -f /tmp/ags-smoke-skills/auto-brainstorm/SKILL.md ]; then
-        # Verify SKILL.md has frontmatter
-        if grep -q 'name:' /tmp/ags-smoke-skills/auto-brainstorm/SKILL.md && \
-           grep -q 'description:' /tmp/ags-smoke-skills/auto-brainstorm/SKILL.md; then
-            echo "OK"
-        else
-            echo "FAIL (SKILL.md created but missing frontmatter)"
-            failures=$((failures + 1))
-        fi
-    elif [ -f /tmp/ags-smoke-skills/auto-brainstorm.md ]; then
-        echo "FAIL (legacy flat file format — must be directory/SKILL.md)"
-        failures=$((failures + 1))
-    else
-        echo "FAIL (SKILL.md not created)"
-        failures=$((failures + 1))
-    fi
-else
-    echo "FAIL (confirm install failed)"
-    failures=$((failures + 1))
-fi
-
-# skill install: install receipt exists after confirm
-echo -n "[....] ags skill install receipt exists "
-if [ -f /tmp/ags-smoke-skills/install-receipt.yaml ]; then
+# protocol-core → protocol_core / full (mixed ignore+protocol escalates to full)
+proto_base="$(git -C "$lane_tmp" rev-parse HEAD)"
+mkdir -p "$lane_tmp/protocol"
+echo "# proto" > "$lane_tmp/protocol/x.md"
+printf 'extra/\n' >> "$lane_tmp/.gitignore"
+git -C "$lane_tmp" add -A && git -C "$lane_tmp" commit -q -m "proto"
+echo -n "[....] verify lane: protocol/ + .gitignore → protocol_core/full (escalates) "
+if cargo run -q -p ags-cli -- verify lane --range "${proto_base}..HEAD" --target "$lane_tmp" --format json > /tmp/verify-lane-proto.json 2>&1 \
+    && grep -q '"lane": "protocol_core"' /tmp/verify-lane-proto.json \
+    && grep -q '"profile": "full"' /tmp/verify-lane-proto.json; then
     echo "OK"
 else
-    echo "FAIL (install receipt not created)"
+    echo "FAIL (expected protocol_core/full)"
+    cat /tmp/verify-lane-proto.json
     failures=$((failures + 1))
 fi
 
-# skill install: recommended creates multiple directories
-echo -n "[....] ags skill install recommended "
-rm -rf /tmp/ags-smoke-skills2 2>/dev/null || true
-if cargo run -q -p ags-cli -- skill install --skill recommended --confirm --target /tmp/ags-smoke-skills2 --format text > /tmp/ags-smoke-install3.log 2>&1; then
-    ok_count=0
-    for name in auto-brainstorm auto-debug auto-verify tdd diagnose caveman-review caveman-commit; do
-        if [ -f "/tmp/ags-smoke-skills2/$name/SKILL.md" ]; then
-            ok_count=$((ok_count + 1))
-        fi
-    done
-    if [ "$ok_count" -ge 7 ]; then
-        echo "OK ($ok_count/7+ skills installed)"
-    else
-        echo "FAIL (only $ok_count/7 skills installed)"
-        failures=$((failures + 1))
-    fi
-else
-    echo "FAIL (recommended install failed)"
-    failures=$((failures + 1))
-fi
-
-# doctor: public edition checks report expanded health status
-echo -n "[....] ags doctor reports full-blood checks "
-if cargo run -q -p ags-cli -- doctor --format text > /tmp/ags-smoke-doctor.log 2>&1; then
-    has_checks=0
-    grep -q 'mcp_registry_gep_adopted' /tmp/ags-smoke-doctor.log && has_checks=$((has_checks + 1)) || true
-    grep -q 'evolver_proxy_health' /tmp/ags-smoke-doctor.log && has_checks=$((has_checks + 1)) || true
-    grep -q 'runtime_profile_template_exists' /tmp/ags-smoke-doctor.log && has_checks=$((has_checks + 1)) || true
-    grep -q 'codex_planner_hook_template_exists' /tmp/ags-smoke-doctor.log && has_checks=$((has_checks + 1)) || true
-    grep -q 'claude_code_stop_hook_template_exists' /tmp/ags-smoke-doctor.log && has_checks=$((has_checks + 1)) || true
-    if [ "$has_checks" -ge 3 ]; then
-        echo "OK ($has_checks/5 public health check categories reported)"
-    else
-        echo "FAIL (only $has_checks/5 check categories found)"
-        failures=$((failures + 1))
-    fi
-else
-    echo "FAIL (doctor failed)"
-    failures=$((failures + 1))
-fi
-
-# compliance: catches missing verification
-echo -n "[....] ags compliance catches missing verification "
-cat > /tmp/test-compliance-no-verify.json << 'EOF'
-{"schema_version":"2.0-m6","receipt_id":"receipt-test","timestamp":"unix-0","task_card_hash":"abc123","task_card_path":null,"gate_result":{"decision":"allow","reason":null},"verification_results":[],"delivery_report_hash":null,"exit_code":0,"review_gate_status":null,"metadata":null}
-EOF
-set +e
-cargo run -q -p ags-cli -- compliance check /tmp/test-compliance-no-verify.json --format text > /tmp/test-comp-log.log 2>&1
-comp_rc=$?
-set -e
-if [ "$comp_rc" -ne 0 ] && grep -q 'verification_presence' /tmp/test-comp-log.log; then
+# empty range (no diff) → ignore_only / minimal (safe no-op)
+echo -n "[....] verify lane: empty range → ignore_only/minimal (no-op safe) "
+empty_head="$(git -C "$lane_tmp" rev-parse HEAD)"
+if cargo run -q -p ags-cli -- verify lane --range "${empty_head}..HEAD" --target "$lane_tmp" --format json > /tmp/verify-lane-empty.json 2>&1 \
+    && grep -q '"lane": "ignore_only"' /tmp/verify-lane-empty.json \
+    && grep -q '"profile": "minimal"' /tmp/verify-lane-empty.json; then
     echo "OK"
 else
-    echo "FAIL (should reject empty verification_results with verification_presence)"
+    echo "FAIL (empty diff must be ignore_only/minimal)"
+    cat /tmp/verify-lane-empty.json
     failures=$((failures + 1))
 fi
 
-# compliance: catches missing review gate
-echo -n "[....] ags compliance catches missing review gate "
-cat > /tmp/test-compliance-no-review.json << 'EOF'
-{"schema_version":"2.0-m6","receipt_id":"receipt-test2","timestamp":"unix-0","task_card_hash":"abc123","task_card_path":null,"gate_result":{"decision":"allow","reason":null},"verification_results":[{"command":"echo ok","exit_code":0,"output_hash":"abc"}],"delivery_report_hash":null,"exit_code":0,"review_gate_status":null,"metadata":null}
-EOF
-set +e
-cargo run -q -p ags-cli -- compliance check /tmp/test-compliance-no-review.json --format text > /tmp/test-comp-log2.log 2>&1
-comp_rc2=$?
-set -e
-if [ "$comp_rc2" -ne 0 ] && grep -q 'review_gate' /tmp/test-comp-log2.log; then
-    echo "OK"
-else
-    echo "FAIL (should reject missing review_gate_status)"
-    failures=$((failures + 1))
-fi
+rm -rf "$lane_tmp"
 
-# compliance: catches private path in receipt
-echo -n "[....] ags compliance catches private paths "
-cat > /tmp/test-compliance-priv.json << 'EOF'
-{"schema_version":"2.0-m6","receipt_id":"receipt-test3","timestamp":"unix-0","task_card_hash":"abc123","task_card_path":"/Users/example/task.md","gate_result":{"decision":"allow","reason":null},"verification_results":[{"command":"echo ok","exit_code":0,"output_hash":"abc"}],"delivery_report_hash":null,"exit_code":0,"review_gate_status":"完成","metadata":null}
-EOF
-set +e
-cargo run -q -p ags-cli -- compliance check /tmp/test-compliance-priv.json --format text > /tmp/test-comp-log3.log 2>&1
-comp_rc3=$?
-set -e
-if [ "$comp_rc3" -ne 0 ] && grep -q 'private_path' /tmp/test-comp-log3.log; then
-    echo "OK"
-else
-    echo "FAIL (should catch private path /Users/ in receipt)"
-    failures=$((failures + 1))
-fi
-
-# archive smoke
-echo -n "[....] ags archive "
-if cargo run -q -p ags-cli -- archive --summary "verify.sh smoke test" --task-card "$REPO_ROOT/tests/fixtures/valid-full.md" --format text > /tmp/ags-smoke-archive.log 2>&1; then
-    if grep -q "Archive complete" /tmp/ags-smoke-archive.log; then
+# ── Push Lane Decision Smoke Tests (trusted shell allowlist) ────────────────
+# scripts/lane-decision.sh is the push gate's MINIMAL/FULL decision, kept in
+# pure shell so a change to the in-tree classifier cannot route a source or
+# protocol diff onto the minimal path. These tests prove exactly that.
+echo "--- Push Lane Decision Smoke Tests ---"
+check_lane_decision() {
+    local label="$1" files="$2" expected="$3"
+    echo -n "[....] lane-decision: $label → $expected "
+    local got
+    got="$(printf '%s\n' "$files" | bash "$REPO_ROOT/scripts/lane-decision.sh" 2>/dev/null || echo ERR)"
+    if [ "$got" = "$expected" ]; then
         echo "OK"
     else
-        echo "FAIL (archive did not complete)"
+        echo "FAIL (got '$got')"
         failures=$((failures + 1))
     fi
-else
-    echo "FAIL (archive failed)"
-    failures=$((failures + 1))
-fi
-
-# ── Resolve-Policy Smoke Tests ──────────────────────────────────────────────
-echo "--- Resolve-Policy Smoke Tests ---"
-
-echo -n "[....] resolve-policy invalid full fixture (expected FAIL) "
-if cargo run -q -p ags-cli -- policy resolve "$REPO_ROOT/tests/fixtures/invalid-ultracode-authority-abuse.md" --format text > /tmp/verify-resolve-invalid.log 2>&1; then
-    echo "FAIL (expected non-zero exit)"
-    failures=$((failures + 1))
-elif ! grep -q "ULTRACODE_AUTHORITY_ABUSE" /tmp/verify-resolve-invalid.log; then
-    echo "FAIL (missing ULTRACODE_AUTHORITY_ABUSE)"
-    cat /tmp/verify-resolve-invalid.log
-    failures=$((failures + 1))
-else
-    echo "OK (correctly rejected: ULTRACODE_AUTHORITY_ABUSE)"
-fi
-
-echo -n "[....] resolve-policy illegal format (expected FAIL) "
-if cargo run -q -p ags-cli -- policy resolve "$REPO_ROOT/tests/fixtures/valid-full.md" --format yaml > /tmp/verify-resolve-format.log 2>&1; then
-    echo "FAIL (expected non-zero exit)"
-    failures=$((failures + 1))
-elif ! grep -qE 'invalid value|possible values' /tmp/verify-resolve-format.log; then
-    echo "FAIL (missing clap format error)"
-    cat /tmp/verify-resolve-format.log
-    failures=$((failures + 1))
-else
-    echo "OK (correctly rejected: clap format validation)"
-fi
-
-echo -n "[....] resolve-policy stdin (json) "
-if cat "$REPO_ROOT/tests/fixtures/valid-full.md" | cargo run -q -p ags-cli -- policy resolve - --format json > /tmp/verify-resolve-stdin.log 2>&1; then
-    echo "OK"
-else
-    echo "FAIL"
-    cat /tmp/verify-resolve-stdin.log
-    failures=$((failures + 1))
-fi
+}
+check_lane_decision ".gitignore-only" ".gitignore" "MINIMAL"
+check_lane_decision "docs-only" $'docs/README.md\nCHANGELOG.md' "MINIMAL"
+check_lane_decision "source-code" "crates/ags-cli/src/main.rs" "FULL"
+check_lane_decision "protocol-core" "protocol/agent-task-protocol.md" "FULL"
+check_lane_decision "scripts(gate-selection)" "scripts/lane-decision.sh" "FULL"
+check_lane_decision "manifests" "manifests/suite.yaml" "FULL"
+check_lane_decision "governance" "governance/skill-adoption-log.yaml" "FULL"
+check_lane_decision "Cargo.toml" "Cargo.toml" "FULL"
+check_lane_decision "root-entry CLAUDE.md" "CLAUDE.md" "FULL"
+check_lane_decision "mixed ignore+source" $'.gitignore\ncrates/x/src/lib.rs' "FULL"
+check_lane_decision "mixed ignore+protocol" $'.gitignore\nprotocol/x.md' "FULL"
+check_lane_decision "empty(fail-safe)" "" "FULL"
 
 # ── Resolver Hardening Smoke Tests (F1-F7) ──────────────────────────────────
 echo "--- Resolver Hardening Smoke Tests (F1-F7) ---"
@@ -621,7 +462,7 @@ echo -n "[....] read-only+worktree must not output --parallel "
 write_smoke_card /tmp/test-readonly-worktree.md cli read-only worktree plan-only Light \
     "Test read-only + worktree gate." \
     "Verify --parallel is not output." \
-    "不执行写操作。" \
+    "None." \
     "any failure" \
     "test passes" \
     "Delivery report."
@@ -644,7 +485,7 @@ echo -n "[....] plan-only+worktree must not output --parallel "
 write_smoke_card /tmp/test-plan-only-worktree.md cli plan-only worktree plan-only Medium \
     "Test plan-only + worktree gate." \
     "Verify --parallel is not output in plan-only." \
-    "不执行写操作。" \
+    "None." \
     "any failure" \
     "no --parallel" \
     "Delivery report."
@@ -667,7 +508,7 @@ echo -n "[....] Heavy + --approve-writes preserves write mode "
 write_smoke_card /tmp/test-heavy-approve.md cli edit-with-confirmation none none Heavy \
     "Test Heavy with approval." \
     "Verify Heavy + --approve-writes keeps edit-with-confirmation." \
-    "无。" \
+    "None." \
     "any failure" \
     "write mode preserved" \
     "Delivery report."
@@ -696,7 +537,7 @@ echo -n "[....] background-agent execution surface passes "
 write_smoke_card /tmp/test-bg-agent.md background-agent execute-and-verify none none Light \
     "Test background-agent surface." \
     "Verify background-agent passes validation." \
-    "无。" \
+    "None." \
     "any failure" \
     "surface accepted" \
     "Delivery report."
@@ -714,16 +555,16 @@ else
     failures=$((failures + 1))
 fi
 
-# ── Resolver Hardening Smoke Tests (F8-F10) ─────────────────────────────────
+# ── Resolver Hardening Smoke Tests (F8-F9: stop and parallelism audit) ──────
 echo ""
-echo "--- Resolver Hardening Smoke Tests (F8-F10) ---"
+echo "--- Resolver Hardening Smoke Tests (F8-F9: stop and parallelism audit) ---"
 
 # F8: Heavy edit-with-confirmation without --approve-writes → stop_before_launch
 echo -n "[....] Heavy edit-with-confirmation without approve → stop_before_launch "
 write_smoke_card /tmp/test-heavy-stop.md cli edit-with-confirmation none none Heavy \
     "Test Heavy stop gate." \
     "Verify Heavy without --approve-writes sets stop_before_launch=true." \
-    "无。" \
+    "None." \
     "any failure" \
     "stop_before_launch=true" \
     "Delivery report."
@@ -756,7 +597,7 @@ write_smoke_card /tmp/test-heavy-plan.md cli plan-only none none Heavy \
     "不执行写操作。" \
     "方案完成后返回用户审阅，等待明确批准" \
     "no stop" \
-    "返回审计方案供 review，等待明确批准。"
+    "返回审计方案供 Codex review，等待明确批准。"
 if cargo run -q -p ags-cli -- policy resolve /tmp/test-heavy-plan.md --format json > /tmp/verify-heavy-plan.log 2>&1; then
     json=$(cat /tmp/verify-heavy-plan.log)
     if echo "$json" | grep -q '"stop_before_launch": false'; then
@@ -782,7 +623,7 @@ echo -n "[....] plan-only+worktree → effective_parallelism=none "
 write_smoke_card /tmp/test-po-wt-none.md cli plan-only worktree plan-only Medium \
     "Test effective_parallelism consistency." \
     "Verify effective_parallelism is none when plan-only strips worktree." \
-    "不执行写操作。" \
+    "None." \
     "any failure" \
     "effective_parallelism is none" \
     "Delivery report."
@@ -811,7 +652,7 @@ echo -n "[....] read-only+worktree → effective_parallelism=none "
 write_smoke_card /tmp/test-ro-wt-none.md cli read-only worktree plan-only Light \
     "Test read-only effective_parallelism." \
     "Verify effective_parallelism=none when read-only strips worktree." \
-    "不执行写操作。" \
+    "None." \
     "any failure" \
     "effective_parallelism=none" \
     "Delivery report."
@@ -830,7 +671,7 @@ else
     failures=$((failures + 1))
 fi
 
-# ── Background-agent audit (F10) ───────────────────────────────────────────
+# ── Resolver Hardening Smoke Tests (F10: background-agent audit) ────────────
 echo "--- Resolver Hardening Smoke Tests (F10: background-agent audit) ---"
 
 # F10: background-agent + read-only → stop_before_launch + stop_reasons + downgrade
@@ -846,7 +687,17 @@ if cargo run -q -p ags-cli -- policy resolve /tmp/test-bg-ro-audit.md --format j
     json=$(cat /tmp/verify-bg-ro-audit.log)
     if echo "$json" | grep -q '"stop_before_launch": true'; then
         if echo "$json" | grep -q '"background-surface-blocked-by-permission"'; then
-            echo "OK"
+            if echo "$json" | grep -q '"field": "execution_surface"'; then
+                if echo "$json" | grep -q '"before": "background-agent"'; then
+                    echo "OK"
+                else
+                    echo "FAIL (downgrade before must be background-agent)"
+                    failures=$((failures + 1))
+                fi
+            else
+                echo "FAIL (must have execution_surface downgrade)"
+                failures=$((failures + 1))
+            fi
         else
             echo "FAIL (stop_reasons kind must be background-surface-blocked-by-permission)"
             echo "$json" | grep -o '"stop_reasons":[^]]*]'
@@ -961,26 +812,6 @@ else
     failures=$((failures + 1))
 fi
 
-# ── Protocol Lifecycle Semantics ────────────────────────────────────────────
-echo ""
-echo "--- Lifecycle Semantics Regression ---"
-
-echo -n "[....] task-routing.md has no classify-first language "
-if grep -q 'Classify the task first' "$REPO_ROOT/protocol/task-routing.md"; then
-    echo "FAIL"
-    failures=$((failures + 1))
-else
-    echo "OK"
-fi
-
-echo -n "[....] agent-task-protocol.md has ambient preflight phase "
-if grep -q 'Ambient Preflight\|ambient preflight' "$REPO_ROOT/protocol/agent-task-protocol.md"; then
-    echo "OK"
-else
-    echo "FAIL"
-    failures=$((failures + 1))
-fi
-
 # F2-doc: runtime-adapters.md must NOT teach runner to read raw fields directly
 echo -n "[....] runtime-adapters.md no raw-field→direct-flag pattern "
 PROTOCOL="$REPO_ROOT/protocol/runtime-adapters.md"
@@ -1001,6 +832,244 @@ elif ! grep -q 'effective_permission_mode' "$PROTOCOL"; then
     failures=$((failures + 1))
 else
     echo "OK"
+fi
+
+# ── M3-M8 Smoke Tests (collapsed — primary verification is now ags verify) ──
+echo ""
+echo "--- M3-M8 Integrated Smoke Tests ---"
+
+# M3 Gate/Policy Engine
+echo -n "[....] gate check valid light → decision=allow "
+if cargo run -q -p ags-cli -- gate check "$REPO_ROOT/tests/fixtures/valid-full.md" --format json > /tmp/verify-m3-gate-light.log 2>&1; then
+    if grep -q '"decision": "allow"' /tmp/verify-m3-gate-light.log && \
+       grep -q '"resolved_policy"' /tmp/verify-m3-gate-light.log; then
+        echo "OK"
+    else
+        echo "FAIL"
+        failures=$((failures + 1))
+    fi
+else
+    echo "FAIL (gate check failed)"
+    failures=$((failures + 1))
+fi
+
+echo -n "[....] gate check Heavy write → decision=stop (exit 1) "
+set +e
+cargo run -q -p ags-cli -- gate check /tmp/test-heavy-stop.md --format json > /tmp/verify-m3-gate-stop.log 2>&1
+rc=$?
+set -e
+if [ "$rc" -eq 1 ] && grep -q '"decision": "stop"' /tmp/verify-m3-gate-stop.log; then
+    echo "OK"
+else
+    echo "FAIL (expected exit 1 + decision=stop, got $rc)"
+    failures=$((failures + 1))
+fi
+
+# M5 Capability
+echo -n "[....] capability list --format json "
+if cargo run -q -p ags-cli -- capability list --format json > /tmp/verify-m5-list.json 2>&1; then
+    echo "OK"
+else
+    echo "FAIL"
+    failures=$((failures + 1))
+fi
+
+# M6 Receipt
+echo -n "[....] receipt verify valid fixture -> exit 0 "
+if cargo run -q -p ags-cli -- receipt verify "$REPO_ROOT/tests/fixtures/receipt-valid.json" --format json > /tmp/verify-m6-verify.json 2>&1; then
+    echo "OK"
+else
+    echo "FAIL"
+    failures=$((failures + 1))
+fi
+
+# M7 Bootstrap
+echo -n "[....] bootstrap --dry-run "
+if cargo run -q -p ags-cli -- bootstrap --dry-run --format text > /tmp/verify-m7-bs.log 2>&1; then
+    echo "OK"
+else
+    echo "FAIL"
+    failures=$((failures + 1))
+fi
+
+# M8 Dogfood — run-task-card.sh --check-only
+echo -n "[....] run-task-card.sh --check-only valid light → ALLOW "
+if "$REPO_ROOT/scripts/run-task-card.sh" "$REPO_ROOT/tests/fixtures/valid-full.md" --check-only --format json > /tmp/verify-m8-run.log 2>&1; then
+    if python3 -c "import json,sys; data=json.load(sys.stdin); assert data['gate_decision'] == 'allow'" < /tmp/verify-m8-run.log; then
+        echo "OK"
+    else
+        echo "FAIL"
+        cat /tmp/verify-m8-run.log
+        failures=$((failures + 1))
+    fi
+else
+    echo "FAIL"
+    cat /tmp/verify-m8-run.log
+    failures=$((failures + 1))
+fi
+
+# ── Session Preflight Smoke ─────────────────────────────────────────────────
+echo -n "[....] session preflight --for claude-code --format json --target repo "
+if cargo run -q -p ags-cli -- session preflight --for claude-code --format json --target "$REPO_ROOT" > /tmp/verify-sp-claude.json 2>&1; then
+    echo "OK"
+else
+    echo "FAIL"
+    failures=$((failures + 1))
+fi
+
+# Tencent Agent host clients resolve and brand correctly (recognized-host table;
+# generic fallback for unknown hosts is preserved separately).
+echo -n "[....] session preflight --for workbuddy → Tencent Agent (WorkBuddy) "
+if cargo run -q -p ags-cli -- session preflight --for workbuddy --format json --target "$REPO_ROOT" > /tmp/verify-sp-wb.json 2>&1 \
+    && grep -q 'Tencent Agent (WorkBuddy)' /tmp/verify-sp-wb.json; then
+    echo "OK"
+else
+    echo "FAIL (workbuddy must brand as Tencent Agent (WorkBuddy))"
+    cat /tmp/verify-sp-wb.json
+    failures=$((failures + 1))
+fi
+echo -n "[....] session preflight --for CodeBuddy-Code → Tencent Agent (CodeBuddy-Code) "
+if cargo run -q -p ags-cli -- session preflight --for CodeBuddy-Code --format json --target "$REPO_ROOT" > /tmp/verify-sp-cb.json 2>&1 \
+    && grep -q 'Tencent Agent (CodeBuddy-Code)' /tmp/verify-sp-cb.json; then
+    echo "OK"
+else
+    echo "FAIL (CodeBuddy-Code must brand as Tencent Agent (CodeBuddy-Code))"
+    cat /tmp/verify-sp-cb.json
+    failures=$((failures + 1))
+fi
+echo -n "[....] unknown host keeps generic fallback (not broken) "
+if cargo run -q -p ags-cli -- session preflight --for some-unknown-host --format json --target "$REPO_ROOT" > /tmp/verify-sp-unknown.json 2>&1 \
+    && grep -q 'Generic Agent (some-unknown-host)' /tmp/verify-sp-unknown.json; then
+    echo "OK"
+else
+    echo "FAIL (unknown host must keep Generic Agent fallback)"
+    cat /tmp/verify-sp-unknown.json
+    failures=$((failures + 1))
+fi
+
+# ── Skill & MCP Console Smoke Tests ─────────────────────────────────────────
+echo ""
+echo "--- Skill & MCP Console Smoke Tests ---"
+run_check "skill overview (json)" \
+    cargo run -q -p ags-cli -- skill --format json
+run_check "skill scan (json)" \
+    cargo run -q -p ags-cli -- skill scan --format json
+run_check "skill check (json)" \
+    cargo run -q -p ags-cli -- skill check --format json
+run_check "skill verify --host claude-code (json)" \
+    cargo run -q -p ags-cli -- skill verify --host claude-code --format json
+
+# Unified inventory: four kinds, AGS suite-interface, BOTH hosts, canonical field.
+echo -n "[....] skill inventory: 4 kinds + both hosts + canonical "
+if cargo run -q -p ags-cli -- skill --format json > /tmp/verify-skill-inv.json 2>&1; then
+    if python3 -c "import json; d=json.load(open('/tmp/verify-skill-inv.json'))['inventory']; ks={c['kind'] for c in d['capabilities']}; assert {'skill','mcp','suite-interface','cli-backed'} <= ks, ks; assert next(c for c in d['capabilities'] if c['name']=='ags')['kind']=='suite-interface'; assert set(d['hosts']) >= {'claude-code','codex'}, d['hosts']; assert isinstance(d['summary']['canonical_present'], int); assert all(any(v['host']=='codex' for v in c['host_visibility']) for c in d['capabilities'])"; then
+        echo "OK"
+    else
+        echo "FAIL (missing a kind / AGS not suite-interface / missing host / no canonical)"
+        failures=$((failures + 1))
+    fi
+else
+    echo "FAIL (skill overview failed)"
+    failures=$((failures + 1))
+fi
+
+# Dry-run proposal in the public edition: optional skills are recommendations
+# with URL sources, not bundled canonical bodies. AGS must not write anything or
+# create dangling host thin indexes from a remote URL; the proposal is safely
+# blocked until a concrete local source exists.
+echo -n "[....] skill propose adopt auto-debug (public recommendation) is blocked/no-write "
+set +e
+cargo run -q -p ags-cli -- skill propose --action adopt --skill auto-debug --format json > /tmp/verify-skill-propose.json 2>&1
+skill_propose_rc=$?
+set -e
+if python3 -c "import json; d=json.load(open('/tmp/verify-skill-propose.json')); assert d['found'] is True; assert d['apply_requested'] is False; assert d['applied'] is False; assert d['apply_status']=='dry-run'; assert d['planned_writes'] == []; assert d['applied_writes'] == []; assert d['apply_errors'] == []; assert d['blocked_reasons'], d" \
+    && [ "$skill_propose_rc" -eq 1 ]; then
+    echo "OK"
+else
+    echo "FAIL (public recommendation dry-run must exit 1, be blocked, and write nothing; got rc=$skill_propose_rc)"
+    cat /tmp/verify-skill-propose.json
+    failures=$((failures + 1))
+fi
+
+# MCP --apply is advised-only: AGS performs nothing (no writes), exits nonzero.
+echo -n "[....] skill propose adopt MCP --apply → advised-only, exit 1, no writes "
+set +e
+cargo run -q -p ags-cli -- skill propose --action adopt --skill context7 --apply --format json > /tmp/verify-skill-mcp-apply.json 2>&1
+mcp_rc=$?
+set -e
+if python3 -c "import json; d=json.load(open('/tmp/verify-skill-mcp-apply.json')); assert d['applied'] is False; assert d['apply_status']=='advised-only'; assert d['applied_writes']==[]; assert d['planned_writes']==[]" && [ "$mcp_rc" -eq 1 ]; then
+    echo "OK"
+else
+    echo "FAIL (MCP --apply must be advised-only, exit 1, write nothing; got rc=$mcp_rc)"
+    failures=$((failures + 1))
+fi
+
+# Verify exposes the failure-aware fields (all_visible / expected / failed).
+echo -n "[....] skill verify exposes all_visible/expected/failed "
+if cargo run -q -p ags-cli -- skill verify --host claude-code --format json > /tmp/verify-skill-verify.json 2>&1; then
+    if python3 -c "import json; d=json.load(open('/tmp/verify-skill-verify.json')); s=d['summary']; assert isinstance(s['all_visible'], bool); assert 'expected' in s and 'failed' in s; assert d['status'] in ('ok','degraded','incomplete')"; then
+        echo "OK"
+    else
+        echo "FAIL (verify must expose all_visible/expected/failed + valid status)"
+        failures=$((failures + 1))
+    fi
+else
+    echo "FAIL (skill verify failed)"
+    failures=$((failures + 1))
+fi
+
+# Codex is a real (supported) host: skill path + `codex mcp list`.
+echo -n "[....] skill verify --host codex → supported (real checks) "
+if cargo run -q -p ags-cli -- skill verify --host codex --format json > /tmp/verify-skill-codex.json 2>&1; then
+    if python3 -c "import json; d=json.load(open('/tmp/verify-skill-codex.json')); assert d['supported'] is True; assert d['status'] in ('ok','degraded','incomplete')"; then
+        echo "OK"
+    else
+        echo "FAIL (codex must be a supported host with a valid status)"
+        failures=$((failures + 1))
+    fi
+else
+    echo "FAIL (skill verify codex failed)"
+    failures=$((failures + 1))
+fi
+
+# Cursor is the reserved host: stable unsupported fields (no panic, no probing).
+echo -n "[....] skill verify --host cursor → unsupported (stable fields) "
+if cargo run -q -p ags-cli -- skill verify --host cursor --format json > /tmp/verify-skill-cursor.json 2>&1; then
+    if python3 -c "import json; d=json.load(open('/tmp/verify-skill-cursor.json')); assert d['supported'] is False; assert d['status'] == 'unsupported'; assert d['checks'] == []"; then
+        echo "OK"
+    else
+        echo "FAIL (cursor must be unsupported with stable fields)"
+        failures=$((failures + 1))
+    fi
+else
+    echo "FAIL (skill verify cursor failed)"
+    failures=$((failures + 1))
+fi
+
+# ── Lifecycle Semantics Regression ──────────────────────────────────────────
+echo ""
+echo "--- Lifecycle Semantics Regression ---"
+echo -n "[....] task-routing.md has no classify-first language "
+if grep -q 'Classify the task first' "$REPO_ROOT/protocol/task-routing.md"; then
+    echo "FAIL"
+    failures=$((failures + 1))
+else
+    echo "OK"
+fi
+echo -n "[....] agent-task-protocol.md has ambient preflight phase "
+if grep -q 'Ambient Preflight\|ambient preflight' "$REPO_ROOT/protocol/agent-task-protocol.md"; then
+    echo "OK"
+else
+    echo "FAIL"
+    failures=$((failures + 1))
+fi
+echo -n "[....] agent-task-protocol.md has Value Route (效价比) section "
+if grep -q 'Value Route' "$REPO_ROOT/protocol/agent-task-protocol.md" \
+    && grep -q '效价比' "$REPO_ROOT/protocol/agent-task-protocol.md"; then
+    echo "OK"
+else
+    echo "FAIL (Value Route / 效价比 missing from agent-task-protocol.md)"
+    failures=$((failures + 1))
 fi
 
 # ── Final result ────────────────────────────────────────────────────────────

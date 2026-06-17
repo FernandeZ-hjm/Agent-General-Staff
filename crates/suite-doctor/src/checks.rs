@@ -311,79 +311,99 @@ pub fn runtime_profile_declared(repo_root: &Path) -> Finding {
     }
 }
 
-/// Check that `manifests/mcp-registry.yaml` has a `gep` MCP entry with
-/// `status: adopted`.  This is an **info** check — it never blocks.
-pub fn mcp_registry_gep_adopted(repo_root: &Path) -> Finding {
+fn mcp_registry_entry_status(repo_root: &Path, mcp_name: &str) -> Result<Option<String>, Finding> {
     let path = repo_root.join("manifests/mcp-registry.yaml");
     if !path.exists() {
         if is_public_edition(repo_root) {
-            return Finding::info(
-                "mcp_registry_gep_adopted",
+            return Err(Finding::info(
+                format!("mcp_registry_{mcp_name}_adopted"),
                 "public edition does not require private mcp-registry.yaml",
-            );
+            ));
         }
-        return Finding::warn(
-            "mcp_registry_gep_adopted",
+        return Err(Finding::warn(
+            format!("mcp_registry_{mcp_name}_adopted"),
             "manifests/mcp-registry.yaml not found",
             format!("Expected at: {}", path.display()),
-        );
+        ));
     }
 
     let raw = match std::fs::read_to_string(&path) {
         Ok(s) => s,
         Err(e) => {
-            return Finding::warn(
-                "mcp_registry_gep_adopted",
+            return Err(Finding::warn(
+                format!("mcp_registry_{mcp_name}_adopted"),
                 "cannot read manifests/mcp-registry.yaml",
                 format!("{e}"),
-            );
+            ));
         }
     };
 
     let parsed: YamlValue = match serde_yaml::from_str(&raw) {
         Ok(value) => value,
         Err(e) => {
-            return Finding::warn(
-                "mcp_registry_gep_adopted",
+            return Err(Finding::warn(
+                format!("mcp_registry_{mcp_name}_adopted"),
                 "manifests/mcp-registry.yaml is not valid YAML",
                 format!("{e}"),
-            );
+            ));
         }
     };
 
-    let gep_status = yaml_get(&parsed, "mcps")
+    Ok(yaml_get(&parsed, "mcps")
         .and_then(|mcps| mcps.as_sequence())
         .and_then(|mcps| {
             mcps.iter().find_map(|entry| {
                 let name = yaml_get(entry, "name").and_then(|value| value.as_str());
-                if name == Some("gep") {
+                if name == Some(mcp_name) {
                     yaml_get(entry, "status").and_then(|value| value.as_str())
                 } else {
                     None
                 }
+                .map(|status| status.to_string())
             })
-        });
+        }))
+}
 
-    let has_gep = gep_status.is_some();
-    let has_adopted = gep_status == Some("adopted");
+fn mcp_registry_adopted_check(repo_root: &Path, mcp_name: &str, display_name: &str) -> Finding {
+    let check_name = format!("mcp_registry_{mcp_name}_adopted");
+    let status = match mcp_registry_entry_status(repo_root, mcp_name) {
+        Ok(status) => status,
+        Err(finding) => return finding,
+    };
 
-    if has_gep && has_adopted {
+    let has_mcp = status.is_some();
+    let has_adopted = status.as_deref() == Some("adopted");
+
+    if has_mcp && has_adopted {
         Finding::info(
-            "mcp_registry_gep_adopted",
-            "GEP MCP registered and adopted in mcp-registry.yaml",
+            check_name,
+            format!("{display_name} MCP registered and adopted in mcp-registry.yaml"),
         )
-    } else if has_gep {
+    } else if has_mcp {
         Finding::warn(
-            "mcp_registry_gep_adopted",
-            "GEP MCP found but status is not adopted",
-            "Review manifests/mcp-registry.yaml gep entry",
+            check_name,
+            format!("{display_name} MCP found but status is not adopted"),
+            format!("Review manifests/mcp-registry.yaml {mcp_name} entry"),
         )
     } else {
         Finding::info(
-            "mcp_registry_gep_adopted",
-            "GEP MCP not registered in mcp-registry.yaml",
+            check_name,
+            format!("{display_name} MCP not registered in mcp-registry.yaml"),
         )
     }
+}
+
+/// Check that `manifests/mcp-registry.yaml` has a `gep` MCP entry with
+/// `status: adopted`.  This is an **info** check — it never blocks.
+pub fn mcp_registry_gep_adopted(repo_root: &Path) -> Finding {
+    mcp_registry_adopted_check(repo_root, "gep", "GEP")
+}
+
+/// Check that `manifests/mcp-registry.yaml` has a `codegraph` MCP entry with
+/// `status: adopted`. This is an **info** check — host verification checks
+/// enforce actual Claude Code registration.
+pub fn mcp_registry_codegraph_adopted(repo_root: &Path) -> Finding {
+    mcp_registry_adopted_check(repo_root, "codegraph", "CodeGraph")
 }
 
 fn yaml_get<'a>(value: &'a YamlValue, key: &str) -> Option<&'a YamlValue> {
@@ -818,6 +838,7 @@ pub fn run_checks(report: &mut HealthReport, repo_root: &Path) {
     report.add(claude_code_stop_hook_wired(repo_root));
     report.add(runtime_profile_declared(repo_root));
     report.add(mcp_registry_gep_adopted(repo_root));
+    report.add(mcp_registry_codegraph_adopted(repo_root));
     // ── EvoMap proxy health (always degradable) ────────────────────────
     report.add(evolver_proxy_health_check());
     // ── Portable template checks ───────────────────────────────────────
@@ -989,8 +1010,8 @@ const evidence = latestTaskArchiveEvidence(process.cwd());
     fn claude_code_stop_hook_wired_blocking_on_bad_json() {
         let tmp = std::env::temp_dir().join("ags-stop-hook-bad-json-test");
         let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp.join(".claude")).unwrap();
-        std::fs::write(&tmp.join(".claude/settings.json"), "not json").unwrap();
+        std::fs::create_dir_all(tmp.join(".claude")).unwrap();
+        std::fs::write(tmp.join(".claude/settings.json"), "not json").unwrap();
         let f = claude_code_stop_hook_wired(&tmp);
         assert_eq!(f.status, CheckStatus::Fail);
         assert_eq!(f.severity, Severity::Fail);
@@ -1001,9 +1022,9 @@ const evidence = latestTaskArchiveEvidence(process.cwd());
     fn claude_code_stop_hook_wired_blocking_on_missing_stop_key() {
         let tmp = std::env::temp_dir().join("ags-stop-hook-no-stop-test");
         let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp.join(".claude")).unwrap();
+        std::fs::create_dir_all(tmp.join(".claude")).unwrap();
         std::fs::write(
-            &tmp.join(".claude/settings.json"),
+            tmp.join(".claude/settings.json"),
             r#"{"hooks": {"SessionStart": []}}"#,
         )
         .unwrap();
@@ -1067,7 +1088,7 @@ const evidence = latestTaskArchiveEvidence(process.cwd());
         let f = mcp_registry_gep_adopted(repo_root);
         if is_public_edition(repo_root) {
             assert_eq!(f.status, CheckStatus::Pass);
-            assert!(f.message.contains("public edition"));
+            assert!(f.message.contains("public edition") || f.message.contains("registered"));
         } else {
             // GEP is adopted — expect Pass (info severity)
             assert_eq!(f.status, CheckStatus::Pass);
@@ -1077,13 +1098,31 @@ const evidence = latestTaskArchiveEvidence(process.cwd());
     }
 
     #[test]
+    fn mcp_registry_codegraph_adopted_in_ags_repo() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        let f = mcp_registry_codegraph_adopted(repo_root);
+        if is_public_edition(repo_root) {
+            assert_eq!(f.status, CheckStatus::Pass);
+            assert!(f.message.contains("public edition") || f.message.contains("registered"));
+        } else {
+            assert_eq!(f.status, CheckStatus::Pass);
+        }
+        assert_eq!(f.severity, Severity::Info);
+        assert_eq!(f.check_name, "mcp_registry_codegraph_adopted");
+    }
+
+    #[test]
     fn public_edition_runtime_checks_are_degradable() {
         let tmp = std::env::temp_dir().join("ags-public-doctor-degradable-test");
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         std::fs::write(
             tmp.join("WORKSPACE.md"),
-            "# Agent General Staff 2.0 — Public Edition Workspace\n",
+            "# Agent Governance Suite 2.0 — Public Edition Workspace\n",
         )
         .unwrap();
 
@@ -1098,6 +1137,10 @@ const evidence = latestTaskArchiveEvidence(process.cwd());
         assert_eq!(claude_code_stop_hook_wired(&tmp).status, CheckStatus::Skip);
         assert_eq!(runtime_profile_declared(&tmp).status, CheckStatus::Skip);
         assert_eq!(mcp_registry_gep_adopted(&tmp).status, CheckStatus::Pass);
+        assert_eq!(
+            mcp_registry_codegraph_adopted(&tmp).status,
+            CheckStatus::Pass
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -1107,6 +1150,8 @@ const evidence = latestTaskArchiveEvidence(process.cwd());
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         let f = mcp_registry_gep_adopted(&tmp);
+        assert_eq!(f.status, CheckStatus::Warn);
+        let f = mcp_registry_codegraph_adopted(&tmp);
         assert_eq!(f.status, CheckStatus::Warn);
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -1191,20 +1236,15 @@ const evidence = latestTaskArchiveEvidence(process.cwd());
     // ── Template existence tests ───────────────────────────────────────
 
     #[test]
-    fn runtime_profile_template_exists_when_file_present() {
-        let tmp = std::env::temp_dir().join("ags-runtime-template-present-test");
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(tmp.join("manifests/templates")).unwrap();
-        std::fs::write(
-            tmp.join("manifests/templates/runtime-profiles.template.yaml"),
-            "schema_version: \"1.0\"\nprofiles: []\n",
-        )
-        .unwrap();
-
-        let f = runtime_profile_template_exists(&tmp);
+    fn runtime_profile_template_exists_in_ags_repo() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        let f = runtime_profile_template_exists(repo_root);
         assert_eq!(f.status, CheckStatus::Pass);
         assert_eq!(f.check_name, "runtime_profile_template_exists");
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
@@ -1219,20 +1259,15 @@ const evidence = latestTaskArchiveEvidence(process.cwd());
     }
 
     #[test]
-    fn codex_planner_hook_template_exists_when_file_present() {
-        let tmp = std::env::temp_dir().join("ags-planner-template-present-test");
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(tmp.join("manifests/templates/hooks")).unwrap();
-        std::fs::write(
-            tmp.join("manifests/templates/hooks/codex-planner-recall.template.json"),
-            "{}\n",
-        )
-        .unwrap();
-
-        let f = codex_planner_hook_template_exists(&tmp);
+    fn codex_planner_hook_template_exists_in_ags_repo() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        let f = codex_planner_hook_template_exists(repo_root);
         assert_eq!(f.status, CheckStatus::Pass);
         assert_eq!(f.check_name, "codex_planner_hook_template_exists");
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
@@ -1247,20 +1282,15 @@ const evidence = latestTaskArchiveEvidence(process.cwd());
     }
 
     #[test]
-    fn claude_code_stop_hook_template_exists_when_file_present() {
-        let tmp = std::env::temp_dir().join("ags-stop-template-present-test");
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(tmp.join("manifests/templates/hooks")).unwrap();
-        std::fs::write(
-            tmp.join("manifests/templates/hooks/claude-code-executor-stop.template.js"),
-            "console.log('ok');\n",
-        )
-        .unwrap();
-
-        let f = claude_code_stop_hook_template_exists(&tmp);
+    fn claude_code_stop_hook_template_exists_in_ags_repo() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        let f = claude_code_stop_hook_template_exists(repo_root);
         assert_eq!(f.status, CheckStatus::Pass);
         assert_eq!(f.check_name, "claude_code_stop_hook_template_exists");
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
