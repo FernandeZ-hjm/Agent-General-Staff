@@ -387,10 +387,10 @@ pub fn verify(target: &Path) -> HealthReport {
     for script in &["scripts/validate.sh", "scripts/run-task-card.sh"] {
         let full = target.join(script);
         if full.exists() {
-            if !ags_platform::is_on_path("bash") {
+            if cfg!(not(unix)) || !ags_platform::is_on_path("bash") {
                 report.add(Finding::skip(
                     format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
-                    format!("bash -n {script} skipped (bash not on PATH)"),
+                    format!("bash -n {script} skipped (non-unix or bash not on PATH)"),
                 ));
                 continue;
             }
@@ -617,7 +617,7 @@ mod tests {
         let protocol_actions: Vec<_> = plan
             .actions
             .iter()
-            .filter(|a| a.path.contains("protocol/"))
+            .filter(|a| a.path.replace('\\', "/").contains("protocol/"))
             .collect();
         assert!(
             !protocol_actions.is_empty(),
@@ -628,7 +628,7 @@ mod tests {
         let script_actions: Vec<_> = plan
             .actions
             .iter()
-            .filter(|a| a.path.contains("scripts/"))
+            .filter(|a| a.path.replace('\\', "/").contains("scripts/"))
             .collect();
         assert!(!script_actions.is_empty(), "should include script files");
         for a in &script_actions {
@@ -661,7 +661,7 @@ mod tests {
         // All template action paths must be under manifests/templates/
         for a in &template_actions {
             assert!(
-                a.path.contains("manifests/templates/"),
+                a.path.replace('\\', "/").contains("manifests/templates/"),
                 "template action path must be under manifests/templates/: {}",
                 a.path
             );
