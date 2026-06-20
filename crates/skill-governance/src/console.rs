@@ -3881,6 +3881,7 @@ mod tests {
 
     /// Read-only thin-index drift scan classifies `.bak` leftovers and dangling
     /// symlinks as drift and a valid symlink as clean — never mutating. (point 2)
+    #[cfg(unix)]
     #[test]
     fn scan_thin_index_drift_classifies_bak_and_dangling() {
         let base = std::env::temp_dir().join(format!("ags-drift-{}", std::process::id()));

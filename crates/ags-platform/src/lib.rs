@@ -29,7 +29,7 @@ fn home_dir_impl() -> Option<PathBuf> {
     }
     if let (Some(drive), Some(path)) = (non_empty_var_os("HOMEDRIVE"), non_empty_var_os("HOMEPATH"))
     {
-        let mut joined = OsString::from(drive);
+        let mut joined = drive;
         joined.push(path);
         return Some(PathBuf::from(joined));
     }
