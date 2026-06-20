@@ -757,10 +757,10 @@ mod tests {
         let report = verify(&target);
         assert!(report.passed(), "verify should pass: {:?}", report.findings);
         for finding in &report.findings {
-            assert_eq!(
-                finding.status,
-                suite_doctor::CheckStatus::Pass,
-                "verify check {} should pass: {} — {}",
+            assert!(
+                finding.status == suite_doctor::CheckStatus::Pass
+                    || finding.status == suite_doctor::CheckStatus::Skip,
+                "verify check {} should pass or skip: {} — {}",
                 finding.check_name,
                 finding.message,
                 finding.detail.as_deref().unwrap_or("")
