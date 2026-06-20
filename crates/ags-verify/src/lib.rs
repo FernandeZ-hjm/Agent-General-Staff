@@ -1614,6 +1614,7 @@ mod tests {
         assert!(!parsed.passed());
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_run_command_executes_in_repo_root() {
         let root = std::env::temp_dir().join(format!("ags-verify-cwd-test-{}", std::process::id()));
