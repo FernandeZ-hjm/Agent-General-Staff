@@ -173,7 +173,6 @@ pub fn repair(target: &Path) -> RepairResult {
                     continue;
                 }
                 let script_path = Path::new(path_str);
-                // Use std::fs::set_permissions to set executable bit on unix
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
@@ -199,6 +198,7 @@ pub fn repair(target: &Path) -> RepairResult {
                 }
                 #[cfg(not(unix))]
                 {
+                    let _ = script_path;
                     skipped.push(format!(
                         "{}: chmod not supported on this platform",
                         item.check_name
