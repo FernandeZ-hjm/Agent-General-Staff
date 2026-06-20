@@ -77,7 +77,7 @@ fn walk_release_files(root: &Path, prefix: &str, files: &mut Vec<String>) {
                 .strip_prefix(root)
                 .unwrap_or(&entry.path())
                 .to_string_lossy()
-                .to_string();
+                .replace('\\', "/");
             if entry.path().is_dir() {
                 if rel == ".git" || rel == "target" || rel.starts_with("target/") {
                     continue;

@@ -157,16 +157,16 @@ args = ["serve", "--mcp"]
         "host_commands": {
             "claude_code": {
                 "slash_command": "/ags",
-                "path": claude_ags_command_path().to_string_lossy()
+                "path": claude_ags_command_path().to_string_lossy().replace('\\', "/")
             },
             "codex": {
                 "command_skills": codex_ags_command_skill_specs()
                     .iter()
-                    .map(|(name, _, _, _, _)| codex_ags_named_skill_path(name).to_string_lossy().to_string())
+                    .map(|(name, _, _, _, _)| codex_ags_named_skill_path(name).to_string_lossy().replace('\\', "/"))
                     .collect::<Vec<_>>(),
                 "retired_visible_skills": retired_codex_ags_skill_dirs()
                     .iter()
-                    .map(|path| path.to_string_lossy().to_string())
+                    .map(|path| path.to_string_lossy().replace('\\', "/"))
                     .collect::<Vec<_>>()
             }
         },
