@@ -113,7 +113,7 @@ pub(in crate::setup) fn write_install_file(
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::write_install_file;
     use crate::file_plan::InstallFile;

@@ -2818,15 +2818,16 @@ Some other text here.
 
     #[test]
     fn test_known_workspace_path_detection() {
-        // Test that the current repo path maps to a known workspace role
         let root = repo_root();
+        let expected = match expected_known_role_for_root(&root) {
+            Some(e) => e,
+            None => return, // CI or non-maintainer machine — path not in KNOWN_WORKSPACE_PATHS
+        };
         let identity = detect_project(&root);
         assert!(
             identity.inferred_role.is_some(),
             "Running from AGS repo — should infer role"
         );
-        let expected = expected_known_role_for_root(&root)
-            .expect("current AGS repo path should be a known workspace path");
         if let Some(ref role) = identity.inferred_role {
             assert_eq!(role.code, expected.0);
             assert_eq!(role.role, expected.1);
