@@ -93,12 +93,15 @@ bash scripts/update.sh --apply
 # 1. 项目预检：Agent 进项目前，先知道自己在哪
 ags session preflight --for claude-code --target .
 
-# 2. 校验任务卡 + 解析执行策略：任务卡合不合格、Agent 有什么权限
-bash scripts/validate.sh examples/task-cards/medium-demo-task.md
+# 2. 套件健康诊断
+ags doctor
+
+# 3. 校验任务卡 + 解析执行策略
+ags task validate examples/task-cards/medium-demo-task.md
 ags policy resolve examples/task-cards/medium-demo-task.md
 
-# 3. 校验执行回执：这次执行留下了什么记录
-ags receipt verify examples/receipts/sample-receipt.json
+# 4. 结构化验证
+ags verify --scope local
 ```
 
 更多样例见 [examples/](examples/)，评估实验见 [evals/](evals/)。
@@ -193,28 +196,34 @@ flowchart TD
 
 ## 常用命令
 
+2.7 采用两层 CLI 架构：7 个顶层命令管理全局环境，内核子命令处理任务卡、策略、验证和回执。
+
+### 全局管理
+
 | 命令 | 作用 |
 |---|---|
-| `ags setup` | 写入本机 AGS runtime、MCP 片段和 Agent 入口 |
-| `ags init` | 对目标项目执行 AGS managed-block 接入 |
-| `ags mcp serve` | 启动 AGS MCP stdio 服务 |
-| `ags session preflight` | 项目预检（MCP 不可用时的 CLI 降级路径） |
-| `ags task validate` | 校验任务卡格式与语义 |
-| `ags task compile` | 从结构化输入编译任务卡 |
-| `ags policy resolve` | 解析任务执行策略 |
-| `ags policy check` | 校验 + 解析，输出 gate 结果 |
-| `ags gate` | Runner 向 gate 决策（M3） |
-| `ags verify` | 结构化验证（local / full / release） |
-| `ags doctor` | 套件健康诊断，`--repair` 可修复 |
-| `ags receipt` | 生成或校验执行回执 |
-| `ags compliance` | 检查任务执行合规性 |
-| `ags capability` | 能力发现与注册（M5） |
-| `ags hook` | stop-archive 钩子管理 |
-| `ags skill` | 技能管理控制台（scan / check / inventory / verify / propose / adopt / ignore） |
-| `ags sync check` | 多项目协议漂移检查 |
-| `ags bootstrap` | 引导初始化（`--dry-run` / `--apply`） |
+| `ags setup` | 安装/升级本机 AGS 治理内核 |
+| `ags init` | 将目标项目接入 AGS 治理 |
+| `ags doctor` | 全链路健康诊断；`--fix` 执行安全修复 |
+| `ags agents scan` | 盘点本机 Agent 宿主与 MCP 注册状态 |
+| `ags skill inventory` | 审计本地技能资产 |
+| `ags capability verify` | 校验跨 Agent 能力可见性 |
+| `ags update check` | 只读漂移报告；`apply` 执行更新 |
 
-**Agent 入口：**`/ags` 是 Claude Code 入口；`$ags-setup` / `$ags-init` / `$ags-skill` / `$ags-doctor` 是 Codex 可见入口。所有 AGS 任务要求优先通过 AGS MCP 调用 `ags_preflight`，CLI 只作为 MCP 不可用时的降级路径。
+### 内核（治理闭环）
+
+| 命令 | 作用 |
+|---|---|
+| `ags session preflight` | 项目预检——Agent 唤醒入口 |
+| `ags task validate` | 校验任务卡格式与语义 |
+| `ags policy resolve` | 解析执行策略 |
+| `ags gate check` | Runner 级 gate 决策 |
+| `ags verify --scope local` | 结构化验证（local / full / release） |
+| `ags verify lane` | 按 diff 风险分类验证路径 |
+| `ags receipt verify` | 校验执行回执完整性 |
+| `ags mcp serve` | 启动 AGS MCP stdio 服务 |
+
+**Agent 入口：**`/ags` 是 Claude Code 入口，所有 AGS 任务优先通过 AGS MCP 调用 `ags_preflight`，CLI 只作为 MCP 不可用时的降级路径。完整子命令用 `ags <command> --help` 查看。
 
 ## 为什么需要 AGS
 

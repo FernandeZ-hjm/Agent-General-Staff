@@ -98,8 +98,8 @@ User projects usually already have their own `AGENTS.md` and `CLAUDE.md`.
 Do not replace them with suite copies. Use the managed-block integration command:
 
 ```bash
-ags project integrate --target /path/to/repo --dry-run
-ags project integrate --target /path/to/repo --confirm
+ags init --target /path/to/repo --dry-run
+ags init --target /path/to/repo --confirm
 ```
 
 This preserves user-authored content, updates only the marked AGS block, creates
@@ -109,8 +109,8 @@ backups on confirmed writes, and stops on conflicting entry-file rules.
 
 ```bash
 # Install from source
-git clone https://github.com/FernandeZ-hjm/agent-governance-suite.git
-cd agent-governance-suite
+git clone https://github.com/FernandeZ-hjm/Agent-General-Staff.git
+cd Agent-General-Staff
 bash scripts/install.sh
 
 # Or DIY: build and add to PATH
@@ -118,7 +118,6 @@ cargo build --release
 export PATH="$PWD/target/release:$PATH"
 
 # Verify installation
-/ags setup
 ags setup --yes --force
 ags doctor
 ags verify --scope local
@@ -126,25 +125,36 @@ ags verify --scope local
 
 ## Commands
 
+### Top-Level (Global Management)
+
 | Command | Description |
 |---|---|
-| `ags setup` | Write public-safe local AGS runtime snippets, MCP config snippets, Claude `/ags`, and Codex AGS command skills |
-| `ags init` | Integrate AGS managed blocks into a target project |
-| `ags mcp serve` | Start the public AGS MCP stdio server |
+| `ags setup` | Install/upgrade the global AGS governance kernel |
+| `ags init` | Onboard a target project into AGS governance |
+| `ags doctor` | Full-pipeline health diagnostics; `--fix` for safe repairs |
+| `ags agents` | Govern local agent hosts: `scan`, `govern`, `verify` |
+| `ags skill` | Skill management console: `inventory`, `dedupe`, `update`, `sync`, `verify` |
+| `ags capability` | Cross-agent capability layer: `inventory`, `verify`, `install`, `sync` |
+| `ags update` | Unified update: `check`, `notify`, `plan`, `apply`, `verify` |
+
+### Kernel (Governance Closed Loop)
+
+| Command | Description |
+|---|---|
+| `ags session preflight` | Aggregated agent wake-up check |
 | `ags task validate` | Validate task cards against the canonical format |
 | `ags policy resolve` | Resolve execution policy from a task card |
-| `ags policy explain` | Explain each policy decision with rule IDs |
 | `ags policy check` | Validate + resolve, exit with decision |
+| `ags gate check` | Runner-level gate decision |
+| `ags verify` | Scoped verification checks (local / full / release) |
+| `ags verify lane` | Classify verification path by diff risk |
+| `ags receipt` | Generate or verify execution receipts |
+| `ags mcp serve` | Start the public AGS MCP stdio server |
 | `ags sync check` | Multi-project protocol drift checker |
-| `ags doctor` | Suite health diagnostics |
-| `ags bootstrap --dry-run` | Bootstrap dry-run simulation |
-| `ags bootstrap --apply` | Bootstrap a target directory |
+| `ags bootstrap` | Bootstrap initialization (`--dry-run` / `--apply`) |
 | `ags project detect` | Detect project identity and AGS integration |
-| `ags project integrate` | Incrementally merge AGS managed blocks into project entry files |
 | `ags protocol status` | Check protocol file status |
 | `ags agent instructions` | Export agent-specific project instructions |
-| `ags session preflight` | Aggregated agent wake-up check |
-| `ags verify` | Scoped verification checks |
 
 ## Directory Structure
 

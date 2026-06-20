@@ -93,12 +93,15 @@ If `ags --version` still shows an older version after updating, the shell is lik
 # 1. Project preflight: the agent learns where it stands before touching anything
 ags session preflight --for claude-code --target .
 
-# 2. Validate a task card + resolve execution policy
-bash scripts/validate.sh examples/task-cards/medium-demo-task.md
+# 2. Suite health diagnostics
+ags doctor
+
+# 3. Validate a task card + resolve execution policy
+ags task validate examples/task-cards/medium-demo-task.md
 ags policy resolve examples/task-cards/medium-demo-task.md
 
-# 3. Verify an execution receipt
-ags receipt verify examples/receipts/sample-receipt.json
+# 4. Structured verification
+ags verify --scope local
 ```
 
 More examples at [examples/](examples/). Eval scenarios at [evals/](evals/).
@@ -194,28 +197,34 @@ For architectural details, see [docs/architecture.md](docs/architecture.md).
 
 ## Common Commands
 
+2.7 uses a two-layer CLI architecture: 7 top-level commands manage the global environment, while kernel subcommands handle task cards, policies, verification, and receipts.
+
+### Global Management
+
 | Command | Purpose |
 |---|---|
-| `ags setup` | Write local AGS runtime, MCP snippets, and agent entries |
-| `ags init` | Integrate AGS managed blocks into a target project |
-| `ags mcp serve` | Start the AGS MCP stdio server |
-| `ags session preflight` | Project preflight (CLI fallback when MCP is unavailable) |
-| `ags task validate` | Validate task-card format and semantics |
-| `ags task compile` | Compile a task card from structured input |
-| `ags policy resolve` | Resolve execution policy |
-| `ags policy check` | Validate + resolve, output gate result |
-| `ags gate` | Runner-facing gate decision (M3) |
-| `ags verify` | Structured verification (local / full / release) |
-| `ags doctor` | Suite health diagnostics; `--repair` for actionable fixes |
-| `ags receipt` | Generate or verify execution receipts |
-| `ags compliance` | Check task-execution compliance |
-| `ags capability` | Capability discovery and registry (M5) |
-| `ags hook` | Stop-archive hook management |
-| `ags skill` | Skill management console (scan / check / inventory / verify / propose / adopt / ignore) |
-| `ags sync check` | Multi-project protocol drift check |
-| `ags bootstrap` | Bootstrap initialization (`--dry-run` / `--apply`) |
+| `ags setup` | Install/upgrade the global AGS governance kernel |
+| `ags init` | Onboard a target project into AGS governance |
+| `ags doctor` | Full-pipeline health diagnostics; `--fix` for safe repairs |
+| `ags agents scan` | Inventory local agent hosts and MCP registration |
+| `ags skill inventory` | Audit on-disk skill assets |
+| `ags capability verify` | Verify cross-agent capability visibility |
+| `ags update check` | Read-only drift report; `apply` to execute updates |
 
-**Agent entries:** `/ags` is the Claude Code entry; `$ags-setup` / `$ags-init` / `$ags-skill` / `$ags-doctor` are Codex-visible entries. All AGS tasks must call the AGS MCP `ags_preflight` tool first, with the CLI as a fallback only.
+### Kernel (Governance Closed Loop)
+
+| Command | Purpose |
+|---|---|
+| `ags session preflight` | Project preflight — agent wake-up entry point |
+| `ags task validate` | Validate task-card format and semantics |
+| `ags policy resolve` | Resolve execution policy |
+| `ags gate check` | Runner-level gate decision |
+| `ags verify --scope local` | Structured verification (local / full / release) |
+| `ags verify lane` | Classify verification path by diff risk |
+| `ags receipt verify` | Verify execution receipt integrity |
+| `ags mcp serve` | Start the AGS MCP stdio server |
+
+**Agent entry:** `/ags` is the Claude Code entry. All AGS tasks should call `ags_preflight` via AGS MCP first, with the CLI as a fallback only. Run `ags <command> --help` for full subcommand details.
 
 ## Why AGS
 

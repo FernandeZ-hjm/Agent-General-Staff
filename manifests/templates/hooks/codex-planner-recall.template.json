@@ -1,0 +1,69 @@
+{
+  "_description": "Codex/Cursor Planner — EvoMap Pre-Solution Advisory Recall Hook Template",
+  "_schema_version": "1.0",
+  "_public_safe": true,
+  "_note": "This is a PORTABLE INSTALLATION TEMPLATE. It declares hook event types and advisory-only policy. Command paths and machine-specific values are REPLACEMENT SLOTS. No real token, node_secret, API key, absolute home-directory path, task archive path, or memory capsule path is included.",
+
+  "profile": "planner",
+  "role": "planner",
+  "evolver_recall": "advisory_only",
+  "enabled_by_default": false,
+
+  "hooks": {
+    "SessionStart": {
+      "enabled": false,
+      "advisory_only": true,
+      "description": "Pre-solution advisory recall. Fires when a planning session begins. Must not change task level, permission mode, review gate, or verification gate.",
+      "command": "REPLACE: path/to/evolver-recall-script",
+      "timeout": 10,
+      "input_signals": "concise non-secret task signals from the current request"
+    },
+    "UserPromptSubmit": {
+      "enabled": false,
+      "advisory_only": true,
+      "description": "Task signal capture for recall input. Must not read secrets, full task archives, or private memory capsules.",
+      "command": "REPLACE: path/to/evolver-signal-capture-script",
+      "timeout": 5,
+      "input_signals": "concise non-secret task summary"
+    },
+    "PostToolUse": {
+      "enabled": false,
+      "advisory_only": true,
+      "description": "Signal detection for method improvement. Advisory only — does not change task classification.",
+      "command": "REPLACE: path/to/evolver-signal-detection-script",
+      "timeout": 5,
+      "watched_tools": ["edit", "write", "bash"]
+    }
+  },
+
+  "authority_boundary": {
+    "may_influence": [
+      "solution formation suggestions",
+      "alternative approaches and design patterns",
+      "risk flags and edge cases",
+      "reusable method references"
+    ],
+    "must_not_decide": [
+      "task level (Light / Medium / Heavy)",
+      "permission mode",
+      "review gate",
+      "verification gate",
+      "protected-path handling",
+      "release boundary"
+    ],
+    "ags_authority_wins": true
+  },
+
+  "recall_documentation_requirements": {
+    "fields": ["status", "search", "fetch"],
+    "required_when_available": [
+      "recall path (MCP / CLI / skill fallback)",
+      "input signals (non-secret summary)",
+      "hit signals (Gene / Capsule / EvolutionEvent / method pattern / none)",
+      "adoption (what was explicitly adopted)",
+      "rejection (what was retrieved but rejected, with reason)",
+      "impact (how recall changed the solution)",
+      "confidence / limitations"
+    ]
+  }
+}
