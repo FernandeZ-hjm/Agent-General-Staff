@@ -177,7 +177,17 @@ scripts/                # Public-safe scripts
   verify.sh             # Verification wrapper
 
 crates/                 # Rust crates (public-safe core)
-  ags-cli/              # Unified CLI entry point
+  ags-cli/              # Unified CLI (2.7: kernel architecture)
+    src/kernel/         # Governance kernel — gate / policy / runner / receipt / rollback
+    src/agents/         # Built-in agent dispatch — govern / scan / verify / host_specs
+    src/setup/          # Setup plan / apply / verify / rollback
+    src/init/           # Project integration overlay
+    src/update/         # Self-update plan / apply / repair / rollback
+    src/capability/     # Capability routing entry
+    src/skill/          # Skill governance entry
+    src/doctor/         # Health diagnostics entry
+    src/cli/            # Command routing — actions + kernel_actions
+  capability-route/     # Advisory routing (2.7)
   task-card-validator/  # Task-card validation
   execution-policy/     # Execution policy resolver
   suite-doctor/         # Suite health diagnostics
@@ -185,6 +195,14 @@ crates/                 # Rust crates (public-safe core)
   workflow-sync-check/  # Protocol drift checker
   ags-verify/           # Scoped verification
   project-discovery/    # Project/agent detection
+  capability-registry/  # Capability registry
+  receipt/              # Execution receipts
+  runner/               # Task runner
+  skill-governance/     # Skill governance
+  ags-mcp/              # MCP stdio server
+  ags-platform/         # Cross-platform primitives
+  task-compiler/        # Task-card compiler
+  prompt-request-classifier/  # Prompt request classification
 
 docs/                   # Documentation
   skill-recommendations.md
@@ -229,4 +247,4 @@ ags verify --scope release
 
 ## License
 
-MIT License. See `LICENSE`, `NOTICE.md`, and `THIRD_PARTY_NOTICES.md`.
+GPL-3.0-only. See `LICENSE`, `NOTICE.md`, and `THIRD_PARTY_NOTICES.md`.

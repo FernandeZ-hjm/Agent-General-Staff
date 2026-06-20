@@ -24,9 +24,10 @@
 //! add/remove` itself.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-pub const CONSOLE_SCHEMA_VERSION: &str = "2.6.0-skill-console";
+pub const CONSOLE_SCHEMA_VERSION: &str = "2.7.0-skill-console";
 
 // ── Command runner seam ─────────────────────────────────────────────────────
 
@@ -136,6 +137,10 @@ pub enum ManagedStatus {
     Ignored,
     /// Present but outside AGS governance.
     Unmanaged,
+    /// An internal entrypoint route target (playbook / MCP tool / CLI
+    /// subcommand) of a real parent capability. Routing-only: never a host
+    /// body, never adopted / synced / relinked, never the primary itself.
+    RouteTarget,
 }
 
 /// Whether the capability is recorded in an AGS registry.
@@ -187,6 +192,205 @@ pub struct HostVisibility {
     pub evidence: Vec<String>,
 }
 
+/// What kind of state a capability mutates when invoked. Used by Capability
+/// Route to cross-check a routed capability against the Value Route posture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum MutationSurface {
+    /// Read / analyze only (e.g. diagnose, zoom-out).
+    #[default]
+    ReadOnly,
+    /// Writes inside the local working tree (e.g. tdd).
+    LocalWrite,
+    /// Talks to an external account / service (e.g. lark-*).
+    ExternalWrite,
+}
+
+/// Relative invocation cost, a deterministic routing tie-break (cheaper
+/// preferred when route priorities tie).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum CostClass {
+    /// No meaningful cost (local skill prompt).
+    #[default]
+    Free,
+    /// Local compute only (e.g. a local CLI).
+    Local,
+    /// Requires a network round-trip.
+    Network,
+    /// Billed / metered external service.
+    Paid,
+}
+
+/// Whether a managed capability participates in Capability Route. Fail-closed by
+/// construction: the serde default is `NotRoutable`, so a capability is NEVER
+/// silently routed merely by carrying routing fields — only an explicit
+/// `route_state: routable` makes it a routing candidate. `Retired` keeps the row
+/// for history / dedupe but is excluded from routing exactly like `NotRoutable`.
+/// (Capabilities with no `routing:` block at all are absent from the routing map
+/// entirely — see `collect_routing` — so this enum only ever applies to members
+/// that authored a routing block.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum RouteState {
+    /// Explicitly participates in Capability Route.
+    Routable,
+    /// Intentionally never routed (e.g. AGS ops commands, personal packs). The
+    /// fail-closed default: absence of an explicit state reads as not-routable.
+    #[default]
+    NotRoutable,
+    /// Was routable, now decommissioned; retained for history, excluded from
+    /// routing (never `Available`, never `primary`).
+    Retired,
+}
+
+/// Per-member positive / negative request examples that drive the hermetic route
+/// smoke. LABEL-LEVEL test fixtures only — never inherited from a group and never
+/// an input to production routing; they cannot change a live route.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct RouteExamples {
+    /// Short user-request samples that SHOULD route to this member.
+    #[serde(default)]
+    pub positive: Vec<String>,
+    /// Short user-request samples that should NOT route to this member.
+    #[serde(default)]
+    pub negative: Vec<String>,
+}
+
+/// Reference to the real, host-visible PARENT capability an internal entrypoint
+/// belongs to. When a routing block carries this, the member is a route target
+/// (an internal entrypoint such as a superpowers playbook, an MCP tool, or a CLI
+/// subcommand), NOT a standalone body: it never produces `expected_hosts`, never
+/// enters sync / apply / propose, and is never the `primary` itself — primary
+/// derefs to the parent and availability is inherited from it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParentRef {
+    /// The parent capability kind (`skill` / `mcp` / `cli-backed`).
+    pub kind: ManagedKind,
+    /// The parent capability name (must be a real host-visible body).
+    pub name: String,
+}
+
+/// The kind of an internal entrypoint within a parent capability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum EntrypointKind {
+    /// A superpowers (or similar skill) playbook.
+    #[default]
+    Playbook,
+    /// An MCP server tool.
+    Tool,
+    /// A CLI command.
+    Command,
+    /// A CLI subcommand.
+    Subcommand,
+    /// A skill / MCP prompt.
+    Prompt,
+}
+
+/// The specific internal entrypoint a route target points at (e.g. the
+/// `verification-before-completion` playbook of `superpowers`, or the
+/// `get-library-docs` tool of `context7`). Display / routing metadata only —
+/// the host always invokes the parent body, never the entrypoint standalone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntrypointRef {
+    pub kind: EntrypointKind,
+    pub name: String,
+}
+
+/// Stable routing facts declared in a manifest (`skills-registry.yaml` /
+/// `mcp-registry.yaml`) and read into the inventory. This is the SINGLE source
+/// of truth for production Capability Route — there is no built-in fallback
+/// table. Only *stable facts* live here; the runtime `auth_status` (whether an
+/// account is actually configured) is DERIVED at route time and is NEVER stored
+/// in a tracked manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoutingMetadata {
+    /// Demand categories this capability serves (e.g. `["debug","diagnose"]`).
+    #[serde(default)]
+    pub intent_tags: Vec<String>,
+    /// Domain scopes (e.g. `["rust"]`; `["*"]` for any).
+    #[serde(default)]
+    pub scope_tags: Vec<String>,
+    /// What the capability mutates when invoked.
+    #[serde(default)]
+    pub mutation_surface: MutationSurface,
+    /// Whether invoking it needs an external account / credential.
+    #[serde(default)]
+    pub requires_auth: bool,
+    /// What kind of auth it needs (e.g. `"feishu-account"`), advisory only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_kind: Option<String>,
+    /// Relative invocation cost (routing tie-break).
+    #[serde(default)]
+    pub cost_class: CostClass,
+    /// Explicit wakeup hint the host emits (e.g. `"[skill: diagnose]"`).
+    /// AGS NEVER auto-invokes — this is a suggestion string only.
+    #[serde(default)]
+    pub invoke_hint: String,
+    /// Routing priority — lower is preferred.
+    #[serde(default = "default_route_priority")]
+    pub route_priority: i32,
+    /// `true` for compatibility aliases (the `auto-*` skills) that should win
+    /// their demand ahead of their canonical successors.
+    #[serde(default)]
+    pub is_compatibility_alias: bool,
+    /// Explicit routing participation state. Fail-closed default `not-routable`:
+    /// a member is a routing candidate only when this is `routable`.
+    #[serde(default)]
+    pub route_state: RouteState,
+    /// Capability (demand) groups this member belongs to — LABELS ONLY, no
+    /// inherited routing / policy values. A member may serve several demand
+    /// pools (e.g. caveman-review ∈ {code-review, verification}).
+    #[serde(default)]
+    pub capability_group: Vec<String>,
+    /// Upstream source group (e.g. `"mattpocock/skills:caveman"`) — LABEL ONLY,
+    /// for update / dedupe / provenance; never inherits routing values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_group: Option<String>,
+    /// Positive / negative request examples driving the hermetic route smoke.
+    #[serde(default)]
+    pub examples: RouteExamples,
+    /// When set, this routing block belongs to an internal ENTRYPOINT of the
+    /// named real, host-visible parent capability (i.e. the member is a route
+    /// target). The route target never produces `expected_hosts`, never enters
+    /// sync / apply / propose, and is never the `primary` itself — primary
+    /// derefs to this parent and availability is inherited from it. A real body
+    /// leaves this `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<ParentRef>,
+    /// The specific internal entrypoint this route target points at. Display /
+    /// routing metadata only; the host invokes the parent body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entrypoint: Option<EntrypointRef>,
+}
+
+fn default_route_priority() -> i32 {
+    100
+}
+
+impl Default for RoutingMetadata {
+    fn default() -> Self {
+        Self {
+            intent_tags: Vec::new(),
+            scope_tags: Vec::new(),
+            mutation_surface: MutationSurface::default(),
+            requires_auth: false,
+            auth_kind: None,
+            cost_class: CostClass::default(),
+            invoke_hint: String::new(),
+            route_priority: default_route_priority(),
+            is_compatibility_alias: false,
+            route_state: RouteState::default(),
+            capability_group: Vec::new(),
+            upstream_group: None,
+            examples: RouteExamples::default(),
+            parent: None,
+            entrypoint: None,
+        }
+    }
+}
+
 /// A single managed capability in the unified inventory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ManagedCapability {
@@ -210,6 +414,21 @@ pub struct ManagedCapability {
     /// Management actions the console offers for this capability.
     pub actions: Vec<String>,
     pub risk_notes: Vec<String>,
+    /// Stable routing facts from the manifest (Capability Route input). `None`
+    /// when the manifest declares no `routing:` block — production routing does
+    /// NOT fall back to a built-in table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<RoutingMetadata>,
+}
+
+impl ManagedCapability {
+    /// Whether this is an internal-entrypoint route target — it carries a
+    /// `routing.parent`. Route targets are routing-only: no `expected_hosts`, no
+    /// sync / apply / propose / relink, and never the `primary` themselves
+    /// (primary derefs to the parent capability).
+    pub fn is_route_target(&self) -> bool {
+        self.routing.as_ref().is_some_and(|r| r.parent.is_some())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -224,6 +443,17 @@ pub struct ManagedInventorySummary {
     /// Count visible to Claude Code (host_visibility status == visible).
     pub claude_visible: usize,
     pub risk_flagged: usize,
+    /// Routing coverage (Capability Route) — members by route_state.
+    #[serde(default)]
+    pub routing_routable: usize,
+    #[serde(default)]
+    pub routing_not_routable: usize,
+    #[serde(default)]
+    pub routing_retired: usize,
+    /// Adopted (suite-managed / governed) members with NO routing block — the
+    /// coverage gap the doctor coverage check flags. 0 = full coverage.
+    #[serde(default)]
+    pub routing_uncovered: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,6 +463,11 @@ pub struct ManagedInventoryResult {
     pub capabilities: Vec<ManagedCapability>,
     pub summary: ManagedInventorySummary,
     pub note: String,
+    /// Names of capabilities whose `routing:` block was present but failed to
+    /// parse. Surfaced (not silently swallowed) so doctor / inventory can flag
+    /// routing schema drift. Empty in the healthy case.
+    #[serde(default)]
+    pub routing_parse_failures: Vec<String>,
 }
 
 // ── CLI-backed families ──────────────────────────────────────────────────────
@@ -317,6 +552,117 @@ fn read_mcp_registry(repo_root: &Path) -> Vec<RegistryEntry> {
     out
 }
 
+// ── Routing metadata reader (Capability Route, manifest = single authority) ───
+
+/// Result of reading routing metadata from the manifests: the parsed per-member
+/// `map` plus the `parse_failures` — names of members whose `routing:` block was
+/// present but failed to parse. Failures are SURFACED (not silently swallowed),
+/// so doctor / inventory can flag routing schema drift while routing itself
+/// stays fail-closed (a failed member is absent from `map` → never routed).
+#[derive(Debug, Clone, Default)]
+pub struct RoutingRead {
+    pub map: HashMap<String, RoutingMetadata>,
+    /// Internal-entrypoint route targets declared under a `route_targets:`
+    /// section — (name, routing) pairs synthesized into route-target inventory
+    /// rows. Each routing carries a `parent`; these are NEVER standalone bodies.
+    pub route_targets: Vec<(String, RoutingMetadata)>,
+    pub parse_failures: Vec<String>,
+}
+
+/// Read stable routing metadata declared in `manifests/skills-registry.yaml`
+/// (per skill) and `manifests/mcp-registry.yaml` (per MCP / suite interface),
+/// keyed by capability name. This is the ONLY source of production routing
+/// metadata — there is no built-in fallback table. Lenient: missing or
+/// unparseable files yield an empty map, and entries without a `routing:` block
+/// are simply absent (never synthesized). A present-but-malformed block is
+/// absent from the map AND recorded in `parse_failures`.
+fn read_routing_metadata(repo_root: &Path) -> RoutingRead {
+    let mut read = RoutingRead::default();
+
+    let skills_path = repo_root.join("manifests/skills-registry.yaml");
+    if let Ok(content) = std::fs::read_to_string(&skills_path) {
+        if let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+            if let Some(seq) = doc.get("skills").and_then(|v| v.as_sequence()) {
+                for item in seq {
+                    collect_routing(item, &mut read);
+                }
+            }
+        }
+    }
+
+    let mcp_path = repo_root.join("manifests/mcp-registry.yaml");
+    if let Ok(content) = std::fs::read_to_string(&mcp_path) {
+        if let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+            for section in ["suite_interfaces", "mcps"] {
+                if let Some(seq) = doc.get(section).and_then(|v| v.as_sequence()) {
+                    for item in seq {
+                        collect_routing(item, &mut read);
+                    }
+                }
+            }
+        }
+    }
+
+    // `route_targets:` — internal entrypoints (playbook / MCP tool / CLI
+    // subcommand) declared as registry-only route targets in either manifest.
+    // Synthesized into route-target inventory rows, NEVER standalone bodies.
+    for path in [
+        repo_root.join("manifests/skills-registry.yaml"),
+        repo_root.join("manifests/mcp-registry.yaml"),
+    ] {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+                if let Some(seq) = doc.get("route_targets").and_then(|v| v.as_sequence()) {
+                    for item in seq {
+                        collect_route_target(item, &mut read);
+                    }
+                }
+            }
+        }
+    }
+
+    read
+}
+
+/// Parse one registry entry's `name` + optional `routing:` block. An entry
+/// without `routing:` is skipped (no synthesis). A malformed `routing:` block is
+/// kept OUT of the map (fail-closed: never routed) but its name is recorded in
+/// `parse_failures` rather than silently swallowed, so schema drift is visible.
+fn collect_routing(item: &serde_yaml::Value, read: &mut RoutingRead) {
+    let Some(name) = item.get("name").and_then(|v| v.as_str()) else {
+        return;
+    };
+    let Some(routing_val) = item.get("routing") else {
+        return;
+    };
+    match serde_yaml::from_value::<RoutingMetadata>(routing_val.clone()) {
+        Ok(meta) => {
+            read.map.insert(name.to_string(), meta);
+        }
+        Err(_) => read.parse_failures.push(name.to_string()),
+    }
+}
+
+/// Parse one `route_targets:` entry into a (name, routing) pair. The routing
+/// block MUST carry a `parent` (that is what makes it a route target); a missing
+/// `routing:` block, a malformed one, or one without `parent` is recorded in
+/// `parse_failures` (fail-closed: never routed, never synthesized).
+fn collect_route_target(item: &serde_yaml::Value, read: &mut RoutingRead) {
+    let Some(name) = item.get("name").and_then(|v| v.as_str()) else {
+        return;
+    };
+    let Some(routing_val) = item.get("routing") else {
+        read.parse_failures.push(name.to_string());
+        return;
+    };
+    match serde_yaml::from_value::<RoutingMetadata>(routing_val.clone()) {
+        Ok(meta) if meta.parent.is_some() => {
+            read.route_targets.push((name.to_string(), meta));
+        }
+        _ => read.parse_failures.push(name.to_string()),
+    }
+}
+
 // ── Host MCP probe ──────────────────────────────────────────────────────────
 
 /// Cached result of probing one host's MCP registry once per inventory.
@@ -373,8 +719,9 @@ fn probe_host_mcp(ctx: &ConsoleContext, host: &str) -> HostMcpProbe {
 }
 
 /// Parse `claude mcp list` output. Lines look like
-/// `name: /path/to/cmd args - ✔ Connected`. Lenient: takes the single token
-/// before the first `:` as the server name and detects a connected marker.
+/// `name: /path/to/cmd args - ✔ Connected`. Plugin-owned MCP names may contain
+/// colons themselves, e.g. `plugin:claude-mem:mcp-search: node ...`, so split
+/// on the first `: ` delimiter instead of the first raw colon.
 fn parse_claude_mcp_list(stdout: &str) -> Vec<(String, bool)> {
     let mut servers = Vec::new();
     for line in stdout.lines() {
@@ -382,7 +729,7 @@ fn parse_claude_mcp_list(stdout: &str) -> Vec<(String, bool)> {
         if line.is_empty() {
             continue;
         }
-        let Some((name, rest)) = line.split_once(':') else {
+        let Some((name, rest)) = line.split_once(": ") else {
             continue;
         };
         let name = name.trim();
@@ -419,7 +766,7 @@ fn parse_codex_mcp_list(stdout: &str) -> Vec<(String, bool)> {
 
 // ── Host visibility computation ───────────────────────────────────────────────
 
-const SUPPORTED_HOSTS: &[&str] = &["claude-code", "codex"];
+const SUPPORTED_HOSTS: &[&str] = &["claude-code", "codex", "codebuddy-code"];
 const DEFERRED_HOSTS: &[&str] = &["cursor"];
 
 /// The `~/<subdir>` skills directory a host loads skill entries from, if any.
@@ -428,6 +775,7 @@ fn host_skills_subdir(host: &str) -> Option<&'static str> {
     match host {
         "claude-code" => Some(".claude/skills"),
         "codex" => Some(".codex/skills"),
+        "codebuddy-code" => Some(".codebuddy/skills"),
         _ => None,
     }
 }
@@ -756,6 +1104,8 @@ fn actions_for(kind: &ManagedKind, status: &ManagedStatus) -> Vec<String> {
         }
         // The AGS host initialization adapter cannot be adopted/removed here.
         ManagedStatus::SuiteInterface => {}
+        // Route targets are routing-only — no adopt / update / relink / verify.
+        ManagedStatus::RouteTarget => return Vec::new(),
     }
     if matches!(kind, ManagedKind::Skill)
         && matches!(
@@ -788,6 +1138,11 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
         .collect();
     let mut caps: Vec<ManagedCapability> = Vec::new();
 
+    // Routing metadata (Capability Route) — manifest is the single authority.
+    // Read up-front so expected-host gating can exclude internal-entrypoint
+    // route targets (routing.parent set) before they are ever flagged.
+    let routing_meta = read_routing_metadata(&ctx.repo_root);
+
     // 1. Suite-managed skills (from the suite manifest + ignore/adoption).
     let scan = crate::scan_skills(&ctx.repo_root);
     let mut known_skill_names: Vec<String> = Vec::new();
@@ -811,8 +1166,17 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
         }
         // Required skills are what the suite installs → expected visible in the
         // host. Optional/personal are opt-in, so not flagged as a verify gap.
-        let expected_hosts = if s.profile == "required" {
-            vec!["claude-code".to_string()]
+        // An internal-entrypoint route target (routing.parent set) is NEVER a
+        // standalone host body, so it never produces an expected-host gap.
+        let s_is_route_target = routing_meta
+            .map
+            .get(&s.name)
+            .is_some_and(|r| r.parent.is_some());
+        let expected_hosts = if s.profile == "required" && !s_is_route_target {
+            supported_skill_hosts()
+                .into_iter()
+                .map(ToString::to_string)
+                .collect()
         } else {
             Vec::new()
         };
@@ -829,6 +1193,7 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
             health_status: HealthStatus::Unknown,
             actions: Vec::new(),
             risk_notes,
+            routing: None,
         });
     }
 
@@ -863,6 +1228,7 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
             health_status: HealthStatus::Unknown,
             actions: Vec::new(),
             risk_notes,
+            routing: None,
         });
     }
 
@@ -898,12 +1264,21 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
         // Expected visible where the registry declares the server installed for
         // a supported host. Flags "registry says installed but host can't see it"
         // drift; an MCP the registry says is NOT installed here is not a gap.
-        let expected_hosts: Vec<String> = e
-            .installed_clients
-            .iter()
-            .filter(|c| SUPPORTED_HOSTS.contains(&c.as_str()))
-            .cloned()
-            .collect();
+        // An internal-entrypoint route target (routing.parent set) is never a
+        // standalone host body → no expected-host gap.
+        let e_is_route_target = routing_meta
+            .map
+            .get(&e.name)
+            .is_some_and(|r| r.parent.is_some());
+        let expected_hosts: Vec<String> = if e_is_route_target {
+            Vec::new()
+        } else {
+            e.installed_clients
+                .iter()
+                .filter(|c| SUPPORTED_HOSTS.contains(&c.as_str()))
+                .cloned()
+                .collect()
+        };
         caps.push(ManagedCapability {
             kind,
             name: e.name.clone(),
@@ -918,6 +1293,7 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
             health_status: HealthStatus::Unknown,
             actions: Vec::new(),
             risk_notes,
+            routing: None,
         });
     }
 
@@ -952,10 +1328,11 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
                 "External official CLI talking to {}. Referenced, not adopted; AGS never runs `{} update`. Live endpoint health is a degraded observation only.",
                 fam.endpoint, fam.cli
             )],
+            routing: None,
         });
     }
 
-    // 5. Fill host visibility, health, and actions for every capability.
+    // 5. Fill host visibility, health, actions, and routing for every capability.
     for cap in &mut caps {
         let cli_backed_external = matches!(cap.kind, ManagedKind::CliBacked)
             && matches!(cap.managed_status, ManagedStatus::Unmanaged);
@@ -985,6 +1362,43 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
             cli_backed_external,
         );
         cap.actions = actions_for(&cap.kind, &cap.managed_status);
+        // Stable routing facts (or None when the manifest declares none).
+        cap.routing = routing_meta.map.get(&cap.name).cloned();
+    }
+
+    // 6. Synthesize route-target rows for internal entrypoints (playbook / MCP
+    //    tool / CLI subcommand) declared under `route_targets:`. Routing-only:
+    //    kind inherited from the parent, NO expected_hosts, NO host probe, NO
+    //    actions, never adopted/synced. capability-route derefs their
+    //    availability + `primary` to the parent capability.
+    for (name, routing) in &routing_meta.route_targets {
+        if known_skill_names.iter().any(|n| n == name) {
+            continue;
+        }
+        known_skill_names.push(name.clone());
+        let kind = routing
+            .parent
+            .as_ref()
+            .map(|p| p.kind.clone())
+            .unwrap_or(ManagedKind::Skill);
+        caps.push(ManagedCapability {
+            kind,
+            name: name.clone(),
+            source: Some("manifests (route_targets)".to_string()),
+            profile: None,
+            managed_status: ManagedStatus::RouteTarget,
+            registry_status: RegistryStatus::Registered,
+            // Metadata-only: the canonical body is the parent capability.
+            canonical_present: true,
+            expected_hosts: Vec::new(),
+            host_visibility: Vec::new(),
+            health_status: HealthStatus::Unknown,
+            actions: Vec::new(),
+            risk_notes: vec![
+                "Internal entrypoint route target of a parent capability; routing-only, never a host body, never adopted/synced.".to_string(),
+            ],
+            routing: Some(routing.clone()),
+        });
     }
 
     caps.sort_by(|a, b| a.name.cmp(&b.name));
@@ -996,6 +1410,7 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
         capabilities: caps,
         summary,
         note: "Read-only inventory. Third-party capabilities are opt-in; AGS never silently bundles or installs. Use `ags skill propose --action <verb> --skill <name>` for a dry-run, then `--apply` to confirm.".to_string(),
+        routing_parse_failures: routing_meta.parse_failures,
     }
 }
 
@@ -1023,6 +1438,39 @@ fn summarize(caps: &[ManagedCapability]) -> ManagedInventorySummary {
         canonical_present: caps.iter().filter(|c| c.canonical_present).count(),
         claude_visible,
         risk_flagged: caps.iter().filter(|c| !c.risk_notes.is_empty()).count(),
+        routing_routable: caps
+            .iter()
+            .filter(|c| {
+                c.routing
+                    .as_ref()
+                    .is_some_and(|r| r.route_state == RouteState::Routable)
+            })
+            .count(),
+        routing_not_routable: caps
+            .iter()
+            .filter(|c| {
+                c.routing
+                    .as_ref()
+                    .is_some_and(|r| r.route_state == RouteState::NotRoutable)
+            })
+            .count(),
+        routing_retired: caps
+            .iter()
+            .filter(|c| {
+                c.routing
+                    .as_ref()
+                    .is_some_and(|r| r.route_state == RouteState::Retired)
+            })
+            .count(),
+        routing_uncovered: caps
+            .iter()
+            .filter(|c| {
+                matches!(
+                    c.managed_status,
+                    ManagedStatus::SuiteManaged | ManagedStatus::Governed
+                ) && c.routing.is_none()
+            })
+            .count(),
     }
 }
 
@@ -1061,6 +1509,32 @@ pub struct HostVerifySummary {
     pub all_visible: bool,
 }
 
+/// Read-only host thin-index DRIFT report: leftover `.bak*` entries, dangling
+/// symlinks, and real-directory copies in a host's skills dir. AGS only REPORTS
+/// this — cleanup is a separate confirmed write path (`ags update repair-local
+/// --apply` / `sync --apply`), NEVER performed by this read-only scan. A clean
+/// host has exactly one thin-index symlink per capability pointing at the
+/// canonical store / `~/.agents/skills`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThinIndexDrift {
+    pub host: String,
+    pub skills_dir: String,
+    pub total_entries: usize,
+    /// Single thin-index symlinks pointing at a valid target (clean).
+    pub clean_symlinks: usize,
+    /// `.bak` / `.bak.N` leftover entries (AGS relink backups).
+    pub bak_leftovers: usize,
+    /// Dangling symlinks (target missing) — e.g. retired-skill fallout.
+    pub broken_symlinks: usize,
+    /// Real-directory copies (non-symlink, not `.system`) — informational: may be
+    /// a legitimate local/external skill, not necessarily drift.
+    pub real_dir_copies: usize,
+    /// True when removable drift (`.bak*` leftovers or dangling symlinks) exists.
+    pub has_drift: bool,
+    /// Capped sample of drift entry names for operator triage.
+    pub drift_samples: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostVerifyResult {
     pub schema_version: String,
@@ -1070,12 +1544,67 @@ pub struct HostVerifyResult {
     pub status: String,
     pub checks: Vec<HostCheck>,
     pub summary: HostVerifySummary,
+    /// Read-only thin-index drift report (None for unsupported hosts / absent
+    /// skills dir). Reported, never auto-cleaned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thin_index_drift: Option<ThinIndexDrift>,
     pub note: String,
 }
 
-/// Verify host visibility for one host. Read-only. For reserved hosts
-/// (codex/cursor) returns `supported: false`, `status: "unsupported"` with
-/// stable fields and an empty check list.
+/// Read-only scan of a host's thin-index dir for drift. NEVER mutates. Returns
+/// `None` for hosts without a skills subdir or when the dir is absent. Counts
+/// `.bak*` leftovers and dangling symlinks as removable drift; real non-`.bak`
+/// directories are reported as informational (could be legitimate local skills).
+fn scan_thin_index_drift(home: &Path, host: &str) -> Option<ThinIndexDrift> {
+    let sub = host_skills_subdir(host)?;
+    let dir = home.join(sub);
+    let read = std::fs::read_dir(&dir).ok()?;
+    let mut total = 0usize;
+    let (mut clean, mut bak, mut broken, mut realdir) = (0usize, 0usize, 0usize, 0usize);
+    let mut samples: Vec<String> = Vec::new();
+    for entry in read.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == ".system" || name.starts_with(".ags-drift-quarantine") {
+            continue;
+        }
+        total += 1;
+        let path = entry.path();
+        let is_link = std::fs::symlink_metadata(&path)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false);
+        let target_exists = path.exists(); // follows the symlink
+        if name.contains(".bak") {
+            bak += 1;
+            if samples.len() < 12 {
+                samples.push(format!("{name} (.bak leftover)"));
+            }
+        } else if is_link && !target_exists {
+            broken += 1;
+            if samples.len() < 12 {
+                samples.push(format!("{name} (dangling symlink)"));
+            }
+        } else if is_link {
+            clean += 1;
+        } else if path.is_dir() {
+            realdir += 1;
+        }
+    }
+    Some(ThinIndexDrift {
+        host: host.to_string(),
+        skills_dir: dir.to_string_lossy().to_string(),
+        total_entries: total,
+        clean_symlinks: clean,
+        bak_leftovers: bak,
+        broken_symlinks: broken,
+        real_dir_copies: realdir,
+        has_drift: bak > 0 || broken > 0,
+        drift_samples: samples,
+    })
+}
+
+/// Verify host visibility for one host. Read-only. For reserved hosts (cursor)
+/// returns `supported: false`, `status: "unsupported"` with stable fields and
+/// an empty check list.
 pub fn verify_host(ctx: &ConsoleContext, host: &str) -> HostVerifyResult {
     let supported = SUPPORTED_HOSTS.contains(&host);
     if !supported {
@@ -1095,6 +1624,7 @@ pub fn verify_host(ctx: &ConsoleContext, host: &str) -> HostVerifyResult {
                 failed: 0,
                 all_visible: true,
             },
+            thin_index_drift: None,
             note: if deferred {
                 format!("Host '{host}' visibility check is reserved for a later phase. Model fields are stable; no probing performed.")
             } else {
@@ -1145,7 +1675,7 @@ pub fn verify_host(ctx: &ConsoleContext, host: &str) -> HostVerifyResult {
     let all_visible = failed == 0 && expected_degraded == 0;
     let status = if failed > 0 {
         "incomplete"
-    } else if degraded > 0 || expected_degraded > 0 {
+    } else if expected_degraded > 0 {
         "degraded"
     } else {
         "ok"
@@ -1167,7 +1697,8 @@ pub fn verify_host(ctx: &ConsoleContext, host: &str) -> HostVerifyResult {
             all_visible,
         },
         checks,
-        note: "Read-only host-visibility verify. status=incomplete means an expected capability is not visible. Restart the host after adopt/update so it re-scans entry points; use --strict to gate (exit nonzero unless status=ok).".to_string(),
+        thin_index_drift: scan_thin_index_drift(&ctx.home, host),
+        note: "Read-only host-visibility verify. status=incomplete means an expected capability is not visible. Restart the host after adopt/update so it re-scans entry points; use --strict to gate (exit nonzero unless status=ok). thin_index_drift reports `.bak`/dangling-symlink drift (read-only; clean via `ags update repair-local --apply`).".to_string(),
     }
 }
 
@@ -1243,6 +1774,19 @@ pub fn propose_action(
     apply: bool,
 ) -> ConsoleProposalResult {
     let inventory = build_inventory(ctx, &supported_skill_hosts());
+    propose_action_inner(ctx, &inventory, action, name, apply)
+}
+
+/// Plan/apply against a pre-built inventory. Lets batch callers (e.g.
+/// [`sync_plan`]) reuse a single inventory instead of rebuilding it — and
+/// re-invoking host CLIs — once per capability.
+fn propose_action_inner(
+    ctx: &ConsoleContext,
+    inventory: &ManagedInventoryResult,
+    action: ConsoleAction,
+    name: &str,
+    apply: bool,
+) -> ConsoleProposalResult {
     let cap = inventory.capabilities.iter().find(|c| c.name == name);
 
     let mut result = ConsoleProposalResult {
@@ -1316,7 +1860,7 @@ pub fn propose_action(
         "advised-only" => note_lines.push(
             "AGS performed NOTHING — this capability has no AGS-owned host file. Run the advised command(s) yourself, then restart the host. `applied` is false by design.".to_string(),
         ),
-        "applied" => note_lines.push("Applied. Restart the host (Claude Code / Codex / Cursor) so it re-scans thin indexes, then run `ags skill verify --host <host>`.".to_string()),
+        "applied" => note_lines.push("Applied. Restart the host (Claude Code / Codex / CodeBuddy-Code / Cursor) so it re-scans thin indexes, then run `ags skill verify --host <host>`.".to_string()),
         _ => {}
     }
     result.note = note_lines.join(" ");
@@ -1335,6 +1879,7 @@ fn managed_status_str(s: &ManagedStatus) -> &'static str {
         ManagedStatus::Discovered => "discovered",
         ManagedStatus::Ignored => "ignored",
         ManagedStatus::Unmanaged => "unmanaged",
+        ManagedStatus::RouteTarget => "route-target",
     }
 }
 
@@ -1577,22 +2122,35 @@ fn plan_mcp_or_cli(cap: &ManagedCapability, action: ConsoleAction, plan: &mut Ac
                         .to_string(),
                 });
             } else {
+                // Cross-Agent host command plan: AGS advises the registration
+                // command for each supported host (Claude Code, Codex). Cursor
+                // MCP registration is reserved. AGS never runs any of these.
                 plan.advised.push(AdvisedCommand {
                     command: format!("claude mcp add {name} -- <command> [args...]"),
-                    reason: "AGS records MCP governance but never registers MCP servers in host config; run this in your host, then restart it.".to_string(),
+                    reason: "Claude Code: AGS records MCP governance but never registers MCP servers in host config; run this in Claude Code, then restart it.".to_string(),
+                });
+                plan.advised.push(AdvisedCommand {
+                    command: format!("codex mcp add {name} -- <command> [args...]"),
+                    reason: "Codex: AGS records MCP governance but never registers MCP servers in host config; run this in Codex, then restart it.".to_string(),
                 });
             }
         }
         ConsoleAction::Remove | ConsoleAction::Uninstall => {
             plan.advised.push(AdvisedCommand {
                 command: format!("claude mcp remove {name}"),
-                reason: "AGS never unregisters MCP servers from host config; run this in your host yourself.".to_string(),
+                reason: "Claude Code: AGS never unregisters MCP servers from host config; run this yourself.".to_string(),
+            });
+            plan.advised.push(AdvisedCommand {
+                command: format!("codex mcp remove {name}"),
+                reason:
+                    "Codex: AGS never unregisters MCP servers from host config; run this yourself."
+                        .to_string(),
             });
         }
         ConsoleAction::Verify => {}
     }
     plan.notes.push(
-        "MCP / CLI-backed capabilities have no AGS-owned host file; AGS advises the host command but never runs it.".to_string(),
+        "MCP / CLI-backed capabilities have no AGS-owned host file; AGS advises the per-host command (Claude Code, Codex) but never runs it.".to_string(),
     );
 }
 
@@ -2135,13 +2693,584 @@ pub fn render_proposal_text(result: &ConsoleProposalResult) -> String {
     lines.join("\n")
 }
 
+// ── Cross-Agent capability sync ──────────────────────────────────────────────
+//
+// `sync_plan` is the batch face: it builds the inventory ONCE and produces an
+// adopt proposal for every adopted/governed capability, so a single call shows
+// (and, with `apply`, performs) the cross-host entry plan for the whole set.
+// AGS-owned skill thin-index writes go through the same single mutation guard;
+// MCP / CLI-backed capabilities remain advise-only. Reused by
+// `ags capability sync`.
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilitySyncSummary {
+    /// Capabilities considered for sync (adopted suite skills + governed MCPs).
+    pub considered: usize,
+    /// Total AGS-owned writes planned across all considered capabilities.
+    pub planned_writes: usize,
+    /// Capabilities whose AGS-owned writes were applied (apply mode only).
+    pub applied: usize,
+    /// Capabilities whose only action is an advised host command AGS never runs.
+    pub advised_only: usize,
+    /// Capabilities with at least one blocked reason.
+    pub blocked: usize,
+    /// Capabilities whose apply errored.
+    pub failed: usize,
+    /// Capabilities that need action (planned writes or advised commands).
+    pub needs_action: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilitySyncResult {
+    pub schema_version: String,
+    pub hosts: Vec<String>,
+    pub apply_requested: bool,
+    pub items: Vec<ConsoleProposalResult>,
+    pub summary: CapabilitySyncSummary,
+    pub note: String,
+}
+
+/// A capability is syncable through the console when AGS governs it as an
+/// adopted suite skill (distributable thin-index) or a governed MCP
+/// (advise-only). AGS self (suite-interface), discovered/ignored/unmanaged
+/// capabilities are never auto-synced.
+fn is_syncable(cap: &ManagedCapability) -> bool {
+    matches!(
+        cap.managed_status,
+        ManagedStatus::SuiteManaged | ManagedStatus::Governed
+    )
+}
+
+/// Build (and, with `apply`, perform) the cross-host entry plan for every
+/// adopted/governed capability. Builds the inventory once and reuses it.
+pub fn sync_plan(ctx: &ConsoleContext, hosts: &[&str], apply: bool) -> CapabilitySyncResult {
+    let inventory = build_inventory(ctx, hosts);
+    let mut items: Vec<ConsoleProposalResult> = Vec::new();
+    for cap in &inventory.capabilities {
+        if is_syncable(cap) {
+            items.push(propose_action_inner(
+                ctx,
+                &inventory,
+                ConsoleAction::Adopt,
+                &cap.name,
+                apply,
+            ));
+        }
+    }
+
+    let summary = CapabilitySyncSummary {
+        considered: items.len(),
+        planned_writes: items.iter().map(|i| i.planned_writes.len()).sum(),
+        applied: items.iter().filter(|i| i.applied).count(),
+        advised_only: items
+            .iter()
+            .filter(|i| i.apply_status == "advised-only" || !i.advised_commands.is_empty())
+            .count(),
+        blocked: items
+            .iter()
+            .filter(|i| !i.blocked_reasons.is_empty())
+            .count(),
+        failed: items.iter().filter(|i| !i.apply_errors.is_empty()).count(),
+        needs_action: items
+            .iter()
+            .filter(|i| !i.planned_writes.is_empty() || !i.advised_commands.is_empty())
+            .count(),
+    };
+
+    CapabilitySyncResult {
+        schema_version: CONSOLE_SCHEMA_VERSION.to_string(),
+        hosts: hosts.iter().map(|h| h.to_string()).collect(),
+        apply_requested: apply,
+        items,
+        summary,
+        note: if apply {
+            "Cross-Agent sync apply: AGS-owned skill thin-index writes were performed through the single guard; MCP / CLI-backed capabilities are advised-only (AGS ran nothing). Restart each host, then `ags capability verify --host <host>`.".to_string()
+        } else {
+            "Cross-Agent sync plan (dry-run): nothing written, no external command run. Re-run with `--apply` to write AGS-owned skill thin-index entries; MCP / CLI registration is always advised, never run by AGS.".to_string()
+        },
+    }
+}
+
+/// Render the sync result as JSON.
+pub fn render_sync_json(result: &CapabilitySyncResult) -> String {
+    serde_json::to_string_pretty(result)
+        .unwrap_or_else(|e| format!(r#"{{"error":"JSON serialization failed: {}"}}"#, e))
+}
+
+/// Render the sync result as compact human-readable text (one line per
+/// capability + summary). Full per-capability detail is available via
+/// `ags capability install --capability <name>`.
+pub fn render_sync_text(result: &CapabilitySyncResult) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    lines.push("Cross-Agent Capability Sync".to_string());
+    lines.push("===========================".to_string());
+    lines.push(format!("Schema:  {}", result.schema_version));
+    lines.push(format!("Hosts:   {}", result.hosts.join(", ")));
+    lines.push(format!(
+        "Mode:    {}",
+        if result.apply_requested {
+            "apply"
+        } else {
+            "dry-run"
+        }
+    ));
+    lines.push(format!(
+        "Summary: considered {}, needs-action {}, planned-writes {}, applied {}, advised-only {}, blocked {}, failed {}",
+        result.summary.considered,
+        result.summary.needs_action,
+        result.summary.planned_writes,
+        result.summary.applied,
+        result.summary.advised_only,
+        result.summary.blocked,
+        result.summary.failed,
+    ));
+    lines.push(String::new());
+    lines.push("─ Capabilities ─".to_string());
+    if result.items.is_empty() {
+        lines.push("  None syncable (no adopted suite skills or governed MCPs).".to_string());
+    } else {
+        for item in &result.items {
+            lines.push(format!(
+                "  [{}] {} ({}) — writes: {}, advised: {}{}",
+                item.apply_status,
+                item.capability,
+                item.kind.as_deref().unwrap_or("?"),
+                item.planned_writes.len(),
+                item.advised_commands.len(),
+                if item.blocked_reasons.is_empty() {
+                    String::new()
+                } else {
+                    format!(", blocked: {}", item.blocked_reasons.len())
+                },
+            ));
+        }
+    }
+    lines.push(String::new());
+    lines.push(format!("NOTE: {}", result.note));
+    lines.join("\n")
+}
+
+// ── Skill deduplication ──────────────────────────────────────────────────────
+//
+// Detects skills that appear under more than one canonical store (a name
+// collision) or whose SKILL.md front-matter `name` disagrees with the directory
+// name. Default dry-run: a proposal only. With `apply`, the non-keeper copies of
+// a name collision are *quarantined* (moved, never deleted) into
+// `governance/backups/dedupe-<stamp>/` — an AGS-owned, reversible location
+// inside the repo. Canonical bodies are never deleted and host directories are
+// never touched. Front-matter mismatches are always advise-only.
+
+/// One copy of a (potentially) duplicated capability.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DuplicateEntry {
+    pub path: String,
+    pub category: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub declared_name: Option<String>,
+}
+
+/// A planned reversible quarantine move (never a delete).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuarantineMove {
+    pub from: String,
+    pub to: String,
+}
+
+/// A group of copies sharing one capability name (or a single mismatch entry).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DuplicateGroup {
+    pub name: String,
+    /// name-collision | front-matter-name-mismatch
+    pub reason: String,
+    pub entries: Vec<DuplicateEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keeper: Option<String>,
+    pub quarantine: Vec<QuarantineMove>,
+    pub advice: Vec<String>,
+    pub blocked_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DedupeSummary {
+    pub groups: usize,
+    pub duplicate_entries: usize,
+    pub planned_quarantines: usize,
+    pub applied: usize,
+    pub blocked: usize,
+    pub failed: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DedupeResult {
+    pub schema_version: String,
+    pub apply_requested: bool,
+    /// dry-run | applied | failed | nothing-to-do | blocked
+    pub apply_status: String,
+    pub groups: Vec<DuplicateGroup>,
+    pub applied_writes: Vec<String>,
+    /// Successful quarantine moves (from → to) for rollback-plan construction.
+    /// Cleared to empty when a partial failure is rolled back (nothing applied).
+    pub applied_moves: Vec<QuarantineMove>,
+    pub apply_errors: Vec<String>,
+    pub summary: DedupeSummary,
+    pub note: String,
+}
+
+fn category_rank(category: &str) -> u8 {
+    match category {
+        "global" => 0,
+        "optional" => 1,
+        "personal" => 2,
+        _ => 3,
+    }
+}
+
+fn dedupe_stamp() -> u64 {
+    use std::time::SystemTime;
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default()
+}
+
+/// Detect duplicate skills across the canonical stores. Read-only unless
+/// `apply`. Never deletes canonical bodies; never touches host directories.
+pub fn analyze_duplicates(repo_root: &Path, apply: bool) -> DedupeResult {
+    use std::collections::BTreeMap;
+
+    let scan = crate::scan_skill_inventory(repo_root);
+    let stamp = dedupe_stamp();
+
+    let mut by_name: BTreeMap<String, Vec<&crate::SkillInventoryEntry>> = BTreeMap::new();
+    for e in &scan.entries {
+        by_name.entry(e.name.clone()).or_default().push(e);
+    }
+
+    let mut groups: Vec<DuplicateGroup> = Vec::new();
+
+    // 1) name collisions across stores.
+    for (name, entries) in &by_name {
+        if entries.len() < 2 {
+            continue;
+        }
+        let mut sorted = entries.clone();
+        sorted.sort_by(|a, b| {
+            category_rank(&a.source_category)
+                .cmp(&category_rank(&b.source_category))
+                .then(a.path.cmp(&b.path))
+        });
+        let keeper = sorted.first().map(|e| e.path.clone());
+        let mut quarantine = Vec::new();
+        for e in sorted.iter().skip(1) {
+            let base = Path::new(&e.path)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| name.clone());
+            let to = repo_root
+                .join("governance/backups")
+                .join(format!("dedupe-{stamp}"))
+                .join(format!("{}__{}", e.source_category, base))
+                .display()
+                .to_string();
+            quarantine.push(QuarantineMove {
+                from: e.path.clone(),
+                to,
+            });
+        }
+        groups.push(DuplicateGroup {
+            name: name.clone(),
+            reason: "name-collision".to_string(),
+            entries: sorted
+                .iter()
+                .map(|e| DuplicateEntry {
+                    path: e.path.clone(),
+                    category: e.source_category.clone(),
+                    declared_name: None,
+                })
+                .collect(),
+            keeper,
+            quarantine,
+            advice: vec![
+                "Keeper is the highest-priority store copy; review before quarantining."
+                    .to_string(),
+            ],
+            blocked_reasons: Vec::new(),
+        });
+    }
+
+    // 2) front-matter name mismatch (advise-only; a rename is a human decision).
+    for e in &scan.entries {
+        let base = Path::new(&e.path)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if !base.is_empty() && base != e.name {
+            groups.push(DuplicateGroup {
+                name: e.name.clone(),
+                reason: "front-matter-name-mismatch".to_string(),
+                entries: vec![DuplicateEntry {
+                    path: e.path.clone(),
+                    category: e.source_category.clone(),
+                    declared_name: Some(e.name.clone()),
+                }],
+                keeper: None,
+                quarantine: Vec::new(),
+                advice: vec![format!(
+                    "Directory `{base}` declares front-matter name `{}`; rename is manual.",
+                    e.name
+                )],
+                blocked_reasons: vec!["rename-is-manual".to_string()],
+            });
+        }
+    }
+
+    // apply: stage + validate the ENTIRE move set first, then execute; roll back
+    // every successful move if any later move fails. Canonical bodies are never
+    // deleted; a failure never leaves a half-quarantined set on disk.
+    let mut applied_writes: Vec<String> = Vec::new();
+    let mut applied_moves: Vec<QuarantineMove> = Vec::new();
+    let mut apply_errors: Vec<String> = Vec::new();
+    let backups_root = repo_root.join("governance/backups");
+    if apply {
+        let all_moves: Vec<&QuarantineMove> =
+            groups.iter().flat_map(|g| g.quarantine.iter()).collect();
+        // 1) pre-validate containment + destination availability for ALL moves.
+        let mut staging_errors: Vec<String> = Vec::new();
+        for mv in &all_moves {
+            let from = Path::new(&mv.from);
+            let to = Path::new(&mv.to);
+            if !canonical_within_store(repo_root, from) {
+                staging_errors.push(format!(
+                    "blocked (source outside canonical store): {}",
+                    mv.from
+                ));
+            } else if !to.starts_with(&backups_root) {
+                staging_errors.push(format!(
+                    "blocked (dest outside governance/backups): {}",
+                    mv.to
+                ));
+            } else if to.exists() {
+                staging_errors.push(format!(
+                    "blocked (quarantine dest already exists): {}",
+                    mv.to
+                ));
+            }
+        }
+        if !staging_errors.is_empty() {
+            // zero-change abort: nothing is moved.
+            apply_errors = staging_errors;
+        } else {
+            // 2) execute; track successful moves for rollback.
+            let mut failed = false;
+            for mv in &all_moves {
+                let from = Path::new(&mv.from);
+                let to = Path::new(&mv.to);
+                if let Some(parent) = to.parent() {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        apply_errors.push(format!("mkdir {}: {e}", parent.display()));
+                        failed = true;
+                        break;
+                    }
+                }
+                match std::fs::rename(from, to) {
+                    Ok(()) => {
+                        applied_writes.push(mv.to.clone());
+                        applied_moves.push((*mv).clone());
+                    }
+                    Err(e) => {
+                        apply_errors.push(format!("rename {} -> {}: {e}", mv.from, mv.to));
+                        failed = true;
+                        break;
+                    }
+                }
+            }
+            // 3) on failure, roll back successful moves (reverse order).
+            if failed {
+                for mv in applied_moves.iter().rev() {
+                    if let Err(e) = std::fs::rename(&mv.to, &mv.from) {
+                        apply_errors.push(format!("rollback failed {} -> {}: {e}", mv.to, mv.from));
+                    }
+                }
+                applied_writes.clear();
+                applied_moves.clear();
+            }
+        }
+    }
+
+    let groups_len = groups.len();
+    let planned: usize = groups.iter().map(|g| g.quarantine.len()).sum();
+    let blocked: usize = groups
+        .iter()
+        .filter(|g| !g.blocked_reasons.is_empty())
+        .count();
+    let duplicate_entries: usize = groups
+        .iter()
+        .filter(|g| g.reason == "name-collision")
+        .map(|g| g.entries.len())
+        .sum();
+    let applied_len = applied_writes.len();
+    let failed_len = apply_errors.len();
+
+    let apply_status = if !apply {
+        "dry-run"
+    } else if !apply_errors.is_empty() {
+        "failed"
+    } else if planned == 0 {
+        "nothing-to-do"
+    } else if applied_writes.is_empty() {
+        "blocked"
+    } else {
+        "applied"
+    }
+    .to_string();
+
+    DedupeResult {
+        schema_version: CONSOLE_SCHEMA_VERSION.to_string(),
+        apply_requested: apply,
+        apply_status,
+        groups,
+        applied_writes,
+        applied_moves,
+        apply_errors,
+        summary: DedupeSummary {
+            groups: groups_len,
+            duplicate_entries,
+            planned_quarantines: planned,
+            applied: applied_len,
+            blocked,
+            failed: failed_len,
+        },
+        note: "Canonical bodies are never deleted; non-keeper copies are quarantined into governance/backups (reversible). Host directories are never touched."
+            .to_string(),
+    }
+}
+
+/// Render a dedupe result as pretty JSON.
+pub fn render_dedupe_json(result: &DedupeResult) -> String {
+    serde_json::to_string_pretty(result)
+        .unwrap_or_else(|e| format!(r#"{{"error": "JSON serialization failed: {e}"}}"#))
+}
+
+/// Render a dedupe result as human-readable text (quiet-by-default).
+pub fn render_dedupe_text(result: &DedupeResult) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    lines.push("Skill Deduplication".to_string());
+    lines.push("===================".to_string());
+    lines.push(format!(
+        "Mode: {} | groups {} | duplicate entries {} | planned quarantines {} | applied {} | blocked {} | failed {}",
+        result.apply_status,
+        result.summary.groups,
+        result.summary.duplicate_entries,
+        result.summary.planned_quarantines,
+        result.summary.applied,
+        result.summary.blocked,
+        result.summary.failed,
+    ));
+    if result.groups.is_empty() {
+        lines.push("  No duplicates detected.".to_string());
+    }
+    for g in &result.groups {
+        lines.push(format!("  [{}] {}", g.reason, g.name));
+        if let Some(keeper) = &g.keeper {
+            lines.push(format!("    keeper: {keeper}"));
+        }
+        for mv in &g.quarantine {
+            lines.push(format!("    quarantine: {} -> {}", mv.from, mv.to));
+        }
+        for b in &g.blocked_reasons {
+            lines.push(format!("    blocked: {b}"));
+        }
+    }
+    if !result.apply_errors.is_empty() {
+        lines.push("Errors:".to_string());
+        for e in &result.apply_errors {
+            lines.push(format!("  - {e}"));
+        }
+    }
+    lines.push(format!("NOTE: {}", result.note));
+    lines.join("\n")
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Mock runner: returns canned `claude mcp list` / `codex mcp list` and
+    #[test]
+    fn analyze_duplicates_detects_name_collision_dry_run() {
+        let root = std::env::temp_dir().join(format!("ags-dedupe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for store in ["global-skills", "skill-packs/optional"] {
+            let d = root.join(store).join("dup");
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("SKILL.md"), "---\nname: dup\ndescription: x\n---\n").unwrap();
+        }
+        let r = analyze_duplicates(&root, false);
+        assert_eq!(r.apply_status, "dry-run");
+        assert!(r.applied_writes.is_empty(), "dry-run writes nothing");
+        let group = r
+            .groups
+            .iter()
+            .find(|g| g.name == "dup" && g.reason == "name-collision")
+            .expect("name-collision group");
+        assert_eq!(group.entries.len(), 2);
+        assert!(group.keeper.as_deref().unwrap().contains("global-skills"));
+        assert_eq!(group.quarantine.len(), 1);
+        // dry-run leaves both copies on disk.
+        assert!(root.join("global-skills/dup/SKILL.md").is_file());
+        assert!(root.join("skill-packs/optional/dup/SKILL.md").is_file());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn seed_dup_repo(tag: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("ags-dedupe-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for store in ["global-skills", "skill-packs/optional"] {
+            let d = root.join(store).join("dup");
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("SKILL.md"), "---\nname: dup\ndescription: x\n---\n").unwrap();
+        }
+        root
+    }
+
+    #[test]
+    fn analyze_duplicates_apply_populates_reversible_moves() {
+        let root = seed_dup_repo("apply");
+        let r = analyze_duplicates(&root, true);
+        assert_eq!(r.apply_status, "applied");
+        assert_eq!(r.applied_moves.len(), 1, "one non-keeper quarantined");
+        // keeper (global) stays; non-keeper moved out of the optional store.
+        assert!(root.join("global-skills/dup/SKILL.md").is_file());
+        assert!(!root.join("skill-packs/optional/dup/SKILL.md").is_file());
+        // the quarantine target lives under governance/backups and is restorable.
+        let mv = &r.applied_moves[0];
+        assert!(mv.to.contains("governance/backups"));
+        assert!(Path::new(&mv.to).join("SKILL.md").is_file());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn analyze_duplicates_apply_failure_leaves_no_partial_quarantine() {
+        let root = seed_dup_repo("fail");
+        // Make governance/backups a FILE so the quarantine mkdir fails mid-apply.
+        std::fs::create_dir_all(root.join("governance")).unwrap();
+        std::fs::write(root.join("governance/backups"), "").unwrap();
+        let r = analyze_duplicates(&root, true);
+        assert_eq!(r.apply_status, "failed");
+        assert!(
+            r.applied_moves.is_empty(),
+            "no partial quarantine on failure"
+        );
+        assert!(!r.apply_errors.is_empty());
+        // both source copies remain in place (nothing half-moved).
+        assert!(root.join("global-skills/dup/SKILL.md").is_file());
+        assert!(root.join("skill-packs/optional/dup/SKILL.md").is_file());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Mock runner: returns canned `claude mcp list` / `codex mcp list`.
+    /// CodeBuddy-Code has no supported CLI MCP probe, so it is not invoked here.
     /// PANICS on anything else — so any attempt to run an external installer or
     /// registrar during a test fails loudly. Proves apply never shells out.
     struct StrictMcpRunner {
@@ -2166,7 +3295,8 @@ mod tests {
             success: true,
             stdout: "Checking MCP server health…\n\n\
                  ags: /home/.cargo/bin/ags mcp serve --transport stdio - ✔ Connected\n\
-                 context7: npx -y @upstash/context7-mcp - ✔ Connected\n"
+                 context7: npx -y @upstash/context7-mcp - ✔ Connected\n\
+                 plugin:claude-mem:mcp-search: node -e launcher - ✔ Connected\n"
                 .to_string(),
         }
     }
@@ -2218,7 +3348,8 @@ mod tests {
              suite_interfaces:\n  - name: \"ags\"\n    role: \"host_initialization_adapter\"\n    governed: false\n    install:\n      installed_clients:\n        - \"claude-code\"\n        - \"codex\"\n\
              mcps:\n\
              \x20 - name: \"context7\"\n    package:\n      manager: \"npm\"\n    install:\n      installed_clients:\n        - \"claude-code\"\n        - \"codex\"\n\
-             \x20 - name: \"codegraph\"\n    package:\n      manager: \"external-cli\"\n    install:\n      installed_clients:\n        - \"codex\"\n",
+             \x20 - name: \"codegraph\"\n    package:\n      manager: \"external-cli\"\n    install:\n      installed_clients:\n        - \"codex\"\n\
+             \x20 - name: \"plugin:claude-mem:mcp-search\"\n    package:\n      manager: \"claude-plugin\"\n    install:\n      installed_clients:\n        - \"claude-code\"\n",
         );
 
         let ctx = ConsoleContext::new(
@@ -2235,6 +3366,121 @@ mod tests {
     fn write_file(path: &Path, content: &str) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, content).unwrap();
+    }
+
+    /// Manifest is the single routing authority, end-to-end: a `routing:` block
+    /// in skills-registry.yaml / mcp-registry.yaml is parsed; an entry with no
+    /// block is absent (never synthesized); a malformed block fails closed to
+    /// absent rather than panicking.
+    #[test]
+    fn read_routing_metadata_parses_manifests_and_fails_closed() {
+        let base = std::env::temp_dir().join(format!("ags-routing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let repo = base.join("repo");
+
+        write_file(
+            &repo.join("manifests/skills-registry.yaml"),
+            "skills:\n\
+             \x20 - name: legacy-compat-skill\n    routing:\n      intent_tags: [debug, diagnose]\n      mutation_surface: read-only\n      requires_auth: false\n      cost_class: free\n      invoke_hint: \"[skill: legacy-compat-skill]\"\n      route_priority: 10\n      is_compatibility_alias: true\n\
+             \x20 - name: no-routing-skill\n    description: has no routing block\n\
+             \x20 - name: broken-skill\n    routing: \"not-a-mapping\"\n",
+        );
+        write_file(
+            &repo.join("manifests/mcp-registry.yaml"),
+            "mcps:\n\
+             \x20 - name: context7\n    routing:\n      intent_tags: [docs-lookup]\n      cost_class: network\n      route_priority: 30\n",
+        );
+
+        let read = read_routing_metadata(&repo);
+        let map = &read.map;
+
+        // Well-formed skill block: stable facts + alias flag parsed.
+        let ad = map
+            .get("legacy-compat-skill")
+            .expect("legacy-compat-skill routing present");
+        assert_eq!(
+            ad.intent_tags,
+            vec!["debug".to_string(), "diagnose".to_string()]
+        );
+        assert!(ad.is_compatibility_alias);
+        assert_eq!(ad.route_priority, 10);
+        assert_eq!(ad.mutation_surface, MutationSurface::ReadOnly);
+
+        // MCP routing block parsed from the other manifest.
+        let c7 = map.get("context7").expect("context7 routing present");
+        assert_eq!(c7.intent_tags, vec!["docs-lookup".to_string()]);
+        assert_eq!(c7.cost_class, CostClass::Network);
+
+        // No routing block → absent (single authority, no synthesis).
+        assert!(map.get("no-routing-skill").is_none());
+        // Malformed block → fail-closed absent from the map, never a panic...
+        assert!(map.get("broken-skill").is_none());
+        // ...but the failure is SURFACED (not silently swallowed) for doctor.
+        assert!(read.parse_failures.contains(&"broken-skill".to_string()));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Backward-compat: existing routing blocks carry NONE of the new fields
+    /// (route_state / capability_group / upstream_group / examples). They must
+    /// still deserialize, and the new fields must take their fail-closed / empty
+    /// defaults — guarding the silent-drop regression where a non-`default` new
+    /// field would make every existing block fail to parse.
+    #[test]
+    fn routing_metadata_legacy_block_round_trips_with_defaults() {
+        let legacy = "intent_tags: [debug, diagnose]\nscope_tags: [\"*\"]\nmutation_surface: read-only\nrequires_auth: false\ncost_class: free\ninvoke_hint: \"[skill: legacy-compat-skill]\"\nroute_priority: 10\nis_compatibility_alias: true\n";
+        let meta: RoutingMetadata =
+            serde_yaml::from_str(legacy).expect("legacy routing block must still parse");
+        assert_eq!(
+            meta.intent_tags,
+            vec!["debug".to_string(), "diagnose".to_string()]
+        );
+        assert!(meta.is_compatibility_alias);
+        assert_eq!(meta.route_priority, 10);
+        // New fields fail-closed / empty by default.
+        assert_eq!(meta.route_state, RouteState::NotRoutable);
+        assert!(meta.capability_group.is_empty());
+        assert!(meta.upstream_group.is_none());
+        assert!(meta.examples.positive.is_empty());
+        assert!(meta.examples.negative.is_empty());
+    }
+
+    /// `route_state` parses all three explicit values, and absence defaults to
+    /// the most restrictive `not-routable` (fail-closed).
+    #[test]
+    fn route_state_parses_and_defaults_fail_closed() {
+        let routable: RoutingMetadata =
+            serde_yaml::from_str("route_state: routable\nintent_tags: [verify]\n").unwrap();
+        assert_eq!(routable.route_state, RouteState::Routable);
+        let retired: RoutingMetadata = serde_yaml::from_str("route_state: retired\n").unwrap();
+        assert_eq!(retired.route_state, RouteState::Retired);
+        let not_routable: RoutingMetadata =
+            serde_yaml::from_str("route_state: not-routable\n").unwrap();
+        assert_eq!(not_routable.route_state, RouteState::NotRoutable);
+        // Absent → fail-closed not-routable.
+        let absent: RoutingMetadata = serde_yaml::from_str("intent_tags: [verify]\n").unwrap();
+        assert_eq!(absent.route_state, RouteState::NotRoutable);
+    }
+
+    /// capability_group (multi-membership), upstream_group, and examples parse as
+    /// plain labels / fixtures.
+    #[test]
+    fn capability_group_upstream_and_examples_parse_as_labels() {
+        let yaml = "route_state: routable\ncapability_group: [code-review, verification]\nupstream_group: \"mattpocock/skills:caveman\"\nexamples:\n\x20 positive: [\"帮我做一次代码审查\"]\n\x20 negative: [\"帮我查飞书日历\"]\n";
+        let meta: RoutingMetadata = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            meta.capability_group,
+            vec!["code-review".to_string(), "verification".to_string()]
+        );
+        assert_eq!(
+            meta.upstream_group.as_deref(),
+            Some("mattpocock/skills:caveman")
+        );
+        assert_eq!(
+            meta.examples.positive,
+            vec!["帮我做一次代码审查".to_string()]
+        );
+        assert_eq!(meta.examples.negative, vec!["帮我查飞书日历".to_string()]);
     }
 
     #[cfg(unix)]
@@ -2342,6 +3588,10 @@ mod tests {
             find(&inv, "ags").host_visibility[0].status,
             HostVisibilityStatus::Visible
         );
+        assert_eq!(
+            find(&inv, "plugin:claude-mem:mcp-search").host_visibility[0].status,
+            HostVisibilityStatus::Visible
+        );
         // codegraph is NOT in the canned list → not visible
         assert_eq!(
             find(&inv, "codegraph").host_visibility[0].status,
@@ -2390,6 +3640,44 @@ mod tests {
             find(&inv, "codegraph").host_visibility[0].status,
             HostVisibilityStatus::NotVisible
         );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codebuddy_skill_path_visibility_is_real() {
+        let (ctx, base) = ctx_with("codebuddyreal", canned_list());
+        link_skill_entry(
+            &ctx,
+            ".codebuddy/skills",
+            "demo-skill",
+            "global-skills/demo-skill",
+        );
+        link_skill_entry(
+            &ctx,
+            ".codebuddy/skills",
+            "lark-shared",
+            "skill-packs/optional/lark-shared",
+        );
+
+        let inv = build_inventory(&ctx, &["codebuddy-code"]);
+        let demo = &find(&inv, "demo-skill").host_visibility[0];
+        assert_eq!(demo.host, "codebuddy-code");
+        assert!(demo.supported);
+        assert_eq!(demo.status, HostVisibilityStatus::Visible);
+
+        let verify = verify_host(&ctx, "codebuddy-code");
+        assert!(verify.supported);
+        assert_eq!(verify.summary.failed, 0);
+        assert!(verify.summary.all_visible);
+        let expected_demo = verify
+            .checks
+            .iter()
+            .find(|c| c.name == "demo-skill")
+            .unwrap();
+        assert!(expected_demo.expected);
+        assert_eq!(expected_demo.visibility, HostVisibilityStatus::Visible);
+
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -2460,9 +3748,9 @@ mod tests {
         let res = propose_action(&ctx, ConsoleAction::Adopt, "lark-shared", true);
         assert!(res.applied);
         assert!(res.apply_errors.is_empty());
-        // P1.1 + thin index: BOTH hosts get a symlink (not a copy) into the
+        // P1.1 + thin index: all supported skill hosts get a symlink (not a copy) into the
         // injected home, and SKILL.md is reachable THROUGH it (canonical body).
-        for sub in [".claude/skills", ".codex/skills"] {
+        for sub in [".claude/skills", ".codex/skills", ".codebuddy/skills"] {
             let entry = ctx.home.join(sub).join("lark-shared");
             let meta = std::fs::symlink_metadata(&entry).unwrap();
             assert!(
@@ -2587,6 +3875,31 @@ mod tests {
             .capabilities
             .iter()
             .any(|c| c.name == "lark" && c.kind == ManagedKind::Mcp));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Read-only thin-index drift scan classifies `.bak` leftovers and dangling
+    /// symlinks as drift and a valid symlink as clean — never mutating. (point 2)
+    #[test]
+    fn scan_thin_index_drift_classifies_bak_and_dangling() {
+        let base = std::env::temp_dir().join(format!("ags-drift-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let skills = base.join(".claude/skills");
+        std::fs::create_dir_all(&skills).unwrap();
+        let target = base.join("canon-target");
+        std::fs::create_dir_all(&target).unwrap();
+        std::os::unix::fs::symlink(&target, skills.join("clean-skill")).unwrap();
+        std::os::unix::fs::symlink(&target, skills.join("clean-skill.bak")).unwrap();
+        std::os::unix::fs::symlink(base.join("missing-target"), skills.join("auto-gone")).unwrap();
+
+        let drift = scan_thin_index_drift(&base, "claude-code").expect("scan present");
+        assert!(drift.has_drift);
+        assert_eq!(drift.bak_leftovers, 1, "one .bak leftover");
+        assert_eq!(drift.broken_symlinks, 1, "one dangling symlink");
+        assert!(drift.clean_symlinks >= 1, "clean symlink counted");
+        // unsupported host has no skills subdir → None.
+        assert!(scan_thin_index_drift(&base, "cursor").is_none());
 
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -3010,6 +4323,135 @@ mod tests {
             res.blocked_reasons
         );
         assert!(!res.applied);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn inventory_host_scoping_limits_visibility() {
+        let (ctx, base) = ctx_with("hostscope", canned_list());
+
+        // Scope to codex only → every capability's host_visibility is codex.
+        let codex_only = build_inventory(&ctx, &["codex"]);
+        assert_eq!(codex_only.hosts, vec!["codex".to_string()]);
+        for cap in &codex_only.capabilities {
+            for v in &cap.host_visibility {
+                assert_eq!(v.host, "codex", "host visibility scoped to requested host");
+            }
+        }
+
+        // Both hosts requested → claude-code visibility is present again.
+        let both = build_inventory(&ctx, &["claude-code", "codex"]);
+        assert!(
+            both.capabilities
+                .iter()
+                .any(|c| c.host_visibility.iter().any(|v| v.host == "claude-code")),
+            "claude-code visibility present when requested"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // ── Cross-Agent capability sync ──────────────────────────────────────
+
+    #[test]
+    fn sync_plan_covers_adopted_and_governed_only() {
+        let (ctx, base) = ctx_with("syncdry", canned_list());
+        let result = sync_plan(&ctx, &["claude-code", "codex"], false);
+
+        // Syncable = suite-managed skills (demo-skill, lark-shared) + governed
+        // MCPs (context7, codegraph). orphan-skill (discovered) and ags
+        // (suite-interface) are excluded.
+        let names: Vec<&str> = result.items.iter().map(|i| i.capability.as_str()).collect();
+        assert!(names.contains(&"demo-skill"));
+        assert!(names.contains(&"lark-shared"));
+        assert!(names.contains(&"context7"));
+        assert!(names.contains(&"codegraph"));
+        assert!(!names.contains(&"orphan-skill"), "discovered is not synced");
+        assert!(!names.contains(&"ags"), "AGS self is never synced");
+        assert_eq!(result.summary.considered, result.items.len());
+
+        // Dry-run: nothing applied; skills plan thin-index writes; MCPs advise.
+        assert!(!result.apply_requested);
+        assert!(result.items.iter().all(|i| i.apply_status == "dry-run"));
+        assert!(result.summary.planned_writes > 0, "skills need thin-index");
+        assert!(result.summary.advised_only >= 2, "two governed MCPs advise");
+        assert_eq!(result.summary.applied, 0);
+
+        // Renders without panic and reflects dry-run.
+        assert!(render_sync_text(&result).contains("Cross-Agent Capability Sync"));
+        let json: serde_json::Value = serde_json::from_str(&render_sync_json(&result)).unwrap();
+        assert_eq!(json["apply_requested"], false);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sync_plan_apply_writes_skill_thin_index_only() {
+        let (ctx, base) = ctx_with("syncapply", canned_list());
+        let result = sync_plan(&ctx, &["claude-code", "codex", "codebuddy-code"], true);
+
+        // At least one suite skill's thin-index was applied; MCPs stayed advised.
+        assert!(result.summary.applied >= 1, "skill thin-index applied");
+        assert!(result.apply_requested);
+        // A governed MCP item must remain advised-only (AGS ran nothing for it).
+        let context7 = result
+            .items
+            .iter()
+            .find(|i| i.capability == "context7")
+            .expect("context7 considered");
+        assert_eq!(context7.apply_status, "advised-only");
+        assert!(!context7.applied);
+        // demo-skill thin index now exists under a host skills dir.
+        let claude_entry = ctx.home.join(".claude/skills/demo-skill");
+        assert!(
+            claude_entry.exists(),
+            "claude thin-index created for demo-skill"
+        );
+        let codebuddy_entry = ctx.home.join(".codebuddy/skills/demo-skill");
+        assert!(
+            codebuddy_entry.exists(),
+            "codebuddy thin-index created for demo-skill"
+        );
+        // Safety invariant: every planned write for a synced skill stays within
+        // the injected temp home — AGS never escapes to the real $HOME.
+        let home_str = ctx.home.to_string_lossy().to_string();
+        let demo = result
+            .items
+            .iter()
+            .find(|i| i.capability == "demo-skill")
+            .expect("demo-skill considered");
+        assert!(!demo.planned_writes.is_empty());
+        for w in &demo.planned_writes {
+            assert!(
+                w.path.contains(&home_str),
+                "planned write escaped temp home: {}",
+                w.path
+            );
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn mcp_adopt_advises_both_claude_and_codex_hosts() {
+        let (ctx, base) = ctx_with("mcphosts", canned_list());
+        let res = propose_action(&ctx, ConsoleAction::Adopt, "context7", false);
+        assert!(res.found);
+        let cmds: Vec<&str> = res
+            .advised_commands
+            .iter()
+            .map(|c| c.command.as_str())
+            .collect();
+        assert!(
+            cmds.iter()
+                .any(|c| c.starts_with("claude mcp add context7")),
+            "{cmds:?}"
+        );
+        assert!(
+            cmds.iter().any(|c| c.starts_with("codex mcp add context7")),
+            "{cmds:?}"
+        );
+        // Still advise-only — AGS never registers MCP servers itself.
+        assert!(res.planned_writes.is_empty());
         let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -16,27 +16,18 @@
 schema_version: "2.0-skill"
 suite:
   name: "agent-general-staff"
-  version: "2.6.0-public"
+  version: "2.7.0-public"
   description: >
-    Agent General Staff 2.6.0 public edition — Rust-native governance
+    Agent General Staff 2.7.0 public edition — Rust-native governance
     kernel and CLI for multi-agent engineering workflows. All core governance
     capabilities included. Optional third-party development skills available
     for confirmed install only.
   required: []
   optional:
-    # ── Auto-trigger skills (activate automatically) ──
-    - name: auto-brainstorm
-      source: "https://github.com/anthropics/skills/tree/main/auto-brainstorm"
-      version: "latest"
-      description: "Auto brainstorms approach options before plan mode"
-    - name: auto-debug
-      source: "https://github.com/anthropics/skills/tree/main/auto-debug"
-      version: "latest"
-      description: "Auto diagnoses errors and exceptions"
-    - name: auto-verify
-      source: "https://github.com/anthropics/skills/tree/main/auto-verify"
-      version: "latest"
-      description: "Auto verifies completion claims"
+    # auto-brainstorm / auto-debug / auto-verify are RETIRED (2.7): no longer
+    # auto-triggered. Brainstorm demand routes to grill-with-docs, debug to
+    # diagnose, and verification to the superpowers verification-before-completion
+    # entrypoint. See manifests/skills-registry.yaml (route_state: retired).
     # ── Manual skills ──
     - name: tdd
       source: "https://github.com/anthropics/skills/tree/main/tdd"
@@ -46,10 +37,18 @@ suite:
       source: "https://github.com/anthropics/skills/tree/main/diagnose"
       version: "latest"
       description: "Root cause diagnosis with evidence chain"
-    - name: verification-before-completion
-      source: "https://github.com/anthropics/skills/tree/main/verification-before-completion"
+    - name: grill-with-docs
+      source: "https://github.com/anthropics/skills/tree/main/grill-with-docs"
       version: "latest"
-      description: "Verification gate before claiming completion"
+      description: "Requirements alignment grounded in project docs"
+    - name: prototype
+      source: "https://github.com/anthropics/skills/tree/main/prototype"
+      version: "latest"
+      description: "Throwaway prototype workflow for uncertain designs"
+    - name: superpowers
+      source: "https://github.com/anthropics/skills/tree/main/superpowers"
+      version: "latest"
+      description: "Bundled engineering playbook dependency"
     - name: webapp-testing
       source: "https://github.com/anthropics/skills/tree/main/webapp-testing"
       version: "latest"

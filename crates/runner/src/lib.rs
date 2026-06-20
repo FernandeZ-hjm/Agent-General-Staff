@@ -18,7 +18,7 @@
 //! - `cursor`: structured stub — reports launch plan, marks is_stub.
 //! - `generic`: capped at plan-only, requires human handoff.
 
-use execution_policy::{ApprovalSource, GateCheckOutput, ResolvedExecutionPolicy};
+use execution_policy::{GateCheckOutput, ResolvedExecutionPolicy};
 
 // ── Public types ──────────────────────────────────────────────────────────
 
@@ -91,6 +91,9 @@ pub const SCHEMA_VERSION: &str = "2.0-runner";
 /// `check_only` — stop after gate check, don't build full launch plan.
 /// `dry_run` — full pipeline, mark as dry run.
 /// `approve_writes` — pass write approval to the policy resolver.
+/// `current_task_approval` — pass the host-detected, current-task execution
+/// instruction to the resolver. This unlocks Heavy `edit-with-confirmation`
+/// only; it never unlocks Heavy `execute-and-verify`.
 ///
 /// Returns `LaunchPlan` on validation pass, or a minimal stop plan on
 /// validation failure. The caller checks `validation_passed` and
@@ -100,6 +103,7 @@ pub fn run_task_card(
     check_only: bool,
     dry_run: bool,
     approve_writes: bool,
+    current_task_approval: bool,
 ) -> LaunchPlan {
     let mode = if check_only {
         "check-only"
@@ -163,10 +167,15 @@ pub fn run_task_card(
     // IMPORTANT: the runner builds TaskPolicyInput from validated fields
     // but NEVER reads raw fields directly for launch decisions. All
     // execution parameters come from the resolved policy.
-    let mut input = execution_policy::TaskPolicyInput::from_fields(&card.fields);
-    if approve_writes {
-        input.approval_source = ApprovalSource::CliFlag;
-    }
+    // Use the canonical approval builder shared with the CLI gate and the AGS
+    // MCP. `--current-task-approval` is structured live-request evidence from
+    // the host/operator; it is never read from task-card prose and only unlocks
+    // Heavy edit-with-confirmation, not execute-and-verify.
+    let input = execution_policy::TaskPolicyInput::from_fields_with_approval(
+        &card.fields,
+        approve_writes,
+        current_task_approval,
+    );
 
     // ── Phase 4: Gate check (validate + resolve + decide) ──────────────
     let gate_output: GateCheckOutput = execution_policy::gate_check(&input);
@@ -527,11 +536,11 @@ pub fn render_json(plan: &LaunchPlan) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use execution_policy::{Parallelism, PermissionMode};
+    use execution_policy::{ApprovalSource, Parallelism, PermissionMode};
 
     #[test]
     fn test_read_error_produces_stop_plan() {
-        let plan = run_task_card("/nonexistent/path/task-card.md", false, true, false);
+        let plan = run_task_card("/nonexistent/path/task-card.md", false, true, false, false);
         assert!(!plan.validation_passed);
         assert_eq!(plan.gate_decision, "stop");
         assert!(plan.gate_error_kind.is_some());
@@ -541,20 +550,20 @@ mod tests {
 
     #[test]
     fn test_check_only_mode_flag() {
-        let plan = run_task_card("/nonexistent/path/task-card.md", true, false, false);
+        let plan = run_task_card("/nonexistent/path/task-card.md", true, false, false, false);
         assert_eq!(plan.mode, "check-only");
         assert!(!plan.validation_passed);
     }
 
     #[test]
     fn test_dry_run_mode_flag() {
-        let plan = run_task_card("/nonexistent/path/task-card.md", false, true, false);
+        let plan = run_task_card("/nonexistent/path/task-card.md", false, true, false, false);
         assert_eq!(plan.mode, "dry-run");
     }
 
     #[test]
     fn test_default_mode_is_plan() {
-        let plan = run_task_card("/nonexistent/path/task-card.md", false, false, false);
+        let plan = run_task_card("/nonexistent/path/task-card.md", false, false, false, false);
         assert_eq!(plan.mode, "plan");
     }
 
@@ -666,7 +675,7 @@ mod tests {
     #[test]
     fn test_receipt_plan_skipped_on_stop() {
         // Simulate: validation failure, plan has no resolved_policy
-        let plan = run_task_card("/nonexistent/path/task-card.md", false, true, false);
+        let plan = run_task_card("/nonexistent/path/task-card.md", false, true, false, false);
         assert!(!plan.receipt_plan.will_generate);
         assert_eq!(plan.receipt_plan.gate_result_for_receipt, "stop");
     }
@@ -680,7 +689,7 @@ mod tests {
 
     #[test]
     fn test_render_text_produces_output() {
-        let plan = run_task_card("/nonexistent/path/task-card.md", false, true, false);
+        let plan = run_task_card("/nonexistent/path/task-card.md", false, true, false, false);
         let text = render_text(&plan);
         assert!(text.contains("AGS Runner"));
         assert!(text.contains("STOP"));
@@ -688,7 +697,7 @@ mod tests {
 
     #[test]
     fn test_render_json_produces_valid_json() {
-        let plan = run_task_card("/nonexistent/path/task-card.md", false, true, false);
+        let plan = run_task_card("/nonexistent/path/task-card.md", false, true, false, false);
         let json = render_json(&plan);
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(&json);
         assert!(parsed.is_ok());
@@ -772,8 +781,8 @@ mod tests {
         let card_path = fixture.join("heavy-plan-only.md");
         if card_path.exists() {
             let path_str = card_path.to_string_lossy().to_string();
-            let plan_without = run_task_card(&path_str, false, true, false);
-            let plan_with = run_task_card(&path_str, false, true, true);
+            let plan_without = run_task_card(&path_str, false, true, false, false);
+            let plan_with = run_task_card(&path_str, false, true, true, false);
 
             // Both should pass validation
             assert!(plan_without.validation_passed);
@@ -782,6 +791,24 @@ mod tests {
             // With approve_writes, the policy should reflect CliFlag approval
             if let Some(ref policy) = plan_with.resolved_policy {
                 assert_eq!(policy.approval_source.to_string(), "cli-flag");
+            }
+        }
+    }
+
+    #[test]
+    fn test_current_task_approval_flag_sets_approval_source() {
+        let fixture = std::path::Path::new("../tests/fixtures");
+        let card_path = fixture.join("heavy-plan-only.md");
+        if card_path.exists() {
+            let path_str = card_path.to_string_lossy().to_string();
+            let plan = run_task_card(&path_str, false, true, false, true);
+
+            assert!(plan.validation_passed);
+            if let Some(ref policy) = plan.resolved_policy {
+                assert_eq!(
+                    policy.approval_source.to_string(),
+                    "current-task-instruction"
+                );
             }
         }
     }

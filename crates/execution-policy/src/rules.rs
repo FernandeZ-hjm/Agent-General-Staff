@@ -27,20 +27,24 @@ fn record_stop(policy: &mut ResolvedExecutionPolicy, reason: StopReason) {
     policy.stop_reasons.push(reason);
 }
 
-// ── M1–M3: Ultracode rules ──────────────────────────────────────────────
+// ── M1–M3: Exhaustive-effort rules ───────────────────────────────────────
 //
-// Ultracode is thinking intensity ONLY.  It does NOT:
+// The exhaustive execution-effort tier is thinking intensity ONLY.  It does NOT:
 //   M1 – change permission mode
 //   M2 – enable parallelism
 //   M3 – generate any permission-escalating launch arg
+//
+// `exhaustive` is the neutral canonical value; `ultracode` is the legacy
+// parse-compatible alias mapping to the same semantics.
 
-/// Apply ultracode thinking-intensity rules (M1, M2, M3).
+/// Apply exhaustive-effort thinking-intensity rules (M1, M2, M3).
 ///
-/// Sets `is_exhaustive_mode` when effort is ultracode.  Does NOT touch
-/// permission mode, parallelism, or launch args — those are set by other
-/// rules based on the original field values, not on effort.
+/// Sets `is_exhaustive_mode` when effort is the exhaustive tier (`exhaustive` or
+/// the legacy `ultracode` alias).  Does NOT touch permission mode, parallelism,
+/// or launch args — those are set by other rules based on the original field
+/// values, not on effort.
 pub(crate) fn apply_ultracode_rules(input: &TaskPolicyInput, policy: &mut ResolvedExecutionPolicy) {
-    if input.effort() == "ultracode" {
+    if input.is_exhaustive_effort() {
         policy.is_exhaustive_mode = true;
     }
 }
@@ -64,9 +68,24 @@ pub(crate) fn apply_heavy_permission_rule(
     }
 
     if input.approval_source.is_approved() {
-        // Heavy with explicit approval — no downgrade needed.
-        // Still set the confirmation gate so the runner knows to prompt.
+        // Heavy with explicit approval — executable without a plan-only round
+        // trip. Still set the confirmation gate so the runner knows to prompt.
         policy.requires_confirmation_gate = true;
+        // execute-and-verify is default-forbidden under Heavy: a current-task
+        // instruction unlocks only edit-with-confirmation. The stronger CLI-flag
+        // / runner-env approval is required to reach execute-and-verify. Cap it
+        // (no stop — the task stays executable in edit-with-confirmation).
+        if policy.effective_permission_mode == PermissionMode::ExecuteAndVerify
+            && !input.approval_source.unlocks_execute_and_verify()
+        {
+            let before = policy.effective_permission_mode.to_string();
+            let after = PermissionMode::EditWithConfirmation.to_string();
+            record_downgrade(
+                policy,
+                DowngradeReason::heavy_execute_capped_to_edit(&before, &after),
+            );
+            policy.effective_permission_mode = PermissionMode::EditWithConfirmation;
+        }
         return;
     }
 

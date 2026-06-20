@@ -32,6 +32,7 @@ use crate::{prompts, resources, tools};
 struct PreflightState {
     preflight_completed: bool,
     preflight_agent: Option<String>,
+    preflight_target: Option<String>,
 }
 
 impl PreflightState {
@@ -39,12 +40,14 @@ impl PreflightState {
         Self {
             preflight_completed: false,
             preflight_agent: None,
+            preflight_target: None,
         }
     }
 
-    fn mark_completed(&mut self, agent: String) {
+    fn mark_completed(&mut self, agent: String, target: Option<String>) {
         self.preflight_completed = true;
         self.preflight_agent = Some(agent);
+        self.preflight_target = target;
     }
 }
 
@@ -240,18 +243,29 @@ fn handle_tools_call(req: &JsonRpcRequest, preflight: &mut PreflightState) -> Js
         return JsonRpcResponse::error(req.id.clone(), -32000, PREFLIGHT_GATE_ERROR);
     }
 
-    match tools::call_tool(tool_name, &arguments) {
+    let tool_arguments = tools::inject_preflight_defaults(
+        tool_name,
+        arguments,
+        preflight.preflight_agent.as_deref(),
+        preflight.preflight_target.as_deref(),
+    );
+
+    match tools::call_tool(tool_name, &tool_arguments) {
         Ok(result) => {
             // Mark preflight as completed only when the preflight report itself
             // is clean. A successful JSON-RPC tool call may still report
             // overall_status=Stop / exit_code=1 for an ungoverned target.
             if tools::is_preflight_tool_name(tool_name) && is_successful_preflight_result(&result) {
-                let agent = arguments
+                let agent = tool_arguments
                     .get("agent")
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown")
                     .to_string();
-                preflight.mark_completed(agent);
+                let target = tool_arguments
+                    .get("target")
+                    .and_then(|v| v.as_str())
+                    .map(ToString::to_string);
+                preflight.mark_completed(agent, target);
                 log_error(&format!(
                     "preflight completed for agent: {}",
                     preflight.preflight_agent.as_deref().unwrap_or("unknown")
@@ -543,7 +557,7 @@ mod tests {
     #[test]
     fn non_preflight_tool_allowed_after_preflight() {
         let mut preflight = PreflightState::new();
-        preflight.mark_completed("claude-code".to_string());
+        preflight.mark_completed("claude-code".to_string(), Some(suite_root()));
 
         let params = json!({"name": "ags_protocol_status", "arguments": {}});
         let req = make_request("tools/call", Some(params));
@@ -653,7 +667,7 @@ mod tests {
     #[test]
     fn solution_phase_prompt_allowed_after_preflight() {
         let mut preflight = PreflightState::new();
-        preflight.mark_completed("claude-code".to_string());
+        preflight.mark_completed("claude-code".to_string(), Some(suite_root()));
 
         let params = json!({"name": "ags_solution_phase", "arguments": {"user_request": "test"}});
         let req = make_request("prompts/get", Some(params));
@@ -682,7 +696,7 @@ mod tests {
     fn initialize_resets_preflight_state() {
         let mut initialized = false;
         let mut preflight = PreflightState::new();
-        preflight.mark_completed("codex".to_string());
+        preflight.mark_completed("codex".to_string(), Some(suite_root()));
 
         let req = make_request(
             "initialize",

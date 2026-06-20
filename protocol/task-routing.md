@@ -120,6 +120,22 @@ prompt-request` (CLI) as a `value_route` block. The planner owns the final path
 and records it as evidence; Light / Medium / Heavy routing then proceeds
 independently — Value Route is not a fourth task level.
 
+## Capability Route (能力路由)
+
+Parallel to Value Route, AGS also surfaces a `capability_route` block on the same
+two entries (`ags_solution_check` and `ags gate prompt-request`). Where Value
+Route answers "which execution-path *form* covers this risk?", Capability Route
+answers "which managed capability should the host be *advised to wake up* for
+this demand, and is it reachable?". It is deterministic, manifest-driven, and
+advisory only: it never auto-invokes a skill/MCP/CLI, never blocks the request,
+and never changes the Light / Medium / Heavy level, permission mode, Review gate,
+or Verification gate. Reachability also depends on machine-local enrollment
+(`ags setup --capability-route <off|suite-only|adopted|review-all>`); a
+not-enrolled capability degrades to advisory and never blocks. The `auto-*` skills
+are explicit-wakeup compatibility aliases, not implicit auto-triggers AGS depends
+on. The canonical definition (fields, fail-closed availability, enrollment,
+host/target resolution) lives in `protocol/agent-task-protocol.md` §3.10.
+
 ## Task Card Compiler v2
 
 The compiler turns a confirmed execution contract into the fixed task-card
@@ -336,8 +352,11 @@ explicitly defines them as manual aliases.
 
 For this project:
 
-- `auto-debug` triggers on errors, failures, broken behavior, or test failures.
-- `auto-verify` triggers when work is claimed complete.
+- `auto-debug` / `auto-verify` / `auto-brainstorm` are **RETIRED**
+  (`routing.route_state: retired`). AGS Capability Route never routes them as
+  primary; their demands now route to canonical successors — debug → `diagnose`,
+  verify → `superpowers` (verification-before-completion), brainstorm →
+  `grill-with-docs`.
 - Use `[skill: verify]` when deep verification should be forced.
 - Use `[skill: diagnose]` for complex root cause work.
 - Use `[skill: zoom-out]` for architecture context, dependency mapping, or risk

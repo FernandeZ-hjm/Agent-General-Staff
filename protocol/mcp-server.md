@@ -8,7 +8,7 @@ operating in AGS scenarios.
 **AGS MCP is not a governed third-party MCP.** It is the suite's own host
 adapter — the MCP transport layer for the AGS governance kernel. In
 `manifests/mcp-registry.yaml`, `ags` resides under `suite_interfaces:`, not
-alongside governed third-party MCPs like `context7` or `gep`.
+under the governed `mcps:` list.
 
 ## Architecture
 
@@ -21,24 +21,21 @@ alongside governed third-party MCPs like `context7` or `gep`.
 │           (initialization gate)              │
 │           ↓                                  │
 │  Step 1-N: all other AGS tools               │
-│           ↓                                  │
-│  Parallel: EvoMap MCP (advisory only)        │
-└───┬──────────────────┬───────────────────────┘
-    │                  │
-    ▼                  ▼
-┌──────────┐   ┌──────────────┐
-│ AGS MCP  │   │  EvoMap MCP  │
-│ (host    │   │  (advisory   │
-│ adapter, │   │   memory)    │
-│ mandatory│   │              │
-│ first)   │   │  Parallel    │
-│          │   │  peer, not   │
-│ stdio    │   │  brokered    │
-└──────────┘   └──────────────┘
+└───┬──────────────────────────────────────────┘
+    │
+    ▼
+┌──────────┐
+│ AGS MCP  │
+│ (host    │
+│ adapter, │
+│ mandatory│
+│ first)   │
+│ stdio    │
+└──────────┘
 ```
 
-**AGS MCP and EvoMap MCP are parallel peers.** Each is called independently
-by the host. AGS MCP does NOT proxy, wrap, or broker EvoMap MCP calls.
+AGS MCP exposes AGS lifecycle and gate checks only. It does not proxy, wrap, or
+broker unrelated tools.
 
 ## AGS Initialization Gate
 
@@ -61,8 +58,6 @@ An AGS scenario is active when any of the following is true:
 - AGS release boundary is involved (private → stable → public promotion)
 - Execution policy is involved (permission downgrades, parallelism strategy,
   launch arg resolution)
-- AGS Evolver boundary is involved (method capture, recall boundary, Gene/
-  Capsule governance)
 - The user explicitly requests AGS protocol, task cards, review gates, or
   verification gates
 
@@ -217,49 +212,20 @@ See `protocol/agent-task-protocol.md` §3.8.
 
 | URI | Content |
 |-----|---------|
-| `ags://global-kernel` | AGS global governance kernel — initialization gate, lifecycle, rules, EvoMap boundary |
+| `ags://global-kernel` | AGS global governance kernel — initialization gate, lifecycle, rules, host boundaries |
 | `ags://protocol/agent-task-protocol` | Canonical agent task protocol |
 | `ags://protocol/task-card-template` | Fixed task-card skeleton |
 | `ags://protocol/runtime-adapters` | Runtime adapter definitions and rules |
 | `ags://protocol/task-routing` | Light/Medium/Heavy routing criteria |
-
-The public edition intentionally does not serve `ags://protocol/evolution-memory`
-or `ags://evolver-boundary`; those backing files are excluded by the public-full
-release boundary.
 
 ### Prompts (4)
 
 | Prompt | Description |
 |--------|-------------|
 | `ags_global_kernel` | Load AGS governance kernel at session start — including mandatory initialization gate |
-| `ags_solution_phase` | Guide through solution formation with EvoMap recall |
+| `ags_solution_phase` | Guide through solution formation and context-backed proposal |
 | `ags_task_card_request_gate` | Enforce the task-card instruction gate |
 | `ags_delivery_report` | Produce a valid AGS delivery report |
-
-## EvoMap Parallel-Call Boundary
-
-AGS MCP and EvoMap MCP are **parallel peers**:
-
-- **AGS MCP** decides: lifecycle, task level, permission mode, review gate,
-  verification gate, release boundary, stop conditions.
-- **EvoMap MCP** advises: design patterns, reusable methods, risk flags,
-  edge cases — during solution formation only.
-
-AGS MCP does NOT:
-- Proxy, wrap, or broker EvoMap MCP calls
-- Return EvoMap Gene/Capsule/EvolutionEvent data
-- Install or configure EvoMap MCP
-- Require EvoMap MCP to be present
-
-The `ags_solution_check` tool recommends EvoMap recall for non-trivial tasks
-but records `recall_status: unavailable_or_not_called` — hosts must call
-EvoMap MCP in parallel.
-
-### Authority precedence
-
-When EvoMap output conflicts with AGS protocol, project memory, task cards,
-or gates — AGS always wins. EvoMap output is advisory input to solution
-formation; it must not override governance decisions.
 
 ## AGS vs Governed MCPs
 
@@ -268,7 +234,7 @@ AGS MCP is structurally distinct from third-party MCPs governed by AGS:
 | Layer | Contains | Role |
 |-------|----------|------|
 | `suite_interfaces` (in `manifests/mcp-registry.yaml`) | `ags` | **Host initialization adapter** — mandatory governance interface; NOT a governed object |
-| `mcps` (in `manifests/mcp-registry.yaml`) | `context7`, `gep`, ... | **Governed third-party MCPs** — reviewed, registered, and managed by AGS |
+| `mcps` (in `manifests/mcp-registry.yaml`) | registered external MCPs | **Governed third-party MCPs** — reviewed, registered, and managed by AGS |
 
 AGS is not in the `mcps:` list. It does not have an adoption entry in the MCP
 adoption log. It is the governance authority, not a governed entity.
@@ -279,7 +245,7 @@ adoption log. It is the governance authority, not a governed entity.
 
 ```json
 → {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"...","version":"..."}}}
-← {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{"listChanged":false},"resources":{"listChanged":false,"subscribe":false},"prompts":{"listChanged":false}},"serverInfo":{"name":"ags-mcp","version":"2.6.0"}}}
+← {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{"listChanged":false},"resources":{"listChanged":false,"subscribe":false},"prompts":{"listChanged":false}},"serverInfo":{"name":"ags-mcp","version":"2.7.0"}}}
 ```
 
 ### Tools
@@ -331,7 +297,7 @@ platform MCP registration snippets:
       "command": "ags",
       "args": ["mcp", "serve", "--transport", "stdio"],
       "mandatory_first_tool": "ags_preflight",
-      "_comment": "AGS MCP is a host initialization adapter; it does not proxy EvoMap."
+      "_comment": "AGS MCP is a host initialization adapter."
     }
   }
 }
@@ -360,17 +326,16 @@ ags verify --scope local
 
 The AGS MCP implementation must stop and report when asked to:
 - Write Tencent Agent (WorkBuddy / CodeBuddy-Code) host configuration
-- Install or enable EvoMap MCP
-- Read real tokens, node_secret, or `~/.evolver/settings.json`
+- Read real tokens, node-local secrets, or host secrets
 - Modify user worktrees without explicit authorization
 - Change AGS lifecycle/gate semantics
-- Proxy EvoMap MCP into AGS MCP or build an MCP broker
+- Turn AGS MCP into a broker for unrelated tools
 
 ## Version History
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 2.6.0 | 2026-06-17 | Quiet governance release: advisory-intent no-mutation gate for consultation requests, `visible_status` quiet foreground summaries on MCP preflight/solution/policy responses, fixed-scope `ags_verify_local`, diff-aware `ags verify lane`, trusted shell MINIMAL/FULL push-lane routing, Tencent Agent host recognition, Value Route advisory output, expanded verification smoke tests, and copyable Markdown fenced-block delivery reports. Public edition keeps the EvoMap backing resources excluded. |
+| 2.6.0 | 2026-06-17 | Quiet governance release: advisory-intent no-mutation gate for consultation requests, `visible_status` quiet foreground summaries on MCP preflight/solution/policy responses, fixed-scope `ags_verify_local`, diff-aware `ags verify lane`, trusted shell MINIMAL/FULL push-lane routing, Tencent Agent host recognition, Value Route advisory output, expanded verification smoke tests, and copyable Markdown fenced-block delivery reports. |
 | 2.5.1 | 2026-06-15 | Local ignored governance overlay: `ags init` defaults to a `local` overlay that adds AGS-managed files to `.git/info/exclude` (idempotent managed block), `--mode shared|tracked` opts into a committed overlay, and `--migrate-tracked-overlay` safely migrates already-tracked AGS-owned files via `git rm --cached`. Task-card template sources collapsed to the single canonical `protocol/task-card-template.md` (per-level fallback templates removed) |
 | 2.5.0 | 2026-06-13 | Engineering self-consistency release: supply-chain gate (`deny.toml` + `cargo deny check`), Windows portability phase 1 (cross-platform home/temp/PATH-lookup helpers), skill asset inventory scanner, and `task-card-validator` module split (move-only, public API and validation messages unchanged) |
 | 2.4.0 | 2026-06-12 | Added human command facade (`setup`, `init`, `doctor`, `skill`, `help`), one-command host initialization, visible Codex command skills (`AGS Setup`, `AGS Init`, `AGS Skill`, `AGS Doctor`) with Chinese descriptions, retired visible Codex hub/preflight/verify entries, project onboarding `.gitignore` management, soft-coded host agent compatibility, and schema-safe MCP tool names |

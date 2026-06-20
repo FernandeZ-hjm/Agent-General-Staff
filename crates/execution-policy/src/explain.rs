@@ -77,27 +77,27 @@ pub fn explain_policy(input: &TaskPolicyInput) -> PolicyExplainOutput {
     let summary = build_task_summary(input);
     let mut explanations: Vec<PolicyExplanation> = Vec::with_capacity(10);
 
-    // ── M1: Ultracode thinking intensity ──────────────────────────────
-    let ultracode = input.effort() == "ultracode";
+    // ── M1: Exhaustive-effort thinking intensity ──────────────────────
+    let exhaustive = input.is_exhaustive_effort();
     explanations.push(PolicyExplanation {
         rule_id: "M1".to_string(),
-        rule_name: "Ultracode Thinking Intensity".to_string(),
-        decision: if ultracode { "applied" } else { "not_applicable" }.to_string(),
+        rule_name: "Exhaustive Effort Thinking Intensity".to_string(),
+        decision: if exhaustive { "applied" } else { "not_applicable" }.to_string(),
         field: Some("execution_effort".to_string()),
-        detail: if ultracode {
-            "Ultracode sets exhaustive mode (is_exhaustive_mode=true) without changing permission mode, parallelism, or launch args.".to_string()
+        detail: if exhaustive {
+            "Exhaustive effort (Execution effort: exhaustive, or the legacy ultracode alias) sets is_exhaustive_mode=true without changing permission mode, parallelism, or launch args.".to_string()
         } else {
-            "Execution effort is not ultracode; M1-M3 rules do not apply.".to_string()
+            "Execution effort is not the exhaustive tier; M1-M3 rules do not apply.".to_string()
         },
     });
 
-    // ── M2: Ultracode does not enable parallelism ─────────────────────
+    // ── M2: Exhaustive effort does not enable parallelism ─────────────
     let requested_parallelism = super::policy::Parallelism::from_str(&input.parallelism);
-    let ultracode_no_para = ultracode && !requested_parallelism.is_active();
+    let exhaustive_no_para = exhaustive && !requested_parallelism.is_active();
     explanations.push(PolicyExplanation {
         rule_id: "M2".to_string(),
-        rule_name: "Ultracode No Parallelism".to_string(),
-        decision: if ultracode {
+        rule_name: "Exhaustive Effort No Parallelism".to_string(),
+        decision: if exhaustive {
             if policy.effective_parallelism == super::policy::Parallelism::None {
                 "passed"
             } else {
@@ -108,25 +108,25 @@ pub fn explain_policy(input: &TaskPolicyInput) -> PolicyExplainOutput {
         }
         .to_string(),
         field: Some("parallelism".to_string()),
-        detail: if ultracode_no_para {
-            "Ultracode does not enable parallelism; effective_parallelism remains none.".to_string()
-        } else if ultracode {
-            "Ultracode is set but parallelism was enabled by another rule; M2 itself does not escalate parallelism.".to_string()
+        detail: if exhaustive_no_para {
+            "Exhaustive effort does not enable parallelism; effective_parallelism remains none.".to_string()
+        } else if exhaustive {
+            "Exhaustive effort is set but parallelism was enabled by another rule; M2 itself does not escalate parallelism.".to_string()
         } else {
-            "Not an ultracode task.".to_string()
+            "Not an exhaustive-effort task.".to_string()
         },
     });
 
-    // ── M3: Ultracode no permission-escalating launch args ────────────
+    // ── M3: Exhaustive effort, no permission-escalating launch args ───
     explanations.push(PolicyExplanation {
         rule_id: "M3".to_string(),
-        rule_name: "Ultracode No Launch-Arg Escalation".to_string(),
-        decision: if ultracode { "passed" } else { "not_applicable" }.to_string(),
+        rule_name: "Exhaustive Effort No Launch-Arg Escalation".to_string(),
+        decision: if exhaustive { "passed" } else { "not_applicable" }.to_string(),
         field: None,
-        detail: if ultracode {
-            "Ultracode does not inject any permission-escalating launch args (--permission-mode, --parallel, --worktree, --headless).".to_string()
+        detail: if exhaustive {
+            "Exhaustive effort does not inject any permission-escalating launch args (--permission-mode, --parallel, --worktree, --headless).".to_string()
         } else {
-            "Not an ultracode task.".to_string()
+            "Not an exhaustive-effort task.".to_string()
         },
     });
 
@@ -372,7 +372,7 @@ pub fn explain_policy(input: &TaskPolicyInput) -> PolicyExplainOutput {
     }
     if policy.is_exhaustive_mode {
         assertions.push(
-            "EXHAUSTIVE MODE: deep reasoning enabled (ultracode). No permission or parallelism escalation."
+            "EXHAUSTIVE MODE: deep reasoning enabled (Execution effort: exhaustive). No permission or parallelism escalation."
                 .to_string(),
         );
     }

@@ -7,8 +7,8 @@
 registry:
   version: 1.1.0
   description: >
-    Private skills registry for the Agent Governance Suite. This indexes the
-    required global skills and records which existing skills should watch
+    Public skills registry for the Agent Governance Suite. This indexes the
+    suite skill surface and records which existing skills should watch
     mattpocock/skills for future upstream changes.
   update_policy: read_only_crawl_then_diff_proposal
   upstreams:
@@ -40,6 +40,9 @@ skills:
     local_path: global-skills/auto-brainstorm
     description: Automatic solution exploration before implementation
     auto_trigger: true
+    routing:
+      route_state: retired
+      intent_tags: []
     source:
       type: local
       relationship: suite_overlay
@@ -50,6 +53,9 @@ skills:
     local_path: global-skills/auto-debug
     description: Automatic debug loop for errors and failures
     auto_trigger: true
+    routing:
+      route_state: retired
+      intent_tags: []
     source:
       type: local
       relationship: suite_overlay
@@ -60,6 +66,9 @@ skills:
     local_path: global-skills/auto-verify
     description: Automatic verification before claiming completion
     auto_trigger: true
+    routing:
+      route_state: retired
+      intent_tags: []
     source:
       type: local
       relationship: suite_overlay
@@ -98,6 +107,21 @@ skills:
     profile: required
     local_path: global-skills/diagnose
     description: Disciplined diagnosis loop for hard bugs
+    routing:
+      route_state: routable
+      intent_tags: [debug, root-cause]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: diagnose]"
+      route_priority: 50
+      is_compatibility_alias: false
+      capability_group: [engineering-process]
+      upstream_group: "mattpocock/skills:diagnose"
+      examples:
+        positive: ["帮我系统排查这个报错"]
+        negative: ["帮我做代码审查"]
     source:
       type: upstream_git
       upstream: mattpocock_skills
@@ -169,6 +193,21 @@ skills:
     profile: required
     local_path: global-skills/grill-with-docs
     description: Requirements alignment interview grounded in project docs
+    routing:
+      route_state: routable
+      intent_tags: [brainstorm, design]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: grill-with-docs]"
+      route_priority: 50
+      is_compatibility_alias: false
+      capability_group: [engineering-process]
+      upstream_group: "mattpocock/skills:grill-with-docs"
+      examples:
+        positive: ["帮我 brainstorm 一个方案"]
+        negative: ["帮我修复这个报错"]
     source:
       type: upstream_git
       upstream: mattpocock_skills
@@ -191,6 +230,15 @@ skills:
     profile: required
     local_path: global-skills/prototype
     description: Throwaway prototype workflow for uncertain designs
+    routing:
+      route_state: routable
+      intent_tags: [brainstorm]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: prototype]"
+      route_priority: 60
     source:
       type: upstream_git
       upstream: mattpocock_skills
@@ -242,10 +290,78 @@ skills:
     profile: required
     local_path: global-skills/superpowers
     description: Bundled playbook dependency for automatic engineering skills
+    routing:
+      route_state: not-routable
+      capability_group: [engineering-process]
+      upstream_group: "obra/superpowers"
     source:
       type: local
       relationship: bundled_dependency
       update_policy: local_canonical_no_upstream
+
+route_targets:
+  # superpowers internal playbooks are metadata-only entrypoints of the real
+  # `superpowers` body. They are not standalone suite skills and do not create
+  # host-visible install expectations.
+  - name: verification-before-completion
+    description: Superpowers verification-before-completion playbook (verify route target)
+    routing:
+      route_state: routable
+      parent: { kind: skill, name: superpowers }
+      entrypoint: { kind: playbook, name: verification-before-completion }
+      intent_tags: [verify]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: superpowers] (playbooks/verification-before-completion)"
+      route_priority: 50
+      is_compatibility_alias: false
+      capability_group: [engineering-process, verification]
+      upstream_group: "obra/superpowers"
+      examples:
+        positive: ["做完了验证一下", "验证一下"]
+        negative: ["帮我修复这个报错"]
+
+  - name: systematic-debugging
+    description: Superpowers systematic-debugging playbook (secondary debug method hint)
+    routing:
+      route_state: routable
+      parent: { kind: skill, name: superpowers }
+      entrypoint: { kind: playbook, name: systematic-debugging }
+      intent_tags: [debug]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: superpowers] (playbooks/systematic-debugging)"
+      route_priority: 70
+      is_compatibility_alias: false
+      capability_group: [engineering-process]
+      upstream_group: "obra/superpowers"
+      examples:
+        positive: ["帮我系统排查这个报错"]
+        negative: ["帮我做代码审查"]
+
+  - name: brainstorming
+    description: Superpowers brainstorming playbook (secondary brainstorm method hint)
+    routing:
+      route_state: routable
+      parent: { kind: skill, name: superpowers }
+      entrypoint: { kind: playbook, name: brainstorming }
+      intent_tags: [brainstorm]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: superpowers] (playbooks/brainstorming)"
+      route_priority: 70
+      is_compatibility_alias: false
+      capability_group: [engineering-process]
+      upstream_group: "obra/superpowers"
+      examples:
+        positive: ["帮我 brainstorm 一个方案"]
+        negative: ["帮我修复这个报错"]
 
 candidate_skills:
   - name: git-guardrails-claude-code

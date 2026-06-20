@@ -41,7 +41,9 @@ pub struct TaskPolicyInput {
     /// Task level: "Light" | "Medium" | "Heavy"
     pub task_level: String,
 
-    /// Execution effort: "normal" | "ultracode" (absent → "unknown")
+    /// Execution effort: neutral tiers "low" | "normal" | "high" | "exhaustive"
+    /// (absent → "unknown"). "ultracode" is a legacy parse-compatible alias that
+    /// maps to the same exhaustive semantics as "exhaustive".
     pub execution_effort: Option<String>,
 
     /// Workflow authority: "none" | "within-card" | "plan-only" | "allowed" (absent → "none")
@@ -84,9 +86,43 @@ impl TaskPolicyInput {
         }
     }
 
+    /// Build a TaskPolicyInput from parsed fields plus STRUCTURED approval
+    /// signals. Approval is never read from task-card text (`from_fields` always
+    /// yields `None`); callers pass the explicit signals they detected:
+    /// - `approve_writes` (CLI `--approve-writes` / runner env) → `CliFlag`,
+    ///   which unlocks up to `execute-and-verify`.
+    /// - `current_task_approval` (host detected an explicit live execution
+    ///   instruction) → `CurrentTaskInstruction`, which unlocks only
+    ///   `edit-with-confirmation`.
+    ///
+    /// The stronger source wins when both are set. This is the single canonical
+    /// mapping shared by the CLI gate and the AGS MCP `ags_policy_resolve` tool,
+    /// so CLI and MCP hosts resolve identical policy for the same approval signal.
+    pub fn from_fields_with_approval(
+        fields: &HashMap<String, String>,
+        approve_writes: bool,
+        current_task_approval: bool,
+    ) -> Self {
+        let mut input = Self::from_fields(fields);
+        if approve_writes {
+            input.approval_source = ApprovalSource::CliFlag;
+        } else if current_task_approval {
+            input.approval_source = ApprovalSource::CurrentTaskInstruction;
+        }
+        input
+    }
+
     /// Return the effective execution effort, defaulting to `"unknown"`.
     pub fn effort(&self) -> &str {
         self.execution_effort.as_deref().unwrap_or("unknown")
+    }
+
+    /// Whether the effective execution effort is the exhaustive tier. `exhaustive`
+    /// is the neutral canonical value; `ultracode` is the legacy parse-compatible
+    /// alias mapping to the same exhaustive semantics. Effort is thinking-intensity
+    /// only — being exhaustive never escalates permission, parallelism, or args.
+    pub fn is_exhaustive_effort(&self) -> bool {
+        matches!(self.effort(), "exhaustive" | "ultracode")
     }
 
     /// Return the effective workflow authority, defaulting to `"none"`.

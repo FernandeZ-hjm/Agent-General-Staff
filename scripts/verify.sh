@@ -960,9 +960,26 @@ run_check "skill verify --host claude-code (json)" \
     cargo run -q -p ags-cli -- skill verify --host claude-code --format json
 
 # Unified inventory: four kinds, AGS suite-interface, BOTH hosts, canonical field.
+# Route-target rows are metadata-only internal entrypoints and intentionally have
+# no host visibility evidence.
 echo -n "[....] skill inventory: 4 kinds + both hosts + canonical "
 if cargo run -q -p ags-cli -- skill --format json > /tmp/verify-skill-inv.json 2>&1; then
-    if python3 -c "import json; d=json.load(open('/tmp/verify-skill-inv.json'))['inventory']; ks={c['kind'] for c in d['capabilities']}; assert {'skill','mcp','suite-interface','cli-backed'} <= ks, ks; assert next(c for c in d['capabilities'] if c['name']=='ags')['kind']=='suite-interface'; assert set(d['hosts']) >= {'claude-code','codex'}, d['hosts']; assert isinstance(d['summary']['canonical_present'], int); assert all(any(v['host']=='codex' for v in c['host_visibility']) for c in d['capabilities'])"; then
+    if python3 - <<'PY'
+import json
+
+d = json.load(open('/tmp/verify-skill-inv.json'))['inventory']
+ks = {c['kind'] for c in d['capabilities']}
+assert {'skill', 'mcp', 'suite-interface', 'cli-backed'} <= ks, ks
+assert next(c for c in d['capabilities'] if c['name'] == 'ags')['kind'] == 'suite-interface'
+assert set(d['hosts']) >= {'claude-code', 'codex'}, d['hosts']
+assert isinstance(d['summary']['canonical_present'], int)
+assert all(
+    c.get('managed_status') == 'route-target'
+    or any(v['host'] == 'codex' for v in c['host_visibility'])
+    for c in d['capabilities']
+)
+PY
+    then
         echo "OK"
     else
         echo "FAIL (missing a kind / AGS not suite-interface / missing host / no canonical)"
@@ -977,9 +994,9 @@ fi
 # with URL sources, not bundled canonical bodies. AGS must not write anything or
 # create dangling host thin indexes from a remote URL; the proposal is safely
 # blocked until a concrete local source exists.
-echo -n "[....] skill propose adopt auto-debug (public recommendation) is blocked/no-write "
+echo -n "[....] skill propose adopt diagnose (public recommendation) is blocked/no-write "
 set +e
-cargo run -q -p ags-cli -- skill propose --action adopt --skill auto-debug --format json > /tmp/verify-skill-propose.json 2>&1
+cargo run -q -p ags-cli -- skill propose --action adopt --skill diagnose --format json > /tmp/verify-skill-propose.json 2>&1
 skill_propose_rc=$?
 set -e
 if python3 -c "import json; d=json.load(open('/tmp/verify-skill-propose.json')); assert d['found'] is True; assert d['apply_requested'] is False; assert d['applied'] is False; assert d['apply_status']=='dry-run'; assert d['planned_writes'] == []; assert d['applied_writes'] == []; assert d['apply_errors'] == []; assert d['blocked_reasons'], d" \

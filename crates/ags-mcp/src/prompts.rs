@@ -27,7 +27,7 @@ pub fn list_prompts() -> PromptListResult {
                 description: Some(
                     "Load the AGS global governance kernel — initialization gate \
                      (call ags_preflight FIRST), mandatory lifecycle, critical rules, \
-                     EvoMap parallel-call boundary, and stop conditions. \
+                     host boundaries, and stop conditions. \
                      Best loaded at session start or when the host first encounters \
                      a development-related request. The initialization gate is \
                      non-negotiable: MCP preflight or CLI fallback must complete \
@@ -40,8 +40,8 @@ pub fn list_prompts() -> PromptListResult {
                 name: "ags_solution_phase".to_string(),
                 description: Some(
                     "Guide the user through AGS solution formation: understand the \
-                     request, run EvoMap recall for non-trivial tasks, present the \
-                     solution, and wait for user confirmation. Reminds that \"方案 OK\" \
+                     request, gather relevant project context, present the solution, \
+                     and wait for user confirmation. Reminds that \"方案 OK\" \
                      does NOT authorize a task card — the three-gate threshold \
                      (方案 OK → 任务卡指令 → 任务分级路由) is mandatory."
                         .to_string(),
@@ -100,7 +100,7 @@ fn prompt_global_kernel() -> PromptGetResult {
             "AGS global governance kernel — load at session start or upon first \
              development request. Leads with mandatory initialization gate \
              (call ags_preflight FIRST), then establishes lifecycle, critical rules, \
-             EvoMap boundary, and stop conditions."
+             host boundaries, and stop conditions."
                 .to_string(),
         ),
         messages: vec![PromptMessage {
@@ -125,10 +125,8 @@ fn prompt_solution_phase(arguments: &serde_json::Value) -> PromptGetResult {
          ### Instructions\n\n\
          1. **Understand the request**. Clarify ambiguities. Diagnose if it describes a problem.\n\
          2. **Read context capsule and task memory** (AGS preflight should have surfaced paths).\n\
-         3. **For non-trivial tasks** (Medium/Heavy, development, architecture, refactoring, \
-         release, governance change): call EvoMap MCP in parallel for advisory method recall. \
-         AGS MCP does NOT call EvoMap MCP — you must call it yourself. Document recall state \
-         in the solution text per `ags://protocol/evolution-memory`.\n\
+         3. **Read relevant project docs surfaced by preflight**. Keep context gathering \
+         explicit and source-backed.\n\
          4. **Form a concrete solution** — not a task card. Include: approach, impact scope, \
          risks, alternatives considered.\n\
          5. **Present the solution to the user** and wait for explicit confirmation (\"方案 OK\").\n\
@@ -139,18 +137,11 @@ fn prompt_solution_phase(arguments: &serde_json::Value) -> PromptGetResult {
          - Proposed approach with rationale\n\
          - Impact scope and blast radius\n\
          - Risks and mitigations\n\
-         - Alternatives considered\n\
-         - EvoMap recall state (for non-trivial tasks):\n\
-           - `status`: available / unavailable / skipped\n\
-           - `search`: full / low_confidence_only / none\n\
-           - `fetch`: success / failed / not_attempted\n\
-           - Recall path, input signals, hit signals, adoption, rejection, impact, \
-           confidence/limitations\n\n\
+         - Alternatives considered\n\n\
          ### Key rules\n\n\
          - Do NOT classify as Light/Medium/Heavy yet.\n\
          - Do NOT generate a task card yet.\n\
-         - \"方案 OK\" ≠ task card approval → three-gate threshold.\n\
-         - AGS is governance authority; EvoMap is advisory only.\n\n\
+         - \"方案 OK\" ≠ task card approval → three-gate threshold.\n\n\
          ### Next phase\n\n\
          After user confirmation, wait for explicit task-card instruction before routing. \
          Use `ags_solution_check` tool or `ags_task_card_request_gate` prompt to enforce \
@@ -160,7 +151,7 @@ fn prompt_solution_phase(arguments: &serde_json::Value) -> PromptGetResult {
 
     PromptGetResult {
         description: Some(
-            "Guide through AGS solution formation phase — understand, recall, \
+            "Guide through AGS solution formation phase — understand, gather context, \
              form solution, present, wait for confirmation."
                 .to_string(),
         ),

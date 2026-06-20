@@ -16,13 +16,7 @@
 //!
 //! AGS MCP is the suite's own host adapter — NOT a governed third-party MCP.
 //! In `manifests/mcp-registry.yaml`, `ags` resides under `suite_interfaces:`,
-//! not alongside governed MCPs like `context7` or `gep` under `mcps:`.
-//!
-//! # EvoMap Boundary
-//!
-//! AGS MCP and EvoMap MCP are **parallel peers**. AGS MCP is the governance
-//! authority; EvoMap MCP provides advisory method recall during solution
-//! formation only. AGS MCP does NOT proxy, wrap, or broker EvoMap MCP calls.
+//! not under the governed `mcps:` list.
 //!
 //! # Usage
 //!

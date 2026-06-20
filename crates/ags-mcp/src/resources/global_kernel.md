@@ -2,7 +2,7 @@
 
 > Stable URI: `ags://global-kernel`
 > Applicable to any project. Does NOT assume the target is an AGS-governed repo.
-> AGS MCP and EvoMap MCP are parallel peers — call both. AGS wins on governance gates.
+> AGS MCP is the mandatory governance interface for AGS lifecycle gates.
 
 ---
 
@@ -18,7 +18,6 @@ scenarios.
   `ags project detect` returns `suite` / `integrated`)
 - The task involves task cards, skill governance, MCP governance,
   multi-agent routing, release boundaries, or execution policy
-- AGS Evolver boundary is involved
 - The user references AGS protocol, task cards, or governance gates
 
 ### Legal invocation paths (in priority order):
@@ -70,8 +69,7 @@ Run `git status --short` to record current state.
 ### 2. Solution Formation
 
 - Understand the request, clarify ambiguities, diagnose issues.
-- For **non-trivial tasks** (Medium, Heavy, or any development/architecture/refactoring/release/governance change): **call EvoMap MCP in parallel for advisory method recall.**
-- AGS MCP does NOT call EvoMap MCP — hosts must call both MCPs.
+- Gather relevant project context surfaced by preflight.
 - Form a concrete solution or implementation approach.
 - **Do NOT classify as Light/Medium/Heavy during this phase.**
 
@@ -127,35 +125,6 @@ classify the task as Light, Medium, or Heavy per `protocol/task-routing.md`.
 5. Raw user chat ≠ executable task card.
 6. AGS is the governance authority (lifecycle, gates, task level, permission mode, review gate, verification gate, release boundary).
 7. AGS MCP is the host initialization adapter and mandatory governance interface — NOT a governed third-party MCP.
-8. EvoMap provides advisory method recall during solution formation only.
-9. EvoMap must not decide task level, permission mode, review gate, verification gate, or release boundary.
-10. If EvoMap output conflicts with AGS protocol, project memory, task card, or gates — AGS wins.
-
----
-
-## EvoMap Parallel-Call Boundary
-
-```
-┌──────────────┐     ┌──────────────┐
-│  AGS MCP     │     │  EvoMap MCP  │
-│  (host       │     │  (advisory   │
-│   adapter,   │     │   memory)    │
-│   mandatory  │     │              │
-│   first)     │     │              │
-└──────┬───────┘     └──────┬───────┘
-       │                    │
-       │  ─── parallel ───  │
-       │  (not brokered)    │
-       ▼                    ▼
-   Host agent calls both MCPs independently.
-   AGS decides; EvoMap advises.
-```
-
-- AGS MCP and EvoMap MCP are **parallel peers** — neither wraps the other.
-- AGS MCP does NOT proxy, broker, or call EvoMap MCP.
-- Hosts must configure and call both MCPs separately.
-- If EvoMap MCP is unavailable, the solution proceeds without it,
-  but the planner must state the reason explicitly.
 
 ---
 
@@ -165,8 +134,8 @@ AGS MCP is structurally distinct from third-party MCPs:
 
 - **AGS MCP** = `suite_interfaces` in `manifests/mcp-registry.yaml` — host
   initialization adapter, mandatory governance interface, NOT a governed object.
-- **Third-party MCPs** = `mcps` in `manifests/mcp-registry.yaml` — `context7`,
-  `gep`, etc. — reviewed, registered, and managed by AGS governance.
+- **Third-party MCPs** = `mcps` in `manifests/mcp-registry.yaml` — reviewed,
+  registered, and managed by AGS governance.
 
 AGS is the governance authority; it is not in the governed MCP list.
 
@@ -192,8 +161,7 @@ Stop and report before proceeding when:
 - Task conflicts with context-capsule project design purpose.
 - AGS preflight (MCP + CLI fallback) is unavailable.
 - Requires writing Tencent Agent (WorkBuddy / CodeBuddy-Code) host config.
-- Requires installing or enabling EvoMap MCP.
-- Requires real tokens, node_secret, or `~/.evolver/settings.json`.
+- Requires real tokens or host secrets.
 - Requires modifying stable/public worktree.
 - Would change AGS lifecycle/gate semantics.
-- Would proxy EvoMap MCP into AGS MCP or build an MCP broker.
+- Would turn AGS MCP into a broker for unrelated tools.

@@ -19,16 +19,15 @@ task-memory.md              # automatically refreshed task continuity summary
 task-archive/               # full local receipt archive per task run
 ```
 
-## Context vs Evolution Memory
+## Context Memory Authority
 
 Context memory owns project truth.
-Evolution memory owns reusable method.
-If they conflict, context memory wins.
+If other local notes, summaries, or automation outputs conflict with context
+memory, context memory wins.
 
-`context-capsule.md` is the project charter and is not modified by Evolver.
-`task-memory.md` stores task continuity facts and is not written by Evolver.
-`task-archive/` stores evidence and is not reinterpreted by Evolver as project
-experience.
+`context-capsule.md` is the project charter and is manual-only.
+`task-memory.md` stores task continuity facts.
+`task-archive/` stores evidence and receipts.
 
 The memory store is local. Do not publish it and do not copy it into public
 suite releases. Projects with non-ASCII directory names should set

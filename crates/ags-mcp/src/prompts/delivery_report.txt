@@ -54,5 +54,4 @@ a matching closing four-backtick fence. Do not add prose outside the block.
 - Did you run the narrowest relevant verification?
 - Did you check the review gate status?
 - If Medium/Heavy: is review gate complete? If not, mark "部分完成".
-- Is the EvoMap method-capture boundary respected? (Only reusable method goes to Evolver;
-  project facts stay in AGS memory.)
+- Are project facts, evidence, and reusable methods kept in the correct AGS records?

@@ -234,10 +234,36 @@ const EXECUTION_OVERRIDES: &[(&str, &str)] = &[
     ("开始做", "zh"),
     ("去改", "zh"),
     ("动手", "zh"),
+    ("一口气做完", "zh"),
+    ("做完核验", "zh"),
+    ("做完验证", "zh"),
+    ("实现这个", "zh"),
+    ("修复这个", "zh"),
+    ("把它修复", "zh"),
+    ("把它做完", "zh"),
     ("implement this", "en"),
     ("execute this", "en"),
     ("start implementing", "en"),
+    ("fix this", "en"),
+    ("get it done", "en"),
 ];
+
+/// Deterministic detection of a STRUCTURED current-task execution approval on the
+/// live user request (an explicit imperative instruction to implement / fix /
+/// finish — see [`EXECUTION_OVERRIDES`]). This is the signal the gate / compiler
+/// maps to `execution_policy::ApprovalSource::CurrentTaskInstruction`, which
+/// unlocks Heavy + edit-with-confirmation without a plan-only round trip. It is
+/// NEVER derived from task-card text — only from the live request. Bare "执行"
+/// is intentionally excluded (it reads as a topic word, not an authorization).
+pub fn detect_current_task_approval(request: &str) -> bool {
+    let lower = request.to_lowercase();
+    let lower_collapsed = collapse_ws(&lower);
+    let compact = despace(&lower);
+    EXECUTION_OVERRIDES.iter().any(|(pat, _lang)| {
+        let pat_compact = despace(pat);
+        contains_bounded(&lower_collapsed, pat) || contains_bounded(&compact, &pat_compact)
+    })
+}
 
 // ── Classifier ───────────────────────────────────────────────────────────────
 
@@ -385,6 +411,353 @@ pub fn classify(request: &str) -> Classification {
         detected_advisory_intent,
         mutation_allowed,
         advisory_override_triggers,
+    }
+}
+
+// ── Demand classification (Capability Route input) ───────────────────────────
+//
+// `classify_demand` is the deterministic text → demand-kind signal that feeds
+// AGS Capability Route. It is the sibling of `classify` (which feeds Value
+// Route / the task-card gate): same locked-trigger-table approach, same
+// normalization (`despace` / `collapse_ws` / `contains_bounded`), no model
+// judgment. Where `classify` answers "is this a prompt/task-card request?",
+// `classify_demand` answers "what kind of development work is being asked
+// for?" so AGS can route to the capability best suited to it.
+//
+// Like `classify`, this is deliberately **recall-biased**: the downstream
+// Capability Route is advisory-only and never blocks, so a false positive only
+// over-suggests a skill wakeup (a safe default) and a missed inflection only
+// under-suggests one. Triggers are kept reasonably verb-bound to avoid the most
+// obvious topic-vs-request confusions, but exhaustive precision is a non-goal.
+
+/// The kind of development demand detected in a request, used to route to a
+/// managed capability. Precedence (highest first — development demands win over
+/// external mutations per governance policy):
+/// `TaskCardHandoff > Debug > Verify > CodeReview > Commit > Architecture >
+/// Brainstorm > MailSend > Messaging > Approval > CalendarQuery > LarkDoc >
+/// SheetOp > LarkCollab > DocsLookup > None`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DemandKind {
+    /// Generate a prompt / task card / hand off to an executor. Delegated to
+    /// `classify` so the handoff trigger table is never duplicated.
+    TaskCardHandoff,
+    /// An error, failing test, crash, or unexpected runtime behavior.
+    Debug,
+    /// Confirming work is complete / ready to commit / passing.
+    Verify,
+    /// Code review of existing code / a PR / a diff.
+    CodeReview,
+    /// Generate a commit message.
+    Commit,
+    /// Refactoring, technical debt, boundary/coupling cleanup.
+    Architecture,
+    /// Open-ended feature, design, or recommendation work.
+    Brainstorm,
+    /// Compose / send an email (e.g. lark-mail). External write — confirm.
+    MailSend,
+    /// Send an IM / chat message (e.g. lark-im / Feishu group). External write.
+    Messaging,
+    /// Submit / act on an approval (e.g. lark-approval). External write.
+    Approval,
+    /// Query a calendar / schedule (e.g. lark-calendar). Read-mostly.
+    CalendarQuery,
+    /// Read / edit a Feishu (Lark) document (e.g. lark-doc). Platform-bound.
+    LarkDoc,
+    /// Read / edit a Feishu (Lark) sheet / base (e.g. lark-sheets). Platform-bound.
+    SheetOp,
+    /// Broad Feishu/Lark collaboration task when no narrower Lark demand fires.
+    LarkCollab,
+    /// Looking up library / API documentation (e.g. context7).
+    DocsLookup,
+    /// No development demand detected (ordinary prose).
+    None,
+}
+
+impl DemandKind {
+    /// Stable kebab-case identifier, identical to the serialized form.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DemandKind::TaskCardHandoff => "task-card-handoff",
+            DemandKind::Debug => "debug",
+            DemandKind::Verify => "verify",
+            DemandKind::CodeReview => "code-review",
+            DemandKind::Commit => "commit",
+            DemandKind::Architecture => "architecture",
+            DemandKind::Brainstorm => "brainstorm",
+            DemandKind::MailSend => "mail-send",
+            DemandKind::Messaging => "messaging",
+            DemandKind::Approval => "approval",
+            DemandKind::CalendarQuery => "calendar-query",
+            DemandKind::LarkDoc => "lark-doc",
+            DemandKind::SheetOp => "sheet-op",
+            DemandKind::LarkCollab => "lark-collab",
+            DemandKind::DocsLookup => "docs-lookup",
+            DemandKind::None => "none",
+        }
+    }
+}
+
+/// The result of classifying a request's development demand. Deterministic.
+#[derive(Debug, Clone, Serialize)]
+pub struct DemandClassification {
+    /// The highest-precedence demand kind matched.
+    pub kind: DemandKind,
+    /// Every demand trigger phrase that matched, in its authored form. For a
+    /// `TaskCardHandoff` verdict these are the `classify` handoff triggers.
+    pub matched_triggers: Vec<String>,
+}
+
+/// `(pattern, kind, lang)` for demand detection. Patterns are authored
+/// lowercased; Chinese patterns are space-free, English patterns keep natural
+/// spaces — each is matched against both the collapsed and despaced input, like
+/// `TRIGGERS`. `TaskCardHandoff` and `None` are intentionally absent here:
+/// handoff is delegated to `classify` (no duplicate triggers) and `None` is the
+/// fallback when nothing matches.
+const DEMAND_TRIGGERS: &[(&str, DemandKind, &str)] = &[
+    // ── Debug ──
+    ("报错", DemandKind::Debug, "zh"),
+    ("出bug", DemandKind::Debug, "zh"),
+    ("有bug", DemandKind::Debug, "zh"),
+    ("测试挂了", DemandKind::Debug, "zh"),
+    ("测试失败", DemandKind::Debug, "zh"),
+    ("不工作了", DemandKind::Debug, "zh"),
+    ("跑不起来", DemandKind::Debug, "zh"),
+    ("崩溃了", DemandKind::Debug, "zh"),
+    ("error", DemandKind::Debug, "en"),
+    ("errors", DemandKind::Debug, "en"),
+    ("failing test", DemandKind::Debug, "en"),
+    ("test failure", DemandKind::Debug, "en"),
+    ("stack trace", DemandKind::Debug, "en"),
+    ("stacktrace", DemandKind::Debug, "en"),
+    ("traceback", DemandKind::Debug, "en"),
+    ("crash", DemandKind::Debug, "en"),
+    ("crashed", DemandKind::Debug, "en"),
+    ("crashing", DemandKind::Debug, "en"),
+    // ── Verify ──
+    ("做完了", DemandKind::Verify, "zh"),
+    ("搞定了", DemandKind::Verify, "zh"),
+    ("验证一下", DemandKind::Verify, "zh"),
+    ("帮我验证", DemandKind::Verify, "zh"),
+    ("准备提交", DemandKind::Verify, "zh"),
+    ("done", DemandKind::Verify, "en"),
+    ("ready to commit", DemandKind::Verify, "en"),
+    ("verify", DemandKind::Verify, "en"),
+    // ── CodeReview ──
+    ("代码审查", DemandKind::CodeReview, "zh"),
+    ("审查代码", DemandKind::CodeReview, "zh"),
+    ("评审代码", DemandKind::CodeReview, "zh"),
+    ("帮我review", DemandKind::CodeReview, "zh"),
+    ("code review", DemandKind::CodeReview, "en"),
+    ("review my code", DemandKind::CodeReview, "en"),
+    ("review this code", DemandKind::CodeReview, "en"),
+    ("review the diff", DemandKind::CodeReview, "en"),
+    // ── Commit ──
+    ("提交信息", DemandKind::Commit, "zh"),
+    ("提交说明", DemandKind::Commit, "zh"),
+    ("写个commit", DemandKind::Commit, "zh"),
+    ("生成commit", DemandKind::Commit, "zh"),
+    ("commit message", DemandKind::Commit, "en"),
+    ("commit msg", DemandKind::Commit, "en"),
+    ("conventional commit", DemandKind::Commit, "en"),
+    // ── Architecture ──
+    ("重构", DemandKind::Architecture, "zh"),
+    ("技术债", DemandKind::Architecture, "zh"),
+    ("边界混乱", DemandKind::Architecture, "zh"),
+    ("难维护", DemandKind::Architecture, "zh"),
+    ("refactor", DemandKind::Architecture, "en"),
+    ("tech debt", DemandKind::Architecture, "en"),
+    ("technical debt", DemandKind::Architecture, "en"),
+    ("simplify architecture", DemandKind::Architecture, "en"),
+    // ── Brainstorm ──
+    ("设计一个", DemandKind::Brainstorm, "zh"),
+    ("怎么实现", DemandKind::Brainstorm, "zh"),
+    ("如何实现", DemandKind::Brainstorm, "zh"),
+    ("做一个", DemandKind::Brainstorm, "zh"),
+    ("加一个功能", DemandKind::Brainstorm, "zh"),
+    // `推荐` kept verb-bound to avoid matching topics like `推荐系统` / `推荐算法`.
+    ("推荐一下", DemandKind::Brainstorm, "zh"),
+    ("推荐个", DemandKind::Brainstorm, "zh"),
+    ("求推荐", DemandKind::Brainstorm, "zh"),
+    ("有什么推荐", DemandKind::Brainstorm, "zh"),
+    ("brainstorm", DemandKind::Brainstorm, "en"),
+    ("design a", DemandKind::Brainstorm, "en"),
+    ("how should i build", DemandKind::Brainstorm, "en"),
+    // ── DocsLookup ──
+    ("查文档", DemandKind::DocsLookup, "zh"),
+    ("看文档", DemandKind::DocsLookup, "zh"),
+    ("文档", DemandKind::DocsLookup, "zh"),
+    ("怎么用这个api", DemandKind::DocsLookup, "zh"),
+    ("api 怎么用", DemandKind::DocsLookup, "zh"),
+    ("library docs", DemandKind::DocsLookup, "en"),
+    ("api docs", DemandKind::DocsLookup, "en"),
+    ("docs", DemandKind::DocsLookup, "en"),
+    ("how do i use", DemandKind::DocsLookup, "en"),
+    // ── MailSend ── (external mutation; outranks DocsLookup so "把文档发邮件"
+    //   routes to mail, not docs)
+    ("发邮件", DemandKind::MailSend, "zh"),
+    ("发个邮件", DemandKind::MailSend, "zh"),
+    ("发送邮件", DemandKind::MailSend, "zh"),
+    ("写封邮件", DemandKind::MailSend, "zh"),
+    ("发邮件给", DemandKind::MailSend, "zh"),
+    ("email to", DemandKind::MailSend, "en"),
+    ("send an email", DemandKind::MailSend, "en"),
+    ("send email", DemandKind::MailSend, "en"),
+    // ── Messaging (IM / Feishu group) ──
+    ("发消息", DemandKind::Messaging, "zh"),
+    ("发个消息", DemandKind::Messaging, "zh"),
+    ("发到群里", DemandKind::Messaging, "zh"),
+    ("群发", DemandKind::Messaging, "zh"),
+    ("飞书群", DemandKind::Messaging, "zh"),
+    ("send a message", DemandKind::Messaging, "en"),
+    ("send to lark", DemandKind::Messaging, "en"),
+    ("post to the channel", DemandKind::Messaging, "en"),
+    // ── Approval ──
+    ("发起审批", DemandKind::Approval, "zh"),
+    ("提交审批", DemandKind::Approval, "zh"),
+    ("审批一下", DemandKind::Approval, "zh"),
+    ("approval request", DemandKind::Approval, "en"),
+    ("submit for approval", DemandKind::Approval, "en"),
+    // ── CalendarQuery ── (first-person / possessive bound to avoid stealing
+    //   "重构日程模块")
+    ("我的日程", DemandKind::CalendarQuery, "zh"),
+    ("查日程", DemandKind::CalendarQuery, "zh"),
+    ("看日程", DemandKind::CalendarQuery, "zh"),
+    ("飞书日历", DemandKind::CalendarQuery, "zh"),
+    ("日历安排", DemandKind::CalendarQuery, "zh"),
+    ("今天的会", DemandKind::CalendarQuery, "zh"),
+    ("my calendar", DemandKind::CalendarQuery, "en"),
+    ("my schedule", DemandKind::CalendarQuery, "en"),
+    ("agenda for", DemandKind::CalendarQuery, "en"),
+    // ── LarkDoc ── (platform-bound so generic "文档" stays DocsLookup→context7)
+    ("飞书文档", DemandKind::LarkDoc, "zh"),
+    ("飞书云文档", DemandKind::LarkDoc, "zh"),
+    ("飞书知识库", DemandKind::LarkDoc, "zh"),
+    ("lark doc", DemandKind::LarkDoc, "en"),
+    ("feishu doc", DemandKind::LarkDoc, "en"),
+    // ── SheetOp ── (platform-bound)
+    ("飞书表格", DemandKind::SheetOp, "zh"),
+    ("飞书多维表格", DemandKind::SheetOp, "zh"),
+    ("飞书电子表格", DemandKind::SheetOp, "zh"),
+    ("lark sheet", DemandKind::SheetOp, "en"),
+    ("feishu sheet", DemandKind::SheetOp, "en"),
+    // ── LarkCollab ── (broad catch-all after narrower Lark demands)
+    ("飞书", DemandKind::LarkCollab, "zh"),
+    ("会议纪要", DemandKind::LarkCollab, "zh"),
+    ("妙记", DemandKind::LarkCollab, "zh"),
+    ("云盘", DemandKind::LarkCollab, "zh"),
+    ("通讯录", DemandKind::LarkCollab, "zh"),
+    ("联系人", DemandKind::LarkCollab, "zh"),
+    ("okr", DemandKind::LarkCollab, "zh"),
+    ("白板", DemandKind::LarkCollab, "zh"),
+    ("飞书应用", DemandKind::LarkCollab, "zh"),
+    ("lark", DemandKind::LarkCollab, "en"),
+    ("feishu", DemandKind::LarkCollab, "en"),
+];
+
+/// Classify a request's development demand for Capability Route. Deterministic:
+/// same input → same demand. Task-card / handoff demand is delegated to
+/// [`classify`] (so the handoff trigger table is not duplicated); the remaining
+/// kinds come from [`DEMAND_TRIGGERS`]. Precedence:
+/// `TaskCardHandoff > Debug > Verify > CodeReview > Commit > Architecture >
+/// Brainstorm > MailSend > Messaging > Approval > CalendarQuery > LarkDoc >
+/// SheetOp > LarkCollab > DocsLookup > None`.
+pub fn classify_demand(request: &str) -> DemandClassification {
+    let base = classify(request);
+
+    let lower = request.to_lowercase();
+    let lower_collapsed = collapse_ws(&lower);
+    let compact = despace(&lower);
+
+    let mut matched_triggers: Vec<String> = Vec::new();
+    let (
+        mut has_debug,
+        mut has_verify,
+        mut has_review,
+        mut has_commit,
+        mut has_arch,
+        mut has_brain,
+        mut has_docs,
+    ) = (false, false, false, false, false, false, false);
+    let (mut has_mail, mut has_msg, mut has_approval, mut has_calendar) =
+        (false, false, false, false);
+    let (mut has_lark_doc, mut has_sheet, mut has_lark) = (false, false, false);
+
+    for (pattern, kind, _lang) in DEMAND_TRIGGERS {
+        let pat_compact = despace(pattern);
+        let hit =
+            contains_bounded(&lower_collapsed, pattern) || contains_bounded(&compact, &pat_compact);
+        if !hit {
+            continue;
+        }
+        matched_triggers.push((*pattern).to_string());
+        match kind {
+            DemandKind::Debug => has_debug = true,
+            DemandKind::Verify => has_verify = true,
+            DemandKind::CodeReview => has_review = true,
+            DemandKind::Commit => has_commit = true,
+            DemandKind::Architecture => has_arch = true,
+            DemandKind::Brainstorm => has_brain = true,
+            DemandKind::MailSend => has_mail = true,
+            DemandKind::Messaging => has_msg = true,
+            DemandKind::Approval => has_approval = true,
+            DemandKind::CalendarQuery => has_calendar = true,
+            DemandKind::LarkDoc => has_lark_doc = true,
+            DemandKind::SheetOp => has_sheet = true,
+            DemandKind::LarkCollab => has_lark = true,
+            DemandKind::DocsLookup => has_docs = true,
+            // TaskCardHandoff / None never appear in DEMAND_TRIGGERS.
+            DemandKind::TaskCardHandoff | DemandKind::None => {}
+        }
+    }
+
+    // Precedence (development demands win over external mutations per policy;
+    // platform-bound Lark doc/sheet outrank generic docs-lookup):
+    // TaskCardHandoff > Debug > Verify > CodeReview > Commit > Architecture >
+    // Brainstorm > MailSend > Messaging > Approval > CalendarQuery > LarkDoc >
+    // SheetOp > LarkCollab > DocsLookup > None.
+    // Handoff reuses the `classify` signal.
+    if base.is_task_card_request {
+        return DemandClassification {
+            kind: DemandKind::TaskCardHandoff,
+            matched_triggers: base.matched_triggers,
+        };
+    }
+    let kind = if has_debug {
+        DemandKind::Debug
+    } else if has_verify {
+        DemandKind::Verify
+    } else if has_review {
+        DemandKind::CodeReview
+    } else if has_commit {
+        DemandKind::Commit
+    } else if has_arch {
+        DemandKind::Architecture
+    } else if has_brain {
+        DemandKind::Brainstorm
+    } else if has_mail {
+        DemandKind::MailSend
+    } else if has_msg {
+        DemandKind::Messaging
+    } else if has_approval {
+        DemandKind::Approval
+    } else if has_calendar {
+        DemandKind::CalendarQuery
+    } else if has_lark_doc {
+        DemandKind::LarkDoc
+    } else if has_sheet {
+        DemandKind::SheetOp
+    } else if has_lark {
+        DemandKind::LarkCollab
+    } else if has_docs {
+        DemandKind::DocsLookup
+    } else {
+        DemandKind::None
+    };
+
+    DemandClassification {
+        kind,
+        matched_triggers,
     }
 }
 
@@ -991,6 +1364,254 @@ mod tests {
         ] {
             assert_eq!(path.as_str(), s);
             assert_eq!(serde_json::to_value(path).unwrap(), s);
+        }
+    }
+
+    // ── classify_demand ──────────────────────────────────────────────────────
+
+    /// Each non-handoff demand kind fires on representative phrases.
+    #[test]
+    fn demand_kinds_fire() {
+        let cases = [
+            ("测试挂了，帮我看下", DemandKind::Debug),
+            ("the build throws an error", DemandKind::Debug),
+            ("stack trace 看不懂", DemandKind::Debug),
+            ("做完了，验证一下", DemandKind::Verify),
+            ("ready to commit, please verify", DemandKind::Verify),
+            ("帮我做一次代码审查", DemandKind::CodeReview),
+            ("please review my code", DemandKind::CodeReview),
+            ("帮我写个commit", DemandKind::Commit),
+            ("generate a conventional commit message", DemandKind::Commit),
+            ("这块要重构一下", DemandKind::Architecture),
+            ("let's refactor this module", DemandKind::Architecture),
+            ("设计一个登录功能", DemandKind::Brainstorm),
+            ("design a caching layer", DemandKind::Brainstorm),
+            ("查一下 React useEffect 文档", DemandKind::DocsLookup),
+            ("how do i use this api", DemandKind::DocsLookup),
+        ];
+        for (input, want) in cases {
+            let d = classify_demand(input);
+            assert_eq!(d.kind, want, "input {input:?} → {:?}", d.kind);
+            assert!(!d.matched_triggers.is_empty(), "no triggers for {input:?}");
+        }
+    }
+
+    /// Inflected English debug phrasings still route (recall hardening).
+    #[test]
+    fn demand_debug_inflections_fire() {
+        for input in ["I'm getting errors", "it crashed", "the app keeps crashing"] {
+            assert_eq!(classify_demand(input).kind, DemandKind::Debug, "{input:?}");
+        }
+    }
+
+    /// `推荐` is verb-bound: a recommender-system *topic* must NOT route to
+    /// Brainstorm, while a genuine "recommend me ..." request does.
+    #[test]
+    fn demand_recommend_is_verb_bound() {
+        assert_eq!(
+            classify_demand("推荐系统的代码在哪").kind,
+            DemandKind::None,
+            "recommender-system topic must not route"
+        );
+        assert_eq!(
+            classify_demand("推荐一下用什么缓存方案").kind,
+            DemandKind::Brainstorm
+        );
+    }
+
+    /// Handoff/task-card demand is delegated to `classify` (no duplicated table).
+    #[test]
+    fn demand_handoff_delegates_to_classify() {
+        for input in [
+            "按这个方案出任务卡",
+            "交给 Claude Code 执行",
+            "give me a prompt",
+        ] {
+            let d = classify_demand(input);
+            assert_eq!(d.kind, DemandKind::TaskCardHandoff, "{input:?}");
+            assert!(!d.matched_triggers.is_empty(), "{input:?}");
+        }
+    }
+
+    /// Ordinary prose / pure questions yield no demand.
+    #[test]
+    fn demand_none_on_prose() {
+        for input in ["解释这段代码", "这是什么意思", "what does this function do"] {
+            let d = classify_demand(input);
+            assert_eq!(
+                d.kind,
+                DemandKind::None,
+                "{input:?} matched {:?}",
+                d.matched_triggers
+            );
+            assert!(d.matched_triggers.is_empty(), "{input:?}");
+        }
+    }
+
+    /// Precedence: handoff outranks debug; debug outranks verify; verify
+    /// outranks architecture.
+    #[test]
+    fn demand_precedence() {
+        // handoff > debug
+        assert_eq!(
+            classify_demand("报错了，按这个方案出任务卡交给 cc 执行").kind,
+            DemandKind::TaskCardHandoff
+        );
+        // debug > verify
+        assert_eq!(
+            classify_demand("done, but the test failure is back").kind,
+            DemandKind::Debug
+        );
+        // verify > architecture
+        assert_eq!(
+            classify_demand("重构做完了，验证一下").kind,
+            DemandKind::Verify
+        );
+        // code review > architecture
+        assert_eq!(
+            classify_demand("重构后帮我做一次代码审查").kind,
+            DemandKind::CodeReview
+        );
+    }
+
+    /// Spacing and casing must not change the verdict.
+    #[test]
+    fn demand_spacing_and_casing_insensitive() {
+        for variant in ["REFACTOR this", "refactor this", "Refactor This"] {
+            assert_eq!(
+                classify_demand(variant).kind,
+                DemandKind::Architecture,
+                "{variant:?}"
+            );
+        }
+    }
+
+    /// Stable kebab-case identifiers, identical to the serialized form.
+    #[test]
+    fn demand_kind_str_roundtrips_serialized_form() {
+        for (kind, s) in [
+            (DemandKind::TaskCardHandoff, "task-card-handoff"),
+            (DemandKind::Debug, "debug"),
+            (DemandKind::Verify, "verify"),
+            (DemandKind::CodeReview, "code-review"),
+            (DemandKind::Commit, "commit"),
+            (DemandKind::Architecture, "architecture"),
+            (DemandKind::Brainstorm, "brainstorm"),
+            (DemandKind::MailSend, "mail-send"),
+            (DemandKind::Messaging, "messaging"),
+            (DemandKind::Approval, "approval"),
+            (DemandKind::CalendarQuery, "calendar-query"),
+            (DemandKind::LarkDoc, "lark-doc"),
+            (DemandKind::SheetOp, "sheet-op"),
+            (DemandKind::LarkCollab, "lark-collab"),
+            (DemandKind::DocsLookup, "docs-lookup"),
+            (DemandKind::None, "none"),
+        ] {
+            assert_eq!(kind.as_str(), s);
+            assert_eq!(serde_json::to_value(kind).unwrap(), s);
+        }
+    }
+
+    /// Headline disambiguation: an email-send request that mentions a document
+    /// must route to MailSend, NOT DocsLookup (which would wrongly hit context7).
+    #[test]
+    fn demand_mail_beats_docs() {
+        let zh = classify_demand("把这个文档发邮件给张三");
+        assert_eq!(
+            zh.kind,
+            DemandKind::MailSend,
+            "triggers={:?}",
+            zh.matched_triggers
+        );
+        let en = classify_demand("send an email with this doc to alice");
+        assert_eq!(
+            en.kind,
+            DemandKind::MailSend,
+            "triggers={:?}",
+            en.matched_triggers
+        );
+    }
+
+    /// Generic documentation lookup is NOT stolen by the platform-bound Lark
+    /// doc triggers — it stays DocsLookup (→ context7).
+    #[test]
+    fn demand_generic_docs_stays_docs_lookup() {
+        assert_eq!(
+            classify_demand("帮我查 React useEffect 最新文档").kind,
+            DemandKind::DocsLookup
+        );
+    }
+
+    /// The new Lark demand kinds fire on representative phrases.
+    #[test]
+    fn demand_lark_kinds_fire() {
+        assert_eq!(
+            classify_demand("帮我查一下飞书日历今天安排").kind,
+            DemandKind::CalendarQuery
+        );
+        assert_eq!(
+            classify_demand("给飞书群发一条消息").kind,
+            DemandKind::Messaging
+        );
+        assert_eq!(classify_demand("发起审批流程").kind, DemandKind::Approval);
+        assert_eq!(
+            classify_demand("打开飞书文档看一下").kind,
+            DemandKind::LarkDoc
+        );
+        assert_eq!(
+            classify_demand("更新飞书表格里的数据").kind,
+            DemandKind::SheetOp
+        );
+        assert_eq!(
+            classify_demand("帮我查一下飞书妙记").kind,
+            DemandKind::LarkCollab
+        );
+    }
+
+    /// Development demands win over external mutations (governance policy):
+    /// a debug request that also asks to email the log routes to Debug.
+    #[test]
+    fn demand_dev_beats_external_mutation() {
+        assert_eq!(
+            classify_demand("报错了，把崩溃日志发邮件给我").kind,
+            DemandKind::Debug
+        );
+    }
+
+    /// A calendar trigger must not steal a refactor request for a calendar module.
+    #[test]
+    fn demand_calendar_does_not_steal_refactor() {
+        assert_eq!(
+            classify_demand("重构日程模块的代码").kind,
+            DemandKind::Architecture
+        );
+    }
+
+    #[test]
+    fn detect_current_task_approval_fires_on_execution_instructions() {
+        for yes in [
+            "按这个方案开始实现",
+            "一口气做完核验",
+            "把它修复",
+            "implement this now",
+            "just get it done",
+            "做完验证一下再说",
+        ] {
+            assert!(
+                detect_current_task_approval(yes),
+                "should detect approval: {yes:?}"
+            );
+        }
+        for no in [
+            "你看看这个执行策略对不对",
+            "解释一下执行器的设计",
+            "should we go ahead with this refactor?",
+            "帮我查飞书日历",
+        ] {
+            assert!(
+                !detect_current_task_approval(no),
+                "should NOT detect approval: {no:?}"
+            );
         }
     }
 }

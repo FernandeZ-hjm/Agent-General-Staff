@@ -1,8 +1,18 @@
-//! AGS skill governance — read-only inventory and proposal engine.
+//! AGS skill governance — skill-body governance face (scan / check /
+//! inventory / upstream / propose).
 //!
-//! Reads governance/skill-adoption-log.yaml, governance/skill-ignore-list.yaml,
-//! and manifests/suite.yaml to produce skill status reports. All operations
-//! are read-only — no adopt/apply/rollback writes are implemented.
+//! This crate owns **skill-body governance**: it reads
+//! governance/skill-adoption-log.yaml, governance/skill-ignore-list.yaml,
+//! manifests/suite.yaml, and manifests/skills-registry.yaml to report skill
+//! status, on-disk inventory, and upstream-comparison proposals. The
+//! lifecycle scan/check/inventory/upstream paths are read-only; the
+//! management console ([`console`]) additionally exposes a
+//! confirmation-protected apply path that writes **only AGS-owned per-host
+//! thin-index entries** (with backup) and never runs external installers.
+//!
+//! Cross-Agent host visibility (which capability is visible to which host)
+//! is exposed through [`console::verify_host`] / [`console::build_inventory`]
+//! and is the seam slated to move under the `ags capability` command layer.
 //!
 //! ## Operations
 //!
@@ -10,6 +20,10 @@
 //!   (required/optional/personal), report available/missing/disabled/degraded.
 //! - `check`: Validate governance YAML files for schema compliance and
 //!   cross-referenced consistency (adoption log ↔ manifest ↔ ignore list).
+//! - `inventory`: Read-only on-disk scan of `SKILL.md` front-matter.
+//! - `upstream`: Read-only upstream-comparison proposal skeleton from
+//!   manifests/skills-registry.yaml. No network crawl is performed — it
+//!   reports which skills watch which upstream and defers real crawl/diff.
 //! - `propose`: Dry-run proposal — show what WOULD change if a skill were
 //!   adopted/enabled/disabled. No files are modified.
 
@@ -408,16 +422,18 @@ pub fn check_skills(root: &Path) -> SkillCheckResult {
     let manifest_status =
         check_file_status(&manifest_path, "manifests/suite.yaml", counts_suite_entries);
 
-    // Consistency: all manifest required entries should have adoption log refs
+    // Consistency: all adopted suite entries should have adoption log refs.
+    // Optional public recommendations are metadata only and may intentionally
+    // have no adoption log entry until a human confirms adoption.
     if let Ok(content) = std::fs::read_to_string(&manifest_path) {
         if let Ok(manifest) = serde_yaml::from_str::<SuiteManifest>(&content) {
             if let Some(suite) = manifest.suite {
-                let mut required_skill_names: Vec<String> = Vec::new();
+                let mut adopted_manifest_skill_names: Vec<String> = Vec::new();
 
                 if let Some(required) = suite.required {
                     for entry in &required {
                         if let Some(ref name) = entry.name {
-                            required_skill_names.push(name.clone());
+                            adopted_manifest_skill_names.push(name.clone());
                             if entry.entry_ref.is_none() {
                                 issues.push(SkillIssue {
                                     severity: "warn".to_string(),
@@ -432,9 +448,31 @@ pub fn check_skills(root: &Path) -> SkillCheckResult {
                     }
                 }
 
-                // Cross-reference: adoption log should contain required adopted
-                // skills. Optional public-edition recommendations are not
-                // adopted until a user explicitly confirms installation.
+                if let Some(personal) = suite.personal {
+                    if let Some(personal_map) = personal.as_mapping() {
+                        for (key, value) in personal_map {
+                            if let Some(name) = key.as_str() {
+                                adopted_manifest_skill_names.push(name.to_string());
+                                if !value
+                                    .as_mapping()
+                                    .is_some_and(|m| m.contains_key("entry_ref"))
+                                {
+                                    issues.push(SkillIssue {
+                                        severity: "warn".to_string(),
+                                        category: "missing_entry_ref".to_string(),
+                                        detail: format!(
+                                            "Personal skill '{}' has no entry_ref in manifest",
+                                            name
+                                        ),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Cross-reference: adoption log should contain adopted manifest
+                // skills. Optional recommendations are excluded.
                 if let Ok(adoption_content) = std::fs::read_to_string(&adoption_path) {
                     if let Ok(adoption) = serde_yaml::from_str::<AdoptionLog>(&adoption_content) {
                         if let Some(entries) = adoption.entries {
@@ -443,7 +481,7 @@ pub fn check_skills(root: &Path) -> SkillCheckResult {
                                 .filter_map(|e| e.get("skill_name").and_then(|v| v.as_str()))
                                 .collect();
 
-                            let missing_from_adoption: Vec<&String> = required_skill_names
+                            let missing_from_adoption: Vec<&String> = adopted_manifest_skill_names
                                 .iter()
                                 .filter(|n| !adopted_names.contains(&n.as_str()))
                                 .collect();
@@ -452,10 +490,11 @@ pub fn check_skills(root: &Path) -> SkillCheckResult {
                                 name: "manifest-to-adoption-log".to_string(),
                                 passed: missing_from_adoption.is_empty(),
                                 detail: if missing_from_adoption.is_empty() {
-                                    "All required manifest skills have adoption log entries; optional recommendations may remain unadopted".to_string()
+                                    "All adopted manifest skills have adoption log entries"
+                                        .to_string()
                                 } else {
                                     format!(
-                                        "{} required manifest skill(s) missing from adoption log: {}",
+                                        "{} adopted manifest skill(s) missing from adoption log: {}",
                                         missing_from_adoption.len(),
                                         missing_from_adoption
                                             .iter()
@@ -690,7 +729,7 @@ pub fn propose_skills(root: &Path, action: &str, skill_name: &str) -> SkillPropo
         target_skills,
         proposed_changes,
         blocked_reasons,
-        note: "DRY-RUN ONLY — no files modified. Human confirmation and explicit task-card authorization required before applying any changes. Adopt/apply/rollback writes are not implemented in this CLI version.".to_string(),
+        note: "DRY-RUN ONLY — this evaluate-only proposal path always returns dry_run and never modifies files. Real AGS-owned writes happen elsewhere via the console module (skill dedupe / propose --apply), with backup + receipt; external installers/registrars are always advised, never run by AGS. Human confirmation + explicit task-card authorization required before any apply.".to_string(),
     }
 }
 
@@ -937,7 +976,7 @@ const RISK_HINT_KEYWORDS: &[&str] = &[
     "api key",
     "api_key",
     "bearer",
-    "node_secret",
+    "node-local secret",
     "rm -rf",
     "sudo ",
     "git reset --hard",
@@ -1209,6 +1248,296 @@ pub fn render_inventory_markdown(result: &SkillInventoryResult) -> String {
     out.join("\n")
 }
 
+// ── Upstream update proposal (stub) ─────────────────────────────────────────
+//
+// Reads `manifests/skills-registry.yaml` and reports which suite skills watch
+// which upstream comparison source, plus declared candidate skills. This is a
+// PLANNING SKELETON only: it performs NO network crawl, clone, or fetch, and
+// proposes no concrete diff. Real `crawl_then_diff_proposal` lives in a future
+// task. Local suite files always remain the canonical source of truth.
+
+#[derive(Debug, Clone, Deserialize)]
+struct SkillsRegistryDoc {
+    registry: Option<RegistrySection>,
+    skills: Option<Vec<RegistrySkill>>,
+    candidate_skills: Option<Vec<RegistryCandidate>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RegistrySection {
+    #[allow(dead_code)]
+    version: Option<serde_yaml::Value>,
+    update_policy: Option<String>,
+    upstreams: Option<serde_yaml::Mapping>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RegistrySkill {
+    name: Option<String>,
+    profile: Option<String>,
+    source: Option<RegistrySource>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RegistryCandidate {
+    name: Option<String>,
+    adoption_priority: Option<String>,
+    adoption_mode: Option<String>,
+    source: Option<RegistrySource>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RegistrySource {
+    #[serde(rename = "type")]
+    source_type: Option<String>,
+    upstream: Option<String>,
+    path: Option<String>,
+    relationship: Option<String>,
+    update_policy: Option<String>,
+}
+
+/// A declared upstream comparison source (read-only crawl seed).
+#[derive(Debug, Clone, Serialize)]
+pub struct UpstreamSourceInfo {
+    pub name: String,
+    pub kind: Option<String>,
+    pub url: Option<String>,
+    pub web: Option<String>,
+    pub reference: Option<String>,
+    pub cli: Option<String>,
+    pub crawl: bool,
+}
+
+/// A suite skill that tracks an upstream comparison source.
+#[derive(Debug, Clone, Serialize)]
+pub struct WatchedSkill {
+    pub name: String,
+    pub profile: Option<String>,
+    pub source_type: Option<String>,
+    pub upstream: Option<String>,
+    pub upstream_path: Option<String>,
+    pub relationship: Option<String>,
+    pub update_policy: Option<String>,
+}
+
+/// A declared candidate skill (evaluate-only; not yet adopted).
+#[derive(Debug, Clone, Serialize)]
+pub struct CandidateSkillInfo {
+    pub name: String,
+    pub upstream: Option<String>,
+    pub adoption_priority: Option<String>,
+    pub adoption_mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpstreamProposalSummary {
+    pub upstreams: usize,
+    pub watched_skills: usize,
+    pub candidates: usize,
+    /// Always `false` in this stub — no crawl/fetch is performed.
+    pub crawl_performed: bool,
+}
+
+/// Result of [`upstream_proposal`].
+#[derive(Debug, Clone, Serialize)]
+pub struct UpstreamProposalResult {
+    pub schema_version: String,
+    pub registry_present: bool,
+    pub registry_parseable: bool,
+    pub registry_path: String,
+    pub update_policy: Option<String>,
+    pub upstreams: Vec<UpstreamSourceInfo>,
+    pub watched_skills: Vec<WatchedSkill>,
+    pub candidates: Vec<CandidateSkillInfo>,
+    pub summary: UpstreamProposalSummary,
+    pub note: String,
+}
+
+/// Build a read-only upstream-comparison proposal skeleton from
+/// `manifests/skills-registry.yaml`. Performs NO network access.
+pub fn upstream_proposal(root: &Path) -> UpstreamProposalResult {
+    let registry_path = root.join("manifests/skills-registry.yaml");
+    let rel_path = "manifests/skills-registry.yaml".to_string();
+
+    let mut result = UpstreamProposalResult {
+        schema_version: SCHEMA_VERSION.to_string(),
+        registry_present: registry_path.exists(),
+        registry_parseable: false,
+        registry_path: rel_path,
+        update_policy: None,
+        upstreams: Vec::new(),
+        watched_skills: Vec::new(),
+        candidates: Vec::new(),
+        summary: UpstreamProposalSummary {
+            upstreams: 0,
+            watched_skills: 0,
+            candidates: 0,
+            crawl_performed: false,
+        },
+        note: UPSTREAM_STUB_NOTE.to_string(),
+    };
+
+    let Ok(content) = std::fs::read_to_string(&registry_path) else {
+        return result;
+    };
+    let Ok(doc) = serde_yaml::from_str::<SkillsRegistryDoc>(&content) else {
+        return result;
+    };
+    result.registry_parseable = true;
+
+    if let Some(registry) = doc.registry {
+        result.update_policy = registry.update_policy;
+        if let Some(upstreams) = registry.upstreams {
+            for (key, value) in &upstreams {
+                let Some(name) = key.as_str() else { continue };
+                result.upstreams.push(UpstreamSourceInfo {
+                    name: name.to_string(),
+                    kind: yaml_field(value, "type"),
+                    url: yaml_field(value, "url"),
+                    web: yaml_field(value, "web"),
+                    reference: yaml_field(value, "ref"),
+                    cli: yaml_field(value, "cli"),
+                    crawl: value
+                        .get("crawl")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
+                });
+            }
+        }
+    }
+    result.upstreams.sort_by(|a, b| a.name.cmp(&b.name));
+
+    // A skill is "watched" when its source declares an upstream comparison
+    // source (i.e. it is not a purely local canonical skill).
+    if let Some(skills) = doc.skills {
+        for skill in skills {
+            let Some(name) = skill.name else { continue };
+            if let Some(source) = skill.source {
+                if source.upstream.is_some() {
+                    result.watched_skills.push(WatchedSkill {
+                        name,
+                        profile: skill.profile,
+                        source_type: source.source_type,
+                        upstream: source.upstream,
+                        upstream_path: source.path,
+                        relationship: source.relationship,
+                        update_policy: source.update_policy,
+                    });
+                }
+            }
+        }
+    }
+
+    if let Some(candidates) = doc.candidate_skills {
+        for candidate in candidates {
+            let Some(name) = candidate.name else { continue };
+            result.candidates.push(CandidateSkillInfo {
+                name,
+                upstream: candidate.source.and_then(|s| s.upstream),
+                adoption_priority: candidate.adoption_priority,
+                adoption_mode: candidate.adoption_mode,
+            });
+        }
+    }
+
+    result.summary = UpstreamProposalSummary {
+        upstreams: result.upstreams.len(),
+        watched_skills: result.watched_skills.len(),
+        candidates: result.candidates.len(),
+        crawl_performed: false,
+    };
+    result
+}
+
+const UPSTREAM_STUB_NOTE: &str = "STUB — no network crawl, clone, or fetch was performed and no concrete diff is proposed. This lists the upstream comparison sources and the suite skills that watch them, per manifests/skills-registry.yaml. Local suite files remain canonical; real crawl_then_diff_proposal is deferred to a future task. AGS never runs `npx skills` or auto-installs from upstream.";
+
+/// Render upstream proposal as human-readable text.
+pub fn render_upstream_text(result: &UpstreamProposalResult) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    lines.push("Skill Governance — Upstream Update Proposal (stub)".to_string());
+    lines.push("=================================================".to_string());
+    lines.push(format!("Schema:        {}", result.schema_version));
+    lines.push(format!("Registry:      {}", result.registry_path));
+    let status = if !result.registry_present {
+        "MISSING"
+    } else if !result.registry_parseable {
+        "PARSE_ERROR"
+    } else {
+        "OK"
+    };
+    lines.push(format!("Status:        {status}"));
+    lines.push(format!(
+        "Update policy: {}",
+        result.update_policy.as_deref().unwrap_or("?")
+    ));
+    lines.push(format!(
+        "Summary:       upstreams {}, watched skills {}, candidates {}, crawl performed {}",
+        result.summary.upstreams,
+        result.summary.watched_skills,
+        result.summary.candidates,
+        result.summary.crawl_performed,
+    ));
+    lines.push(String::new());
+
+    lines.push("─ Upstream Sources ─".to_string());
+    if result.upstreams.is_empty() {
+        lines.push("  None declared.".to_string());
+    } else {
+        for u in &result.upstreams {
+            let crawl = if u.crawl { "crawl" } else { "no-crawl" };
+            lines.push(format!(
+                "  - {} ({}, {})",
+                u.name,
+                u.kind.as_deref().unwrap_or("?"),
+                crawl
+            ));
+            if let Some(ref web) = u.web {
+                lines.push(format!("      web: {web}"));
+            }
+        }
+    }
+    lines.push(String::new());
+
+    lines.push("─ Watched Skills ─".to_string());
+    if result.watched_skills.is_empty() {
+        lines.push("  None.".to_string());
+    } else {
+        for s in &result.watched_skills {
+            lines.push(format!(
+                "  - {} → upstream {} (policy: {})",
+                s.name,
+                s.upstream.as_deref().unwrap_or("?"),
+                s.update_policy.as_deref().unwrap_or("?"),
+            ));
+        }
+    }
+    lines.push(String::new());
+
+    lines.push("─ Candidate Skills ─".to_string());
+    if result.candidates.is_empty() {
+        lines.push("  None.".to_string());
+    } else {
+        for c in &result.candidates {
+            lines.push(format!(
+                "  - {} (upstream: {}, priority: {}, mode: {})",
+                c.name,
+                c.upstream.as_deref().unwrap_or("?"),
+                c.adoption_priority.as_deref().unwrap_or("?"),
+                c.adoption_mode.as_deref().unwrap_or("?"),
+            ));
+        }
+    }
+    lines.push(String::new());
+    lines.push(format!("NOTE: {}", result.note));
+    lines.join("\n")
+}
+
+/// Render upstream proposal as JSON.
+pub fn render_upstream_json(result: &UpstreamProposalResult) -> String {
+    serde_json::to_string_pretty(result)
+        .unwrap_or_else(|e| format!(r#"{{"error":"JSON serialization failed: {}"}}"#, e))
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1227,31 +1556,32 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_public_manifest() {
-        // Public edition ships optional skill recommendations only. It must not
-        // bundle private migrated or personal skill metadata.
+    fn test_scan_migrated_manifest() {
+        // Scan the public suite manifest in the repo.
         let root = repo_root();
         let result = scan_skills(&root);
         assert_eq!(result.schema_version, SCHEMA_VERSION);
+        // The public edition exposes installable skill entries as optional
+        // metadata only; private/personal skill profiles are not distributed.
+        // auto-brainstorm/auto-debug/auto-verify were retired in 2.7, reducing
+        // the optional set from 11 to 8.
         assert_eq!(result.summary.available, 0);
-        assert_eq!(result.summary.optional, 9);
+        assert_eq!(result.summary.optional, 8);
         assert_eq!(result.summary.personal, 0);
         assert_eq!(result.summary.disabled, 0);
     }
 
     #[test]
-    fn test_public_manifest_has_no_personal_skill_metadata() {
+    fn test_scan_public_manifest_excludes_personal_profile() {
         let root = repo_root();
         let result = scan_skills(&root);
-        assert!(!result
-            .skills
-            .iter()
-            .any(|s| matches!(s.status, SkillStatus::Personal)));
-        assert!(!result.skills.iter().any(|s| s
-            .source
-            .as_deref()
-            .unwrap_or("")
-            .contains("skill-packs/")));
+        assert!(
+            result
+                .skills
+                .iter()
+                .all(|skill| skill.status != SkillStatus::Personal),
+            "public suite manifest must not expose personal skill metadata"
+        );
     }
 
     #[test]
@@ -1411,5 +1741,64 @@ mod tests {
             Some("2.0".to_string())
         );
         assert_eq!(extract_schema_version("entries: []"), None);
+    }
+
+    #[test]
+    fn test_upstream_proposal_on_repo_registry() {
+        let root = repo_root();
+        let result = upstream_proposal(&root);
+        assert!(result.registry_present, "repo ships skills-registry.yaml");
+        assert!(result.registry_parseable);
+        assert_eq!(
+            result.update_policy.as_deref(),
+            Some("read_only_crawl_then_diff_proposal")
+        );
+        // Declared upstream comparison sources.
+        assert!(result
+            .upstreams
+            .iter()
+            .any(|u| u.name == "mattpocock_skills" && u.crawl));
+        assert!(result.upstreams.iter().any(|u| u.name == "graphify"));
+        // Skills that track an upstream are surfaced; purely-local ones are not.
+        assert!(result.watched_skills.iter().any(|s| s.name == "tdd"));
+        assert!(!result
+            .watched_skills
+            .iter()
+            .any(|s| s.name == "prompt-maker"));
+        // Candidates are declared but not adopted.
+        assert!(result
+            .candidates
+            .iter()
+            .any(|c| c.name == "git-guardrails-claude-code"));
+        // This is a stub — no crawl is ever performed.
+        assert!(!result.summary.crawl_performed);
+        assert_eq!(result.summary.watched_skills, result.watched_skills.len());
+    }
+
+    #[test]
+    fn test_upstream_proposal_missing_registry() {
+        let base =
+            std::env::temp_dir().join(format!("ags-upstream-missing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let result = upstream_proposal(&base);
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(!result.registry_present);
+        assert!(!result.registry_parseable);
+        assert!(result.upstreams.is_empty());
+        assert!(result.watched_skills.is_empty());
+        assert!(!result.summary.crawl_performed);
+    }
+
+    #[test]
+    fn test_render_upstream_text_and_json() {
+        let root = repo_root();
+        let result = upstream_proposal(&root);
+        let text = render_upstream_text(&result);
+        assert!(text.contains("Upstream Update Proposal"));
+        assert!(text.contains("STUB"));
+        let json = render_upstream_json(&result);
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["summary"]["crawl_performed"], false);
     }
 }

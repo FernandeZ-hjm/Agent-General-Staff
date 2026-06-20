@@ -116,7 +116,7 @@ Dry-run 不得产生任何文件系统副作用。只有 dry-run 通过且人工
 - `适用治理文档` 填写本文件路径
 - `非目标` 明确禁止写入用户目录、运行外部 CLI、自动应用 patch
 - `实施要求` 说明默认先 scan / dry-run，人工确认后才能 adopt / ignore
-- 涉及 `notebooklm`、Hermes 输出层技能、TempoFlow 输出层业务契约时，必须注明只可引用不可 adopt
+- 涉及 `notebooklm` 或项目自管输出层业务契约时，必须注明只可引用不可 adopt
 
 详细填槽规则见 `protocol/task-card-template.md` 的 "Skill Governance 治理任务补充" 章节。
 
@@ -125,7 +125,7 @@ Dry-run 不得产生任何文件系统副作用。只有 dry-run 通过且人工
 以下技能类型不在套件治理范围内，只能被引用，不能被 adopt / update / 打包：
 
 - **外部官方 CLI 技能**：`notebooklm`、`lark-*` 系列（飞书开放平台技能）等由外部 CLI 或服务管理的技能
-- **输出层业务技能**：Hermes 输出层技能、TempoFlow 输出层业务契约为业务运行时契约，不得改写为开发套件任务卡或技能治理对象
+- **输出层业务技能**：项目自管输出层技能和业务契约为业务运行时契约，不得改写为开发套件任务卡或技能治理对象
 - **项目自管输出层技能**：项目内 `output/`、`dist/` 等自管输出目录下的技能，治理权归项目自身
 
 套件分发的 public-safe 技能清单由 `manifests/suite.yaml` 的 allowlist 规则（见

@@ -8,20 +8,31 @@ When a task references a skill, open only the relevant SKILL.md. When a task doe
 
 - Paths in this document that contain `$HOME` are template paths. Before opening any SKILL.md, expand `$HOME` to the actual home directory of the current machine.
 
-- Use `auto-brainstorm` for open-ended feature, design, architecture, or recommendation work before implementing.
-- Use `auto-debug` for errors, failing tests, broken behavior, performance issues, or unexpected runtime output.
-- Use `auto-verify` before claiming work is complete, fixed, passing, or ready to hand off.
+- Use `grill-with-docs` for open-ended feature, design, architecture, or recommendation work before implementing.
+- Use `diagnose` for errors, failing tests, broken behavior, performance issues, or unexpected runtime output.
+- Use `superpowers` (verification-before-completion) before claiming work is complete, fixed, passing, or ready to hand off.
 - Use manual skills only when they directly reduce risk for the current task.
 - Do not stack unrelated skills. Prefer one or two strong procedural guardrails over a long list.
 - If a skill file is missing or unreadable, report that briefly and continue with the nearest safe workflow.
 - For delegated Claude Code CLI work, follow `protocol/agent-task-protocol.md` and use `protocol/task-card-template.md`.
 - Include the required `[skill: xxx]` tags in the task card and require a delivery report.
 
-## Auto-trigger skills
+## Retired aliases (superseded)
 
-- auto-brainstorm: $HOME/.agents/skills/auto-brainstorm/SKILL.md
-- auto-debug: $HOME/.agents/skills/auto-debug/SKILL.md
-- auto-verify: $HOME/.agents/skills/auto-verify/SKILL.md
+The `auto-brainstorm` / `auto-debug` / `auto-verify` skills are **RETIRED**
+(`manifests/skills-registry.yaml` → `routing.route_state: retired`). They are no
+longer auto-triggered or part of the suite manifest's active skill set; their
+demands route to the canonical successors instead:
+
+- brainstorm → primary `grill-with-docs` (superpowers `brainstorming` playbook is a secondary method hint)
+- debug → primary `diagnose` (superpowers `systematic-debugging` playbook is a secondary method hint)
+- verify → primary `superpowers`, internal entrypoint = the `verification-before-completion` playbook
+
+The superpowers playbooks are **internal entrypoints**, NOT standalone skills:
+they are registered only under `route_targets:` (parent: `superpowers`) in
+`manifests/skills-registry.yaml` and never create a suite-required entry or a
+host-visible expectation. Do not author new task cards that wake the `auto-*`
+aliases.
 
 ## Manual skills
 

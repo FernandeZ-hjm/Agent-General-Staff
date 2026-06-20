@@ -450,6 +450,265 @@ pub fn render_receipt_json(receipt: &Receipt) -> String {
         .unwrap_or_else(|e| format!(r#"{{"error": "JSON serialization failed: {}"}}"#, e))
 }
 
+// ── Action receipt (write-action evidence) ───────────────────────────────────
+//
+// Distinct from the task-card-centric `Receipt`. AGS write / half-write actions
+// (setup --yes, skill --apply, init, update apply / repair-local)
+// emit an `ActionReceipt` so every mutation leaves machine-readable evidence
+// plus a plan-only rollback. `receipt_id` is prefixed `ar-` and `schema_version`
+// is `2.0-action-receipt`, so action receipts never collide with task-card
+// receipts (`receipt-` / `2.0-m6`) and verifiers can dispatch by schema.
+//
+// Pure advised-only surfaces such as `ags agents govern` do NOT emit receipts:
+// the operator must see and choose the advised host/tool registrations in the
+// conversation/stdout before any external host registrar is run.
+
+/// One file write recorded in an action receipt. `op` reuses the skill-console
+/// PlannedWrite vocabulary so receipts and the console speak the same dialect.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReceiptWrite {
+    /// create | overwrite | backup | remove | relink | unlink
+    pub op: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    /// `.bak.<stamp>` backup path when one was written (rollback references it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backup: Option<String>,
+    pub detail: String,
+}
+
+/// An external command AGS advised but never executed (e.g. `claude mcp add`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReceiptAdvised {
+    pub command: String,
+    pub reason: String,
+}
+
+/// One inverse step in a rollback plan. Data only — AGS never executes it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RollbackStep {
+    pub affected_path: String,
+    /// restore-backup | remove-created | relink-previous | none
+    pub inverse_op: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backup_path: Option<String>,
+    /// Human-runnable inverse command (advice; AGS does not run it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inverse_command: Option<String>,
+    pub detail: String,
+}
+
+/// A plan-only rollback description embedded in every action receipt.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RollbackPlan {
+    pub schema_version: String,
+    /// backup-restore | thin-index-relink | manual-confirm | none
+    pub strategy: String,
+    pub steps: Vec<RollbackStep>,
+    pub note: String,
+}
+
+impl RollbackPlan {
+    /// An empty plan-only rollback with a stable note.
+    pub fn none() -> Self {
+        RollbackPlan {
+            schema_version: "2.0-rollback".to_string(),
+            strategy: "none".to_string(),
+            steps: Vec::new(),
+            note: "PLAN-ONLY — nothing to roll back".to_string(),
+        }
+    }
+    /// A backup-restore rollback (setup / runtime / update lanes).
+    pub fn backup_restore(steps: Vec<RollbackStep>) -> Self {
+        RollbackPlan {
+            schema_version: "2.0-rollback".to_string(),
+            strategy: "backup-restore".to_string(),
+            steps,
+            note: "PLAN-ONLY — apply requires explicit task-card authorization".to_string(),
+        }
+    }
+    /// A thin-index relink rollback (skill / agents / capability host entries).
+    pub fn thin_index_relink(steps: Vec<RollbackStep>) -> Self {
+        RollbackPlan {
+            schema_version: "2.0-rollback".to_string(),
+            strategy: "thin-index-relink".to_string(),
+            steps,
+            note: "PLAN-ONLY — apply requires explicit task-card authorization".to_string(),
+        }
+    }
+}
+
+/// A write-action receipt: what an AGS mutation planned, applied, advised, and
+/// how to roll it back.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActionReceipt {
+    pub schema_version: String,
+    /// `ar-<action>-<stamp>-<hash12>`
+    pub receipt_id: String,
+    pub action: String,
+    pub timestamp: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    pub gate: GateResult,
+    pub planned_writes: Vec<ReceiptWrite>,
+    pub applied_writes: Vec<ReceiptWrite>,
+    pub advised_commands: Vec<ReceiptAdvised>,
+    pub verification_results: Vec<VerificationResult>,
+    pub rollback: RollbackPlan,
+    /// dry-run | applied | failed | advised-only | nothing-to-do | blocked
+    pub apply_status: String,
+    pub applied: bool,
+}
+
+fn unix_secs() -> u64 {
+    use std::time::SystemTime;
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default()
+}
+
+/// Per-call entropy for collision-resistant receipt ids: (nanoseconds, pid).
+fn unique_token() -> (u128, u32) {
+    use std::time::SystemTime;
+    let nanos = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    (nanos, std::process::id())
+}
+
+/// Build an action receipt from the facts of one write action. `receipt_id` is
+/// derived deterministically from the action plus planned/applied content.
+#[allow(clippy::too_many_arguments)]
+pub fn build_action_receipt(
+    action: &str,
+    target: Option<&str>,
+    gate: GateResult,
+    planned: Vec<ReceiptWrite>,
+    applied: Vec<ReceiptWrite>,
+    advised: Vec<ReceiptAdvised>,
+    verification: Vec<VerificationResult>,
+    rollback: RollbackPlan,
+    apply_status: &str,
+    applied_flag: bool,
+) -> ActionReceipt {
+    let stamp = unix_secs();
+    let (nanos, pid) = unique_token();
+    // Hash includes per-call entropy (nanos, pid) and the full action surface
+    // (target, advised, verification) so distinct actions in the same second
+    // never collide on the same receipt id.
+    let mut basis = format!("{action}:{stamp}:{nanos}:{pid}:{apply_status}");
+    if let Some(t) = target {
+        basis.push_str(&format!("|target:{t}"));
+    }
+    for w in planned.iter().chain(applied.iter()) {
+        basis.push_str(&format!("|{}:{}", w.op, w.path));
+    }
+    for a in &advised {
+        basis.push_str(&format!("|advised:{}", a.command));
+    }
+    for v in &verification {
+        basis.push_str(&format!("|verify:{}:{}", v.command, v.exit_code));
+    }
+    let hash = sha256_hex(basis.as_bytes());
+    ActionReceipt {
+        schema_version: "2.0-action-receipt".to_string(),
+        receipt_id: format!("ar-{action}-{stamp}-{}", &hash[..16.min(hash.len())]),
+        action: action.to_string(),
+        timestamp: format!("unix-{stamp}"),
+        target: target.map(|s| s.to_string()),
+        gate,
+        planned_writes: planned,
+        applied_writes: applied,
+        advised_commands: advised,
+        verification_results: verification,
+        rollback,
+        apply_status: apply_status.to_string(),
+        applied: applied_flag,
+    }
+}
+
+/// Persist an action receipt to `<receipts_root>/<receipt_id>.json`, returning
+/// the absolute path. Refuses to write if any serialized field carries a
+/// token-like secret. On Unix the file is chmod 0o600.
+pub fn emit_action_receipt(
+    receipts_root: &Path,
+    receipt: &ActionReceipt,
+) -> Result<std::path::PathBuf, String> {
+    let json = render_action_receipt_json(receipt);
+    if receipt_contains_secret(&json) {
+        return Err("refusing to write receipt: token-like secret detected".to_string());
+    }
+    std::fs::create_dir_all(receipts_root)
+        .map_err(|e| format!("cannot create {}: {}", receipts_root.display(), e))?;
+    // Create-new semantics: never overwrite an existing receipt (mutation
+    // evidence must not be lost). On the rare id collision, append a counter.
+    use std::io::Write;
+    for attempt in 0..1000u32 {
+        let name = if attempt == 0 {
+            format!("{}.json", receipt.receipt_id)
+        } else {
+            format!("{}-{attempt}.json", receipt.receipt_id)
+        };
+        let path = receipts_root.join(&name);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut f) => {
+                f.write_all(json.as_bytes())
+                    .map_err(|e| format!("cannot write {}: {}", path.display(), e))?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+                }
+                return Ok(path);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("cannot write {}: {}", path.display(), e)),
+        }
+    }
+    Err("receipt id collision: too many receipts with the same id".to_string())
+}
+
+/// Render an action receipt as pretty JSON.
+pub fn render_action_receipt_json(r: &ActionReceipt) -> String {
+    serde_json::to_string_pretty(r)
+        .unwrap_or_else(|e| format!(r#"{{"error": "JSON serialization failed: {}"}}"#, e))
+}
+
+/// A single-line `receipt: <path>` summary for quiet-by-default output.
+pub fn render_action_receipt_summary_line(path: &Path) -> String {
+    format!("receipt: {}", path.display())
+}
+
+/// Minimal token-like secret detector (Bearer / sk- tails) so receipts never
+/// leak credentials. Self-contained to avoid a cross-crate dependency.
+fn receipt_contains_secret(text: &str) -> bool {
+    token_like(text, "Bearer ", 20) || token_like(text, "sk-", 20)
+}
+
+fn token_like(text: &str, prefix: &str, min_tail: usize) -> bool {
+    let mut start = 0;
+    while let Some(off) = text[start..].find(prefix) {
+        let tail_start = start + off + prefix.len();
+        let tail = &text[tail_start..];
+        let len = tail
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+            .count();
+        if len >= min_tail {
+            return true;
+        }
+        start = tail_start;
+    }
+    false
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -877,5 +1136,135 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["compliant"], false);
         assert!(!parsed["checks"][0]["detail"].as_str().unwrap().is_empty());
+    }
+
+    // ── Action receipt tests ──────────────────────────────────────────────
+
+    fn sample_write() -> ReceiptWrite {
+        ReceiptWrite {
+            op: "create".to_string(),
+            path: "/tmp/ags/x".to_string(),
+            from: None,
+            backup: None,
+            detail: "created".to_string(),
+        }
+    }
+
+    #[test]
+    fn emit_action_receipt_writes_file_and_returns_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let r = build_action_receipt(
+            "setup-apply",
+            Some("/tmp/ags"),
+            GateResult {
+                decision: "allow".to_string(),
+                reason: None,
+            },
+            vec![],
+            vec![sample_write()],
+            vec![],
+            vec![],
+            RollbackPlan::backup_restore(vec![]),
+            "applied",
+            true,
+        );
+        let path = emit_action_receipt(dir.path(), &r).unwrap();
+        assert!(path.exists());
+        assert!(path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("ar-setup-apply-"));
+        let back: ActionReceipt =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(back.action, "setup-apply");
+        assert_eq!(back.apply_status, "applied");
+        assert_eq!(back.rollback.strategy, "backup-restore");
+        assert_eq!(back.schema_version, "2.0-action-receipt");
+    }
+
+    #[test]
+    fn build_action_receipt_derives_stable_prefix() {
+        let r = build_action_receipt(
+            "skill-apply",
+            None,
+            GateResult {
+                decision: "confirm".to_string(),
+                reason: None,
+            },
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            RollbackPlan::none(),
+            "advised-only",
+            false,
+        );
+        assert!(r.receipt_id.starts_with("ar-skill-apply-"));
+        assert_eq!(r.schema_version, "2.0-action-receipt");
+        assert!(!r.applied);
+    }
+
+    #[test]
+    fn emit_refuses_secret_in_receipt() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut w = sample_write();
+        w.detail = "sk-abcdefghijklmnopqrstuvwxyz0123".to_string();
+        let r = build_action_receipt(
+            "agents-govern",
+            None,
+            GateResult {
+                decision: "allow".to_string(),
+                reason: None,
+            },
+            vec![],
+            vec![w],
+            vec![],
+            vec![],
+            RollbackPlan::none(),
+            "applied",
+            true,
+        );
+        assert!(emit_action_receipt(dir.path(), &r).is_err());
+    }
+
+    #[test]
+    fn rollback_plan_constructors_have_stable_strategy() {
+        assert_eq!(RollbackPlan::none().strategy, "none");
+        assert_eq!(
+            RollbackPlan::backup_restore(vec![]).strategy,
+            "backup-restore"
+        );
+        assert_eq!(
+            RollbackPlan::thin_index_relink(vec![]).strategy,
+            "thin-index-relink"
+        );
+    }
+
+    #[test]
+    fn emit_action_receipt_never_overwrites_on_id_collision() {
+        let dir = tempfile::tempdir().unwrap();
+        // Force two receipts to share an id; the second must NOT overwrite the
+        // first (mutation evidence must never be lost).
+        let mut r = build_action_receipt(
+            "agents-govern",
+            None,
+            GateResult {
+                decision: "allow".to_string(),
+                reason: None,
+            },
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            RollbackPlan::none(),
+            "advised-only",
+            false,
+        );
+        r.receipt_id = "ar-fixed-collision-id".to_string();
+        let p1 = emit_action_receipt(dir.path(), &r).unwrap();
+        let p2 = emit_action_receipt(dir.path(), &r).unwrap();
+        assert_ne!(p1, p2, "second receipt must not overwrite the first");
+        assert!(p1.exists() && p2.exists());
     }
 }

@@ -16,10 +16,11 @@ members = [
     "crates/skill-governance",
     "crates/ags-mcp",
     "crates/ags-platform",
+    "crates/capability-route",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "2.6.0"
+version = "2.7.0"
 edition = "2021"
-license = "MIT"
+license = "GPL-3.0-only"

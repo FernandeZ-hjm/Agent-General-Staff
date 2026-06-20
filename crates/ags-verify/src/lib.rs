@@ -906,7 +906,7 @@ fn check_release_boundary(repo_root: &Path) -> Vec<CheckItem> {
         ));
     }
 
-    // Check 3: Verify public-full package plan strips EvoMap/GEP runtime surfaces.
+    // Check 3: Verify public-full package plan strips local runtime surfaces.
     let (package_code, package_stdout, package_stderr) = run_command(
         repo_root,
         "cargo",
@@ -947,30 +947,30 @@ fn check_release_boundary(repo_root: &Path) -> Vec<CheckItem> {
                     .into_iter()
                     .flatten()
                     .filter_map(|value| value.as_str())
-                    .filter(|path| public_package_evomap_surface(path))
+                    .filter(|path| public_package_local_runtime_surface(path))
                     .map(ToString::to_string)
                     .collect();
 
                 if leaked.is_empty() {
                     items.push(CheckItem::pass(
-                        "release-package-strips-evomap",
+                        "release-package-strips-local-runtime",
                         "release",
-                        "public-full package plan contains no EvoMap/Evolver/GEP runtime paths.",
+                        "public-full package plan contains no local runtime paths.",
                     ));
                 } else {
                     items.push(CheckItem::fail(
-                        "release-package-strips-evomap",
+                        "release-package-strips-local-runtime",
                         "release",
                         &format!(
-                            "public-full package plan includes EvoMap/Evolver/GEP paths: {}",
+                            "public-full package plan includes local runtime paths: {}",
                             leaked.join(", ")
                         ),
-                        "Remove EvoMap/GEP paths from the public release allowlist and forbidden payload gate.",
+                        "Remove local runtime paths from the public release allowlist and forbidden payload gate.",
                     ));
                 }
             }
             Err(e) => items.push(CheckItem::fail(
-                "release-package-strips-evomap",
+                "release-package-strips-local-runtime",
                 "release",
                 &format!("cannot parse public-full package plan JSON: {e}"),
                 "Fix `ags release package --profile public-full --dry-run --format json` output.",
@@ -984,20 +984,16 @@ fn check_release_boundary(repo_root: &Path) -> Vec<CheckItem> {
     items
 }
 
-fn public_package_evomap_surface(path: &str) -> bool {
+fn public_package_local_runtime_surface(path: &str) -> bool {
     let lower = path
         .trim_start_matches("./")
         .replace('\\', "/")
         .to_ascii_lowercase();
-    lower.contains("evomap")
-        || lower.contains("evolver")
-        || lower == ".evolver"
-        || lower.starts_with(".evolver/")
-        || lower == "assets/gep"
-        || lower.starts_with("assets/gep/")
-        || lower.contains("/gep/")
-        || lower.ends_with("/gep")
-        || lower == "mcp/gep.mcp.json"
+    lower == ".ags"
+        || lower.starts_with(".ags/")
+        || lower == ".ags-local"
+        || lower.starts_with(".ags-local/")
+        || lower.starts_with("assets/local-runtime/")
 }
 
 /// Check that portable runtime profile templates exist, parse correctly,
@@ -1012,7 +1008,7 @@ fn check_runtime_profile_templates(repo_root: &Path) -> CheckItem {
         return CheckItem::warn(
             "runtime-profile-templates",
             "local",
-            "manifests/templates/ directory not found — portable EvoMap profile templates missing",
+            "manifests/templates/ directory not found — portable runtime profile templates missing",
             "Run `mkdir -p manifests/templates/hooks` and add template files.",
         );
     }
@@ -1022,10 +1018,6 @@ fn check_runtime_profile_templates(repo_root: &Path) -> CheckItem {
         (
             "manifests/templates/hooks/claude-code-executor-stop.template.js",
             "javascript",
-        ),
-        (
-            "manifests/templates/hooks/codex-planner-recall.template.json",
-            "json",
         ),
         ("manifests/templates/README.md", "markdown"),
     ];
@@ -1678,7 +1670,7 @@ mod tests {
 
     #[test]
     fn template_leak_detection_flags_real_user_path() {
-        let content = "proxy_url: \"/Users/example/.evolver/settings.json\"";
+        let content = "proxy_url: \"/Users/example/.ags/settings.json\"";
         let leaks = detect_template_leaks(content, "test.yaml");
         assert!(!leaks.is_empty(), "should detect /Users/example path leak");
     }
@@ -1692,7 +1684,7 @@ mod tests {
 
     #[test]
     fn template_leak_detection_flags_node_command_with_real_user_path() {
-        let content = "node /Users/example/.evolver/run-hook.js";
+        let content = "node /Users/example/.ags/run-hook.js";
         let leaks = detect_template_leaks(content, "test.md");
         assert!(
             !leaks.is_empty(),
@@ -1702,7 +1694,7 @@ mod tests {
 
     #[test]
     fn template_leak_detection_flags_python_command_with_real_user_path() {
-        let content = "python3 /Users/example/scripts/evolver.py";
+        let content = "python3 /Users/example/scripts/local-hook.py";
         let leaks = detect_template_leaks(content, "test.md");
         assert!(
             !leaks.is_empty(),
@@ -1713,7 +1705,7 @@ mod tests {
     #[test]
     fn template_leak_detection_flags_comments_with_paths() {
         // Real /Users/<name> paths in comments ARE now detected.
-        let content = "# /Users/example/.evolver/settings.json";
+        let content = "# /Users/example/.ags/settings.json";
         let leaks = detect_template_leaks(content, "test.yaml");
         assert!(
             !leaks.is_empty(),
@@ -1731,7 +1723,7 @@ mod tests {
 
     #[test]
     fn template_leak_detection_ignores_replace_slots() {
-        let content = "\"REPLACE: path/to/evolver-recall-script\"";
+        let content = "\"REPLACE: path/to/local-context-script\"";
         let leaks = detect_template_leaks(content, "test.json");
         assert!(leaks.is_empty(), "should ignore REPLACE slot lines");
     }

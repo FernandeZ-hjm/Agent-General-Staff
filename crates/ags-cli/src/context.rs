@@ -1,0 +1,149 @@
+//! Shared environment / path / guard / version helpers.
+
+use std::path::{Path, PathBuf};
+
+pub(crate) const AGS_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub(crate) fn guard_writable_target(command: &str, target: &Path) {
+    let target_path = guard_path(target);
+    let protected_roots = [
+        "/Volumes/Projects/example-private-suite",
+        "/Volumes/Projects/remotes/example-private-suite.git",
+        "/Volumes/Projects/example-stable-suite",
+        "/Volumes/AI Project/ai-dev-env-bootstrap",
+        "/Volumes/Projects/remotes/example-public-suite.git",
+    ];
+
+    for protected in &protected_roots {
+        let protected_path = guard_path(Path::new(protected));
+        if target_path == protected_path || target_path.starts_with(&protected_path) {
+            eprintln!(
+                "{command}: refused — target is a protected suite path: {}",
+                target.display()
+            );
+            eprintln!("Write-mode operations must target a tempdir or non-A/S/B directory.");
+            std::process::exit(1);
+        }
+    }
+
+    if target_path.join("WORKSPACE.md").exists()
+        || target_path.join("AGENT_SUITE_PROTOCOL.md").exists()
+    {
+        eprintln!(
+            "{command}: refused — target appears to be a suite root: {}",
+            target.display()
+        );
+        eprintln!("Write-mode operations must target a tempdir or non-A/S/B directory.");
+        std::process::exit(1);
+    }
+}
+pub(crate) fn guard_path(path: &Path) -> PathBuf {
+    if let Ok(canonical) = path.canonicalize() {
+        return canonical;
+    }
+
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    };
+
+    if let Ok(canonical) = absolute.canonicalize() {
+        return canonical;
+    }
+
+    let mut existing = absolute.as_path();
+    let mut missing = Vec::new();
+    while !existing.exists() {
+        if let Some(name) = existing.file_name() {
+            missing.push(name.to_os_string());
+        }
+        match existing.parent() {
+            Some(parent) => existing = parent,
+            None => return absolute,
+        }
+    }
+
+    let mut normalized = existing
+        .canonicalize()
+        .unwrap_or_else(|_| existing.to_path_buf());
+    for component in missing.iter().rev() {
+        normalized.push(component);
+    }
+    normalized
+}
+pub(crate) fn sanitize_name(path: &str) -> String {
+    path.trim_matches('/')
+        .replace(['/', '\\', '.'], "-")
+        .trim_matches('-')
+        .to_string()
+}
+pub(crate) fn default_private_runtime_home() -> PathBuf {
+    if let Some(path) = std::env::var_os("AGS_HOME") {
+        return PathBuf::from(path);
+    }
+    if let Some(home) = ags_platform::home_dir() {
+        return home.join(".ags").join("runtime");
+    }
+    PathBuf::from(".ags").join("runtime")
+}
+pub(crate) fn private_install_target(target: Option<PathBuf>) -> PathBuf {
+    target.unwrap_or_else(default_private_runtime_home)
+}
+/// Guard: refuse to treat `source_repo` as a private-suite source root unless
+/// the canonical bootstrap payload files are all present. Shared by the
+/// source-root helper and the bootstrap apply path.
+pub(crate) fn ensure_bootstrap_source_repo(source_repo: &Path) {
+    let required = [
+        "protocol/agent-task-protocol.md",
+        "protocol/task-card-template.md",
+        "protocol/runtime-adapters.md",
+        "protocol/task-routing.md",
+        "scripts/validate.sh",
+        "scripts/run-task-card.sh",
+    ];
+
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|rel| !source_repo.join(rel).exists())
+        .collect();
+
+    if missing.is_empty() {
+        return;
+    }
+
+    eprintln!(
+        "ags bootstrap --apply: refused — source is not a complete private suite root: {}",
+        source_repo.display()
+    );
+    eprintln!("Missing bootstrap payload source file(s):");
+    for rel in missing {
+        eprintln!("  - {rel}");
+    }
+    std::process::exit(1);
+}
+pub(crate) fn source_root_or_exit(command: &str) -> PathBuf {
+    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    ensure_bootstrap_source_repo(&root);
+    if !root.join("crates/ags-cli/Cargo.toml").exists() {
+        eprintln!("{command}: refused — run from the AGS private suite root.");
+        std::process::exit(1);
+    }
+    root
+}
+pub(crate) fn unix_timestamp() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+pub(crate) fn shell_quote(path: &Path) -> String {
+    let s = path.to_string_lossy();
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+pub(crate) fn home_dir() -> PathBuf {
+    ags_platform::home_dir().unwrap_or_else(|| PathBuf::from("."))
+}

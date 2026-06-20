@@ -33,7 +33,6 @@ pub const FULL_MANIFEST: SyncManifest = SyncManifest {
         "protocol/agent-task-protocol.md",
         "protocol/context-memory.md",
         "protocol/cursor-skill-index.md",
-        "protocol/evolution-memory.md",
         "protocol/project-profile.md",
         "protocol/runtime-adapters.md",
         "protocol/task-card-template.md",
@@ -49,7 +48,7 @@ pub const FULL_MANIFEST: SyncManifest = SyncManifest {
 /// Manifest for public-full sanitized targets.
 ///
 /// Public-full includes the Rust AGS runtime and governance framework, while
-/// keeping private EvoMap/GEP runtime surfaces outside the public sync surface.
+/// keeping local runtime state outside the public sync surface.
 pub const PUBLIC_MANIFEST: SyncManifest = SyncManifest {
     required_files: &[
         "AGENTS.md",
@@ -101,19 +100,13 @@ pub const PUBLIC_FORBIDDEN_PAYLOAD: &[&str] = &[
     "global-skills/",
     "skill-packs/",
     ".agents/",
+    ".ags/",
+    ".ags-local/",
     ".codex/",
     ".claude/local/",
-    ".evolver/",
-    "assets/gep/",
-    "evomap/",
-    "docs/evomap/",
-    "mcp/gep.mcp.json",
-    "hosts/claude-code.evomap-mcp.snippet.json",
-    "bin/evolver-proxy-mcp",
+    "assets/local-runtime/",
     "manifests/runtime-profiles.yaml",
     "manifests/templates/",
-    "crates/ags-mcp/src/resources/evolver_boundary.md",
-    "protocol/evolution-memory.md",
     "memory/",
     "task-archive/",
 ];
@@ -284,8 +277,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn full_manifest_has_19_files() {
-        assert_eq!(FULL_MANIFEST.required_files.len(), 19);
+    fn full_manifest_has_18_files() {
+        assert_eq!(FULL_MANIFEST.required_files.len(), 18);
     }
 
     #[test]
@@ -319,7 +312,7 @@ mod tests {
     #[test]
     fn stable_uses_full_manifest() {
         let m = manifest_for(&ProjectKind::Stable);
-        assert_eq!(m.required_files.len(), 19);
+        assert_eq!(m.required_files.len(), 18);
     }
 
     #[test]
@@ -336,6 +329,7 @@ mod tests {
             "global-skills/custom/SKILL.md",
             "skill-packs/personal/example/SKILL.md",
             ".agents/memory/projects/demo/context-capsule.md",
+            ".ags-local/private-public-update.sh",
             ".codex/skills/example/SKILL.md",
         ] {
             assert!(
@@ -353,18 +347,17 @@ mod tests {
         assert!(is_public_forbidden_payload(
             "global-skills/example/SKILL.md"
         ));
-        assert!(is_public_forbidden_payload(".evolver/gep/genes.json"));
-        assert!(is_public_forbidden_payload("assets/gep/capsules.json"));
-        assert!(is_public_forbidden_payload("evomap/README.md"));
-        assert!(is_public_forbidden_payload("mcp/gep.mcp.json"));
+        assert!(is_public_forbidden_payload(".ags/runtime-state.json"));
         assert!(is_public_forbidden_payload(
-            "hosts/claude-code.evomap-mcp.snippet.json"
+            ".ags-local/private-public-update.sh"
         ));
-        assert!(is_public_forbidden_payload("bin/evolver-proxy-mcp"));
+        assert!(!is_public_forbidden_payload(".ags-locality/file.txt"));
+        assert!(is_public_forbidden_payload(
+            "assets/local-runtime/capsules.json"
+        ));
         assert!(is_public_forbidden_payload(
             "manifests/templates/runtime-profiles.template.yaml"
         ));
-        assert!(is_public_forbidden_payload("protocol/evolution-memory.md"));
         assert!(!is_public_forbidden_payload("global-skills.md"));
         assert!(!is_public_forbidden_payload("governance/skill-sync.md"));
     }
@@ -403,7 +396,7 @@ mod tests {
     #[test]
     fn custom_target_uses_full_manifest() {
         let m = manifest_for(&ProjectKind::Custom("test".into()));
-        assert_eq!(m.required_files.len(), 19);
+        assert_eq!(m.required_files.len(), 18);
     }
 
     // ── verify_release_manifest tests ─────────────────────────────────

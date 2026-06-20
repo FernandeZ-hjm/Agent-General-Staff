@@ -209,21 +209,17 @@ pub fn plan(source_repo: &Path, target: &Path) -> BootstrapPlan {
 
     // ── Portable runtime profile / hook templates (public-safe) ──────────
     // These templates are installation skeletons — they contain no real
-    // token, node_secret, API key, absolute $HOME path, task archive path,
+    // token, node-local secret, API key, absolute $HOME path, task archive path,
     // or memory capsule path.  They can safely enter public and bootstrap
     // payloads.
     let template_files: &[(&str, &str)] = &[
         (
             "manifests/templates/runtime-profiles.template.yaml",
-            "EvoMap runtime profiles (executor + planner) portable template",
+            "runtime profiles portable template",
         ),
         (
             "manifests/templates/hooks/claude-code-executor-stop.template.js",
-            "Claude Code Stop hook for post-task method capture",
-        ),
-        (
-            "manifests/templates/hooks/codex-planner-recall.template.json",
-            "Codex/Cursor planner pre-solution advisory recall hook template",
+            "Claude Code executor Stop hook template",
         ),
         (
             "manifests/templates/README.md",

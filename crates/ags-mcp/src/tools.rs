@@ -12,12 +12,6 @@
 //! can discover that preflight is required. `ags_solution_check` is a phase
 //! gate, NOT a preflight substitute.
 //!
-//! # EvoMap parallel-call boundary
-//!
-//! Tools that relate to solution formation (`ags_solution_check`) remind the
-//! host to call EvoMap MCP recall in parallel, but AGS MCP never proxies
-//! or calls EvoMap MCP itself.
-
 use std::path::PathBuf;
 
 use crate::protocol::ToolListResult;
@@ -126,13 +120,21 @@ pub fn list_tools() -> ToolListResult {
             ),
             tool_def(
                 TOOL_POLICY_RESOLVE,
-                "Resolve execution policy for a validated task card. Returns effective permission mode, effective parallelism, allowed launch args, downgrade reasons, stop reasons, and confirmation gate requirements. Read-only — never launches a runner.",
+                "Resolve execution policy for a validated task card. Returns effective permission mode, effective parallelism, allowed launch args, downgrade reasons, stop reasons, and confirmation gate requirements. Read-only — never launches a runner. Structured approval signals (never read from the task-card text) are accepted so MCP hosts resolve identical policy to the CLI gate: `approve_writes` (unlocks up to execute-and-verify) and `current_task_approval` (a host-detected live execution instruction; unlocks Heavy edit-with-confirmation only).",
                 serde_json::json!({
                     "type": "object",
                     "properties": {
                         "task_card": {
                             "type": "string",
                             "description": "Task card markdown text to resolve policy for"
+                        },
+                        "approve_writes": {
+                            "type": "boolean",
+                            "description": "Strong write approval (CLI flag / runner env). Unlocks up to execute-and-verify. Default false."
+                        },
+                        "current_task_approval": {
+                            "type": "boolean",
+                            "description": "Structured current-task approval: the host detected an explicit user execution instruction (实现/修复/做完) on the live request. Unlocks Heavy + edit-with-confirmation only (not execute-and-verify). Never derived from task-card text. Default false."
                         }
                     },
                     "required": ["task_card"]
@@ -153,7 +155,7 @@ pub fn list_tools() -> ToolListResult {
             ),
             tool_def(
                 TOOL_SOLUTION_CHECK,
-                "Check whether the current phase allows an executable task card. Returns: whether solution formation is still required, whether a task-card instruction is needed (task_card_requested=false blocks executable output with block_reason=task_card_not_requested), and whether EvoMap MCP recall should be called in parallel for non-trivial tasks. It also runs a deterministic prompt-request classifier over `summary` and returns `detected_task_card_request` + `detected_triggers` so the host recognizes \"give me a prompt / generate a task card / hand off to Claude Code\" intent instead of treating it as prose — advisory only: detection alone does NOT authorize a card (the three-gate threshold still requires an explicit task-card instruction). This is a phase gate, NOT a preflight substitute — preflight must complete first. AGS MCP does NOT call EvoMap MCP — hosts must call both MCPs in parallel. Read-only.",
+                "Check whether the current phase allows an executable task card. Returns: whether solution formation is still required and whether a task-card instruction is needed (task_card_requested=false blocks executable output with block_reason=task_card_not_requested). It also runs a deterministic prompt-request classifier over `summary` and returns `detected_task_card_request` + `detected_triggers` so the host recognizes \"give me a prompt / generate a task card / hand off to Claude Code\" intent instead of treating it as prose — advisory only: detection alone does NOT authorize a card (the three-gate threshold still requires an explicit task-card instruction). It surfaces two advisory, deterministic routing blocks: `value_route` (效价比路由 — the minimal execution-path form that covers the risk) and `capability_route` (能力路由 — which managed capability to suggest the host wake up for the demand, and whether it is reachable). Both are advisory-only and never change the task level, permission mode, Review gate, or Verification gate; capability_route never auto-invokes anything and never blocks. Optional `active_host` (or `agent`) and `target` shape the capability route for a specific host/repo; when omitted on the MCP server, the values from a successful `ags_preflight` are reused. This is a phase gate, NOT a preflight substitute — preflight must complete first. Read-only.",
                 serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -165,6 +167,18 @@ pub fn list_tools() -> ToolListResult {
                             "type": "boolean",
                             "description": "Whether the user has explicitly issued a task-card instruction (\"生成任务卡\", \"按这个方案出任务卡\", \"交给 Claude Code 执行\", etc.)",
                             "default": false
+                        },
+                        "active_host": {
+                            "type": "string",
+                            "description": "Active host the Capability Route targets (e.g. claude-code, codex). Optional. Empty string is host-agnostic (conservative, fail-closed). When omitted, the MCP server reuses the agent recorded by a successful ags_preflight."
+                        },
+                        "agent": {
+                            "type": "string",
+                            "description": "Alias for active_host. If both are absent, the MCP server falls back to the preflight agent."
+                        },
+                        "target": {
+                            "type": "string",
+                            "description": "Repository path used to read capability manifests for the Capability Route. Optional; resolves the manifest root from this path or any subdirectory. When omitted, the MCP server reuses the target recorded by a successful ags_preflight (default: current directory)."
                         }
                     },
                     "required": ["summary"]
@@ -202,6 +216,45 @@ pub fn call_tool(name: &str, arguments: &serde_json::Value) -> Result<String, St
         TOOL_SOLUTION_CHECK | LEGACY_TOOL_SOLUTION_CHECK => tool_solution_check(arguments),
         other => Err(format!("Unknown tool: {}", other)),
     }
+}
+
+/// Inject preflight-derived context defaults into a tool's arguments.
+///
+/// Only `ags_solution_check` consumes the `active_host` / `target` context, so
+/// every other tool passes through unchanged. Explicit arguments always win: a
+/// default is filled ONLY when the corresponding key is absent. An explicitly
+/// supplied empty `active_host` (`""`) is a deliberate host-agnostic choice and
+/// is left untouched. `agent` is treated as an alias key for `active_host` —
+/// when either is already present no host default is injected.
+///
+/// The server passes the NORMALIZED agent and RESOLVED target it recorded from a
+/// successful preflight; this is the only path that fills defaults. Callers that
+/// invoke `call_tool` directly without going through the server (e.g. low-level
+/// unit tests) get no injection, so an absent host stays host-agnostic
+/// (conservative, fail-closed) rather than a fabricated host.
+pub fn inject_preflight_defaults(
+    tool_name: &str,
+    mut arguments: serde_json::Value,
+    agent: Option<&str>,
+    target: Option<&str>,
+) -> serde_json::Value {
+    if !matches!(tool_name, TOOL_SOLUTION_CHECK | LEGACY_TOOL_SOLUTION_CHECK) {
+        return arguments;
+    }
+    if let Some(obj) = arguments.as_object_mut() {
+        let host_present = obj.contains_key("active_host") || obj.contains_key("agent");
+        if !host_present {
+            if let Some(a) = agent {
+                obj.insert("active_host".to_string(), serde_json::json!(a));
+            }
+        }
+        if !obj.contains_key("target") {
+            if let Some(t) = target {
+                obj.insert("target".to_string(), serde_json::json!(t));
+            }
+        }
+    }
+    arguments
 }
 
 // ── Tool Implementations ─────────────────────────────────────────────────────
@@ -521,10 +574,24 @@ fn tool_policy_resolve(args: &serde_json::Value) -> Result<String, String> {
             .map_err(|e| format!("JSON serialize error: {}", e));
     }
 
-    // Parse and resolve
+    // Parse and resolve. Structured approval signals are read from explicit
+    // args (NEVER from task-card text) and threaded through the same canonical
+    // builder the CLI gate uses, so MCP and CLI resolve identical policy.
     let parsed = task_card_validator::parse_validated(&task_card)
         .map_err(|e| format!("Parse error: {:?}", e))?;
-    let input = execution_policy::TaskPolicyInput::from_fields(&parsed.fields);
+    let approve_writes = args
+        .get("approve_writes")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let current_task_approval = args
+        .get("current_task_approval")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let input = execution_policy::TaskPolicyInput::from_fields_with_approval(
+        &parsed.fields,
+        approve_writes,
+        current_task_approval,
+    );
     let policy = execution_policy::resolve_policy(input);
 
     #[derive(Serialize)]
@@ -614,6 +681,24 @@ fn tool_solution_check(args: &serde_json::Value) -> Result<String, String> {
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    // Resolve the active host + target for the advisory Capability Route.
+    // Explicit `active_host` wins, then `agent`; the MCP server fills these from
+    // a successful preflight when absent (see `inject_preflight_defaults`). An
+    // absent or empty host is host-agnostic (conservative, fail-closed) — never a
+    // fabricated host. Target resolves the manifest root from itself or any
+    // subdirectory; absent → current directory.
+    let active_host = args
+        .get("active_host")
+        .and_then(|v| v.as_str())
+        .or_else(|| args.get("agent").and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .to_string();
+    let target = args
+        .get("target")
+        .and_then(|v| v.as_str())
+        .unwrap_or(".")
+        .to_string();
+
     #[derive(Serialize)]
     struct SolutionCheckOutput {
         executable_allowed: bool,
@@ -637,9 +722,6 @@ fn tool_solution_check(args: &serde_json::Value) -> Result<String, String> {
         /// Block reason when advisory intent blocks mutation.
         #[serde(skip_serializing_if = "Option::is_none")]
         advisory_block_reason: Option<String>,
-        evomap_recall_recommended: bool,
-        recall_status: String,
-        evomap_boundary: String,
         next_step: String,
         trivial_possible: bool,
         /// Value Route (效价比路由): the minimal execution-path form that still
@@ -648,6 +730,16 @@ fn tool_solution_check(args: &serde_json::Value) -> Result<String, String> {
         /// changes the Light/Medium/Heavy level, permission mode, Review gate, or
         /// Verification gate. The planner owns the final path.
         value_route: prompt_request_classifier::ValueRoute,
+        /// Capability Route (能力路由): which managed capability the host is
+        /// ADVISED to wake up for this demand, and whether it is reachable.
+        /// Parallel to `value_route` — value_route shapes the execution-path form,
+        /// capability_route suggests a third-party capability wakeup. Advisory and
+        /// deterministic; additive. It never auto-invokes a skill/MCP/CLI, never
+        /// blocks the request, and never changes the task level, permission mode,
+        /// Review gate, or Verification gate. Computed for the resolved
+        /// `active_host` / `target` (explicit args, else preflight context).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        capability_route: Option<capability_route::CapabilityRoute>,
         /// Quiet-by-default foreground decision state.
         #[serde(skip_serializing_if = "Option::is_none")]
         visible_status: Option<String>,
@@ -678,8 +770,16 @@ fn tool_solution_check(args: &serde_json::Value) -> Result<String, String> {
         trivial_possible,
     );
 
-    // Non-trivial tasks during solution formation should recall EvoMap
-    let evomap_recall_recommended = !task_card_requested && !trivial_possible;
+    // Capability Route (能力路由): advisory wakeup suggestion for the demand,
+    // reachable-or-fallback for the active host. Reads the manifest source of
+    // truth at `target`'s manifest root via the shared `capability-route` wiring.
+    // Advisory-only and additive — it never blocks, never auto-invokes, and
+    // carries no task-level/permission/gate field by construction.
+    let cap_route = capability_route::route_request(
+        &summary,
+        &capability_route::locate_manifest_root(std::path::Path::new(&target)),
+        &active_host,
+    );
 
     let (executable_allowed, block_reason, phase) = if !task_card_requested {
         (
@@ -731,12 +831,10 @@ fn tool_solution_check(args: &serde_json::Value) -> Result<String, String> {
         detected_advisory_intent: advisory_intent,
         mutation_allowed: advisory_mutation,
         advisory_block_reason: advisory_reason,
-        evomap_recall_recommended,
-        recall_status: "unavailable_or_not_called — AGS MCP does not proxy EvoMap MCP. Host must call EvoMap MCP in parallel for recall.".to_string(),
-        evomap_boundary: "AGS MCP and EvoMap MCP are parallel peers. AGS is the governance authority (lifecycle, gates, task level, permission mode, review gate, verification gate). EvoMap provides advisory method recall during solution formation only. AGS MCP does NOT proxy, wrap, or broker EvoMap MCP calls. If the host has no EvoMap MCP configured, recall_status stays 'unavailable_or_not_called'.".to_string(),
         next_step,
         trivial_possible,
         value_route,
+        capability_route: Some(cap_route),
         visible_status: Some(
             ags_verify::derive_visible_status(&ags_verify::StatusSignals {
                 advisory_no_mutation: classification.detected_advisory_intent
@@ -781,6 +879,14 @@ mod tests {
         });
         let out = call_tool(TOOL_SOLUTION_CHECK, &args).expect("solution_check ok");
         serde_json::from_str(&out).expect("valid json")
+    }
+
+    /// Suite root (two levels up from the crate dir) for capability-route tests.
+    fn suite_root() -> String {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .to_string_lossy()
+            .to_string()
     }
 
     #[test]
@@ -856,6 +962,44 @@ mod tests {
     }
 
     #[test]
+    fn policy_resolve_current_task_approval_unlocks_heavy_edit() {
+        // No MCP/CLI policy divergence: the MCP ags_policy_resolve carries the
+        // same structured current-task approval signal as the CLI gate, so a
+        // Heavy + edit-with-confirmation card resolves differently with and
+        // without the signal.
+        let card = include_str!("../../../tests/fixtures/valid-full.md")
+            .replace("任务级别：Light", "任务级别：Heavy")
+            .replace(
+                "Permission mode: execute-and-verify",
+                "Permission mode: edit-with-confirmation",
+            );
+
+        // Without approval → Heavy defaults to plan-only.
+        let no = call_tool(
+            TOOL_POLICY_RESOLVE,
+            &serde_json::json!({ "task_card": card }),
+        )
+        .expect("policy resolve ok");
+        let vno: serde_json::Value = serde_json::from_str(&no).expect("valid json");
+        assert_eq!(
+            vno["effective_permission_mode"], "plan-only",
+            "Heavy without approval must downgrade to plan-only: {vno}"
+        );
+
+        // With current_task_approval → stays edit-with-confirmation (no downgrade).
+        let yes = call_tool(
+            TOOL_POLICY_RESOLVE,
+            &serde_json::json!({ "task_card": card, "current_task_approval": true }),
+        )
+        .expect("policy resolve ok");
+        let vyes: serde_json::Value = serde_json::from_str(&yes).expect("valid json");
+        assert_eq!(
+            vyes["effective_permission_mode"], "edit-with-confirmation",
+            "current-task approval must unlock Heavy edit-with-confirmation over MCP: {vyes}"
+        );
+    }
+
+    #[test]
     fn solution_check_advisory_intent_detected() {
         let v = run_solution_check("评估一下这个方案的风险", false);
         assert_eq!(v["detected_advisory_intent"], true);
@@ -895,13 +1039,121 @@ mod tests {
         );
     }
 
+    // ── Capability Route (additive, advisory) ────────────────────────────────
+
+    /// `ags_solution_check` exposes BOTH value_route and an advisory
+    /// capability_route. A bare `call_tool` (no server injection, no preflight)
+    /// stays host-agnostic — never a fabricated host.
     #[test]
-    fn solution_check_stays_read_only_and_does_not_proxy_evomap() {
-        let v = run_solution_check("重构这个模块的边界", false);
-        let recall = v["recall_status"].as_str().unwrap();
-        assert!(
-            recall.contains("AGS MCP does not proxy EvoMap"),
-            "recall_status must state AGS does not proxy EvoMap: {recall}"
+    fn solution_check_exposes_capability_route_advisory() {
+        let v = run_solution_check("测试挂了，帮我看下", false);
+        let cr = &v["capability_route"];
+        assert!(!cr.is_null(), "capability_route must be present");
+        assert_eq!(cr["advisory"], true);
+        assert_eq!(cr["demand_kind"], "debug");
+        assert_eq!(
+            cr["active_host"], "host-agnostic",
+            "no active_host arg + no preflight injection → host-agnostic"
         );
+        assert!(
+            !v["value_route"].is_null(),
+            "value_route must remain present"
+        );
+    }
+
+    /// Capability Route is advisory-only: it does NOT change the executable gate
+    /// decision. The same summary with/without capability data resolves the gate
+    /// identically (driven solely by task_card_requested).
+    #[test]
+    fn solution_check_capability_route_does_not_change_gate() {
+        let v = run_solution_check("测试挂了，帮我看下", false);
+        assert_eq!(v["executable_allowed"], false);
+        assert_eq!(v["block_reason"], "task_card_not_requested");
+        // capability_route present but the gate is unaffected by it.
+        assert!(!v["capability_route"].is_null());
+    }
+
+    /// Explicit `active_host` + `target` in the args drive the route (this is the
+    /// path the MCP server uses to inject preflight context).
+    #[test]
+    fn solution_check_capability_route_uses_explicit_host_and_target() {
+        let args = serde_json::json!({
+            "summary": "测试挂了，帮我看下",
+            "active_host": "claude-code",
+            "target": suite_root(),
+        });
+        let out = call_tool(TOOL_SOLUTION_CHECK, &args).expect("solution_check ok");
+        let v: serde_json::Value = serde_json::from_str(&out).expect("valid json");
+        assert_eq!(v["capability_route"]["active_host"], "claude-code");
+        assert_eq!(v["capability_route"]["demand_kind"], "debug");
+        // auto-* aliases are retired (route_state: retired → excluded from
+        // routing); the debug demand routes to the canonical successor diagnose,
+        // and the retired auto-debug alias no longer surfaces.
+        let names: Vec<&str> = v["capability_route"]["recommendations"]
+            .as_array()
+            .expect("recommendations array")
+            .iter()
+            .filter_map(|r| r["capability_name"].as_str())
+            .collect();
+        assert!(
+            names.contains(&"diagnose"),
+            "debug demand should surface diagnose, got {names:?}"
+        );
+        assert!(
+            !names.contains(&"auto-debug"),
+            "retired auto-debug alias must not surface, got {names:?}"
+        );
+    }
+
+    /// The `agent` key is accepted as an alias for `active_host`.
+    #[test]
+    fn solution_check_capability_route_accepts_agent_alias() {
+        let args = serde_json::json!({
+            "summary": "测试挂了",
+            "agent": "codex",
+            "target": suite_root(),
+        });
+        let out = call_tool(TOOL_SOLUTION_CHECK, &args).expect("solution_check ok");
+        let v: serde_json::Value = serde_json::from_str(&out).expect("valid json");
+        assert_eq!(v["capability_route"]["active_host"], "codex");
+    }
+
+    /// Ordinary prose with no development demand → capability_route present with
+    /// a no-demand status; still advisory, never blocks.
+    #[test]
+    fn solution_check_capability_route_no_demand_on_prose() {
+        let v = run_solution_check("解释这段代码是做什么的", false);
+        assert_eq!(v["capability_route"]["status"], "no-demand-detected");
+        assert_eq!(v["capability_route"]["advisory"], true);
+    }
+
+    /// `inject_preflight_defaults` fills active_host/target only when absent;
+    /// explicit values always win, and non-solution-check tools pass through.
+    #[test]
+    fn inject_preflight_defaults_fills_only_absent_keys() {
+        // Absent → filled from preflight context.
+        let args = serde_json::json!({"summary": "x"});
+        let out =
+            inject_preflight_defaults(TOOL_SOLUTION_CHECK, args, Some("codex"), Some("/repo"));
+        assert_eq!(out["active_host"], "codex");
+        assert_eq!(out["target"], "/repo");
+
+        // Explicit active_host wins; explicit target wins.
+        let args = serde_json::json!({"summary": "x", "active_host": "claude-code", "target": "/explicit"});
+        let out =
+            inject_preflight_defaults(TOOL_SOLUTION_CHECK, args, Some("codex"), Some("/repo"));
+        assert_eq!(out["active_host"], "claude-code");
+        assert_eq!(out["target"], "/explicit");
+
+        // Explicit empty active_host is a deliberate host-agnostic choice — kept.
+        let args = serde_json::json!({"summary": "x", "active_host": ""});
+        let out = inject_preflight_defaults(TOOL_SOLUTION_CHECK, args, Some("codex"), None);
+        assert_eq!(out["active_host"], "");
+
+        // Non-solution-check tool: pass through unchanged.
+        let args = serde_json::json!({"agent": "claude-code"});
+        let out = inject_preflight_defaults(TOOL_PREFLIGHT, args, Some("codex"), Some("/repo"));
+        assert!(out.get("active_host").is_none(), "preflight args untouched");
+        assert!(out.get("target").is_none(), "preflight args untouched");
     }
 }

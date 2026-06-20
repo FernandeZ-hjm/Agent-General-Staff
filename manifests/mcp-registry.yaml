@@ -36,14 +36,13 @@ suite_interfaces:
     trust_level: "suite_canonical"
     description: >
       AGS MCP Server — host initialization adapter and mandatory governance
-      interface over MCP stdio. Provides 7 governance tools, 7 protocol
+      interface over MCP stdio. Provides 7 governance tools, 5 protocol
       resources, and 4 governance prompts. AGS is the governance authority;
-      it is NOT a governed third-party MCP. AGS MCP does NOT proxy, wrap,
-      or broker EvoMap MCP calls. All tools are read-only.
+      it is NOT a governed third-party MCP. All tools are read-only.
     package:
       manager: "cargo"
       name: "ags-mcp"
-      version: "2.6.0"
+      version: "2.7.0"
       repository: "this repository"
       license: "MIT"
     install:
@@ -78,9 +77,8 @@ suite_interfaces:
         - "Return AGS protocol resources and governance prompts."
       denied:
         - "Write files, install hooks, or modify any configuration."
-        - "Proxy, wrap, or broker EvoMap MCP calls."
         - "Decide task level, permission mode, review gate, or verification gate — these are already encoded in AGS protocol; the tools only enforce."
-        - "Read or write real tokens, node_secret, or ~/.evolver/settings.json."
+        - "Read or write real tokens, node-local secrets, or host secrets."
         - "Modify user worktrees without explicit authorization."
         - "Change AGS lifecycle/gate semantics."
     initialization_gate:
@@ -94,15 +92,6 @@ suite_interfaces:
         (ags_solution_check, ags_task_validate, ags_policy_resolve,
         ags_verify_local) require preflight to have completed first.
         Hosts should reject calls to these tools before preflight.
-    boundary:
-      evomap: "parallel_peer_not_brokered"
-      evomap_rule: >
-        AGS MCP and EvoMap MCP are parallel peers. Hosts call both independently.
-        AGS is the governance authority (lifecycle, gates, task level, permission
-        mode, review gate, verification gate, release boundary). EvoMap provides
-        advisory method recall during solution formation only. AGS MCP does NOT
-        proxy, wrap, or broker EvoMap MCP calls. If EvoMap output conflicts with
-        AGS protocol or gates, AGS always wins.
     risk:
       level: "low"
       findings:
@@ -113,7 +102,6 @@ suite_interfaces:
         - "Read-only by design — no write paths exist."
         - "Stdio transport only in v1 — no network exposure."
         - "No secret handling — tools do not read tokens, credentials, or keychain."
-        - "EvoMap boundary is enforced in code — no proxy or broker paths exist."
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Governed MCPs — third-party, registered and managed by AGS governance
@@ -165,82 +153,6 @@ mcps:
         - "Treat Context7 output as advisory documentation context, not protocol authority."
         - "Require manual review before version bumps or enabling additional clients."
     adoption_entry: "context7-mcp-adopted-20260607-optional"
-
-  - name: "gep"
-    profile: "optional"
-    status: "adopted"
-    category: "evolution_asset_recall"
-    trust_level: "reviewed_external"
-    protocol:
-      name: "gep-a2a"
-      version: "1.0.0"
-      schema_version: "1.8.0"
-      hub_url: "https://evomap.ai"
-      observed_mode: "remote"
-    package:
-      manager: "npm"
-      name: "@evomap/evolver"
-      version: "protocol-gep-a2a-1.0.0-schema-1.8.0"
-      integrity: "not_captured_existing_install"
-      repository: "https://github.com/EvoMap/evolver"
-      license: "not_recorded"
-    install:
-      transport: "mcp"
-      command: "configured-client-mcp"
-      args: []
-      installed_clients:
-        - "codex"
-        - "claude-code"
-      not_installed_clients:
-        - "cursor"
-      local_config_refs:
-        - "codex:mcp__gep__ active in current session"
-        - "claude-code:user-scope gep MCP entry"
-    authority:
-      allowed:
-        - "Return GEP protocol metadata for drift detection."
-        - "Search and list explicitly configured local GEP or skill assets."
-        - "Search and list EvoMap Hub assets as advisory external recall."
-        - "Run pre-solution evolution recall for Genes, Capsules, Skills, and method patterns."
-        - "Return source-tagged asset candidates with local, hub, or bundled provenance."
-        - "Submit validation reports only when explicitly authorized by the user or task card."
-      denied:
-        - "Read arbitrary local filesystem paths outside configured GEP or skill asset indexes."
-        - "Write project files, AGS memory, task cards, delivery reports, receipts, or verification results."
-        - "Install local Genes, Capsules, Skills, MCPs, or packages without explicit human approval."
-        - "Publish, revoke, or submit EvoMap assets without explicit human approval."
-        - "Override AGS protocol, project memory, task-card, execution-policy, release, review-gate, or verification authority."
-        - "Treat Hub or community assets as trusted project facts."
-    retrieval_policy:
-      default_sources:
-        - "local"
-        - "hub"
-      ranking:
-        - "Prefer AGS project memory, task evidence, and local user-owned assets over Hub assets."
-        - "Use Hub verified or featured assets as supplemental method recall."
-        - "Use ordinary community assets only as low-trust advisory references."
-      required_result_fields:
-        - "source"
-        - "type"
-        - "id"
-        - "summary"
-        - "provenance"
-        - "trust"
-        - "why_selected"
-    risk:
-      level: "medium"
-      findings:
-        - "Remote mode can query EvoMap Hub and may return community-provided assets."
-        - "Local asset listing may expose names or summaries of user-owned skills or GEP assets to the parent agent."
-        - "Install, publish, revoke, and validation-report tools can mutate local or Hub state if called."
-        - "Hub assets may be stale, incomplete, malicious, or misaligned with AGS boundaries."
-      mitigations:
-        - "Keep GEP as advisory recall only; AGS remains the authority layer."
-        - "Require source, trust, and provenance fields in recalled asset summaries."
-        - "Require explicit human approval before install, publish, revoke, or validation-report submission."
-        - "Do not send secrets, private task archives, receipts, or full project memory to Hub search."
-        - "Record adoption and future updates in the MCP adoption log."
-    adoption_entry: "gep-mcp-adopted-20260607-optional"
 
   - name: "codegraph"
     profile: "required"
@@ -300,3 +212,24 @@ mcps:
         - "Require manual review before version bumps or enabling additional clients."
         - "Record adoption and future updates in the MCP adoption log."
     adoption_entry: "codegraph-mcp-adopted-20260613-required"
+
+route_targets:
+  - name: "context7:get-library-docs"
+    description: context7 MCP get-library-docs tool (docs-lookup route target)
+    routing:
+      route_state: routable
+      parent: { kind: mcp, name: context7 }
+      entrypoint: { kind: tool, name: get-library-docs }
+      intent_tags: [docs-lookup]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: network
+      invoke_hint: "context7 MCP get-library-docs"
+      route_priority: 28
+      is_compatibility_alias: false
+      capability_group: [documentation-context]
+      upstream_group: "upstash/context7"
+      examples:
+        positive: ["查一下这个库的最新文档", "how do I use the X library API"]
+        negative: ["把这个文档发邮件给张三"]

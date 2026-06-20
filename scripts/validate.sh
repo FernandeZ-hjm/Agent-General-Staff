@@ -11,7 +11,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-RUST_VALIDATOR=(cargo run -q --manifest-path "$REPO_ROOT/Cargo.toml" -p ags-cli -- task-card-validator)
+RUST_VALIDATOR=(cargo run -q --manifest-path "$REPO_ROOT/Cargo.toml" -p ags-cli -- task validate)
 
 if [ $# -eq 0 ]; then
     echo "Usage: bash scripts/validate.sh <task-card> [...]"

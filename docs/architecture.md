@@ -148,19 +148,16 @@ flowchart LR
     PHASE[ags_solution_check<br/>phase gate]
     TOOLS[Read-only AGS tools<br/>agent instructions / protocol status / task validate / verify local]
     CLI[CLI fallback<br/>ags session preflight]
-    EXT[Optional external MCP<br/>parallel advisory recall]
 
     HOST --> AGSMCP
     AGSMCP --> PREFLIGHT
     PREFLIGHT --> PHASE
     PREFLIGHT --> TOOLS
     HOST -. MCP unavailable .-> CLI
-    HOST -. optional parallel recall .-> EXT
 
     style AGSMCP fill:#1565c0,color:#fff
     style PREFLIGHT fill:#ffeb3b,stroke:#f57f17
     style CLI fill:#e0e0e0
-    style EXT fill:#e8f5e9
 ```
 
 **Boundary rules:**

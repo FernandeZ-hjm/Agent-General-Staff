@@ -80,17 +80,9 @@ skills:
     source: 需用户自行选择可信来源（community-maintained）
 
   # ── Quality & Verification ──────────────────────────────────────────
-  - id: auto-verify
-    name: Auto-Verify
-    category: quality
-    purpose: Automatic behavior verification on task completion
-    risk: low
-    risk_description: Read-only verification
-    install_location: $HOME/.agents/skills/auto-verify/
-    manual_steps:
-      - "mkdir -p ~/.agents/skills/auto-verify"
-      - "Copy SKILL.md"
-    source: 需用户自行选择可信来源（community-maintained）
+  # auto-verify is RETIRED (2.7). Completion verification routes to the
+  # superpowers verification-before-completion entrypoint (see id: superpowers),
+  # not a standalone skill — so no separate auto-verify recommendation is listed.
 
   - id: caveman-commit
     name: Conventional Commits

@@ -9,6 +9,68 @@ to ship the `ags` CLI, canonical task-card protocols, execution-policy checks,
 release-boundary verification, memory-capsule templates, and public
 skill-governance workflows.
 
+## Release 2.7.0
+
+AGS 2.7.0 is the kernel-architecture release. It consolidates governance logic
+into a unified kernel, restructures the CLI entry surface, and switches the
+project license from MIT to GPL-3.0-only.
+
+### Kernel architecture
+
+- The `ags-cli` crate is restructured around a `kernel/` subsystem: awareness,
+  bootstrap, compliance, gate, hooks, mcp, policy, receipt, rollback, runner,
+  sync, task, and verify modules form a gate → policy → runner → receipt →
+  rollback closed loop. Previously scattered governance logic now lives behind
+  a single kernel entry surface.
+- New `agents/` subsystem (govern, host_specs, scan, verify) adds lightweight
+  built-in agent dispatch within the CLI.
+- CLI routing split into `cli/actions` (user-facing commands) and
+  `cli/kernel_actions` (governance commands); `main.rs` is now a thin dispatcher.
+- `setup/`, `init/`, and `update/` are independent modules, each with plan →
+  apply → verify → rollback stages supporting dry-run and rollback.
+
+### Capability and routing
+
+- Retired the `auto-brainstorm` / `auto-debug` / `auto-verify` aliases. Brainstorm
+  demand now routes to `grill-with-docs`, debugging to `diagnose`, and verification to
+  the `superpowers` verification-before-completion entrypoint. The aliases are no
+  longer suite-required or auto-triggered.
+- Capability Route ships as a tracked advisory routing crate
+  (`crates/capability-route`) — manifest-driven and advisory-only across the MCP, CLI,
+  and skill-governance inventory surfaces.
+
+### Diagnostics
+
+- `suite-doctor` checks rewritten (~1400 lines changed) for alignment with the
+  kernel architecture and expanded diagnostic coverage.
+
+### License
+
+- License changed from MIT to GPL-3.0-only. Derivative works that are
+  distributed must also be licensed under GPL-3.0-only. Internal use is
+  unaffected. See `LICENSE`, `COMMERCIAL.md`, and `NOTICE.md`.
+
+### Other
+
+- Version surface aligned to 2.7.0 across Cargo metadata, the suite manifest, the MCP
+  registry and serverInfo example, and suite diagnostics.
+- Third-party skill recommendations remain manual-install only; the public edition
+  bundles no third-party skill bodies and no private runtime or memory state.
+
+## Release 2.6.2
+
+AGS 2.6.2 refreshes the public runtime to the current core architecture while
+keeping the public-full boundary strict:
+
+- Capability Route is manifest-driven and advisory-only across MCP, CLI, and
+  skill-governance inventory surfaces.
+- Runner and execution-policy flows use the resolver-first `ags run` contract,
+  including structured current-task approval handling.
+- Public manifests keep third-party skill bodies out of the payload while still
+  exposing safe recommendation and route-target metadata.
+- Public documentation and release checks remove private runtime names and
+  machine-local capability surfaces.
+
 ## Release 2.6.0
 
 AGS 2.6.0 is the quiet-governance public release. It keeps the public-full
@@ -27,9 +89,8 @@ surface:
   Tencent Agent host clients with governed-host preflight behavior.
 - Verification routing: `ags verify lane` and the shell lane-decision helper
   classify diffs into minimal, standard, full, and release verification profiles.
-- Public boundary retained: EvoMap/GEP runtime assets, backing EvoMap resources,
-  local memory, build output, and machine-local overlays remain excluded from
-  the public-full payload.
+- Public boundary retained: local runtime assets, local memory, build output, and
+  machine-local overlays remain excluded from the public-full payload.
 
 ## Release 2.5.1
 
@@ -64,9 +125,8 @@ safety while preserving the 2.0 governance product surface:
   local`, Ubuntu additionally runs the Bash gate and `cargo deny`.
 - Pre-push verifier: `templates/hooks/pre-push.verify.sh` (repo-local-first,
   fail-closed; opt-in install, never automatic).
-- Public release boundary: the public-full sanitized payload strips EvoMap/GEP
-  capability-plugin runtime and the two EvoMap boundary backing resources; the
-  AGS↔EvoMap integration itself is unchanged as product form.
+- Public release boundary: the public-full sanitized payload strips local runtime
+  state, backing private resources, and machine-local overlays.
 - Skill governance console: `ags skill` now exposes a management console on top
   of the existing `scan` / `check` / `install` flow — `ags skill inventory`
   (audit on-disk skill assets, optionally writing `governance/skills-inventory.md`),
@@ -117,8 +177,9 @@ Not claimed in 2.5.0:
   governance framework, while excluding build output, installed third-party
   skills, private memory, private task archives, secrets, and local machine
   state.
-- MIT license: AGS may be used, copied, modified, distributed, and used
-  commercially under the standard MIT terms.
+- GPL-3.0-only license: AGS may be used, studied, modified, and redistributed
+  under the terms of the GNU General Public License v3.0 only. Distributed
+  derivative works must also be GPL-3.0-only.
 
 ## Rust And CLI Conversion
 
@@ -144,6 +205,6 @@ ags verify --scope release
 
 ## License And Attribution
 
-AGS Public Edition is distributed under the MIT License.
-Superpowers-related workflow inspiration and optional skill references are
-attributed separately in THIRD_PARTY_NOTICES.md.
+AGS Public Edition is distributed under the GNU General Public License v3.0
+only (GPL-3.0-only). Superpowers-related workflow inspiration and optional
+skill references are attributed separately in THIRD_PARTY_NOTICES.md.

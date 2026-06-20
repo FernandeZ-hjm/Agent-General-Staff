@@ -1,7 +1,7 @@
 # Agent General Staff (AGS)
 
 [![CI](https://github.com/FernandeZ-hjm/Agent-General-Staff/actions/workflows/ci.yml/badge.svg)](https://github.com/FernandeZ-hjm/Agent-General-Staff/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg)](https://www.rust-lang.org/)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-blue.svg)]()
 
@@ -135,13 +135,13 @@ Third-party skills can be recommended, never installed for you by default. `ags 
 
 Let experience escape the chat log and become a project asset. After each task, AGS saves task snapshots, key decisions, verification results, and context summaries. A later agent reads the project profile and task memory before continuing, instead of re-explaining the requirement from scratch. The larger the project, the longer the task chain, the more agents involved — the more this matters.
 
-### Self-Check And Release Gate (2.6)
+### Self-Check And Release Gate
 
-The repository ships a `deny.toml` (RustSec advisories + MIT/Apache-2.0/Unicode-3.0 license allowlist + crates.io-only sources), wired into CI and `scripts/verify.sh` with a fail-closed policy. In 2.6, verification moves closer to the change itself: `ags verify lane` and the lane-decision helper classify diffs into minimal / standard / full / release paths, while release verification keeps the public-full boundary free of private runtime files, machine-local paths, and build output.
+The repository ships a `deny.toml` (RustSec advisories + license allowlist + crates.io-only sources), wired into CI and `scripts/verify.sh` with a fail-closed policy. `ags verify lane` and the lane-decision helper classify diffs into minimal / standard / full / release paths, while release verification keeps the public-full boundary free of private runtime files, machine-local paths, and build output.
 
 ## How It Works
 
-AGS does not allow an agent to jump from a single user sentence straight into execution. The standard flow:
+AGS does not allow an agent to jump from a single user sentence straight into execution. In 2.7, governance logic is consolidated into a unified kernel (`kernel`), forming a gate → policy → runner → receipt → rollback closed loop. The standard flow:
 
 ```text
 Project preflight → solution formation → user confirmation → task card generation
@@ -277,7 +277,7 @@ Think of it as fitting a budget model with an arc reactor: a small core that let
 
 ## Cross-Platform Support
 
-AGS 2.6 continues to be verified on `ubuntu-latest`, `macos-latest`, and `windows-latest` in CI.
+AGS continues to be verified on `ubuntu-latest`, `macos-latest`, and `windows-latest` in CI.
 
 - The **Rust core** builds, tests, and runs across all three platforms. The `ags-platform` crate handles home-directory resolution and PATH lookups uniformly (Windows uses `USERPROFILE` + `PATHEXT`; no dependency on Unix `$HOME` or external `which`).
 - **Bash scripts** (`scripts/*.sh`) target Linux / macOS / WSL / Git Bash and are not promised to run natively under Windows PowerShell or cmd.
@@ -308,13 +308,13 @@ Third-party skills change agent behavior and may affect the local development en
 - [docs/comparison.md](docs/comparison.md) — AGS compared with other governance approaches
 - [examples/](examples/) — Public-safe examples: demo project, task cards, sample outputs, synthetic receipts
 - [evals/](evals/) — Reproducible experiment scenarios: authority escalation, unverified delivery, solution-as-execution
-- [COMMERCIAL.md](COMMERCIAL.md) — Commercial use, attribution, and brand notes under the MIT License
+- [COMMERCIAL.md](COMMERCIAL.md) — Commercial use, attribution, and brand notes under GPL-3.0
 
 ## License
 
-AGS (Agent General Staff, formerly Agent Governance Suite) uses the MIT License.
+AGS (Agent General Staff, formerly Agent Governance Suite) is licensed under the GNU General Public License v3.0 only (GPL-3.0-only).
 
-You may download, read, copy, modify, distribute, use commercially, and create derivative works from AGS. The required condition is preserving the MIT license text and copyright notice. `NOTICE.md` and `THIRD_PARTY_NOTICES.md` record project attribution and third-party materials and should be preserved when distributing AGS. The names "Agent General Staff" and "AGS" may be used for truthful attribution and compatibility statements, but they do not grant brand endorsement or trademark rights.
+You may download, read, copy, modify, and distribute AGS. **Key condition: if you distribute AGS or derivative works, recipients must also receive the complete source code under GPL-3.0-only.** Internal use alone does not trigger this obligation. `NOTICE.md` and `THIRD_PARTY_NOTICES.md` record project attribution and third-party materials and should be preserved when distributing AGS. The names "Agent General Staff" and "AGS" may be used for truthful attribution and compatibility statements, but they do not grant brand endorsement or trademark rights.
 
 ---
 

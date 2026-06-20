@@ -16,7 +16,7 @@ pub fn list_resources() -> ResourceListResult {
                 uri: "ags://global-kernel".to_string(),
                 name: "AGS Global Kernel".to_string(),
                 description: Some(
-                    "AGS global governance kernel summary — lifecycle, rules, and EvoMap boundary. \
+                    "AGS global governance kernel summary — lifecycle, rules, and host boundaries. \
                      Applicable to any project; does NOT assume the target is an AGS repo. \
                      Includes: ambient preflight → solution formation → user confirmation → \
                      task-card request gate → execution contract → routing → gate/execution/receipt. \
@@ -57,10 +57,6 @@ pub fn list_resources() -> ResourceListResult {
                 description: Some("Light/Medium/Heavy task routing criteria and escalation rules.".to_string()),
                 mimeType: Some("text/markdown".to_string()),
             },
-            // EvoMap boundary resources (ags://evolver-boundary,
-            // ags://protocol/evolution-memory) are not served in the public
-            // edition: their backing files are EvoMap-capability boundary specs
-            // that the release gate forbids from the public payload.
         ],
     }
 }

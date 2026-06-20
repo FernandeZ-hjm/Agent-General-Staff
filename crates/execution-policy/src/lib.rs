@@ -809,6 +809,91 @@ mod tests {
         assert_eq!(policy.approval_source, ApprovalSource::RunnerEnv);
     }
 
+    // ── Decoupling: structured current-task instruction approval ─────────────
+
+    #[test]
+    fn heavy_edit_with_current_task_instruction_no_downgrade() {
+        // A current-task instruction unlocks Heavy + edit-with-confirmation
+        // directly (no plan-only round trip), without a stop.
+        let input = TaskPolicyInput {
+            permission_mode: "edit-with-confirmation".into(),
+            task_level: "Heavy".into(),
+            approval_source: ApprovalSource::CurrentTaskInstruction,
+            ..light_execute_input()
+        };
+        let policy = resolve_policy(input);
+        assert_eq!(
+            policy.effective_permission_mode,
+            PermissionMode::EditWithConfirmation
+        );
+        assert!(!policy.was_downgraded);
+        assert!(!policy.stop_before_launch);
+        assert!(policy.requires_confirmation_gate);
+        assert_eq!(
+            policy.approval_source,
+            ApprovalSource::CurrentTaskInstruction
+        );
+    }
+
+    #[test]
+    fn heavy_execute_with_current_task_instruction_capped_to_edit() {
+        // execute-and-verify is default-forbidden under Heavy: a current-task
+        // instruction only unlocks edit-with-confirmation, so e&v is capped to
+        // edit-with-confirmation (downgraded, but NOT stopped).
+        let input = TaskPolicyInput {
+            permission_mode: "execute-and-verify".into(),
+            task_level: "Heavy".into(),
+            approval_source: ApprovalSource::CurrentTaskInstruction,
+            ..light_execute_input()
+        };
+        let policy = resolve_policy(input);
+        assert_eq!(
+            policy.effective_permission_mode,
+            PermissionMode::EditWithConfirmation
+        );
+        assert!(policy.was_downgraded);
+        assert_eq!(policy.downgrade_reasons[0].rule_id, "M4");
+        assert_eq!(policy.downgrade_reasons[0].after, "edit-with-confirmation");
+        assert!(
+            !policy.stop_before_launch,
+            "capped e&v stays executable, not stopped"
+        );
+        assert!(policy.requires_confirmation_gate);
+    }
+
+    #[test]
+    fn heavy_execute_with_cli_flag_unlocks_execute_and_verify() {
+        // The stronger CLI-flag approval DOES unlock execute-and-verify.
+        let input = TaskPolicyInput {
+            permission_mode: "execute-and-verify".into(),
+            task_level: "Heavy".into(),
+            approval_source: ApprovalSource::CliFlag,
+            ..light_execute_input()
+        };
+        let policy = resolve_policy(input);
+        assert_eq!(
+            policy.effective_permission_mode,
+            PermissionMode::ExecuteAndVerify
+        );
+        assert!(!policy.was_downgraded);
+        assert!(!policy.stop_before_launch);
+    }
+
+    #[test]
+    fn current_task_instruction_serializes_canonical() {
+        let input = TaskPolicyInput {
+            permission_mode: "edit-with-confirmation".into(),
+            task_level: "Heavy".into(),
+            approval_source: ApprovalSource::CurrentTaskInstruction,
+            ..light_execute_input()
+        };
+        let json = serde_json::to_string(&resolve_policy(input)).unwrap();
+        assert!(
+            json.contains("\"current-task-instruction\""),
+            "approval_source must serialize canonically: {json}"
+        );
+    }
+
     // ═════════════════════════════════════════════════════════════════════
     // F5: JSON canonical values
     // ═════════════════════════════════════════════════════════════════════
@@ -1569,5 +1654,73 @@ mod tests {
                 forbidden
             );
         }
+    }
+
+    // ── 2.7: neutral exhaustive effort maps to is_exhaustive_mode ────
+
+    #[test]
+    fn neutral_exhaustive_effort_sets_exhaustive_mode_no_escalation() {
+        let input = TaskPolicyInput {
+            execution_effort: Some("exhaustive".into()),
+            task_level: "Medium".into(),
+            ..light_execute_input()
+        };
+        let policy = resolve_policy(input);
+        assert!(policy.is_exhaustive_mode);
+        assert_eq!(policy.execution_effort, "exhaustive");
+        // No permission / parallelism / launch-arg escalation (M1-M3).
+        assert_eq!(
+            policy.effective_permission_mode,
+            PermissionMode::ExecuteAndVerify
+        );
+        assert_eq!(policy.effective_parallelism, Parallelism::None);
+        assert!(!policy
+            .allowed_launch_args
+            .contains(&"--permission-mode".to_string()));
+    }
+
+    #[test]
+    fn ultracode_alias_still_maps_to_exhaustive_mode() {
+        // The legacy ultracode alias resolves to the same is_exhaustive_mode as
+        // the neutral exhaustive value (parse-compatibility).
+        let input = TaskPolicyInput {
+            execution_effort: Some("ultracode".into()),
+            task_level: "Medium".into(),
+            ..light_execute_input()
+        };
+        let policy = resolve_policy(input);
+        assert!(policy.is_exhaustive_mode);
+        assert_eq!(policy.execution_effort, "ultracode");
+    }
+
+    #[test]
+    fn neutral_low_high_effort_do_not_set_exhaustive_mode() {
+        for effort in ["low", "normal", "high"] {
+            let input = TaskPolicyInput {
+                execution_effort: Some(effort.into()),
+                ..light_execute_input()
+            };
+            let policy = resolve_policy(input);
+            assert!(
+                !policy.is_exhaustive_mode,
+                "effort `{effort}` must not set exhaustive mode"
+            );
+        }
+    }
+
+    #[test]
+    fn explain_m1_applied_for_neutral_exhaustive() {
+        let input = TaskPolicyInput {
+            execution_effort: Some("exhaustive".into()),
+            task_level: "Medium".into(),
+            ..light_execute_input()
+        };
+        let output = explain_policy(&input);
+        let m1 = output
+            .explanations
+            .iter()
+            .find(|e| e.rule_id == "M1")
+            .unwrap();
+        assert_eq!(m1.decision, "applied");
     }
 }

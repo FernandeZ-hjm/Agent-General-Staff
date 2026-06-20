@@ -378,6 +378,25 @@ Allow `agent-team` only when the user explicitly requests experimental
 multi-agent execution or the runtime has a documented team mode. Treat it as
 unsupported for generic agents.
 
+## Subtask Scope Rules
+
+`子任务编排` declares a splittable structure; it never itself fires a subagent or
+workflow (the claude-code adapter / runner translates it under the resolved
+policy). When subtasks ARE used, their scope is restricted:
+
+- Subtasks may contain ONLY parallelizable work: read-only audit / analysis,
+  bounded implementation, documentation sync, or test addition.
+- The following MUST stay with the main executor and may NOT be delegated to a
+  subtask: the final verification run, the delivery report, `git` commit / push,
+  and any release gate.
+- All subtask results merge into a single diff; the main executor then runs the
+  unified verification, reads the full output, and writes the delivery report.
+
+Rationale: only the main executor has continuity across all phases and can make
+coherent verification / commit / delivery decisions. Subtasks are
+work-generation units; their output is material the main executor integrates,
+verifies, and delivers.
+
 ## Permission Downgrade Rules
 
 The executor must downgrade permission and stop when:
@@ -562,7 +581,7 @@ The resolver enforces the following MUST rules (canonical rule IDs M1–M10).
 | Rule | Description |
 |---|---|
 | M1–M3 | `ultracode` is thinking intensity only. It does **not** change permission mode, enable parallelism, or inject any launch arg. |
-| M4 | Heavy tasks without `explicit_write_approval` are downgraded to `plan-only` and require a confirmation gate. |
+| M4 | Heavy tasks without structured approval are downgraded to `plan-only` and require a confirmation gate. `current-task-approval` unlocks Heavy `edit-with-confirmation` only; `approve-writes` / runner-env can unlock stronger write modes. |
 | M5–M6 | `read-only` / `plan-only` effective permission modes must **never** produce write-type launch args. Active parallelism flags (`--parallel`, `--worktree`) and `--headless` are stripped. |
 | M7 | `subagent`, `multi-session`, `agent-team` require Workflow authority `within-card` or `allowed`. `worktree` requires Workflow authority **not** `none`. |
 | M8 | Every downgrade records a structured `DowngradeReason` with the before/after values and the triggering rule.  The `downgrade_reasons` list provides a full audit trail. |
@@ -574,7 +593,7 @@ The resolver enforces the following MUST rules (canonical rule IDs M1–M10).
 Validate and resolve execution policy in one command:
 
 ```bash
-ags policy resolve <task-card> --format text|json [--approve-writes]
+ags policy resolve <task-card> --format text|json [--current-task-approval] [--approve-writes]
 ```
 
 The old `ags resolve-policy` is kept as a hidden backward-compatible alias.
@@ -584,10 +603,16 @@ it prints errors to stderr and exits 1.  On success it outputs the resolved
 policy in text or JSON format.  It is **read-only** — it never launches a
 runner.
 
+The optional `--current-task-approval` flag sets `approval_source` to
+`current-task-instruction`, allowing Heavy tasks to retain
+`edit-with-confirmation` when the live user request explicitly approved this
+task's execution. It does not unlock Heavy `execute-and-verify`.
+
 The optional `--approve-writes` flag sets `approval_source` to `cli-flag`,
-allowing Heavy tasks to retain write-mode permissions without downgrade.
-Without this flag (or a runner environment override), Heavy tasks are always
-downgraded to `plan-only`.
+allowing Heavy tasks to retain stronger write-mode permissions when the current
+task contract explicitly allows them. Without either structured approval signal
+(or a runner environment override), Heavy mutation requests are downgraded to
+`plan-only`.
 
 ### Default semantics
 
@@ -597,10 +622,19 @@ downgraded to `plan-only`.
 | `Workflow authority:` | absent or empty | `"none"` |
 | `approval_source` | (not in task card fields) | `none` |
 
+`Execution effort` accepts the neutral execution-intensity values `low` /
+`normal` / `high` / `exhaustive` (default `unknown` when absent). The exhaustive
+tier (`exhaustive`) sets `is_exhaustive_mode`; `ultracode` is retained only as a
+parse-compatible legacy alias mapping to the same exhaustive semantics and must
+not be generated into the front-stage task card. Host-private depth/workflow
+trigger words are translated to execution behavior only by the claude-code
+adapter / runner from the resolved policy — never read from the task-card body.
+
 The resolver does not accept `approval_source` from the task card text — only
-an explicit CLI flag (`--approve-writes` → `cli-flag`) or runner environment
-override (`AGS_APPROVE_WRITES=1` → `runner-env`) can set it to an approved
-state.  Task card text is **never** an approval source.
+structured launch inputs can set it: `--current-task-approval` →
+`current-task-instruction`, `--approve-writes` → `cli-flag`, or runner
+environment override (`AGS_APPROVE_WRITES=1` → `runner-env`). Task card text is
+**never** an approval source.
 
 ### Stop vs confirmation gate
 
@@ -612,7 +646,8 @@ The resolver has two distinct launch-blocking mechanisms:
 | `requires_confirmation_gate=true` | Launch but present a confirmation prompt before mutation. | Runner launches in plan mode, presents plan, waits for human approval before editing. |
 
 `stop_before_launch` is set when:
-- A Heavy task requests mutation without explicit write approval.
+- A Heavy task requests mutation without the structured approval required for
+  that permission mode.
 - Active parallelism (subagent, worktree, multi-session, agent-team) is
   requested but the effective permission mode forbids writes — the
   parallelism flags would create filesystem side effects incompatible
@@ -655,8 +690,8 @@ consume JSON.
 | `downgrade_reasons` | object array | Full audit trail; each entry has `rule_id`, `field`, `before`, `after`, `reason`. |
 | `requires_confirmation_gate` | boolean | If `true` and launch is not stopped, runner must present a confirmation gate before mutation. |
 | `execution_effort` | string | Declared effort, defaulting to `unknown` when absent. |
-| `is_exhaustive_mode` | boolean | `true` only for `Execution effort: ultracode`; it never grants permission or parallelism. |
-| `approval_source` | string | `none`, `cli-flag`, or `runner-env`. Task-card text is never an approval source. |
+| `is_exhaustive_mode` | boolean | `true` for the exhaustive execution-effort tier (`Execution effort: exhaustive`, or the legacy `ultracode` alias); it never grants permission or parallelism. |
+| `approval_source` | string | `none`, `current-task-instruction`, `cli-flag`, or `runner-env`. Task-card text is never an approval source. |
 
 Stopped policy invariant:
 
@@ -665,56 +700,77 @@ Stopped policy invariant:
 - If `stop_before_launch=true`, `requires_confirmation_gate` does not authorize
   a launch; stop wins.
 
-## Runner Auto Mode
+## Script Wrapper (`run-task-card.sh`) → `ags run`
 
-`scripts/run-task-card.sh --auto` is a conservative orchestration layer. It MUST
-consume the **resolved execution policy** from `ags policy resolve` to determine
-launch flags — it must NOT derive flags directly from raw task-card fields.
+`scripts/run-task-card.sh` is a **thin compatibility wrapper** that preserves the
+historical script entry point. It performs no validation, gate, policy, adapter,
+or receipt logic of its own. It forwards the task-card path and a small fixed set
+of flags to the canonical Rust runner `ags run`, which owns the entire
+resolver-first launch contract described below.
 
-### Correct auto-mode flow
+The wrapper's only real flags are:
+
+- `--check-only` — stop after the gate check; exit `0` if allowed/confirm, `1`
+  if stopped.
+- `--dry-run` — emit the full launch plan without executing.
+- `--current-task-approval` — pass live current-task approval through to the
+  resolver; unlocks Heavy `edit-with-confirmation` only.
+- `--approve-writes` — pass write approval through to the resolver for Heavy
+  tasks.
+- `--format text|json` — output format passed through to `ags run`
+  (default `text`).
+
+The task-card path must come FIRST; options follow it. Beyond argument
+forwarding, the only extra behavior the wrapper adds is signal forwarding (it
+kills the child `ags run` on cancellation) and a best-effort, post-task update
+notifier that runs after a normal, real execution. The wrapper never reads raw
+task-card fields and never synthesizes launch flags.
+
+### Flow
 
 ```
 task card
     │
     ▼
-ags policy resolve --format json           ◄── resolver enforces M1–M10
+run-task-card.sh                           ◄── thin wrapper; forwards args only
     │
     ▼
-run-task-card.sh --auto                    ◄── reads resolved policy JSON
-    │  reads .effective_permission_mode
-    │  reads .effective_parallelism
-    │  reads .allowed_launch_args            ◄── authoritative, already gated
-    │  reads .stop_before_launch
-    │  reads .requires_confirmation_gate
-    │  reads .runtime_adapter
+ags run <task-card> [flags]                ◄── canonical runner owns all logic:
+    │  validates the canonical task card        validation, gate, policy resolve,
+    │  resolves execution policy (M1–M10)        adapter, receipt planning
+    │  applies authority / writability gates
     │
     ▼
 launch or stop
 ```
 
-### Why resolver-first
+### Resolver-first contract (enforced by `ags run`)
 
 The resolver enforces M5/M6: `read-only` and `plan-only` effective permission
 modes must never produce write-type launch args or active parallelism flags.
-If the auto-mode runner reads raw task-card fields directly, it can produce
+`ags run` therefore drives launch from the **resolved execution policy**
+(`ags policy resolve`), not from raw task-card fields. If a runner bypassed the
+resolver and used unprocessed task-card values directly, it could produce
 `--parallel`, `--worktree`, or `--headless` flags for a `read-only` card —
 bypassing the resolver's writability gate entirely.
 
-The auto-mode runner MUST:
+`ags run` MUST:
 
-1. Run `ags policy resolve <task-card> --format json` (with `--approve-writes`
-   if the invoking context carries explicit approval).
+1. Resolve the execution policy via `ags policy resolve <task-card> --format json`
+   (with `--current-task-approval` or `--approve-writes` when the invoking
+   context carries the matching structured approval).
 2. Check `stop_before_launch` — if `true`, refuse to launch and surface all
    `stop_reasons` entries to the caller. Multiple independent gates can stop
    the same launch attempt.
-3. Use `allowed_launch_args` verbatim as the CLI arguments for the runner.
+3. Use `allowed_launch_args` verbatim as the CLI arguments for the launched
+   session.
 4. If `requires_confirmation_gate` is `true`, present a confirmation prompt
-   before enabling mutation in the runner session.
+   before enabling mutation in the session.
 5. Never read `Parallelism:`, `Execution surface:`, or `Permission mode:`
    from the raw task card to decide launch flags — those values have already
    been resolved, downgraded, and gated by the resolver.
 
-### Example: resolved policy → runner flags
+### Example: resolved policy → launch flags
 
 Given a task card with `Permission mode: read-only`, `Parallelism: worktree`:
 
@@ -730,37 +786,58 @@ Given a task card with `Permission mode: read-only`, `Parallelism: worktree`:
 }
 ```
 
-The auto-mode runner sees `stop_before_launch: true`, refuses to launch, and
-reports the stop reason entries. It never generates `--parallel --worktree`,
-and it receives no launch args at all because stopped policies expose
-`allowed_launch_args: []`.
+`ags run` sees `stop_before_launch: true`, refuses to launch, and reports the
+stop reason entries. It never generates `--parallel --worktree`, and it receives
+no launch args at all because stopped policies expose `allowed_launch_args: []`.
 
 ### Defaults preserved
 
-Auto mode never upgrades `Permission mode`; Heavy tasks still default to
-`plan-only` and require explicit current-task approval before mutation.
-Receipt-first execution remains an explicit runner flag; auto mode does not
-enable it implicitly.
+`ags run` never upgrades `Permission mode`; Heavy tasks still default to
+`plan-only` and require structured current-task approval before
+`edit-with-confirmation` mutation. Heavy `execute-and-verify` still requires the
+stronger `--approve-writes` / runner-env approval path.
+Receipt-first execution remains an explicit runner flag; it is never enabled
+implicitly.
 
-## Learning Runner
+### Planned — standalone auto-orchestration (not implemented)
 
-`scripts/run-task-card.sh` is learning-enabled by default. Before launching
-Claude Code, the runner validates the canonical task card, compiles a transient
-Task IR / compiled brief, and injects the brief as an execution guardrail.
+> **Status: planned, not implemented in the current wrapper.** A standalone
+> `run-task-card.sh --auto` orchestration mode — where the script itself reads
+> the resolved policy JSON and decides launch flags — does **not** exist. The
+> wrapper supports only `--check-only`, `--dry-run`, `--current-task-approval`,
+> `--approve-writes`, and `--format`; it delegates the entire resolver-first launch contract above to
+> `ags run`. Treat the resolver-first rules in this section as the contract
+> `ags run` already enforces, not as a separate script-level auto mode.
 
-Rules:
+## Planned — Learning Runner (not implemented)
+
+> **Status: planned, not implemented in the current wrapper.** Neither
+> `scripts/run-task-card.sh` nor `ags run` is "learning-enabled by default."
+> The wrapper has no Task IR / compiled-brief compile step, no `--no-learning`
+> or `--keep-ir` flags, and writes no `learning-gaps/` entries. The flags it
+> actually accepts are `--check-only`, `--dry-run`, `--current-task-approval`,
+> `--approve-writes`, and `--format`. The design below records the intended future capability and its
+> boundary rules so they are not reinvented incompatibly; do not describe any
+> of it as live behavior.
+
+The planned learning runner would, before launching the executor, validate the
+canonical task card, compile a transient Task IR / compiled brief, and inject the
+brief as an execution guardrail.
+
+Intended rules (planned):
 
 - Task IR and compiled brief are not task-card formats.
 - They must not be pasted into, appended to, or required as part of the
   canonical task-card skeleton.
-- They are temporary by default and are deleted after the run.
-- `--keep-ir` may retain them in the receipt package for compiler debugging.
-- `--no-learning` disables the transient compile and learning-gap extraction
-  for a run.
-- Long-term retention is limited to `learning-gaps/` entries under local
+- They would be temporary by default and deleted after the run.
+- A `--keep-ir` flag would retain them in the receipt package for compiler
+  debugging.
+- A `--no-learning` flag would disable the transient compile and learning-gap
+  extraction for a run.
+- Long-term retention would be limited to `learning-gaps/` entries under local
   project memory when the runner detects reusable misses such as weak
   verification, executor delivery failure, nonzero execution, or compiler
   coverage gaps.
-- Learning gaps are review proposals. They do not automatically update
+- Learning gaps would be review proposals. They must not automatically update
   `context-capsule.md`, task-card templates, protocol files, validator rules, or
   project profiles.

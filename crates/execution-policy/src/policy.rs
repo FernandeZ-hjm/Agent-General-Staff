@@ -131,23 +131,41 @@ impl Serialize for Parallelism {
 /// Where explicit write approval came from.
 ///
 /// Task-card text is **never** an approval source — the `from_fields()`
-/// constructor always returns `None`.  Only a CLI flag or runner environment
-/// override can set approval.
+/// constructor always returns `None`.  Approval is a STRUCTURED signal carried
+/// here, separate from the task LEVEL: a Heavy (risk/review) task can still be
+/// executable when an approval source is present.  The sources differ in how far
+/// they unlock — see [`ApprovalSource::unlocks_execute_and_verify`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApprovalSource {
-    /// No explicit write approval — Heavy tasks will be downgraded.
+    /// No explicit write approval — Heavy tasks default to plan-only and stop.
     None,
-    /// Approval came from the `--approve-writes` CLI flag.
+    /// Structured current-task approval derived from an explicit user execution
+    /// instruction on the live request ("实现 / 修复 / 做完 / 一口气做完 /
+    /// 做完核验", detected deterministically by the classifier, NEVER from the
+    /// task-card text).  Unlocks Heavy + `edit-with-confirmation` WITHOUT a
+    /// plan-only round-trip, but does NOT unlock `execute-and-verify`.
+    CurrentTaskInstruction,
+    /// Approval came from the `--approve-writes` CLI flag.  Unlocks up to
+    /// `execute-and-verify`.
     CliFlag,
     /// Approval came from a runner environment variable
-    /// (`AGS_APPROVE_WRITES=1` or equivalent).
+    /// (`AGS_APPROVE_WRITES=1` or equivalent).  Unlocks up to `execute-and-verify`.
     RunnerEnv,
 }
 
 impl ApprovalSource {
-    /// Whether this source constitutes explicit write approval.
+    /// Whether this source constitutes explicit write approval (allows the Heavy
+    /// task to proceed in an edit-capable mode rather than being forced to
+    /// plan-only).
     pub fn is_approved(&self) -> bool {
         !matches!(self, Self::None)
+    }
+
+    /// Whether this source is strong enough to unlock `execute-and-verify`.
+    /// A current-task instruction only unlocks `edit-with-confirmation`;
+    /// `execute-and-verify` requires the stronger CLI-flag / runner-env approval.
+    pub fn unlocks_execute_and_verify(&self) -> bool {
+        matches!(self, Self::CliFlag | Self::RunnerEnv)
     }
 }
 
@@ -155,6 +173,7 @@ impl fmt::Display for ApprovalSource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::None => write!(f, "none"),
+            Self::CurrentTaskInstruction => write!(f, "current-task-instruction"),
             Self::CliFlag => write!(f, "cli-flag"),
             Self::RunnerEnv => write!(f, "runner-env"),
         }
@@ -309,6 +328,20 @@ impl DowngradeReason {
             reason: format!(
                 "Heavy task defaults to plan-only without explicit write approval; requested={}, effective={}",
                 requested, effective
+            ),
+        }
+    }
+
+    /// Heavy `execute-and-verify` capped to `edit-with-confirmation` because the
+    /// approval was a current-task instruction (which does not unlock e&v).
+    pub fn heavy_execute_capped_to_edit(requested: &str, effective: &str) -> Self {
+        Self {
+            rule_id: "M4".to_string(),
+            field: "permission_mode".to_string(),
+            before: requested.to_string(),
+            after: effective.to_string(),
+            reason: format!(
+                "Heavy execute-and-verify is default-forbidden; a current-task instruction unlocks only edit-with-confirmation. Capped: requested={requested}, effective={effective}. Use --approve-writes / runner-env approval for execute-and-verify."
             ),
         }
     }

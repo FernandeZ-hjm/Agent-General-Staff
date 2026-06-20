@@ -155,6 +155,10 @@ pub fn default_public_allowlist() -> Allowlist {
                 ],
                 allowed_content_drift_sections: vec![
                     "Agent Task Protocol".to_string(),
+                    "Agent Task Protocol > 完整生命周期 > 2. Solution Phase（方案形成）"
+                        .to_string(),
+                    "Agent Task Protocol > 完整生命周期 > 3.10. Capability Route（能力路由，advisory）"
+                        .to_string(),
                     "Agent Task Protocol > Executor 入口规则".to_string(),
                     "Agent Task Protocol > Review Gate 规则".to_string(),
                     "Agent Task Protocol > Runtime Hook Policy".to_string(),

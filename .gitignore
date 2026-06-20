@@ -7,7 +7,6 @@ benchmarks/
 # Public worktree private/local overlays
 /config/
 /memory/
-/.evolver/
 /.ags/
 
 # Maintainer-private sync tool — not part of the public edition
@@ -17,7 +16,6 @@ benchmarks/
 .graphifyignore
 graphify-out/
 
-# GEP local runtime data
-assets/gep/
-/docs/evomap/
+# Local runtime data
+/assets/local-runtime/
 /manifests/templates/

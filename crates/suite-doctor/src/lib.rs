@@ -12,7 +12,7 @@
 //!     render_json, render_text, CheckStatus, Finding, HealthReport, Severity,
 //! };
 //!
-//! let mut report = HealthReport::new("Suite Doctor v2.6.0");
+//! let mut report = HealthReport::new("Suite Doctor v2.7.0");
 //! report.add(Finding::pass("cargo-fmt", "cargo fmt --check passed"));
 //! report.add(Finding::fail("cargo-test", "2 tests failed",
 //!     "Run `cargo test` for details."));
@@ -27,7 +27,7 @@ mod checks;
 mod report;
 mod types;
 
-pub use checks::run_checks;
+pub use checks::{capability_route_coverage_check, capability_route_drift_check, run_checks};
 pub use report::{render_json, render_text};
 pub use types::{CheckStatus, Finding, HealthReport, Severity};
 

@@ -1,7 +1,8 @@
 # Third-Party Notices
 
 This file lists third-party works referenced by or adapted into the Agent
-Governance Suite (AGS) public edition.
+General Staff (AGS) public edition. AGS itself is licensed under GPL-3.0-only.
+Third-party components retain their original licenses as listed below.
 
 ## Superpowers
 

@@ -73,16 +73,10 @@ each must be manually installed by the user.
 
 ## Quality & Verification
 
-### Auto-Verify
-- **Purpose**: Automatic behavior verification on task completion; confirms changes work before declaring done
-- **Source**: 需用户自行选择可信来源（community-maintained）
-- **Risk**: Low (read-only verification)
-- **Install Location**: `$HOME/.agents/skills/auto-verify/`
-- **Manual Install**:
-  ```bash
-  mkdir -p ~/.agents/skills/auto-verify
-  # Copy SKILL.md
-  ```
+> **Verification route**: AGS routes completion verification to the `superpowers`
+> **verification-before-completion** entrypoint (see *Engineering Workflow* above),
+> not a standalone "auto-verify" skill. The retired `auto-verify` alias is no longer
+> recommended.
 
 ### Conventional Commits (caveman-commit)
 - **Purpose**: Generate concise Conventional Commit messages from diff analysis
