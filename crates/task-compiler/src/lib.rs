@@ -1941,8 +1941,13 @@ mod tests {
             errors,
             card
         );
+        let has_absolute_path = card.contains("目标文件夹路径：\n- /")
+            || card.contains("目标文件夹路径：\n- \\\\?\\")
+            || card.lines().any(|l| {
+                l.starts_with("- ") && l.len() > 3 && l.as_bytes()[2].is_ascii_alphabetic() && l.contains(":\\")
+            });
         assert!(
-            card.contains("目标文件夹路径：\n- /"),
+            has_absolute_path,
             "compiled card must render an absolute target folder path:\n{}",
             card
         );
