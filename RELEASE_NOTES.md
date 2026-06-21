@@ -9,6 +9,51 @@ to ship the `ags` CLI, canonical task-card protocols, execution-policy checks,
 release-boundary verification, memory-capsule templates, and public
 skill-governance workflows.
 
+## Post-2.7.0 Changes
+
+### Unified routing model
+
+- Entry architecture switched to **unified routing** (`gate prompt-request`).
+  Every user request is classified by `prompt-request-classifier` for intent,
+  routed through `capability-route` for capability wakeup advice, and evaluated
+  by `value-route` for execution-path form — all before deciding whether to
+  enter the task-card pipeline. Requests that do not require a task card are
+  allowed through as ordinary responses.
+- CLI top-level surface consolidated to the **five-stage pipeline**: setup →
+  agents → skill → init → update. `doctor` and `capability` remain available
+  but are no longer primary user-facing pipeline stages.
+
+### Memory capsule capture
+
+- `claude-stop-memory-capture.py` publishes capsule capture: the stop hook now
+  archives delivery reports and receipts into task-memory and task-archive
+  automatically.
+
+### Task-card validator modular refactoring
+
+- `task-card-validator` refactored from a single 5000+ line `lib.rs` into
+  focused modules: `parse.rs` (markdown parsing), `validate.rs` (field and
+  combination checks), `contradictions.rs` (contradiction detection engine),
+  `types.rs` (shared types), and `tests.rs`. No behavioral change — same
+  validation rules, cleaner boundaries.
+
+### Capability skill retirement
+
+- The public `ags capability` skill entry is retired from setup. Capability
+  routing remains available as an internal advisory crate
+  (`crates/capability-route`) and via `ags gate capability-request`.
+
+### Cross-platform CI hardening
+
+- Windows and macOS CI stabilized: path separator normalization, LF line
+  endings via `.gitattributes`, `#[cfg(unix)]` gates on shell-dependent tests,
+  `PATHEXT`-aware command lookup, and temp-path spelling fixes.
+
+### Task compiler updates
+
+- `task-compiler` gains Windows absolute-path acceptance and tighter test
+  assertions for compiled task-card output.
+
 ## Release 2.7.0
 
 AGS 2.7.0 is the kernel-architecture release. It consolidates governance logic

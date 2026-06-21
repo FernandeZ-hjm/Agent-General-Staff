@@ -144,15 +144,16 @@ The repository ships a `deny.toml` (RustSec advisories + license allowlist + cra
 
 ## How It Works
 
-AGS does not allow an agent to jump from a single user sentence straight into execution. In 2.7, governance logic is consolidated into a unified kernel (`kernel`), forming a gate → policy → runner → receipt → rollback closed loop. The standard flow:
+AGS does not allow an agent to jump from a single user sentence straight into execution. In 2.7, AGS uses a **unified routing model**: every user request first passes through `gate prompt-request` for intent classification, capability routing, and value routing before deciding whether to enter the task-card pipeline.
 
 ```text
-Project preflight → solution formation → user confirmation → task card generation
-  → execution policy resolution → gate check → execution → verification
-  → receipt generation → task memory update
+User request → unified routing (intent classification + capability route + value route)
+  → task card required?
+      yes → preflight → solution → compile task card → validate → policy → execute → verify → receipt → memory
+      no  → allow ordinary response
 ```
 
-The most important part is not any single command, but the order. **Three-gate threshold:**
+Once inside the task-card pipeline, the **three-gate threshold** still applies:
 
 1. **Solution OK** — the user confirms the solution direction
 2. **Task-card instruction** — the user explicitly asks for a task card ("Solution OK" ≠ "go")
@@ -162,29 +163,39 @@ Without the middle gate (task-card instruction), routing must not proceed.
 
 ```mermaid
 flowchart TD
-    A[User Request] --> B[Ambient Preflight<br/>Project preflight]
-    B --> B1[Detect project identity<br/>Read memory capsule]
-    B1 --> C[Solution Phase<br/>Solution formation]
+    A[User Request] --> R[Unified Routing<br/>gate prompt-request]
+    R --> R1[Intent Classification<br/>prompt-request-classifier]
+    R1 --> R2[Capability Route<br/>capability-route]
+    R2 --> R3[Value Route<br/>value-route]
+    R3 --> D0{Task card required?}
+    D0 -->|No| PASS[Allow ordinary response]
+    D0 -->|Yes| B[1. Preflight<br/>ags_preflight / CLI fallback]
+    B --> B1[Read context capsule + task memory]
+    B1 --> C[2. Solution Phase]
     C --> C1[Understand → Diagnose → Form solution]
     C1 --> D{User confirms?}
-    D -->|Solution OK| E[Execution Contract]
+    D -->|Solution OK| E[3. Execution Contract]
     D -->|Revise| C
     E --> F{Task-card instruction?}
-    F -->|Generate task card| G[Task-Card Instruction Gate ✅]
-    F -->|Not received| F_WAIT[Wait]
+    F -->|Generate task card| G[4. Task-Card Instruction Gate ✅]
+    F -->|Not received| F_WAIT[Wait — ags task compile<br/>blocks without --task-card-requested]
     F_WAIT --> F
-    G --> H[Routing<br/>Light / Medium / Heavy]
-    H --> I[Task Card Generation]
-    I --> J[Gate Check<br/>ags task validate]
-    J -->|Pass| K[Policy Resolution<br/>ags policy resolve]
-    J -->|Fail| I
+    G --> H[5. Routing<br/>Light / Medium / Heavy]
+    H --> I[6. Task Card Generation<br/>ags task compile]
+    I --> J[7. Gate Check<br/>ags task validate — hard gate]
+    J -->|Pass| K[8. Policy Resolution<br/>ags policy resolve — soft resolution]
+    J -->|Fail| J_FAIL[Fix task card]
+    J_FAIL --> I
     K --> L{stop_before_launch?}
-    L -->|Yes| L_STOP[STOP: fix card or get approval]
-    L -->|No| M[Execution]
-    M --> N[Verification]
-    N --> O[Receipt]
-    O --> P[Task Memory Update]
+    L -->|Yes| L_STOP[STOP: fix or get approval]
+    L -->|No| M[9. Execution<br/>ags run]
+    M --> N[10. Verification<br/>ags verify]
+    N --> O[11. Receipt<br/>ags receipt generate]
+    O --> P[12. Task Memory Update]
 
+    style R fill:#7e57c2,color:#fff
+    style R1 fill:#9575cd,color:#fff
+    style PASS fill:#c8e6c9
     style B fill:#e1f5fe
     style C fill:#fff3e0
     style G fill:#ffeb3b,stroke:#f57f17
@@ -197,28 +208,30 @@ For architectural details, see [docs/architecture.md](docs/architecture.md).
 
 ## Common Commands
 
-2.7 uses a two-layer CLI architecture: 7 top-level commands manage the global environment, while kernel subcommands handle task cards, policies, verification, and receipts.
+2.7 uses a unified routing + five-stage pipeline CLI architecture: 5 top-level commands cover the full governance lifecycle, while kernel subcommands handle task cards, policies, verification, and receipts.
 
-### Global Management
+### Five-Stage Pipeline (Global Management)
 
-| Command | Purpose |
-|---|---|
-| `ags setup` | Install/upgrade the global AGS governance kernel |
-| `ags init` | Onboard a target project into AGS governance |
-| `ags doctor` | Full-pipeline health diagnostics; `--fix` for safe repairs |
-| `ags agents scan` | Inventory local agent hosts and MCP registration |
-| `ags skill inventory` | Audit on-disk skill assets |
-| `ags capability verify` | Verify cross-agent capability visibility |
-| `ags update check` | Read-only drift report; `apply` to execute updates |
+| Stage | Command | Purpose |
+|---|---|---|
+| 1 | `ags setup` | Install/upgrade the global AGS governance kernel |
+| 2 | `ags agents` | Govern local agent hosts (scan / govern / verify) |
+| 3 | `ags skill` | Govern local skill bodies (inventory / dedupe / verify) |
+| 4 | `ags init` | Onboard a target project into AGS governance |
+| 5 | `ags update` | Unified update across kernel / agents / skills / projects |
 
 ### Kernel (Governance Closed Loop)
 
 | Command | Purpose |
 |---|---|
-| `ags session preflight` | Project preflight — agent wake-up entry point |
+| `ags session preflight` | Project preflight — agent wake-up entry (MCP fallback) |
 | `ags task validate` | Validate task-card format and semantics |
+| `ags task compile` | Compile execution contract into canonical task card |
 | `ags policy resolve` | Resolve execution policy |
+| `ags policy check` | Validate + resolve, exit with gate decision |
+| `ags policy explain` | Print per-rule policy explanations |
 | `ags gate check` | Runner-level gate decision |
+| `ags run` | Task-card execution pipeline (resolver-first) |
 | `ags verify --scope local` | Structured verification (local / full / release) |
 | `ags verify lane` | Classify verification path by diff risk |
 | `ags receipt verify` | Verify execution receipt integrity |
