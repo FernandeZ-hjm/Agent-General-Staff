@@ -48,6 +48,23 @@ Canonical 协议文件位于本仓库：
 - `protocol/skill-governance.md` — 技能治理协议（推荐/说明/只读边界）
 - `protocol/project-profile.md` — 项目画像协议（用户项目集成后自行生长）
 - `protocol/context-memory.md` — 上下文记忆协议（公开版只发布协议和空白模板）
+- `protocol/cursor-skill-index.md` — Cursor / skill routing 索引
+- `protocol/mcp-server.md` — AGS MCP host initialization adapter 协议
+- `manifests/suite.yaml` — 公开版 suite manifest
+- `manifests/skills-registry.yaml` — governed skill registry + routing metadata
+- `manifests/mcp-registry.yaml` — governed MCP registry
+- `manifests/skill-recommendations.yaml` — public-safe skill recommendations
+
+关键脚本入口：
+
+- `scripts/verify.sh` — full verification wrapper
+- `scripts/validate.sh` — canonical task-card validator wrapper
+- `scripts/run-task-card.sh` — runner wrapper
+- `scripts/lane-decision.sh` — change-lane / verification profile helper
+- `scripts/context-memory.sh` — context capsule / task memory helper
+- `scripts/claude-stop-memory-capture.py` — Claude Stop hook memory capture bridge
+- `scripts/install.sh` — installer
+- `scripts/update.sh` — self-update helper
 
 ## Task Card Validation
 

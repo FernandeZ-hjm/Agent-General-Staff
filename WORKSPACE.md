@@ -31,24 +31,34 @@ AGENT_SUITE_PROTOCOL.md     # Suite protocol overview
 WORKSPACE.md                # This file
 
 protocol/                   # Canonical protocol files
-  agent-task-protocol.md
-  task-card-template.md
-  runtime-adapters.md
-  task-routing.md
-  skill-governance.md
-  project-profile.md
-  context-memory.md
   2.0-baseline.md
   2.0-roadmap.md
+  agent-task-protocol.md
+  context-memory.md
+  cursor-skill-index.md
+  mcp-server.md
+  project-profile.md
+  runtime-adapters.md
+  skill-governance.md
+  task-card-template.md
+  task-routing.md
 
 manifests/                  # Suite manifests
+  mcp-registry.yaml
+  skills-registry.yaml
   suite.yaml
   skill-recommendations.yaml
 
 scripts/                    # Public-safe scripts
+  claude-stop-memory-capture.py
+  context-memory.sh
   install.sh
-  validate.sh
+  lane-decision.sh
   run-task-card.sh
+  stop-archive-hook.sh
+  update.sh
+  validate-task-card.sh
+  validate.sh
   verify.sh
 
 crates/                     # Rust crates (public-safe core)
