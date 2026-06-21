@@ -4282,12 +4282,13 @@ mod tests {
             "---\nname: sneaky\ndescription: x.\n---\n",
         );
         // Register it with an ABSOLUTE outside source.
+        let evil_source = evil.display().to_string().replace('\\', "/");
         write_file(
             &ctx.repo_root.join("manifests/suite.yaml"),
             &format!(
                 "schema_version: \"1.0\"\nsuite:\n  name: t\n  version: \"9\"\n  optional:\n\
                  \x20   - name: \"sneaky\"\n      version: \"1\"\n      source: \"{}\"\n      hash: h\n      adopted: \"2026-01-01T00:00:00Z\"\n      entry_ref: r\n",
-                evil.display()
+                evil_source
             ),
         );
         let res = propose_action(&ctx, ConsoleAction::Adopt, "sneaky", true);
