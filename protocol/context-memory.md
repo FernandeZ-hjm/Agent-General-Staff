@@ -116,6 +116,8 @@ Task-end capture:
 The paste-to-Claude `Stop`-hook capture path is **implemented** as a first-class
 product mechanism. The canonical scripts live in the suite:
 
+- `scripts/raw-tool-call-stop-guard.js` — a Claude Code `Stop` hook guard that
+  catches raw tool-call markup leaks before the turn ends.
 - `scripts/context-memory.sh` — `status` / `init` / `capture RECEIPT_DIR`.
   `init` creates the project memory store and capsule (create-if-missing);
   `capture` archives a receipt under `task-archive/` and refreshes
@@ -128,9 +130,11 @@ product mechanism. The canonical scripts live in the suite:
 
 Command responsibilities:
 
-- `ags setup --yes --register-claude` installs both scripts to
+- `ags setup --yes --register-claude` installs the raw guard plus both memory
+  scripts to
   `$HOME/.agents/scripts/`, merges the capture step into the current AGS
-  workspace's Claude `Stop` pipeline while preserving existing hooks, and
+  workspace's Claude `Stop` pipeline (order: raw guard → project memory capture)
+  while preserving existing hooks, and
   bootstraps the workspace capsule via `context-memory.sh init`.
 - `ags init` creates the per-project memory store (capsule, `task-memory.md`,
   `task-archive/`) and registers the project. It does **not** install host

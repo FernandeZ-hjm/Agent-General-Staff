@@ -1,9 +1,10 @@
 //! AGS context-memory product mechanism wiring for `ags setup`.
 //!
 //! Restores the project-memory capture chain as a first-class product:
-//!   - installs the canonical capture scripts to the host script dir,
+//!   - installs the canonical guard/capture scripts to the host script dir,
 //!   - merges the project-memory-capture step into the current AGS workspace's
-//!     Claude Code Stop pipeline while preserving every existing hook,
+//!     Claude Code Stop pipeline (raw guard → project memory capture), while
+//!     preserving every existing hook,
 //!   - bootstraps the current workspace's memory capsule via the installed
 //!     `context-memory.sh` (create-if-missing; never overwrites the capsule).
 //!
@@ -21,6 +22,8 @@ pub(in crate::setup) const CONTEXT_MEMORY_SH: &str =
     include_str!("../../../../scripts/context-memory.sh");
 pub(in crate::setup) const CLAUDE_STOP_MEMORY_CAPTURE_PY: &str =
     include_str!("../../../../scripts/claude-stop-memory-capture.py");
+pub(in crate::setup) const RAW_TOOL_CALL_STOP_GUARD_JS: &str =
+    include_str!("../../../../scripts/raw-tool-call-stop-guard.js");
 
 /// Marker substrings used for idempotent, structure-preserving hook detection.
 const MEMORY_CAPTURE_MARKER: &str = "claude-stop-memory-capture";
@@ -38,6 +41,9 @@ pub(in crate::setup) fn context_memory_script_path(home: &Path) -> PathBuf {
 pub(in crate::setup) fn claude_stop_memory_capture_path(home: &Path) -> PathBuf {
     host_scripts_dir(home).join("claude-stop-memory-capture.py")
 }
+pub(in crate::setup) fn raw_tool_call_stop_guard_path(home: &Path) -> PathBuf {
+    host_scripts_dir(home).join("raw-tool-call-stop-guard.js")
+}
 
 /// Stop-hook command that runs the project-memory capture bridge. Uses `$HOME`
 /// (shell-expanded by the host) so the tracked workspace `settings.json` stays
@@ -45,12 +51,21 @@ pub(in crate::setup) fn claude_stop_memory_capture_path(home: &Path) -> PathBuf 
 pub(in crate::setup) fn memory_capture_command() -> String {
     "python3 \"$HOME/.agents/scripts/claude-stop-memory-capture.py\"".to_string()
 }
+pub(in crate::setup) fn raw_guard_command() -> String {
+    "node \"$HOME/.agents/scripts/raw-tool-call-stop-guard.js\"".to_string()
+}
 
 /// Install-file entries for the capture scripts. Added to the base install plan
 /// so they appear in `ags setup` dry-run output and are written by the standard
 /// install loop (which backs up changed files before overwriting).
 pub(in crate::setup) fn memory_script_install_files(home: &Path) -> Vec<InstallFile> {
     vec![
+        InstallFile {
+            path: raw_tool_call_stop_guard_path(home),
+            description: "AGS Claude Stop raw tool-call guard".to_string(),
+            content: RAW_TOOL_CALL_STOP_GUARD_JS.to_string(),
+            mode: Some(0o755),
+        },
         InstallFile {
             path: context_memory_script_path(home),
             description: "AGS context-memory product script (status/init/capture)".to_string(),
@@ -79,24 +94,24 @@ fn command_str(hook: &serde_json::Value) -> Option<&str> {
     hook.get("command").and_then(|c| c.as_str())
 }
 
+fn hook_has_marker(hook: &serde_json::Value, marker: &str) -> bool {
+    command_str(hook)
+        .map(|c| c.contains(marker))
+        .unwrap_or(false)
+}
+
+fn group_has_marker(group: &serde_json::Value, marker: &str) -> bool {
+    let nested = group
+        .get("hooks")
+        .and_then(|h| h.as_array())
+        .map(|hooks| hooks.iter().any(|h| hook_has_marker(h, marker)))
+        .unwrap_or(false);
+    let flat = hook_has_marker(group, marker);
+    nested || flat
+}
+
 fn hooks_contain(groups: &[serde_json::Value], marker: &str) -> bool {
-    groups.iter().any(|group| {
-        // Nested form: { "hooks": [ {command}, ... ] }
-        let nested = group
-            .get("hooks")
-            .and_then(|h| h.as_array())
-            .map(|hooks| {
-                hooks
-                    .iter()
-                    .any(|h| command_str(h).map(|c| c.contains(marker)).unwrap_or(false))
-            })
-            .unwrap_or(false);
-        // Flat form: { "command": ... } directly on the group.
-        let flat = command_str(group)
-            .map(|c| c.contains(marker))
-            .unwrap_or(false);
-        nested || flat
-    })
+    groups.iter().any(|group| group_has_marker(group, marker))
 }
 
 fn memory_hook_entry(command: &str) -> serde_json::Value {
@@ -107,14 +122,46 @@ fn memory_hook_entry(command: &str) -> serde_json::Value {
     })
 }
 
+fn raw_guard_hook_entry() -> serde_json::Value {
+    serde_json::json!({
+        "type": "command",
+        "command": raw_guard_command(),
+        "timeout": 2,
+    })
+}
+
+fn insert_raw_guard(stop_arr: &mut Vec<serde_json::Value>) {
+    let mut first_nested_group: Option<usize> = None;
+    let mut preferred_group: Option<usize> = None;
+    for (idx, group) in stop_arr.iter().enumerate() {
+        if group.get("hooks").and_then(|h| h.as_array()).is_some() {
+            if first_nested_group.is_none() {
+                first_nested_group = Some(idx);
+            }
+            if group_has_marker(group, MEMORY_CAPTURE_MARKER) {
+                preferred_group = Some(idx);
+                break;
+            }
+        }
+    }
+
+    if let Some(gi) = preferred_group.or(first_nested_group) {
+        stop_arr[gi]
+            .get_mut("hooks")
+            .and_then(|h| h.as_array_mut())
+            .expect("nested hooks array")
+            .insert(0, raw_guard_hook_entry());
+    } else {
+        stop_arr.insert(0, serde_json::json!({ "hooks": [raw_guard_hook_entry()] }));
+    }
+}
+
 /// Merge a project-memory-capture step into `value`'s `hooks.Stop` pipeline.
 ///
-/// Ordering rule: when an AGS raw-tool-call guard is present in a nested Stop
-/// hook group, insert memory capture immediately after that guard. Otherwise,
-/// append memory capture to the first nested group, or create a new group when
-/// no nested group exists. Every existing hook is preserved. Idempotent: if a
-/// capture command is already present anywhere in the Stop pipeline, the value
-/// is left unchanged.
+/// Ordering rule: setup restores the AGS raw-tool-call guard when missing, then
+/// inserts memory capture immediately after that guard. Every existing hook is
+/// preserved. Idempotent: if both raw guard and capture command are already
+/// present anywhere in the Stop pipeline, the value is left unchanged.
 pub(in crate::setup) fn merge_memory_capture(
     value: &mut serde_json::Value,
     command: &str,
@@ -136,14 +183,24 @@ pub(in crate::setup) fn merge_memory_capture(
     }
     let stop_arr = stop.as_array_mut().expect("stop array");
 
+    let mut changed = false;
+    if !hooks_contain(stop_arr, RAW_GUARD_MARKER) {
+        insert_raw_guard(stop_arr);
+        changed = true;
+    }
+
     if hooks_contain(stop_arr, MEMORY_CAPTURE_MARKER) {
-        return MergeOutcome::AlreadyPresent;
+        return if changed {
+            MergeOutcome::Wired
+        } else {
+            MergeOutcome::AlreadyPresent
+        };
     }
 
     let entry = memory_hook_entry(command);
 
-    // Prefer inserting immediately after the AGS raw guard. This keeps the guard
-    // first while avoiding assumptions about any other user-owned Stop hooks.
+    // Insert immediately after the AGS raw guard. This keeps the guard first
+    // while avoiding assumptions about any other user-owned Stop hooks.
     let mut raw_guard_slot: Option<(usize, usize)> = None;
     let mut first_nested_group: Option<usize> = None;
     for (idx, group) in stop_arr.iter().enumerate() {
@@ -389,21 +446,27 @@ pub(in crate::setup) fn render_memory_capture_plan(
     register_claude: bool,
 ) -> String {
     let settings_path = workspace_root.join(".claude").join("settings.json");
-    let wired = std::fs::read_to_string(&settings_path)
+    let (raw_wired, memory_wired) = std::fs::read_to_string(&settings_path)
         .ok()
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
         .map(|v| {
             v.get("hooks")
                 .and_then(|h| h.get("Stop"))
                 .and_then(|s| s.as_array())
-                .map(|stop| hooks_contain(stop, MEMORY_CAPTURE_MARKER))
-                .unwrap_or(false)
+                .map(|stop| {
+                    (
+                        hooks_contain(stop, RAW_GUARD_MARKER),
+                        hooks_contain(stop, MEMORY_CAPTURE_MARKER),
+                    )
+                })
+                .unwrap_or((false, false))
         })
-        .unwrap_or(false);
+        .unwrap_or((false, false));
 
     let mut lines = vec!["Memory capture chain (project memory):".to_string()];
     lines.push(format!(
-        "  - Scripts: {} , {}",
+        "  - Scripts: {} , {} , {}",
+        raw_tool_call_stop_guard_path(home).display(),
         context_memory_script_path(home).display(),
         claude_stop_memory_capture_path(home).display()
     ));
@@ -412,18 +475,22 @@ pub(in crate::setup) fn render_memory_capture_plan(
         settings_path.display()
     ));
     lines.push(format!(
+        "  - Current state: raw guard {}",
+        if raw_wired { "WIRED" } else { "MISSING" }
+    ));
+    lines.push(format!(
         "  - Current state: project memory capture {}",
-        if wired { "WIRED" } else { "MISSING" }
+        if memory_wired { "WIRED" } else { "MISSING" }
     ));
     if register_claude {
-        if wired {
+        if raw_wired && memory_wired {
             lines.push(
                 "  - Action: scripts refreshed; Stop pipeline already wired (idempotent)."
                     .to_string(),
             );
         } else {
             lines.push(
-                "  - Action: install scripts + merge capture step after the AGS raw guard when present, backing up the prior settings.json."
+                "  - Action: install scripts + repair Stop pipeline (raw guard → project memory capture), backing up the prior settings.json."
                     .to_string(),
             );
         }
@@ -460,6 +527,21 @@ mod tests {
                     {
                         "hooks": [
                             { "type": "command", "command": "node /x/raw-tool-call-stop-guard.js", "timeout": 2 },
+                            { "type": "command", "command": "node /x/user-stop-hook.js", "timeout": 8 }
+                        ]
+                    }
+                ]
+            },
+            "_keep": true
+        })
+    }
+
+    fn user_only_settings() -> serde_json::Value {
+        serde_json::json!({
+            "hooks": {
+                "Stop": [
+                    {
+                        "hooks": [
                             { "type": "command", "command": "node /x/user-stop-hook.js", "timeout": 8 }
                         ]
                     }
@@ -537,17 +619,15 @@ mod tests {
     }
 
     #[test]
-    fn merge_appends_when_no_raw_guard() {
-        let mut v = serde_json::json!({
-            "hooks": { "Stop": [ { "hooks": [
-                { "type": "command", "command": "node /x/user-stop-hook.js" }
-            ] } ] }
-        });
+    fn merge_restores_raw_guard_when_absent() {
+        let mut v = user_only_settings();
         merge_memory_capture(&mut v, &memory_capture_command());
         let cmds = commands(&v);
-        assert_eq!(cmds.len(), 2);
-        assert!(cmds[0].contains("user-stop-hook.js"));
+        assert_eq!(cmds.len(), 3);
+        assert!(cmds[0].contains(RAW_GUARD_MARKER));
         assert!(cmds[1].contains(MEMORY_CAPTURE_MARKER));
+        assert!(cmds[2].contains("user-stop-hook.js"));
+        assert_eq!(describe_order(&v), "raw-guard → memory-capture");
     }
 
     #[test]
@@ -564,14 +644,20 @@ mod tests {
     fn install_files_target_agents_scripts_with_mode() {
         let home = tmp("install-files");
         let files = memory_script_install_files(&home);
-        assert_eq!(files.len(), 2);
-        assert!(files[0].path.ends_with(".agents/scripts/context-memory.sh"));
-        assert!(files[1]
+        assert_eq!(files.len(), 3);
+        assert!(files[0]
+            .path
+            .ends_with(".agents/scripts/raw-tool-call-stop-guard.js"));
+        assert!(files[1].path.ends_with(".agents/scripts/context-memory.sh"));
+        assert!(files[2]
             .path
             .ends_with(".agents/scripts/claude-stop-memory-capture.py"));
         assert_eq!(files[0].mode, Some(0o755));
-        assert!(files[0].content.contains("context-memory.sh"));
-        assert!(files[1].content.contains("claude-stop-memory-capture"));
+        assert_eq!(files[1].mode, Some(0o755));
+        assert_eq!(files[2].mode, Some(0o755));
+        assert!(files[0].content.contains("hasRawToolCallLeak"));
+        assert!(files[1].content.contains("context-memory.sh"));
+        assert!(files[2].content.contains("claude-stop-memory-capture"));
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -817,6 +903,47 @@ mod tests {
         assert!(
             report.passed(),
             "valid settings must wire + bootstrap cleanly"
+        );
+        let written: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(workspace.join(".claude/settings.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(describe_order(&written), "raw-guard → memory-capture");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn register_claude_apply_repairs_missing_raw_guard() {
+        let base = tmp("repairs");
+        let home = base.join("home");
+        let workspace = base.join("ws");
+        std::fs::create_dir_all(host_scripts_dir(&home)).unwrap();
+        std::fs::create_dir_all(workspace.join(".claude")).unwrap();
+        std::fs::create_dir_all(workspace.join("config")).unwrap();
+        std::fs::write(context_memory_script_path(&home), CONTEXT_MEMORY_SH).unwrap();
+        std::fs::write(
+            workspace.join("config/agent-project-profile.yaml"),
+            "schema_version: 1\nproject:\n  slug: repairs-fixture\n",
+        )
+        .unwrap();
+        std::fs::write(
+            workspace.join(".claude/settings.json"),
+            serde_json::to_string_pretty(&user_only_settings()).unwrap(),
+        )
+        .unwrap();
+
+        let mut report = suite_doctor::HealthReport::new("t");
+        add_workspace_memory_capture_inner(
+            &mut report,
+            &home,
+            &workspace,
+            7,
+            Some(&base.join("mem")),
+        );
+        assert!(
+            report.passed(),
+            "settings without raw guard must be repaired by register-claude apply"
         );
         let written: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(workspace.join(".claude/settings.json")).unwrap(),

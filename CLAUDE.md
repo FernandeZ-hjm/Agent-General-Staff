@@ -185,6 +185,7 @@ manifests/              # Suite manifests
   skill-recommendations.yaml  # Third-party skill recommendations
 
 scripts/                # Public-safe scripts
+  raw-tool-call-stop-guard.js # Claude Stop hook raw tool-call guard
   claude-stop-memory-capture.py # Claude Stop hook memory capture bridge
   context-memory.sh     # Context capsule / task memory helper
   install.sh            # DIY install

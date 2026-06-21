@@ -61,6 +61,7 @@ Canonical 协议文件位于本仓库：
 - `scripts/validate.sh` — canonical task-card validator wrapper
 - `scripts/run-task-card.sh` — runner wrapper
 - `scripts/lane-decision.sh` — change-lane / verification profile helper
+- `scripts/raw-tool-call-stop-guard.js` — Claude Stop hook raw tool-call guard
 - `scripts/context-memory.sh` — context capsule / task memory helper
 - `scripts/claude-stop-memory-capture.py` — Claude Stop hook memory capture bridge
 - `scripts/install.sh` — installer

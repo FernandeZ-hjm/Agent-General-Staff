@@ -50,6 +50,7 @@ manifests/                  # Suite manifests
   skill-recommendations.yaml
 
 scripts/                    # Public-safe scripts
+  raw-tool-call-stop-guard.js
   claude-stop-memory-capture.py
   context-memory.sh
   install.sh
