@@ -463,3 +463,57 @@ pub(crate) fn cmd_private_verify(profile: &str, target: Option<PathBuf>, format:
     }
     std::process::exit(report.exit_code());
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::setup::retired_codex_ags_skill_dirs;
+    use crate::setup::templates::codex_ags_command_skill_specs;
+
+    fn spec_names() -> Vec<&'static str> {
+        codex_ags_command_skill_specs()
+            .iter()
+            .map(|(name, _, _, _, _)| *name)
+            .collect()
+    }
+
+    /// The standard Codex front-stage AGS command skills that setup writes and
+    /// verify checks are exactly setup / agents / skill / init / doctor.
+    /// `ags-capability` is not among them — it is the underlying cross-Agent
+    /// `ags capability` CLI, retired from the front-stage command-skill set.
+    #[test]
+    fn verified_codex_command_skills_are_the_canonical_five() {
+        assert_eq!(
+            spec_names(),
+            vec![
+                "ags-setup",
+                "ags-agents",
+                "ags-skill",
+                "ags-init",
+                "ags-doctor"
+            ]
+        );
+        assert!(!spec_names().contains(&"ags-capability"));
+    }
+
+    /// `ags-capability` is on the retired-Codex-skill list, so the verify gate
+    /// reports a stale `~/.codex/skills/ags-capability` entry and setup cleans it.
+    /// The active command-skill set and the retired set must stay disjoint.
+    #[test]
+    fn ags_capability_is_a_retired_codex_skill() {
+        assert!(
+            retired_codex_ags_skill_dirs()
+                .iter()
+                .any(|dir| dir.ends_with("ags-capability")),
+            "ags-capability must be retired so setup/verify de-expose the stale Codex entry"
+        );
+        let active = spec_names();
+        for dir in retired_codex_ags_skill_dirs() {
+            if let Some(last) = dir.file_name().and_then(|s| s.to_str()) {
+                assert!(
+                    !active.contains(&last),
+                    "retired skill {last} must not also be an active command skill"
+                );
+            }
+        }
+    }
+}

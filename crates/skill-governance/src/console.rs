@@ -1902,6 +1902,26 @@ fn plan_action(ctx: &ConsoleContext, cap: &ManagedCapability, action: ConsoleAct
         return plan;
     }
 
+    // Retired capabilities (route_state: retired) keep a registry row for
+    // history/dedupe and may still have a canonical body on disk, but they must
+    // never be (re)adopted, updated, or repaired into a host — that would
+    // resurrect a deliberately retired front-stage entry. `remove`/`uninstall`
+    // (cleanup) and `verify` stay available.
+    if matches!(
+        action,
+        ConsoleAction::Adopt | ConsoleAction::Update | ConsoleAction::Repair
+    ) && cap
+        .routing
+        .as_ref()
+        .is_some_and(|r| r.route_state == RouteState::Retired)
+    {
+        plan.blocked.push(format!(
+            "'{}' is retired (route_state: retired) and cannot be adopted/updated/repaired into a host — it is kept only as a history/compat record. Any underlying CLI/successor remains; `remove`/`uninstall` and `verify` stay available.",
+            cap.name
+        ));
+        return plan;
+    }
+
     match cap.kind {
         ManagedKind::Skill => plan_skill_entry(ctx, cap, action, &mut plan),
         ManagedKind::Mcp | ManagedKind::CliBacked => plan_mcp_or_cli(cap, action, &mut plan),
@@ -2735,6 +2755,15 @@ pub struct CapabilitySyncResult {
 /// (advise-only). AGS self (suite-interface), discovered/ignored/unmanaged
 /// capabilities are never auto-synced.
 fn is_syncable(cap: &ManagedCapability) -> bool {
+    // Retired capabilities are never synced into a host, regardless of
+    // managed_status — a retired front-stage entry must not be resurrected.
+    if cap
+        .routing
+        .as_ref()
+        .is_some_and(|r| r.route_state == RouteState::Retired)
+    {
+        return false;
+    }
     matches!(
         cap.managed_status,
         ManagedStatus::SuiteManaged | ManagedStatus::Governed
@@ -4430,6 +4459,85 @@ mod tests {
                 w.path
             );
         }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Regression: a capability marked `route_state: retired` must never be
+    /// (re)adopted/synced into a host, even though its canonical body is still
+    /// on disk — this closes the resurrection path
+    /// (`ags capability install --capability <retired>`).
+    #[test]
+    fn retired_capability_is_blocked_from_adoption_and_sync() {
+        let base = std::env::temp_dir().join(format!("ags-retired-gate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let repo = base.join("repo");
+        let home = base.join("home");
+
+        write_file(
+            &repo.join("manifests/suite.yaml"),
+            "schema_version: \"1.0\"\n\
+             suite:\n  name: \"t\"\n  version: \"9.9.9\"\n  required:\n\
+             \x20   - name: \"retired-demo\"\n      version: \"1.0\"\n      source: \"global-skills/retired-demo\"\n      hash: \"h\"\n      adopted: \"2026-01-01T00:00:00Z\"\n      entry_ref: \"retired-demo-ref\"\n\
+             \x20   - name: \"demo-skill\"\n      version: \"1.0\"\n      source: \"global-skills/demo-skill\"\n      hash: \"h\"\n      adopted: \"2026-01-01T00:00:00Z\"\n      entry_ref: \"demo-skill-ref\"\n",
+        );
+        write_file(
+            &repo.join("global-skills/retired-demo/SKILL.md"),
+            "---\nname: retired-demo\ndescription: retired body still on disk.\n---\nbody\n",
+        );
+        write_file(
+            &repo.join("global-skills/demo-skill/SKILL.md"),
+            "---\nname: demo-skill\ndescription: control.\n---\nbody\n",
+        );
+        write_file(
+            &repo.join("manifests/skills-registry.yaml"),
+            "skills:\n\
+             \x20 - name: retired-demo\n    routing:\n      route_state: retired\n      capability_group: [ags-governance-ops]\n\
+             \x20 - name: demo-skill\n    routing:\n      route_state: not-routable\n",
+        );
+        write_file(&repo.join("manifests/mcp-registry.yaml"), "mcps: []\n");
+
+        let ctx = ConsoleContext::new(
+            repo,
+            home,
+            Box::new(StrictMcpRunner {
+                claude: canned_list(),
+                codex: canned_codex_list(),
+            }),
+        );
+
+        for action in [
+            ConsoleAction::Adopt,
+            ConsoleAction::Update,
+            ConsoleAction::Repair,
+        ] {
+            let res = propose_action(&ctx, action, "retired-demo", false);
+            assert!(res.found, "retired body is still discovered: {action:?}");
+            assert!(
+                !res.blocked_reasons.is_empty(),
+                "retired skill must be blocked for {action:?}"
+            );
+            assert!(
+                res.planned_writes.is_empty(),
+                "retired skill must plan no host writes for {action:?}"
+            );
+            assert!(
+                res.blocked_reasons.iter().any(|r| r.contains("retired")),
+                "block reason must name retirement: {:?}",
+                res.blocked_reasons
+            );
+        }
+
+        let sync = sync_plan(&ctx, &["claude-code", "codex"], false);
+        let names: Vec<&str> = sync.items.iter().map(|i| i.capability.as_str()).collect();
+        assert!(
+            !names.contains(&"retired-demo"),
+            "retired skill must be excluded from sync: {names:?}"
+        );
+        assert!(
+            names.contains(&"demo-skill"),
+            "non-retired required skill still syncs: {names:?}"
+        );
+
         let _ = std::fs::remove_dir_all(&base);
     }
 

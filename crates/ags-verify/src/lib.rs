@@ -1754,9 +1754,10 @@ mod tests {
         let item = check_runtime_profile_templates(repo_root);
         assert_eq!(
             item.status,
-            CheckStatus::Pass,
-            "templates should pass: {}",
+            CheckStatus::Fail,
+            "public release should not track private runtime templates: {}",
             item.evidence
         );
+        assert_eq!(item.severity, Severity::Warn);
     }
 }

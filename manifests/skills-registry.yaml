@@ -299,6 +299,21 @@ skills:
       relationship: bundled_dependency
       update_policy: local_canonical_no_upstream
 
+  # ags-capability retired from the front-stage command-skill set (2.7): the
+  # `ags capability ...` CLI and Cross-Agent sync engine remain, but the
+  # host-visible `ags-capability` command skill is no longer installed. The row
+  # is retained as a history-preserve resurrection guard; public edition ships
+  # no canonical skill body for it.
+  - name: ags-capability
+    description: Retired Codex front-stage command skill for the capability CLI
+    routing:
+      route_state: retired
+      intent_tags: []
+    source:
+      type: local
+      relationship: retired_history_record
+      update_policy: none_retired
+
 route_targets:
   # superpowers internal playbooks are metadata-only entrypoints of the real
   # `superpowers` body. They are not standalone suite skills and do not create

@@ -207,37 +207,9 @@ pub fn plan(source_repo: &Path, target: &Path) -> BootstrapPlan {
         }
     }
 
-    // ── Portable runtime profile / hook templates (public-safe) ──────────
-    // These templates are installation skeletons — they contain no real
-    // token, node-local secret, API key, absolute $HOME path, task archive path,
-    // or memory capsule path.  They can safely enter public and bootstrap
-    // payloads.
-    let template_files: &[(&str, &str)] = &[
-        (
-            "manifests/templates/runtime-profiles.template.yaml",
-            "runtime profiles portable template",
-        ),
-        (
-            "manifests/templates/hooks/claude-code-executor-stop.template.js",
-            "Claude Code executor Stop hook template",
-        ),
-        (
-            "manifests/templates/README.md",
-            "Template installation and migration boundary documentation",
-        ),
-    ];
-
-    for (rel_path, desc) in template_files {
-        let src = source_repo.join(rel_path);
-        let dst = target.join(rel_path);
-        if src.exists() {
-            actions.push(BootstrapAction {
-                action: "copy-template".into(),
-                path: dst.display().to_string(),
-                description: format!("copy {rel_path}: {desc}"),
-            });
-        }
-    }
+    // Runtime/hook templates are intentionally not copied by the public
+    // bootstrap payload. They are local runtime state, not public release
+    // content. `ags setup` generates public-safe placeholders at install time.
 
     // ── Bootstrap log (generated, not copied) ───────────────────────────
     actions.push(BootstrapAction {
@@ -647,30 +619,16 @@ mod tests {
             "should include bootstrap log"
         );
 
-        // Must include template file actions
+        // Public bootstrap must not copy private runtime/hook templates.
         let template_actions: Vec<_> = plan
             .actions
             .iter()
             .filter(|a| a.action == "copy-template")
             .collect();
         assert!(
-            template_actions.len() >= 3,
-            "should include at least 3 template actions (profile, js hook, json hook), got {}",
-            template_actions.len()
+            template_actions.is_empty(),
+            "public bootstrap must not copy templates"
         );
-        // All template action paths must be under manifests/templates/
-        for a in &template_actions {
-            assert!(
-                a.path.replace('\\', "/").contains("manifests/templates/"),
-                "template action path must be under manifests/templates/: {}",
-                a.path
-            );
-            assert_eq!(
-                a.action, "copy-template",
-                "template action must use 'copy-template', got '{}' for {}",
-                a.action, a.path
-            );
-        }
     }
 
     #[test]

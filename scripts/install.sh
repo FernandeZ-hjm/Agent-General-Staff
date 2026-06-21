@@ -35,6 +35,6 @@ AGS install complete.
 
 Next commands:
   1. In Claude Code, run: /ags setup
-     In Codex, use: $ags-setup, $ags-init, $ags-skill, or $ags-doctor
+     In Codex, use: $ags-setup, $ags-agents, $ags-skill, $ags-init, or $ags-doctor
   2. In each project you want AGS to govern, run: /ags init
 EOF

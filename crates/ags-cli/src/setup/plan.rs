@@ -117,20 +117,35 @@ args = ["serve", "--mcp"]
         "CodeBuddy-Code (Tencent Agent host client) platform MCP registration for AGS.",
     );
 
-    let profile = std::fs::read_to_string(
-        source_root.join("manifests/templates/runtime-profiles.template.yaml"),
-    )
-    .unwrap_or_default()
-    .replace("http://127.0.0.1:PORT", "http://127.0.0.1:19821");
+    let profile = r#"schema_version: "2.7-public-runtime-profile"
+profiles:
+  claude-code-executor:
+    role: "executor"
+    first_tool: "ags_preflight"
+    hooks: []
+    note: "Public edition records AGS governance posture only; no private runtime hooks are bundled."
+  planner:
+    role: "planner"
+    first_tool: "ags_preflight"
+    advisory_recall: "disabled"
+    note: "Use AGS preflight and solution formation; public edition does not bundle local recall hooks."
+"#
+    .to_string();
 
-    let claude_hook = std::fs::read_to_string(
-        source_root.join("manifests/templates/hooks/claude-code-executor-stop.template.js"),
-    )
-    .unwrap_or_default();
-    let codex_hook = std::fs::read_to_string(
-        source_root.join("manifests/templates/hooks/codex-planner-recall.template.json"),
-    )
-    .unwrap_or_default();
+    let claude_hook = r#"#!/usr/bin/env node
+// AGS public edition no-op Stop hook.
+// Private runtime hooks are not bundled in the public release.
+process.exit(0);
+"#
+    .to_string();
+
+    let codex_hook = r#"{
+  "schema_version": "2.7-public-hook-placeholder",
+  "hooks": [],
+  "boundary": "Public edition does not bundle local planner recall hooks; use AGS preflight first."
+}
+"#
+    .to_string();
 
     let launcher = format!(
         "#!/usr/bin/env bash\nset -euo pipefail\nexport AGS_RUNTIME_HOME={}\nexec ags mcp serve --transport stdio\n",
@@ -188,8 +203,9 @@ The one-line installer seeds `/ags`; `ags setup --yes` refreshes it at `~/.claud
 Use `/ags setup` to initialize this machine and `/ags init` to onboard the current project.\n\
 Diagnostics remain available as `/ags preflight` and `/ags doctor`; verification gates drive `ags verify` internally.\n\n\
 ## Codex skills\n\n\
-`ags setup --yes` installs visible top-level command skills: `$ags-setup`, `$ags-init`, `$ags-skill`, `$ags-capability`, and `$ags-doctor`.\n\
-Retired visible skills (`$ags`, `$ags-preflight`, `$ags-verify`) are removed from the Codex skill list during setup.\n\
+`ags setup --yes` installs visible top-level command skills: `$ags-setup`, `$ags-agents`, `$ags-skill`, `$ags-init`, and `$ags-doctor`.\n\
+Retired visible skills (`$ags`, `$ags-preflight`, `$ags-verify`, `$ags-capability`) are removed from the Codex skill list during setup.\n\
+`ags capability` remains the Cross-Agent visibility/sync CLI and is no longer installed as a visible Codex command skill.\n\
 `ags verify` remains a kernel/CI verification command and is not installed as a visible Codex skill.\n\
 Each command skill routes through AGS preflight before acting.\n",
         target.display()
@@ -471,7 +487,7 @@ pub(in crate::setup) fn render_private_plan_json(plan: &PrivateInstallPlan) -> S
         .map(|path| {
             serde_json::json!({
                 "path": path.to_string_lossy(),
-                "status": if path.exists() { "would-remove" } else { "absent" },
+                "status": if path.exists() { "would-retire" } else { "absent" },
             })
         })
         .collect();
@@ -520,7 +536,7 @@ pub(in crate::setup) fn render_private_plan_text(plan: &PrivateInstallPlan) -> S
         lines.push("Cleanup:".to_string());
         for (i, dir) in plan.cleanup_dirs.iter().enumerate() {
             let status = if dir.exists() {
-                "would-remove"
+                "would-retire"
             } else {
                 "absent"
             };
@@ -539,21 +555,78 @@ pub(in crate::setup) fn render_private_plan_text(plan: &PrivateInstallPlan) -> S
     );
     lines.join("\n")
 }
-pub(in crate::setup) fn cleanup_install_dir(path: &Path) -> suite_doctor::Finding {
-    if !path.exists() {
-        return suite_doctor::Finding::pass(
-            format!("cleanup-{}", sanitize_name(&path.to_string_lossy())),
-            format!("absent: {}", path.display()),
+/// Does `dir` look like an AGS-generated Codex command-skill body? True when it
+/// has a `SKILL.md` whose front-matter `name` matches the directory and whose
+/// body routes through AGS preflight — the shape `codex_ags_command_skill_content`
+/// emits. Used to decide whether a retired host entry can be auto-quarantined.
+fn is_ags_generated_codex_skill_dir(dir: &Path) -> bool {
+    let Some(name) = dir.file_name().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    let Ok(text) = std::fs::read_to_string(dir.join("SKILL.md")) else {
+        return false;
+    };
+    text.contains(&format!("name: \"{name}\""))
+        && text.contains("ags session preflight --for codex")
+}
+
+/// Retire a (possibly stale) Codex AGS command-skill host entry safely. This is
+/// the cleanup path for `retired_codex_ags_skill_dirs`; it never does a blind
+/// `remove_dir_all`:
+///   - a thin-index symlink is unlinked only (the canonical body is untouched);
+///   - a real directory AGS recognizably generated is moved to a timestamped
+///     backup (reversible quarantine), not deleted;
+///   - a real entry with unrecognized (possibly user-edited) content is left in
+///     place unless `force`, in which case it is also quarantined to a backup.
+pub(in crate::setup) fn cleanup_install_dir(
+    path: &Path,
+    force: bool,
+    backup_stamp: u64,
+) -> suite_doctor::Finding {
+    let id = format!("cleanup-{}", sanitize_name(&path.to_string_lossy()));
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return suite_doctor::Finding::pass(id, format!("absent: {}", path.display()));
+    };
+
+    if meta.file_type().is_symlink() {
+        return match std::fs::remove_file(path) {
+            Ok(()) => suite_doctor::Finding::pass(
+                id,
+                format!("unlinked thin-index symlink: {}", path.display()),
+            ),
+            Err(e) => suite_doctor::Finding::fail(
+                id,
+                format!("unlink failed: {}", path.display()),
+                e.to_string(),
+            ),
+        };
+    }
+
+    if !is_ags_generated_codex_skill_dir(path) && !force {
+        return suite_doctor::Finding::fail(
+            id,
+            format!(
+                "retired skill entry has unrecognized (possibly user-edited) content: {}",
+                path.display()
+            ),
+            "not modifying it automatically — back it up and remove manually, or rerun `ags setup --yes --force` to quarantine it to a backup",
         );
     }
-    match std::fs::remove_dir_all(path) {
+
+    let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("skill");
+    let backup = path.with_file_name(format!("{file_name}.retired.bak.{backup_stamp}"));
+    match std::fs::rename(path, &backup) {
         Ok(()) => suite_doctor::Finding::pass(
-            format!("cleanup-{}", sanitize_name(&path.to_string_lossy())),
-            format!("removed: {}", path.display()),
+            id,
+            format!(
+                "retired (quarantined to backup): {} -> {}",
+                path.display(),
+                backup.display()
+            ),
         ),
         Err(e) => suite_doctor::Finding::fail(
-            format!("cleanup-{}", sanitize_name(&path.to_string_lossy())),
-            format!("remove failed: {}", path.display()),
+            id,
+            format!("retire failed: {}", path.display()),
             e.to_string(),
         ),
     }
@@ -606,9 +679,9 @@ mod install_plan_tests {
             .expect("manifest file must be generated");
         assert!(manifest.content.contains("\"slash_command\": \"/ags\""));
         assert!(manifest.content.contains("ags-setup"));
+        assert!(manifest.content.contains("ags-agents"));
         assert!(manifest.content.contains("ags-init"));
         assert!(manifest.content.contains("ags-skill"));
-        assert!(manifest.content.contains("ags-capability"));
         assert!(manifest.content.contains(".claude/commands/ags.md"));
         assert!(!manifest.content.contains(".codex/skills/ags/SKILL.md"));
         for (name, _, _, _, _) in codex_ags_command_skill_specs() {
@@ -620,6 +693,85 @@ mod install_plan_tests {
         for retired_dir in retired_codex_ags_skill_dirs() {
             assert!(plan.cleanup_dirs.iter().any(|dir| dir == &retired_dir));
         }
+    }
+
+    /// Codex front-stage command skills are exactly the canonical five
+    /// (setup / agents / skill / init / doctor). `ags-capability` must not be a
+    /// visible command skill — it is retired into `retired_visible_skills` while
+    /// the underlying `ags capability` CLI remains.
+    #[test]
+    fn codex_visible_command_skills_are_exactly_the_canonical_five() {
+        let target = std::env::temp_dir().join("ags-public-install-plan-five-set-test");
+        let plan = private_install_plan(
+            &workspace_root(),
+            &target,
+            capability_route::EnrollmentMode::SuiteOnly,
+        );
+
+        let spec_names: Vec<&str> = codex_ags_command_skill_specs()
+            .iter()
+            .map(|(name, _, _, _, _)| *name)
+            .collect();
+        assert_eq!(
+            spec_names,
+            vec![
+                "ags-setup",
+                "ags-agents",
+                "ags-skill",
+                "ags-init",
+                "ags-doctor"
+            ],
+            "Codex front-stage command skills must be exactly setup/agents/skill/init/doctor"
+        );
+        assert!(
+            !spec_names.contains(&"ags-capability"),
+            "ags-capability must not be a front-stage Codex command skill"
+        );
+
+        let manifest = plan
+            .files
+            .iter()
+            .find(|file| file.path.ends_with("install-manifest.json"))
+            .expect("manifest file must be generated");
+        let json: serde_json::Value =
+            serde_json::from_str(&manifest.content).expect("manifest is valid JSON");
+        let command_skills = json["host_commands"]["codex"]["command_skills"]
+            .as_array()
+            .expect("codex command_skills array");
+        let command_skill_text = command_skills
+            .iter()
+            .map(|v| v.as_str().unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for expected in [
+            "ags-setup",
+            "ags-agents",
+            "ags-skill",
+            "ags-init",
+            "ags-doctor",
+        ] {
+            assert!(
+                command_skill_text.contains(expected),
+                "manifest command_skills missing {expected}: {command_skill_text}"
+            );
+        }
+        assert!(
+            !command_skill_text.contains("ags-capability"),
+            "manifest command_skills must exclude ags-capability: {command_skill_text}"
+        );
+
+        let retired_skills = json["host_commands"]["codex"]["retired_visible_skills"]
+            .as_array()
+            .expect("codex retired_visible_skills array");
+        let retired_text = retired_skills
+            .iter()
+            .map(|v| v.as_str().unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            retired_text.contains("ags-capability"),
+            "ags-capability must be in retired_visible_skills: {retired_text}"
+        );
     }
 
     #[test]
@@ -705,5 +857,98 @@ mod install_plan_tests {
             assert!(metadata.contains(short_description));
             assert!(metadata.contains(default_prompt));
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_retire_unlinks_symlink_without_touching_canonical() {
+        use std::os::unix::fs::symlink;
+
+        let base = std::env::temp_dir().join(format!("ags-cleanup-symlink-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let canonical = base.join("canonical");
+        let link = base.join("ags-capability");
+        std::fs::create_dir_all(&canonical).unwrap();
+        std::fs::write(canonical.join("SKILL.md"), "canonical").unwrap();
+        symlink(&canonical, &link).unwrap();
+
+        let finding = cleanup_install_dir(&link, false, 123);
+        assert_eq!(
+            finding.status,
+            suite_doctor::CheckStatus::Pass,
+            "{finding:?}"
+        );
+        assert!(!link.exists(), "symlink should be unlinked");
+        assert!(
+            canonical.join("SKILL.md").exists(),
+            "canonical body must not be touched"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn cleanup_retire_quarantines_ags_generated_dir_reversibly() {
+        let base =
+            std::env::temp_dir().join(format!("ags-cleanup-generated-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let dir = base.join("ags-capability");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("SKILL.md"),
+            "---\nname: \"ags-capability\"\n---\nags session preflight --for codex --target .\n",
+        )
+        .unwrap();
+
+        let finding = cleanup_install_dir(&dir, false, 456);
+        assert_eq!(
+            finding.status,
+            suite_doctor::CheckStatus::Pass,
+            "{finding:?}"
+        );
+        assert!(!dir.exists(), "original dir should be moved");
+        assert!(
+            base.join("ags-capability.retired.bak.456")
+                .join("SKILL.md")
+                .exists(),
+            "backup quarantine should keep contents"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn cleanup_retire_refuses_unrecognized_content_without_force() {
+        let base = std::env::temp_dir().join(format!("ags-cleanup-refuse-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let dir = base.join("ags-capability");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("SKILL.md"), "user edited content").unwrap();
+
+        let finding = cleanup_install_dir(&dir, false, 789);
+        assert_eq!(
+            finding.status,
+            suite_doctor::CheckStatus::Fail,
+            "{finding:?}"
+        );
+        assert!(dir.join("SKILL.md").exists(), "user content must remain");
+        assert!(
+            !base.join("ags-capability.retired.bak.789").exists(),
+            "no backup should be created without force"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn cleanup_retire_absent_is_pass() {
+        let path = std::env::temp_dir().join(format!("ags-cleanup-absent-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        let finding = cleanup_install_dir(&path, false, 1);
+        assert_eq!(
+            finding.status,
+            suite_doctor::CheckStatus::Pass,
+            "{finding:?}"
+        );
     }
 }

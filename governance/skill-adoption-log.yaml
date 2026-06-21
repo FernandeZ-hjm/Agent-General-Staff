@@ -7,4 +7,15 @@
 # Never delete or reorder entries — this is an audit trail.
 
 schema_version: "2.0-skill"
-entries: []
+entries:
+  - id: "ags-capability-retired-20260621-public"
+    skill_name: "ags-capability"
+    profile: "required"
+    source: "global-skills/ags-capability"
+    source_hash: ""
+    safety_findings: "retired from public Codex front-stage command-skill surface; underlying ags capability CLI remains"
+    decision: "retired"
+    actor: "public-safe-sync"
+    timestamp: "2026-06-21T00:00:00Z"
+    backup_ref: ""
+    notes: "Retained only as registry/history guard so setup/capability sync cannot resurrect a visible ags-capability command skill."

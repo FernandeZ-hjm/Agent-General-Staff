@@ -60,6 +60,11 @@ pub(in crate::setup) fn codex_ags_command_skill_specs() -> &'static [(
     &'static str,
     &'static str,
 )] {
+    // Standard Codex front-stage AGS command skills: exactly setup → agents →
+    // skill → init → doctor. `ags-capability` is intentionally NOT here — it is
+    // the underlying cross-Agent visibility/sync layer (`ags capability ...` CLI
+    // remains) and is retired from the front-stage set (see
+    // `retired_codex_ags_skill_dirs`).
     &[
         (
             "ags-setup",
@@ -69,11 +74,11 @@ pub(in crate::setup) fn codex_ags_command_skill_specs() -> &'static [(
             "初始化本机 AGS 环境：运行 `ags setup --yes --force --register-claude`，然后用 `ags verify --profile private` 校验",
         ),
         (
-            "ags-init",
-            "AGS Init",
-            "纳管当前项目",
-            "用 $ags-init 纳管当前项目。",
-            "纳管当前仓库：运行 `ags init --target .`，然后运行 `ags session preflight --for codex --target .`",
+            "ags-agents",
+            "AGS Agents",
+            "纳管本机 Agent 宿主",
+            "用 $ags-agents 纳管本机 Agent 宿主。",
+            "纳管本机 Agent 宿主：运行 `ags agents scan` 盘点宿主与 AGS MCP 注册，`ags agents govern` 生成 advise-only 接入方案，`ags agents verify --host <host>` 复核可见性",
         ),
         (
             "ags-skill",
@@ -83,11 +88,11 @@ pub(in crate::setup) fn codex_ags_command_skill_specs() -> &'static [(
             "管理第三方技能：运行 `ags skill` 查看概览，或运行 `ags skill --fix`、`ags skill scan`、`ags skill check`、`ags skill propose --action adopt --skill <name>` 生成纳管建议",
         ),
         (
-            "ags-capability",
-            "AGS Capability",
-            "管理跨 Agent 能力",
-            "用 $ags-capability 查看和同步跨 Agent 能力。",
-            "管理跨 Agent 能力：运行 `ags capability inventory` 查看能力可见性，或运行 `ags capability verify --host codex`、`ags capability install --capability <name>`、`ags capability sync` 生成同步计划",
+            "ags-init",
+            "AGS Init",
+            "纳管当前项目",
+            "用 $ags-init 纳管当前项目。",
+            "纳管当前仓库：运行 `ags init --target .`，然后运行 `ags session preflight --for codex --target .`",
         ),
         (
             "ags-doctor",

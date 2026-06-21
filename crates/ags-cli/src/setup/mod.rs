@@ -47,6 +47,10 @@ pub(in crate::setup) fn retired_codex_ags_skill_dirs() -> Vec<PathBuf> {
         codex_ags_named_skill_dir("ags"),
         codex_ags_named_skill_dir("ags-preflight"),
         codex_ags_named_skill_dir("ags-verify"),
+        // `ags-capability` retired from the standard front-stage Codex set (2.7):
+        // the `ags capability ...` CLI and Cross-Agent sync engine remain, but
+        // the visible command skill is removed. Setup cleans the stale host entry.
+        codex_ags_named_skill_dir("ags-capability"),
     ]
 }
 pub(crate) fn cmd_private_plan(
@@ -159,7 +163,7 @@ pub(crate) fn run_private_apply(
         report.add(write_install_file(file, force, backup_stamp));
     }
     for dir in &plan.cleanup_dirs {
-        report.add(cleanup_install_dir(dir));
+        report.add(cleanup_install_dir(dir, force, backup_stamp));
     }
     if register_claude {
         add_claude_registration_checks(&mut report);

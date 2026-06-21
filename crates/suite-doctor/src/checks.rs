@@ -1191,7 +1191,7 @@ mod tests {
             .parent()
             .unwrap();
         let f = runtime_profile_template_exists(repo_root);
-        assert_eq!(f.status, CheckStatus::Pass);
+        assert_eq!(f.status, CheckStatus::Warn);
         assert_eq!(f.check_name, "runtime_profile_template_exists");
     }
 
@@ -1214,7 +1214,7 @@ mod tests {
             .parent()
             .unwrap();
         let f = codex_planner_hook_template_exists(repo_root);
-        assert_eq!(f.status, CheckStatus::Pass);
+        assert_eq!(f.status, CheckStatus::Warn);
         assert_eq!(f.check_name, "codex_planner_hook_template_exists");
     }
 
@@ -1237,7 +1237,7 @@ mod tests {
             .parent()
             .unwrap();
         let f = claude_code_stop_hook_template_exists(repo_root);
-        assert_eq!(f.status, CheckStatus::Pass);
+        assert_eq!(f.status, CheckStatus::Warn);
         assert_eq!(f.check_name, "claude_code_stop_hook_template_exists");
     }
 

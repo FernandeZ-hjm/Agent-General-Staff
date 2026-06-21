@@ -28,6 +28,9 @@ suite:
     # auto-triggered. Brainstorm demand routes to grill-with-docs, debug to
     # diagnose, and verification to the superpowers verification-before-completion
     # entrypoint. See manifests/skills-registry.yaml (route_state: retired).
+    # ags-capability is also retired as a Codex front-stage command skill; the
+    # public `ags capability ...` CLI remains available for Cross-Agent
+    # visibility/sync and is not exposed as a `$ags-capability` skill.
     # ── Manual skills ──
     - name: tdd
       source: "https://github.com/anthropics/skills/tree/main/tdd"
