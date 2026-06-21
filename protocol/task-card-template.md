@@ -123,7 +123,7 @@ Verification gate:
 - 为了保持执行稳定性和缓存友好性，任务卡必须使用固定骨架：标题、字段顺序、基础措辞保持不变；只在固定槽位填写动态任务内容。
 - `项目画像` 是稳定上下文入口。项目存在 `config/agent-project-profile.yaml` 时只引用路径或提取必要短事实，不把整份画像粘进任务卡；项目无画像时填写 `无`。
 - `记忆胶囊` 是人工项目宪章入口。存在本地 capsule 时只引用路径，不粘贴长记忆；没有 capsule 时填写 `无`。Executor 开始任务前必须读取 capsule；如同目录存在 `task-memory.md`，也必须读取。若任务目标与 capsule 的 `## 项目设计目的` 冲突，停止并报告。
-- `任务存档` 是自动任务记忆入口。存在本地 `task-memory.md` 时填写该路径；没有任务记忆时填写 `无`。使用 runner 执行后，最终交付报告会先沉淀到本机 `task-memory.md` / `task-archive/`，再打印到前台；完整证据保存在 `$HOME/.agents/memory/projects/<project-slug>/task-archive/`。
+- `任务存档` 是自动任务记忆入口。存在本地 `task-memory.md` 时填写该路径；没有任务记忆时填写 `无`。使用 runner 执行会生成收据；启用 memory capture 时，`context-memory.sh capture` 会刷新本机 `task-memory.md` 并把完整证据归档到 `$HOME/.agents/memory/projects/<project-slug>/task-archive/`。
 - `目标文件夹路径` 是本次任务的实际工作目录或目标仓库根目录，必须填写绝对路径；远程控制、挂载目录、跨仓库或启动目录与目标目录不一致时，以实际会被读写的目标文件夹为准。
 - 默认不生成 `.md` 文件产物；只有用户明确要求落盘或需要 runner 直接消费文件时，才创建任务卡文件。
 - 任务卡只有唯一形态：本文件 `protocol/task-card-template.md` 定义的固定骨架。跨仓库、外部 agent、或 Executor 无法访问本项目文件时，仍使用同一骨架，并把所需固定规则内联进去使其自包含；不得切换到第二套模板或按任务级别选用不同模板文件。任务级别 Light / Medium / Heavy 只是 `任务级别：` 字段值，不决定模板文件。
@@ -158,7 +158,7 @@ Verification gate:
 - **Task-card request gate**：`ags task compile` 在没有 `--task-card-requested` 参数时拒绝输出可执行任务卡，报告 `executable_allowed=false`、`block_reason=task_card_not_requested`。只有用户明确发出任务卡指令后，generator 才能带 `--task-card-requested` 调用 compiler。参见 `protocol/agent-task-protocol.md` 生命周期阶段 3.5。
 - Executor、Runtime adapter、Execution surface、Permission mode、Parallelism、Verification gate 按 `protocol/runtime-adapters.md` 定义；Review gate 的唯一规则表在 `protocol/agent-task-protocol.md`。
 - 需要让 runner 自动选择执行层时，可以使用 `scripts/run-task-card.sh <task-card> --auto`；auto mode 不会提高任务卡声明的权限。
-- runner 默认启用 Learning Runner：任务卡进入执行前会临时编译 Task IR / compiled brief 并注入给 Claude Code；这些编译产物不是第三种任务卡格式，默认不长期保留，只在本地 memory 中沉淀可复用 `learning-gaps/`。
+- 未来若启用 transient compile / learning pipeline，其编译产物也不是第三种任务卡格式；任何可复用 proposal 都必须先进入人工可审查流程，不得自动提升为规则。
 - 涉及本地 Agent 技能同步、proposal、adoption log 或 ignore list 时，必须引用项目内对应治理文档；如无项目治理文档，使用套件级 `scripts/govern-new-skills.sh` 流程。最终输出仍使用本文件的固定任务卡骨架。
 
 ## 与全局提示词生成器的关系
@@ -183,7 +183,7 @@ Verification gate:
 - `本次任务相关文件`：列出本次涉及的 skill 源目录、proposal、adoption log 或 ignore list。
 - `项目画像`：如存在，填写 `config/agent-project-profile.yaml`；不要复制无关画像内容。
 - `记忆胶囊`：如存在，填写 `$HOME/.agents/memory/projects/<project-slug>/context-capsule.md`；不要复制长记忆。开始执行前同步读取同目录 `task-memory.md`。
-- `任务存档`：如存在，填写 `$HOME/.agents/memory/projects/<project-slug>/task-memory.md`；没有任务记忆时填 `无`。runner 执行后默认由 `context-memory.sh capture` 刷新本机 `task-memory.md`、归档完整收据，并在沉淀后打印最终交付报告；直接粘贴给 Claude Code 的任务卡在 Stop hook 检测到交付报告后也会自动归档。
+- `任务存档`：如存在，填写 `$HOME/.agents/memory/projects/<project-slug>/task-memory.md`；没有任务记忆时填 `无`。启用 memory capture 时，`context-memory.sh capture` 刷新本机 `task-memory.md` 并归档完整收据；直接粘贴给 Claude Code 的任务卡在 Stop hook 检测到交付报告后也会自动归档。
 - `适用治理文档`：填写项目内治理文档；如无项目治理文档，填写 `AGENT_SUITE_PROTOCOL.md`。
 - `非目标`：明确不得写 `$HOME/.agents/skills`、`$HOME/.codex/skills`、`$HOME/.codex/plugins/cache`，不得运行 `lark-cli update`、`npx skills add/remove/update`，不得接管外部官方 CLI 或项目自管输出层技能，不得自动应用 patch。
 - `实施要求`：说明默认先 scan / dry-run，人工确认后才能 adopt / ignore。

@@ -2,7 +2,7 @@ use super::{
     claude_ags_command_path, codex_ags_named_skill_agent_metadata_path, codex_ags_named_skill_path,
     retired_codex_ags_skill_dirs, PRIVATE_INSTALL_SCHEMA,
 };
-use crate::context::{sanitize_name, shell_quote};
+use crate::context::{home_dir, sanitize_name, shell_quote};
 use crate::file_plan::InstallFile;
 use crate::project_templates::{portable_validate_script, project_protocol_files};
 use crate::setup::apply::codex_skill_thin_index_ancestor;
@@ -306,6 +306,7 @@ Each command skill routes through AGS preflight before acting.\n",
             mode: Some(0o755),
         },
     ];
+    files.extend(super::memory::memory_script_install_files(&home_dir()));
 
     for (name, display_name, short_description, default_prompt, summary) in
         codex_ags_command_skill_specs()

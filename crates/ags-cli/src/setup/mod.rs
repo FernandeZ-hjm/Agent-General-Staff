@@ -2,6 +2,7 @@
 
 mod apply;
 mod global_entry;
+mod memory;
 mod plan;
 pub(crate) mod rollback;
 mod templates;
@@ -167,6 +168,7 @@ pub(crate) fn run_private_apply(
     }
     if register_claude {
         add_claude_registration_checks(&mut report);
+        memory::add_workspace_memory_capture(&mut report, &home_dir(), &source_root, backup_stamp);
     }
     // Incremental managed-block write of the AGS-owned global entry (under the
     // runtime target — never a host config). Confirm-gated: only the apply path
@@ -291,6 +293,14 @@ pub(crate) fn cmd_setup(
         );
         receipt_path = emit_ags_action_receipt(&ar).ok();
         apply_code = Some(report.exit_code());
+    }
+    if format != "json" {
+        let source_root = source_root_or_exit("ags setup");
+        println!();
+        println!(
+            "{}",
+            memory::render_memory_capture_plan(&home_dir(), &source_root, register_claude)
+        );
     }
     // Always show the Global Entry Protocol Templates gate + wizard.
     cmd_private_plan("private", target, format, capability_route_mode);

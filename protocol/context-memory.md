@@ -86,13 +86,10 @@ continuity entrypoint. Full evidence remains under `task-archive/<run-id>/`.
 
 Memory capture is append-only and conservative:
 
-- Archive each runner receipt under `task-archive/` when memory capture is
+- Archive each `ags run` receipt under `task-archive/` when memory capture is
   enabled.
 - Refresh `task-memory.md` from recent local task archives, including a compact
   excerpt of the latest delivery report.
-- Store Learning Runner coverage gaps under `learning-gaps/` when runner
-  detects reusable misses; do not store transient Task IR or compiled briefs
-  there.
 - Prefer references to receipt files over copying logs.
 - Do not overwrite `context-capsule.md`.
 - Do not automatically update project design purpose, long-term boundaries,
@@ -105,30 +102,54 @@ Memory capture is append-only and conservative:
 
 ## Runner Integration
 
-Task-start hook:
+Task-start context read:
 
-- `scripts/memory-start-context.sh` reads `context-capsule.md` and
-  `task-memory.md` for the current repository.
-- It is read-only and must not write memory files.
-- It is installed into both Claude Code and Codex `UserPromptSubmit` runtime
-  hooks by `scripts/bootstrap.sh --apply`.
+- At task start, the executing agent reads `context-capsule.md` and
+  `task-memory.md` for the current repository when the task card names them.
+- This read is read-only and must not write memory files.
+- Automatic injection through host `UserPromptSubmit` hooks is planned (not yet
+  implemented). Until then, the task-start read is driven by AGS preflight and
+  the executor's documented startup steps, not by an installed prompt hook.
 
 Task-end capture:
 
-- `scripts/run-task-card.sh` copies the receipt package into `task-archive/`
-  and refreshes `task-memory.md` after the receipt and delivery report are
-  written.
-- `scripts/run-task-card.sh` also runs a transient compile/learning pipeline by
-  default. It may write small `learning-gaps/` proposals, but it must not
-  promote those proposals into rules without human review.
-- `scripts/claude-stop-memory-capture.py` covers the paste-to-Claude workflow:
-  when a Claude Code `Stop` hook sees both a task card and a delivery report in
-  the transcript, it builds a local receipt and delegates to
-  `scripts/context-memory.sh capture`.
-- The runner prints the final `delivery-report.md` to the foreground only after
-  memory capture succeeds, so the displayed report is already represented in
-  local task memory.
-- Neither capture path overwrites `context-capsule.md`.
+The paste-to-Claude `Stop`-hook capture path is **implemented** as a first-class
+product mechanism. The canonical scripts live in the suite:
+
+- `scripts/context-memory.sh` — `status` / `init` / `capture RECEIPT_DIR`.
+  `init` creates the project memory store and capsule (create-if-missing);
+  `capture` archives a receipt under `task-archive/` and refreshes
+  `task-memory.md`. It never overwrites `context-capsule.md`.
+- `scripts/claude-stop-memory-capture.py` — a Claude Code `Stop` hook that reads
+  the transcript, detects a pasted task card plus its delivery report, builds a
+  local receipt package, and delegates the write to `context-memory.sh capture`.
+  It is conservative: no task card → skip; no delivery report → skip; duplicate
+  transcript → skip; the capsule is never written directly.
+
+Command responsibilities:
+
+- `ags setup --yes --register-claude` installs both scripts to
+  `$HOME/.agents/scripts/`, merges the capture step into the current AGS
+  workspace's Claude `Stop` pipeline while preserving existing hooks, and
+  bootstraps the workspace capsule via `context-memory.sh init`.
+- `ags init` creates the per-project memory store (capsule, `task-memory.md`,
+  `task-archive/`) and registers the project. It does **not** install host
+  hooks: the installed capture bridge is cwd-aware and resolves each project's
+  memory by repository, so one host-level hook serves every onboarded project.
+- `ags doctor` reports the chain state: capture scripts present, Stop hook
+  wired, raw guard preserved, `task-memory.md` freshness, and capsule
+  design-purpose integrity.
+
+Boundary notes:
+
+- The receipt-first runner (`ags run`) writes the task receipt and delivery
+  report. `scripts/run-task-card.sh` is a thin wrapper that delegates planning
+  to `ags run` (`--check-only`, `--dry-run`, `--approve-writes`,
+  `--format text|json`); it does not itself copy a receipt package.
+- A transient compile/learning pipeline and `learning-gaps/` proposal capture
+  remain planned (not yet implemented). When added, any such proposals must not
+  be promoted into rules without human review.
+- The capture path must not overwrite `context-capsule.md`.
 
 Use `--no-memory` only when a task run should intentionally skip local memory
 capture.

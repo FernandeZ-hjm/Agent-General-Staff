@@ -77,6 +77,7 @@ pub const PUBLIC_MANIFEST: SyncManifest = SyncManifest {
         "scripts/run-task-card.sh",
         "scripts/verify.sh",
         "scripts/context-memory.sh",
+        "scripts/claude-stop-memory-capture.py",
         "scripts/stop-archive-hook.sh",
         "manifests/suite.yaml",
         "manifests/skill-recommendations.yaml",

@@ -3,7 +3,7 @@
 //! rollback stub stays in `kernel::rollback`.
 
 use super::{claude_ags_command_path, PRIVATE_INSTALL_SCHEMA};
-use crate::context::private_install_target;
+use crate::context::{home_dir, private_install_target};
 use std::path::{Path, PathBuf};
 
 pub(crate) fn cmd_private_rollback_plan(profile: &str, target: Option<PathBuf>, format: &str) {
@@ -44,6 +44,17 @@ pub(crate) fn cmd_private_rollback_plan(profile: &str, target: Option<PathBuf>, 
         "exists": claude_command_path.exists(),
         "backup_candidates": backup_candidates(&claude_command_path),
     }));
+    let home = home_dir();
+    for script in [
+        super::memory::context_memory_script_path(&home),
+        super::memory::claude_stop_memory_capture_path(&home),
+    ] {
+        entries.push(serde_json::json!({
+            "path": script.to_string_lossy(),
+            "exists": script.exists(),
+            "backup_candidates": backup_candidates(&script),
+        }));
+    }
 
     let plan = serde_json::json!({
         "schema_version": PRIVATE_INSTALL_SCHEMA,
