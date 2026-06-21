@@ -1944,7 +1944,10 @@ mod tests {
         let has_absolute_path = card.contains("目标文件夹路径：\n- /")
             || card.contains("目标文件夹路径：\n- \\\\?\\")
             || card.lines().any(|l| {
-                l.starts_with("- ") && l.len() > 3 && l.as_bytes()[2].is_ascii_alphabetic() && l.contains(":\\")
+                l.starts_with("- ")
+                    && l.len() > 3
+                    && l.as_bytes()[2].is_ascii_alphabetic()
+                    && l.contains(":\\")
             });
         assert!(
             has_absolute_path,
