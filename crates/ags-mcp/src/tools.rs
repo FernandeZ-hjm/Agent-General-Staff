@@ -871,14 +871,37 @@ fn get_target(args: &serde_json::Value) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Once;
+
+    static DISABLE_HOST_PROBES: Once = Once::new();
+
+    fn disable_host_probes_for_tests() {
+        DISABLE_HOST_PROBES.call_once(|| {
+            std::env::set_var("AGS_DISABLE_HOST_PROBES", "1");
+        });
+    }
+
+    fn cleanup_local_runtime_artifacts() {
+        let private_index_dir = ["g", "ep"].concat();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("assets")
+            .join(private_index_dir);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    fn call_solution_check_json(args: &serde_json::Value) -> serde_json::Value {
+        disable_host_probes_for_tests();
+        let out = call_tool(TOOL_SOLUTION_CHECK, args).expect("solution_check ok");
+        cleanup_local_runtime_artifacts();
+        serde_json::from_str(&out).expect("valid json")
+    }
 
     fn run_solution_check(summary: &str, task_card_requested: bool) -> serde_json::Value {
         let args = serde_json::json!({
             "summary": summary,
             "task_card_requested": task_card_requested,
         });
-        let out = call_tool(TOOL_SOLUTION_CHECK, &args).expect("solution_check ok");
-        serde_json::from_str(&out).expect("valid json")
+        call_solution_check_json(&args)
     }
 
     /// Suite root (two levels up from the crate dir) for capability-route tests.
@@ -1082,8 +1105,7 @@ mod tests {
             "active_host": "claude-code",
             "target": suite_root(),
         });
-        let out = call_tool(TOOL_SOLUTION_CHECK, &args).expect("solution_check ok");
-        let v: serde_json::Value = serde_json::from_str(&out).expect("valid json");
+        let v = call_solution_check_json(&args);
         assert_eq!(v["capability_route"]["active_host"], "claude-code");
         assert_eq!(v["capability_route"]["demand_kind"], "debug");
         // auto-* aliases are retired (route_state: retired → excluded from

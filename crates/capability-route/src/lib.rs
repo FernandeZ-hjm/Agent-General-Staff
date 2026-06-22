@@ -769,6 +769,59 @@ mod tests {
     use skill_governance::console::{
         HostVisibility, ManagedInventorySummary, ManagedStatus, RegistryStatus,
     };
+    use std::sync::Once;
+
+    static DISABLE_HOST_PROBES: Once = Once::new();
+
+    fn disable_host_probes_for_tests() {
+        DISABLE_HOST_PROBES.call_once(|| {
+            std::env::set_var("AGS_DISABLE_HOST_PROBES", "1");
+        });
+    }
+
+    fn cleanup_local_runtime_artifacts() {
+        let private_index_dir = ["g", "ep"].concat();
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("assets")
+            .join(private_index_dir);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    fn route_request_for_test(
+        request: &str,
+        manifest_root: &Path,
+        active_host: &str,
+    ) -> CapabilityRoute {
+        disable_host_probes_for_tests();
+        let route = route_request(request, manifest_root, active_host);
+        cleanup_local_runtime_artifacts();
+        route
+    }
+
+    fn route_request_with_runtime_home_for_test(
+        request: &str,
+        manifest_root: &Path,
+        active_host: &str,
+        runtime_home: &Path,
+    ) -> CapabilityRoute {
+        disable_host_probes_for_tests();
+        let route =
+            route_request_with_runtime_home(request, manifest_root, active_host, runtime_home);
+        cleanup_local_runtime_artifacts();
+        route
+    }
+
+    fn system_context_for_test(root: PathBuf) -> ConsoleContext {
+        disable_host_probes_for_tests();
+        ConsoleContext::system(root)
+    }
+
+    fn build_inventory_for_test(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventoryResult {
+        disable_host_probes_for_tests();
+        let inventory = build_inventory(ctx, hosts);
+        cleanup_local_runtime_artifacts();
+        inventory
+    }
 
     fn summary() -> ManagedInventorySummary {
         ManagedInventorySummary {
@@ -1394,7 +1447,12 @@ mod tests {
 
         // No enrollment evidence → fail-closed: diagnosing-bugs still surfaces but as
         // not-enrolled, with no primary; the route stays advisory.
-        let r0 = route_request_with_runtime_home("测试挂了，帮我看下", &root, "claude-code", &home);
+        let r0 = route_request_with_runtime_home_for_test(
+            "测试挂了，帮我看下",
+            &root,
+            "claude-code",
+            &home,
+        );
         assert!(r0.advisory);
         assert!(!r0.enrollment.present);
         let ad0 = r0
@@ -1418,7 +1476,12 @@ mod tests {
             render_enrollment_json(EnrollmentMode::SuiteOnly, "test"),
         )
         .unwrap();
-        let r1 = route_request_with_runtime_home("测试挂了，帮我看下", &root, "claude-code", &home);
+        let r1 = route_request_with_runtime_home_for_test(
+            "测试挂了，帮我看下",
+            &root,
+            "claude-code",
+            &home,
+        );
         assert!(r1.enrollment.present);
         assert_eq!(r1.enrollment.mode, EnrollmentMode::SuiteOnly);
         let ad1 = r1
@@ -1447,7 +1510,7 @@ mod tests {
 
         // Malformed evidence → fail-closed: present=false, advisory, no primary.
         std::fs::write(&path, "{ not json").unwrap();
-        let rm = route_request_with_runtime_home("测试挂了", &root, "claude-code", &home);
+        let rm = route_request_with_runtime_home_for_test("测试挂了", &root, "claude-code", &home);
         assert!(!rm.enrollment.present);
         assert!(rm.advisory);
         assert!(rm.primary.is_none());
@@ -1458,7 +1521,7 @@ mod tests {
             render_enrollment_json(EnrollmentMode::ReviewAll, "test"),
         )
         .unwrap();
-        let rr = route_request_with_runtime_home("测试挂了", &root, "claude-code", &home);
+        let rr = route_request_with_runtime_home_for_test("测试挂了", &root, "claude-code", &home);
         assert!(rr.enrollment.present);
         assert_eq!(rr.enrollment.mode, EnrollmentMode::ReviewAll);
 
@@ -1468,7 +1531,7 @@ mod tests {
             render_enrollment_json(EnrollmentMode::Adopted, "test"),
         )
         .unwrap();
-        let ra = route_request_with_runtime_home("测试挂了", &root, "claude-code", &home);
+        let ra = route_request_with_runtime_home_for_test("测试挂了", &root, "claude-code", &home);
         assert!(ra.enrollment.present);
         assert_eq!(ra.enrollment.mode, EnrollmentMode::Adopted);
 
@@ -1516,7 +1579,7 @@ mod tests {
     #[test]
     fn route_request_reads_suite_manifests_and_is_advisory() {
         let root = locate_manifest_root(&suite_root());
-        let route = route_request("测试挂了，帮我看下", &root, "claude-code");
+        let route = route_request_for_test("测试挂了，帮我看下", &root, "claude-code");
         assert_eq!(route.demand_kind, DemandKind::Debug);
         assert_eq!(route.active_host, "claude-code");
         assert!(route.advisory, "capability route is always advisory");
@@ -1542,7 +1605,7 @@ mod tests {
     #[test]
     fn route_request_host_agnostic_is_conservative() {
         let root = locate_manifest_root(&suite_root());
-        let route = route_request("测试挂了，帮我看下", &root, "");
+        let route = route_request_for_test("测试挂了，帮我看下", &root, "");
         assert_eq!(route.active_host, "host-agnostic");
         assert!(route.advisory);
         assert!(
@@ -1560,8 +1623,8 @@ mod tests {
     #[test]
     fn manifest_positive_examples_route_to_their_member() {
         let root = locate_manifest_root(&suite_root());
-        let ctx = ConsoleContext::system(root);
-        let inventory = build_inventory(&ctx, &["claude-code"]);
+        let ctx = system_context_for_test(root);
+        let inventory = build_inventory_for_test(&ctx, &["claude-code"]);
         let enrolled = RuntimeEnrollment::fully_enrolled();
         let mut checked = 0;
         for cap in &inventory.capabilities {
@@ -1926,8 +1989,8 @@ mod tests {
     #[test]
     fn route_targets_synthesized_without_host_expectation() {
         let root = locate_manifest_root(&suite_root());
-        let ctx = ConsoleContext::system(root);
-        let inventory = build_inventory(&ctx, &["claude-code"]);
+        let ctx = system_context_for_test(root);
+        let inventory = build_inventory_for_test(&ctx, &["claude-code"]);
         let find = |n: &str| inventory.capabilities.iter().find(|c| c.name == n);
 
         let vbc = find("verification-before-completion").expect("vbc route target present");
@@ -1972,8 +2035,8 @@ mod tests {
     #[test]
     fn retired_demands_have_non_alias_successors() {
         let root = locate_manifest_root(&suite_root());
-        let ctx = ConsoleContext::system(root);
-        let inventory = build_inventory(&ctx, &["claude-code"]);
+        let ctx = system_context_for_test(root);
+        let inventory = build_inventory_for_test(&ctx, &["claude-code"]);
         let non_alias_serves = |demand: &str| {
             inventory.capabilities.iter().any(|c| {
                 c.routing.as_ref().is_some_and(|m| {

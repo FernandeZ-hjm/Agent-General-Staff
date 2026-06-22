@@ -1,5 +1,6 @@
 use crate::cli::ReleaseAction;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 /// Shared dispatch: `release verify`
 fn cmd_release_verify(target: &str, format: &str) {
@@ -89,6 +90,43 @@ fn walk_release_files(root: &Path, prefix: &str, files: &mut Vec<String>) {
         }
     }
 }
+fn git_tracked_release_files(root: &Path) -> Option<Vec<String>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("ls-files")
+        .arg("-z")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    Some(
+        output
+            .stdout
+            .split(|byte| *byte == 0)
+            .filter(|entry| !entry.is_empty())
+            .filter_map(|entry| {
+                let relative = String::from_utf8_lossy(entry).replace('\\', "/");
+                if root.join(&relative).is_file() {
+                    Some(relative)
+                } else {
+                    None
+                }
+            })
+            .collect(),
+    )
+}
+fn release_file_list(source_root: &Path) -> Vec<String> {
+    if let Some(files) = git_tracked_release_files(source_root) {
+        return files;
+    }
+
+    let mut files = Vec::new();
+    walk_release_files(source_root, "", &mut files);
+    files
+}
 fn release_package_plan(
     source_root: &Path,
     profile: &str,
@@ -99,8 +137,7 @@ fn release_package_plan(
     let mut excluded: Vec<String> = Vec::new();
     let mut exclusion_reasons: Vec<(String, String)> = Vec::new();
 
-    let mut all_files: Vec<String> = Vec::new();
-    walk_release_files(source_root, "", &mut all_files);
+    let mut all_files = release_file_list(source_root);
     all_files.sort();
 
     if is_public_release_profile(profile) {
@@ -230,7 +267,10 @@ fn cmd_release_package(profile: &str, dry_run: bool, format: &str) {
 #[cfg(test)]
 mod release_package_tests {
     use super::{is_public_release_profile, matches_path_boundary, release_package_plan};
+    use std::fs;
     use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn file_boundary_requires_exact_match() {
@@ -272,6 +312,14 @@ mod release_package_tests {
             .to_path_buf()
     }
 
+    fn unique_temp_repo(name: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        std::env::temp_dir().join(format!("{name}-{}-{suffix}", std::process::id()))
+    }
+
     #[test]
     fn public_release_profile_detection_is_explicit() {
         assert!(is_public_release_profile("public-core"));
@@ -297,6 +345,44 @@ mod release_package_tests {
         assert!(included.contains(&"crates/ags-cli/src/main.rs"));
         assert!(included.contains(&"protocol/task-card-template.md"));
         assert!(!included.contains(&"manifests/templates/runtime-profiles.template.yaml"));
+    }
+
+    #[test]
+    fn public_release_package_uses_tracked_files_not_untracked_workspace_artifacts() {
+        let root = unique_temp_repo("ags-release-package-tracked-files");
+        fs::create_dir_all(root.join("notes")).unwrap();
+        fs::write(root.join("Cargo.toml"), "[workspace]\n").unwrap();
+        fs::write(root.join("README.md"), "# public\n").unwrap();
+        fs::write(root.join("notes/untracked.txt"), "local artifact\n").unwrap();
+
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .arg("init")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .arg("add")
+            .arg("Cargo.toml")
+            .arg("README.md")
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let (plan, failed) = release_package_plan(&root, "public-full", true);
+        assert!(!failed);
+        let included = plan["included_files"]
+            .as_array()
+            .expect("included_files must be an array");
+        let included: Vec<&str> = included.iter().filter_map(|value| value.as_str()).collect();
+        assert!(included.contains(&"Cargo.toml"));
+        assert!(included.contains(&"README.md"));
+        assert!(!included.contains(&"notes/untracked.txt"));
+
+        let _ = fs::remove_dir_all(root);
     }
 }
 

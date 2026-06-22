@@ -62,6 +62,28 @@ impl CommandRunner for SystemCommandRunner {
     }
 }
 
+/// Runner used when host probes are explicitly disabled, for hermetic tests and
+/// CI environments that should not touch user-local agent tooling.
+pub struct DisabledCommandRunner;
+
+impl CommandRunner for DisabledCommandRunner {
+    fn run(&self, _program: &str, _args: &[&str]) -> CommandOutcome {
+        CommandOutcome::Unavailable
+    }
+}
+
+fn host_probes_disabled() -> bool {
+    std::env::var_os("AGS_DISABLE_HOST_PROBES").is_some()
+}
+
+fn system_runner() -> Box<dyn CommandRunner> {
+    if host_probes_disabled() {
+        Box::new(DisabledCommandRunner)
+    } else {
+        Box::new(SystemCommandRunner)
+    }
+}
+
 // ── Injectable context (testability seam) ───────────────────────────────────
 
 /// All filesystem roots and the command runner the console reads through.
@@ -92,7 +114,7 @@ impl ConsoleContext {
         Self {
             repo_root: repo_root.into(),
             home: default_home(),
-            runner: Box::new(SystemCommandRunner),
+            runner: system_runner(),
         }
     }
 }
@@ -903,17 +925,17 @@ fn skill_path_visibility(
                 return v(HostVisibilityStatus::Degraded, evidence);
             }
         };
-        if real_entry != real_canonical {
+        let Some(match_kind) = thin_index_target_match(&real_entry, &real_canonical) else {
             evidence.push(format!(
                 "host thin index points to {}, expected AGS canonical {}",
                 real_entry.display(),
                 real_canonical.display()
             ));
             return v(HostVisibilityStatus::Degraded, evidence);
-        }
+        };
         evidence.push(format!(
-            "thin index resolves to AGS canonical body: {}",
-            real_canonical.display()
+            "thin index resolves to {match_kind}: {}",
+            real_entry.display()
         ));
     }
     if !skill_md.is_file() {
@@ -958,6 +980,62 @@ fn skill_path_visibility(
             v(HostVisibilityStatus::Degraded, evidence)
         }
     }
+}
+
+fn thin_index_target_match(real_entry: &Path, real_canonical: &Path) -> Option<&'static str> {
+    if real_entry == real_canonical {
+        return Some("AGS canonical body");
+    }
+    if same_private_stable_suite_path(real_entry, real_canonical) {
+        return Some("AGS stable/private runtime twin");
+    }
+    None
+}
+
+fn same_private_stable_suite_path(real_entry: &Path, real_canonical: &Path) -> bool {
+    let Some((entry_suite, entry_rel)) = split_suite_runtime_path(real_entry) else {
+        return false;
+    };
+    let Some((canonical_suite, canonical_rel)) = split_suite_runtime_path(real_canonical) else {
+        return false;
+    };
+
+    entry_suite != canonical_suite && entry_rel == canonical_rel
+}
+
+fn split_suite_runtime_path(path: &Path) -> Option<(&'static str, PathBuf)> {
+    const SUITE_PREFIX: &str = "agent-governance-suite-";
+    const SOURCE_SUFFIX: &str = "private";
+    const RUNTIME_SUFFIX: &str = "stable";
+
+    let mut suite = None;
+    let mut rel = PathBuf::new();
+
+    for component in path.components() {
+        if let Some(found) = suite {
+            rel.push(component.as_os_str());
+            suite = Some(found);
+            continue;
+        }
+        let Some(name) = component.as_os_str().to_str() else {
+            continue;
+        };
+        if let Some(suffix) = name.strip_prefix(SUITE_PREFIX) {
+            if suffix == SOURCE_SUFFIX {
+                suite = Some("source");
+            } else if suffix == RUNTIME_SUFFIX {
+                suite = Some("runtime");
+            }
+        }
+    }
+
+    suite.and_then(|found| {
+        if rel.components().next().is_some() {
+            Some((found, rel))
+        } else {
+            None
+        }
+    })
 }
 
 /// MCP-registration visibility for a host via its cached `<host> mcp list`.
@@ -3403,9 +3481,17 @@ mod tests {
     }
 
     fn ctx_with(tag: &str, list: CommandOutcome) -> (ConsoleContext, PathBuf) {
+        ctx_with_repo_dir(tag, list, "repo")
+    }
+
+    fn ctx_with_repo_dir(
+        tag: &str,
+        list: CommandOutcome,
+        repo_dir_name: &str,
+    ) -> (ConsoleContext, PathBuf) {
         let base = std::env::temp_dir().join(format!("ags-console-{}-{}", std::process::id(), tag));
         let _ = std::fs::remove_dir_all(&base);
-        let repo = base.join("repo");
+        let repo = base.join(repo_dir_name);
         let home = base.join("home");
 
         write_file(
@@ -3470,7 +3556,7 @@ mod tests {
         write_file(
             &repo.join("manifests/skills-registry.yaml"),
             "skills:\n\
-             \x20 - name: legacy-compat-skill\n    routing:\n      intent_tags: [debug, diagnose]\n      mutation_surface: read-only\n      requires_auth: false\n      cost_class: free\n      invoke_hint: \"[skill: legacy-compat-skill]\"\n      route_priority: 10\n      is_compatibility_alias: true\n\
+             \x20 - name: legacy-compat-skill\n    routing:\n      intent_tags: [debug, diagnosing-bugs]\n      mutation_surface: read-only\n      requires_auth: false\n      cost_class: free\n      invoke_hint: \"[skill: legacy-compat-skill]\"\n      route_priority: 10\n      is_compatibility_alias: true\n\
              \x20 - name: no-routing-skill\n    description: has no routing block\n\
              \x20 - name: broken-skill\n    routing: \"not-a-mapping\"\n",
         );
@@ -3489,7 +3575,7 @@ mod tests {
             .expect("legacy-compat-skill routing present");
         assert_eq!(
             ad.intent_tags,
-            vec!["debug".to_string(), "diagnose".to_string()]
+            vec!["debug".to_string(), "diagnosing-bugs".to_string()]
         );
         assert!(ad.is_compatibility_alias);
         assert_eq!(ad.route_priority, 10);
@@ -3517,12 +3603,12 @@ mod tests {
     /// field would make every existing block fail to parse.
     #[test]
     fn routing_metadata_legacy_block_round_trips_with_defaults() {
-        let legacy = "intent_tags: [debug, diagnose]\nscope_tags: [\"*\"]\nmutation_surface: read-only\nrequires_auth: false\ncost_class: free\ninvoke_hint: \"[skill: legacy-compat-skill]\"\nroute_priority: 10\nis_compatibility_alias: true\n";
+        let legacy = "intent_tags: [debug, diagnosing-bugs]\nscope_tags: [\"*\"]\nmutation_surface: read-only\nrequires_auth: false\ncost_class: free\ninvoke_hint: \"[skill: legacy-compat-skill]\"\nroute_priority: 10\nis_compatibility_alias: true\n";
         let meta: RoutingMetadata =
             serde_yaml::from_str(legacy).expect("legacy routing block must still parse");
         assert_eq!(
             meta.intent_tags,
-            vec!["debug".to_string(), "diagnose".to_string()]
+            vec!["debug".to_string(), "diagnosing-bugs".to_string()]
         );
         assert!(meta.is_compatibility_alias);
         assert_eq!(meta.route_priority, 10);
@@ -4328,6 +4414,43 @@ mod tests {
             vis.evidence
                 .iter()
                 .any(|e| e.contains("expected AGS canonical")),
+            "{:?}",
+            vis.evidence
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // The development private suite may verify hosts whose thin indexes point at
+    // the stable suite runtime. Treat the same relative skill body under the
+    // private/stable suite pair as visible, while unrelated external copies still
+    // fail the `non_canonical_symlink_is_degraded` guard above.
+    #[cfg(unix)]
+    #[test]
+    fn stable_runtime_twin_symlink_is_visible() {
+        let (ctx, base) = ctx_with_repo_dir(
+            "stable-runtime",
+            canned_list(),
+            &format!("agent-governance-suite-{}", "private"),
+        );
+        let stable_source = base.join(format!(
+            "agent-governance-suite-{}/skill-packs/optional/lark-shared",
+            "stable"
+        ));
+        write_file(
+            &stable_source.join("SKILL.md"),
+            "---\nname: lark-shared\ndescription: stable runtime body.\n---\n",
+        );
+        let skills = ctx.home.join(".claude/skills");
+        std::fs::create_dir_all(&skills).unwrap();
+        make_symlink(&stable_source, &skills.join("lark-shared")).unwrap();
+
+        let inv = build_inventory(&ctx, &["claude-code"]);
+        let vis = &find(&inv, "lark-shared").host_visibility[0];
+        assert_eq!(vis.status, HostVisibilityStatus::Visible);
+        assert!(
+            vis.evidence
+                .iter()
+                .any(|e| e.contains("AGS stable/private runtime twin")),
             "{:?}",
             vis.evidence
         );
