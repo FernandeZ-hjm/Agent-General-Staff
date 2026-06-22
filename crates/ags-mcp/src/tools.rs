@@ -1087,8 +1087,8 @@ mod tests {
         assert_eq!(v["capability_route"]["active_host"], "claude-code");
         assert_eq!(v["capability_route"]["demand_kind"], "debug");
         // auto-* aliases are retired (route_state: retired → excluded from
-        // routing); the debug demand routes to the canonical successor diagnose,
-        // and the retired auto-debug alias no longer surfaces.
+        // routing); the debug demand routes to the canonical successor
+        // diagnosing-bugs, and the retired auto-debug alias no longer surfaces.
         let names: Vec<&str> = v["capability_route"]["recommendations"]
             .as_array()
             .expect("recommendations array")
@@ -1096,8 +1096,8 @@ mod tests {
             .filter_map(|r| r["capability_name"].as_str())
             .collect();
         assert!(
-            names.contains(&"diagnose"),
-            "debug demand should surface diagnose, got {names:?}"
+            names.contains(&"diagnosing-bugs"),
+            "debug demand should surface diagnosing-bugs, got {names:?}"
         );
         assert!(
             !names.contains(&"auto-debug"),

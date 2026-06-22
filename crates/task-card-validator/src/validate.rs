@@ -30,6 +30,7 @@ pub fn validate(input: &str) -> Vec<String> {
     if let Some(pos) = find_text_fence(input) {
         errors.push(format!("第 {} 行附近：禁止使用 `text` 类型代码围栏", pos));
     }
+    check_retired_skill_tags(input, &mut errors);
 
     // Single canonical task-card format: the classic fixed skeleton whose
     // second non-empty line is `读取并遵守：`. The compact task-card format

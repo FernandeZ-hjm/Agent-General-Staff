@@ -231,7 +231,7 @@ tracked manifest，**绝不**含真实凭据。证据缺失 / 损坏 / 未知 mo
 
 **auto-* 已退役。** auto-brainstorm / auto-debug / auto-verify 现为 `routing.route_state: retired`，
 Capability Route **永不**把它们作为 primary、永不唤醒；其 demand 路由到 canonical 后继（debug →
-`diagnose`、verify → `superpowers` 的 verification-before-completion、brainstorm → `grill-with-docs`）。
+`diagnosing-bugs`、verify → `verification-before-completion`、brainstorm → `grill-with-docs`）。
 `is_compatibility_alias` 仅保留为审计溯源，不再参与排序；排序与 primary 资格由 `route_state` 决定。
 退役记录见 `manifests/skills-registry.yaml` 的 `route_state: retired` 与 `governance/skill-adoption-log.yaml` 的 append-only 记录；`auto-*` 同时从 `manifests/suite.yaml` 的 suite-required 集合移除（不新增装饰性 `retired:` 块）。其 demand 现由指向已存在 superpowers playbook `SKILL.md` 的 route target 承接。
 
@@ -393,11 +393,11 @@ Stop review hook 已废弃，不再是最终执行点，也不是自动阻塞依
 
 | 任务级别 | Review gate |
 |---|---|
-| Light | 完成验证后运行 `caveman-review` 或等价轻量 diff review；如发现风险高于 Light，升级 Medium。 |
+| Light | 完成验证后运行 `requesting-code-review` 或等价轻量 diff review；如发现风险高于 Light，升级 Medium。 |
 | Medium | Codex 最终 Review gate；Executor 完成验证后将任务状态标为"部分完成 / 等待 Codex review"，由 Codex 审查通过后再放行。 |
 | Heavy | 先计划后执行；人工 Adversarial Review gate；Executor 完成验证后将任务状态标为"部分完成 / 等待人工 adversarial review"，并提醒操作者手动运行 `/codex:adversarial-review` 后再放行。 |
 
-Executor 完成交付前必须报告 review gate 状态；Medium / Heavy 在对应人工 review 完成前只能标为"部分完成"。Light 若在 `caveman-review` 中发现跨文件协议、权限、hook、数据写入、路径迁移或生成物同步风险，必须升级为 Medium 并等待 Codex review。
+Executor 完成交付前必须报告 review gate 状态；Medium / Heavy 在对应人工 review 完成前只能标为"部分完成"。Light 若在 `requesting-code-review` 或等价轻量 diff review 中发现跨文件协议、权限、hook、数据写入、路径迁移或生成物同步风险，必须升级为 Medium 并等待 Codex review。
 
 如果 Medium / Heavy 的实现和验证已经完成，但对应 review gate 尚未完成，
 交付报告中的 `## 任务状态` 必须写"部分完成 / 等待 Codex review"或
@@ -457,7 +457,7 @@ Markdown 代码块；外层使用四反引号 `markdown` fence，外层代码块
 
 任务卡末尾可包含 `[skill: xxx]` 标记。Executor 收到标记后，按 `protocol/cursor-skill-index.md` 打开对应 SKILL.md 并按其指引执行。
 
-常用标记：`[skill: tdd]`、`[skill: diagnose]`、`[skill: review]`、`[skill: verify]`、`[skill: commit]`。
+常用标记：`[skill: test-driven-development]`、`[skill: diagnosing-bugs]`、`[skill: review]`、`[skill: verification-before-completion]`。
 
 ## 任务卡模板
 

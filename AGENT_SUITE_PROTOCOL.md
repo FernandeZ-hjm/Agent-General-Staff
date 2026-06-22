@@ -203,5 +203,6 @@ partial/not-integrated/failures/conflicts，2 = 参数错误。
 
 ## 技能标记
 
-任务卡末尾可包含 `[skill: xxx]` 标记。常用：`[skill: tdd]`、`[skill: diagnose]`、
-`[skill: review]`、`[skill: verify]`、`[skill: zoom-out]`。
+任务卡末尾可包含 `[skill: xxx]` 标记。常用：`[skill: test-driven-development]`、
+`[skill: diagnosing-bugs]`、`[skill: review]`、`[skill: verification-before-completion]`、
+`[skill: codebase-design]`。

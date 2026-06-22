@@ -133,6 +133,65 @@ pub(crate) fn find_text_fence(input: &str) -> Option<usize> {
     None
 }
 
+pub(crate) fn check_retired_skill_tags(input: &str, errors: &mut Vec<String>) {
+    let lines: Vec<&str> = input.lines().collect();
+
+    for (line_idx, tag) in trailing_skill_metadata_lines(&lines) {
+        if let Some((retired, replacement)) = RETIRED_SKILL_TAGS
+            .iter()
+            .find(|(name, _)| tag.eq_ignore_ascii_case(name))
+        {
+            let replacement_hint = if replacement.is_empty() {
+                "该标记已删除，不再提供替代标记".to_string()
+            } else {
+                format!("请改用 `[skill: {replacement}]`")
+            };
+            errors.push(format!(
+                "[{}] 第 {} 行：旧技能标记 `[skill: {retired}]` 已删除，{replacement_hint}",
+                error_code::RETIRED_SKILL_TAG,
+                line_idx + 1
+            ));
+        }
+    }
+}
+
+fn trailing_skill_metadata_lines<'a>(lines: &'a [&'a str]) -> Vec<(usize, &'a str)> {
+    let mut found = Vec::new();
+    let mut idx = lines.len();
+
+    while idx > 0 {
+        idx -= 1;
+        let line = lines[idx];
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        if let Some(tag) = standalone_skill_tag(line) {
+            found.push((idx, tag));
+            continue;
+        }
+
+        break;
+    }
+
+    found.reverse();
+    found
+}
+
+fn standalone_skill_tag(line: &str) -> Option<&str> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with("[skill:") || !trimmed.ends_with(']') {
+        return None;
+    }
+
+    let tag = trimmed["[skill:".len()..trimmed.len() - 1].trim();
+    if tag.is_empty() {
+        None
+    } else {
+        Some(tag)
+    }
+}
+
 // ── Phase 2: field-value checks ────────────────────────────────────────
 
 pub(crate) fn check_field_values(fields: &HashMap<String, String>, errors: &mut Vec<String>) {

@@ -9,8 +9,8 @@ When a task references a skill, open only the relevant SKILL.md. When a task doe
 - Paths in this document that contain `$HOME` are template paths. Before opening any SKILL.md, expand `$HOME` to the actual home directory of the current machine.
 
 - Use `grill-with-docs` for open-ended feature, design, architecture, or recommendation work before implementing.
-- Use `diagnose` for errors, failing tests, broken behavior, performance issues, or unexpected runtime output.
-- Use `superpowers` (verification-before-completion) before claiming work is complete, fixed, passing, or ready to hand off.
+- Use `diagnosing-bugs` for errors, failing tests, broken behavior, performance issues, or unexpected runtime output.
+- Use `verification-before-completion` before claiming work is complete, fixed, passing, or ready to hand off.
 - Use manual skills only when they directly reduce risk for the current task.
 - Do not stack unrelated skills. Prefer one or two strong procedural guardrails over a long list.
 - If a skill file is missing or unreadable, report that briefly and continue with the nearest safe workflow.
@@ -25,25 +25,22 @@ longer auto-triggered or part of the suite manifest's active skill set; their
 demands route to the canonical successors instead:
 
 - brainstorm → primary `grill-with-docs` (superpowers `brainstorming` playbook is a secondary method hint)
-- debug → primary `diagnose` (superpowers `systematic-debugging` playbook is a secondary method hint)
-- verify → primary `superpowers`, internal entrypoint = the `verification-before-completion` playbook
+- debug → primary `diagnosing-bugs` (`systematic-debugging` is a secondary method hint)
+- verify → primary `verification-before-completion`
 
-The superpowers playbooks are **internal entrypoints**, NOT standalone skills:
-they are registered only under `route_targets:` (parent: `superpowers`) in
-`manifests/skills-registry.yaml` and never create a suite-required entry or a
-host-visible expectation. Do not author new task cards that wake the `auto-*`
-aliases.
+Superpowers playbooks keep their upstream names as standalone skills in the
+local skill index. Do not author new task cards that wake the `auto-*` aliases.
 
 ## Manual skills
 
-- tdd: $HOME/.agents/skills/tdd/SKILL.md
-- diagnose: $HOME/.agents/skills/diagnose/SKILL.md
+- test-driven-development: $HOME/.agents/skills/test-driven-development/SKILL.md
+- diagnosing-bugs: $HOME/.agents/skills/diagnosing-bugs/SKILL.md
 - grill-with-docs: $HOME/.agents/skills/grill-with-docs/SKILL.md
 - improve-codebase-architecture: $HOME/.agents/skills/improve-codebase-architecture/SKILL.md
 - prototype: $HOME/.agents/skills/prototype/SKILL.md
-- zoom-out: $HOME/.agents/skills/zoom-out/SKILL.md
-- caveman-commit: $HOME/.agents/skills/caveman-commit/SKILL.md
-- caveman-review: $HOME/.agents/skills/caveman-review/SKILL.md
+- codebase-design: $HOME/.agents/skills/codebase-design/SKILL.md
+- review: $HOME/.agents/skills/review/SKILL.md
+- verification-before-completion: $HOME/.agents/skills/verification-before-completion/SKILL.md
 - finishing-a-development-branch: $HOME/.agents/skills/finishing-a-development-branch/SKILL.md
 - using-git-worktrees: $HOME/.agents/skills/using-git-worktrees/SKILL.md
 - webapp-testing: $HOME/.agents/skills/webapp-testing/SKILL.md
@@ -85,5 +82,5 @@ Use this when Cursor needs to hand work to Claude Code CLI, another agent, or a 
 - heavy 任务先给 root cause / 设计 / 计划，等确认再修改
 - 完成后运行相关验证
 
-[skill: verify]
+[skill: verification-before-completion]
 ```

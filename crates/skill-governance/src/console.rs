@@ -197,10 +197,10 @@ pub struct HostVisibility {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum MutationSurface {
-    /// Read / analyze only (e.g. diagnose, zoom-out).
+    /// Read / analyze only (e.g. diagnosing-bugs, codebase-design).
     #[default]
     ReadOnly,
-    /// Writes inside the local working tree (e.g. tdd).
+    /// Writes inside the local working tree (e.g. test-driven-development).
     LocalWrite,
     /// Talks to an external account / service (e.g. lark-*).
     ExternalWrite,
@@ -341,10 +341,10 @@ pub struct RoutingMetadata {
     pub route_state: RouteState,
     /// Capability (demand) groups this member belongs to — LABELS ONLY, no
     /// inherited routing / policy values. A member may serve several demand
-    /// pools (e.g. caveman-review ∈ {code-review, verification}).
+    /// pools (e.g. review ∈ {code-review, verification}).
     #[serde(default)]
     pub capability_group: Vec<String>,
-    /// Upstream source group (e.g. `"mattpocock/skills:caveman"`) — LABEL ONLY,
+    /// Upstream source group (e.g. `"mattpocock/skills:review"`) — LABEL ONLY,
     /// for update / dedupe / provenance; never inherits routing values.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upstream_group: Option<String>,
@@ -1478,7 +1478,12 @@ fn summarize(caps: &[ManagedCapability]) -> ManagedInventorySummary {
 /// a `SKILL.md`. Read-only.
 fn canonical_skill_present(repo_root: &Path, source: Option<&str>) -> bool {
     source
-        .map(|s| resolve_source(repo_root, s).join("SKILL.md").is_file())
+        .map(|s| {
+            // External recommendation-only sources (URLs) are never an
+            // AGS-hosted canonical body. Short-circuit so we never build a
+            // bogus `repo_root/https:/.../SKILL.md` path.
+            !source_is_external(s) && resolve_source(repo_root, s).join("SKILL.md").is_file()
+        })
         .unwrap_or(false)
 }
 
@@ -1983,10 +1988,50 @@ fn plan_skill_entry(
         return;
     }
 
+    // External recommendation-only sources (e.g. a GitHub URL) are NOT
+    // AGS-hosted bodies: AGS never clones/installs them or writes a thin index.
+    // Resolving the URL as a repo path would produce a dangling
+    // `repo_root/https:/.../SKILL.md` and block the sync. Instead, surface
+    // install/onboarding ADVICE and stop. `remove`/`uninstall`/`verify` fall
+    // through unchanged (there is no local body to touch).
+    // External recommendation-only sources (a URL) are NOT AGS-hosted bodies:
+    // AGS never clones the URL. BUT if the user has already installed a local
+    // canonical body at the conventional store path for this name, link THAT —
+    // so the advised recovery (install locally, then re-adopt) actually works.
+    // Otherwise surface install advice and stop (no dangling URL path, no block).
+    let mut effective_source = cap.source.clone();
+    if matches!(
+        action,
+        ConsoleAction::Adopt | ConsoleAction::Update | ConsoleAction::Repair
+    ) {
+        if let Some(src) = cap.source.as_deref() {
+            if source_is_external(src) {
+                let local = format!("global-skills/{}", cap.name);
+                if ctx.repo_root.join(&local).join("SKILL.md").is_file() {
+                    // A local canonical body exists by name — link it instead of
+                    // the URL; validation below enforces store containment + name.
+                    effective_source = Some(local);
+                } else {
+                    plan.notes.push(format!(
+                        "'{}' has an external recommendation-only source ({src}); it is not an AGS-hosted skill body, so AGS writes no thin index for it.",
+                        cap.name
+                    ));
+                    plan.advised.push(AdvisedCommand {
+                        command: format!(
+                            "install the skill body at global-skills/{0}/ (or skill-packs/.../{0}/), then re-run `ags skill propose --action adopt --skill {0}`",
+                            cap.name
+                        ),
+                        reason: "Recommendation-only external skill — AGS never clones or installs it. Once a local canonical body exists under an approved store at this name, the next adopt links the thin index.".to_string(),
+                    });
+                    return;
+                }
+            }
+        }
+    }
+
     // Resolve and validate the canonical body for actions that link to it. We
     // refuse to create a dangling thin index.
-    let canonical = cap
-        .source
+    let canonical = effective_source
         .as_ref()
         .map(|s| resolve_source(&ctx.repo_root, s));
     let canonical = if matches!(
@@ -2172,6 +2217,21 @@ fn plan_mcp_or_cli(cap: &ManagedCapability, action: ConsoleAction, plan: &mut Ac
     plan.notes.push(
         "MCP / CLI-backed capabilities have no AGS-owned host file; AGS advises the per-host command (Claude Code, Codex) but never runs it.".to_string(),
     );
+}
+
+/// True when a manifest `source` is an EXTERNAL recommendation pointer (a URL or
+/// remote ref), not a local repo path. External sources are recommendation-only:
+/// AGS never resolves them to a canonical body or writes a host thin index for
+/// them — it advises a manual install instead. Keeps URLs from being joined onto
+/// `repo_root` (which would yield a dangling `repo_root/https:/.../SKILL.md`).
+fn source_is_external(source: &str) -> bool {
+    let s = source.trim();
+    s.starts_with("http://")
+        || s.starts_with("https://")
+        || s.starts_with("git://")
+        || s.starts_with("ssh://")
+        || s.starts_with("git@")
+        || s.contains("://")
 }
 
 /// Resolve a suite source path; absolute paths are used as-is.
@@ -3495,7 +3555,7 @@ mod tests {
     /// plain labels / fixtures.
     #[test]
     fn capability_group_upstream_and_examples_parse_as_labels() {
-        let yaml = "route_state: routable\ncapability_group: [code-review, verification]\nupstream_group: \"mattpocock/skills:caveman\"\nexamples:\n\x20 positive: [\"帮我做一次代码审查\"]\n\x20 negative: [\"帮我查飞书日历\"]\n";
+        let yaml = "route_state: routable\ncapability_group: [code-review, verification]\nupstream_group: \"mattpocock/skills:review\"\nexamples:\n\x20 positive: [\"帮我做一次代码审查\"]\n\x20 negative: [\"帮我查飞书日历\"]\n";
         let meta: RoutingMetadata = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(
             meta.capability_group,
@@ -3503,7 +3563,7 @@ mod tests {
         );
         assert_eq!(
             meta.upstream_group.as_deref(),
-            Some("mattpocock/skills:caveman")
+            Some("mattpocock/skills:review")
         );
         assert_eq!(
             meta.examples.positive,
@@ -4331,6 +4391,70 @@ mod tests {
         );
         assert!(!res.applied);
         assert!(res.applied_writes.is_empty());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // Recommendation-only external source (a URL) must NOT be resolved to a repo
+    // path or blocked. AGS surfaces install advice instead of a dangling
+    // `repo_root/https:/.../SKILL.md` thin index, so `capability sync` stays green.
+    #[test]
+    fn external_url_source_is_advised_not_blocked() {
+        let (ctx, base) = ctx_with("externalsrc", canned_list());
+        write_file(
+            &ctx.repo_root.join("manifests/suite.yaml"),
+            "schema_version: \"1.0\"\nsuite:\n  name: t\n  version: \"9\"\n  optional:\n\
+             \x20   - name: \"diagnosing-bugs\"\n      version: \"1\"\n      source: \"https://github.com/mattpocock/skills/tree/main/skills/engineering/diagnosing-bugs\"\n      hash: h\n      adopted: \"2026-01-01T00:00:00Z\"\n      entry_ref: r\n",
+        );
+        let res = propose_action(&ctx, ConsoleAction::Adopt, "diagnosing-bugs", true);
+        assert!(res.found);
+        // No dangling-path block (or any other block) for a URL source.
+        assert!(
+            res.blocked_reasons.is_empty(),
+            "external URL source must not block: {:?}",
+            res.blocked_reasons
+        );
+        // AGS performed nothing; it only advised a manual install.
+        assert_eq!(res.apply_status, "advised-only");
+        assert!(!res.applied);
+        assert!(res.applied_writes.is_empty());
+        assert!(
+            !res.advised_commands.is_empty(),
+            "external recommendation-only source should advise a manual install"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // Recovery path: when an external-source skill ALSO has a local canonical
+    // body installed at the conventional store path, adopt links THAT body
+    // (the advised "install locally, then re-adopt" path must actually work,
+    // not loop forever on advice).
+    #[test]
+    fn external_url_source_with_local_body_links_it() {
+        let (ctx, base) = ctx_with("externalsrclocal", canned_list());
+        write_file(
+            &ctx.repo_root.join("manifests/suite.yaml"),
+            "schema_version: \"1.0\"\nsuite:\n  name: t\n  version: \"9\"\n  optional:\n\
+             \x20   - name: \"diagnosing-bugs\"\n      version: \"1\"\n      source: \"https://github.com/mattpocock/skills/tree/main/skills/engineering/diagnosing-bugs\"\n      hash: h\n      adopted: \"2026-01-01T00:00:00Z\"\n      entry_ref: r\n",
+        );
+        // User installed a local canonical body under the approved store by name.
+        write_file(
+            &ctx.repo_root.join("global-skills/diagnosing-bugs/SKILL.md"),
+            "---\nname: diagnosing-bugs\ndescription: local body.\n---\nbody\n",
+        );
+        let res = propose_action(&ctx, ConsoleAction::Adopt, "diagnosing-bugs", true);
+        assert!(res.found);
+        assert!(
+            res.blocked_reasons.is_empty(),
+            "local body present must not block: {:?}",
+            res.blocked_reasons
+        );
+        // AGS links the local body — recovery path works, not stuck advising.
+        assert_eq!(
+            res.apply_status, "applied",
+            "local body should be linked; got writes={:?} advised={:?}",
+            res.planned_writes, res.advised_commands
+        );
+        assert!(!res.planned_writes.is_empty());
         let _ = std::fs::remove_dir_all(&base);
     }
 

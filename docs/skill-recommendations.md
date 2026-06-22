@@ -1,152 +1,98 @@
 # Third-Party Development Skill Recommendations
 
-This document lists **recommended** third-party development skills that enhance
-the full AGS development experience. These are **not installed by default** —
-each must be manually installed by the user.
+This document mirrors `manifests/skill-recommendations.yaml`, the single public
+recommendation source consumed by `ags setup`. These are **recommendations
+only** — each must be **manually installed** by the user.
 
 ## Important: Recommendations Only
 
-- **No skills are installed automatically.**
+- **No skills are installed automatically.** AGS never clones, installs,
+  downloads, copies, or packages these bodies.
 - **No repositories are cloned during AGS installation.**
-- **No files are written to `$HOME/.agents/skills/`, `$HOME/.codex/skills/`, or `$HOME/.codex/plugins/cache/`.**
-- Each skill entry below lists its source, purpose, risk level, and **manual installation steps**.
+- **No files are written** to `$HOME/.agents/skills/`, `$HOME/.codex/skills/`,
+  or any host skill directory, and no host config or skill thin-index is written
+  for a recommendation-only source.
+- Every entry uses its **upstream canonical name** (no local aliases) and lists
+  its source, tier, risk, and **manual installation steps**.
 
-## Core Development Skills
+> **Recommendation-only ≠ AGS-hosted body.** An `external` source is an upstream
+> pointer for manual install, not an AGS-locally-hosted canonical skill body.
+> Only a real local `SKILL.md` under an AGS canonical store participates in
+> thin-index writes.
 
-### Engineering Workflow (brainstorm/superpowers)
-- **Purpose**: Structured engineering workflow — brainstorm → plan → execute → review → verify → worktree isolation → parallel execution
-- **Source**: `obra/superpowers` — https://github.com/obra/superpowers
-- **License**: MIT; retain upstream copyright and license notice when copying or adapting Superpowers material
-- **Risk**: Low (read-only orchestration, no production writes)
-- **Install Location**: `$HOME/.agents/skills/superpowers/`
-- **Manual Install**:
-  ```bash
-  # Step 1: Review https://github.com/obra/superpowers and its MIT license
-  # Step 2: Clone or copy the relevant skill pack to your skills directory
-  mkdir -p ~/.agents/skills/superpowers
-  # Step 3: Copy SKILL.md and playbooks/ into ~/.agents/skills/superpowers/
-  ```
+## Excluded by policy
 
-### Systematic Debugging (diagnose)
-- **Purpose**: HITL debugging loop with evidence-chain tracing, root-cause isolation, reproduction-first discipline
-- **Source**: 需用户自行选择可信来源（community-maintained）
-- **Risk**: Low (read-only diagnosis; no production writes)
-- **Install Location**: `$HOME/.agents/skills/diagnose/`
-- **Manual Install**:
-  ```bash
-  mkdir -p ~/.agents/skills/diagnose
-  # Copy SKILL.md, scripts/, references/ into ~/.agents/skills/diagnose/
-  ```
+- `obsidian-vault` — user-personal skill; never a public core recommendation.
+- `teach` — not recommended for the public core development surface.
 
-### Test-Driven Development (tdd)
-- **Purpose**: Red-green-refactor cycle, mocking patterns, interface design from tests
-- **Source**: 需用户自行选择可信来源（community-maintained）
-- **Risk**: Low (local development only)
-- **Install Location**: `$HOME/.agents/skills/tdd/`
-- **Manual Install**:
-  ```bash
-  mkdir -p ~/.agents/skills/tdd
-  # Copy SKILL.md, deep-modules.md, interface-design.md, mocking.md, tests.md, refactoring.md
-  ```
+Retired local aliases were removed with **no compatibility rows**; upstream
+canonical names are used throughout. See `RELEASE_NOTES.md` for the rename map.
 
-### Code Review (code-review)
-- **Purpose**: Code review across correctness bugs, simplification, efficiency cleanups
-- **Source**: 需用户自行选择可信来源（community-maintained）
-- **Risk**: Low (read-only review; posts comments only when explicitly requested)
-- **Install Location**: `$HOME/.agents/skills/code-review/`
-- **Manual Install**:
-  ```bash
-  mkdir -p ~/.agents/skills/code-review
-  # Copy SKILL.md and references/
-  ```
+## Core Engineering Workflow
 
-### Git Worktrees (using-git-worktrees)
-- **Purpose**: Isolated git worktree management for parallel feature branches
-- **Source**: 需用户自行选择可信来源（community-maintained）
-- **Risk**: Low (local git operations only)
-- **Install Location**: `$HOME/.agents/skills/using-git-worktrees/`
-- **Manual Install**:
-  ```bash
-  mkdir -p ~/.agents/skills/using-git-worktrees
-  # Copy SKILL.md
-  ```
+### Engineering Workflow (superpowers)
+- **Tier**: core · **Source**: `obra/superpowers` — https://github.com/obra/superpowers · **License**: MIT (retain upstream notice)
+- **Purpose**: brainstorm → plan → execute → review → verify → worktree isolation → parallel execution
+- **Risk**: Low (read-only orchestration) · **Install**: `$HOME/.agents/skills/superpowers/`
+
+## Matt Flow (mattpocock/skills)
+
+Upstream: https://github.com/mattpocock/skills · each is `external`,
+recommendation-only, Low risk unless noted, installed under
+`$HOME/.agents/skills/<id>/`.
+
+- **grill-me** — relentless plan/design interrogation before building — `skills/productivity/grill-me`
+- **review** — review changes since a fixed point (standards + spec axes) — `skills/in-progress/review`
+- **decision-mapping** — map decisions and trade-offs before committing — `skills/in-progress/decision-mapping`
+- **resolving-merge-conflicts** — resolve an in-progress git merge/rebase conflict — `skills/engineering/resolving-merge-conflicts`
+- **to-prd** — shape requirements into a PRD (optional task-card module; never replaces the task-card contract) — `skills/engineering/to-prd`
+- **to-issues** — break work into GitHub issues — `skills/engineering/to-issues`
+- **triage** — backlog and issue triage — `skills/engineering/triage`
+- **handoff** — clean context handoff to another agent/session — `skills/productivity/handoff`
+
+> `grill-me` (Matt), `grill-with-docs` (Matt, requirements alignment), and the
+> Superpowers `grilling` playbook are **distinct** skills — keep their separate
+> upstream names; do not alias one to another.
 
 ## Quality & Verification
 
-> **Verification route**: AGS routes completion verification to the `superpowers`
-> **verification-before-completion** entrypoint (see *Engineering Workflow* above),
-> not a standalone "auto-verify" skill. The retired `auto-verify` alias is no longer
-> recommended.
+### Test-Driven Development (test-driven-development)
+- **Tier**: quality · **Source**: `obra/superpowers` — `skills/test-driven-development` · **License**: MIT
+- **Purpose**: red-green-refactor, mocking patterns, interface design from tests
+- **Risk**: Low (local development) · **Install**: `$HOME/.agents/skills/test-driven-development/`
 
-### Conventional Commits (caveman-commit)
-- **Purpose**: Generate concise Conventional Commit messages from diff analysis
-- **Source**: 需用户自行选择可信来源（community-maintained）
-- **Risk**: Low (generates commit messages; does not commit without confirmation)
-- **Install Location**: `$HOME/.agents/skills/caveman-commit/`
-- **Manual Install**:
-  ```bash
-  mkdir -p ~/.agents/skills/caveman-commit
-  # Copy SKILL.md, README.md
-  ```
+## Debugging
 
-### Code Review Lite (caveman-review)
-- **Purpose**: Short, actionable code review feedback — correctness and simplification
-- **Source**: 需用户自行选择可信来源（community-maintained）
-- **Risk**: Low (read-only review output)
-- **Install Location**: `$HOME/.agents/skills/caveman-review/`
-- **Manual Install**:
-  ```bash
-  mkdir -p ~/.agents/skills/caveman-review
-  # Copy SKILL.md, README.md
-  ```
+### Diagnosing Bugs (diagnosing-bugs)
+- **Tier**: debugging · **Source**: `mattpocock/skills` — `skills/engineering/diagnosing-bugs`
+- **Purpose**: HITL diagnosis loop with evidence-chain tracing and root-cause isolation
+- **Risk**: Low (read-only diagnosis) · **Install**: `$HOME/.agents/skills/diagnosing-bugs/`
 
 ## Architecture & Planning
 
-### Zoom Out
-- **Purpose**: High-level architecture context, risk assessment before changes, module-in-system view
-- **Source**: 需用户自行选择可信来源（community-maintained）
-- **Risk**: Low (read-only architecture analysis)
-- **Install Location**: `$HOME/.agents/skills/zoom-out/`
-- **Manual Install**:
-  ```bash
-  mkdir -p ~/.agents/skills/zoom-out
-  # Copy SKILL.md
-  ```
-
-### Improve Codebase Architecture
-- **Purpose**: Architecture improvement patterns — boundary hardening, testability, dep cleanup
-- **Source**: 需用户自行选择可信来源（community-maintained）
-- **Risk**: Medium (may propose structural refactors; always requires human approval)
-- **Install Location**: `$HOME/.agents/skills/improve-codebase-architecture/`
-- **Manual Install**:
-  ```bash
-  mkdir -p ~/.agents/skills/improve-codebase-architecture
-  # Copy SKILL.md, DEEPENING.md, INTERFACE-DESIGN.md, LANGUAGE.md
-  ```
-
 ### Requirements Clarification (grill-with-docs)
-- **Purpose**: Align requirements with project docs before implementation; ask clarifying questions
-- **Source**: 需用户自行选择可信来源（community-maintained）
-- **Risk**: Low (read-only alignment check)
-- **Install Location**: `$HOME/.agents/skills/grill-with-docs/`
-- **Manual Install**:
-  ```bash
-  mkdir -p ~/.agents/skills/grill-with-docs
-  # Copy SKILL.md, ADR-FORMAT.md, CONTEXT-FORMAT.md
-  ```
+- **Tier**: architecture · **Source**: `mattpocock/skills` — `skills/engineering/grill-with-docs`
+- **Purpose**: align requirements with project docs before implementation
+- **Risk**: Low (read-only alignment) · **Install**: `$HOME/.agents/skills/grill-with-docs/`
+
+### Improve Codebase Architecture (improve-codebase-architecture)
+- **Tier**: architecture · **Source**: `mattpocock/skills` — `skills/engineering/improve-codebase-architecture`
+- **Purpose**: architecture improvement patterns — boundary hardening, testability
+- **Risk**: Medium (may propose structural refactors; always requires human approval) · **Install**: `$HOME/.agents/skills/improve-codebase-architecture/`
+
+## Workflow
+
+### Git Worktrees (using-git-worktrees)
+- **Tier**: workflow · **Source**: `obra/superpowers` — `skills/using-git-worktrees` · **License**: MIT
+- **Purpose**: isolated git worktree management for parallel feature branches
+- **Risk**: Low (local git operations) · **Install**: `$HOME/.agents/skills/using-git-worktrees/`
 
 ## Supply Chain Security
 
-### Supply Chain Risk Auditor
-- **Purpose**: Dependency supply chain risk audit — license compliance, maintainer health, vulnerability scanning
-- **Source**: 需用户自行选择可信来源（community-maintained）
-- **Risk**: Low (read-only audit report)
-- **Install Location**: `$HOME/.agents/skills/supply-chain-risk-auditor/`
-- **Manual Install**:
-  ```bash
-  mkdir -p ~/.agents/skills/supply-chain-risk-auditor
-  # Copy SKILL.md, resources/
-  ```
+### Supply Chain Risk Auditor (supply-chain-risk-auditor)
+- **Tier**: security · **Source**: community-maintained (select a trusted source)
+- **Purpose**: dependency supply-chain risk audit — license compliance, maintainer health, vulnerability scanning
+- **Risk**: Low (read-only audit) · **Install**: `$HOME/.agents/skills/supply-chain-risk-auditor/`
 
 ---
 
@@ -154,13 +100,14 @@ each must be manually installed by the user.
 
 For each skill above:
 
-1. **Find the skill source** — community-maintained copies are available on GitHub
-2. **Clone or download** the skill directory to the install location listed
-3. **Verify the skill** — check SKILL.md for configuration requirements
-4. **Test** — run a simple task to verify the skill is loaded by your agent
+1. **Review the upstream source** at the URL listed (and its license).
+2. **Copy or download** the skill directory to the install location.
+3. **Verify the skill** — check SKILL.md for configuration requirements.
+4. **Test** — run a simple task to confirm your agent loads the skill.
 
-**AGS will never clone, install, or configure skills on your behalf.** Every skill
-above requires explicit manual action. The recommendations here are informational only.
+**AGS will never clone, install, or configure skills on your behalf.** Every
+skill above requires explicit manual action; the recommendations here are
+informational only. Inspect governance status with `ags skill inventory`.
 
 ## Risk Levels
 
@@ -170,5 +117,5 @@ above requires explicit manual action. The recommendations here are informationa
 | **Medium** | May propose structural changes; always requires human approval before execution |
 | **High** | Not recommended without full security review |
 
-All skills listed above are **Low** or **Medium** risk. No **High** risk skills
-are recommended by default.
+All skills above are **Low** or **Medium** risk. No **High** risk skills are
+recommended by default.

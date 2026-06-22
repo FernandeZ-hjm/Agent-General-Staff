@@ -607,7 +607,7 @@ pub fn derive_capability_route_enrolled(
     // cheaper cost, then name (stable tie-break). The auto-* compatibility
     // aliases are retired (route_state: retired → excluded from routing), so
     // there is NO alias-wins tiebreak: a demand's primary is the routable
-    // canonical successor with the lowest route_priority (debug → diagnose,
+    // canonical successor with the lowest route_priority (debug → diagnosing-bugs,
     // brainstorm → grill-with-docs, verify → verification-before-completion).
     // `is_compatibility_alias` is retained as an audit/display field but is no
     // longer a sort key.
@@ -883,17 +883,20 @@ mod tests {
     #[test]
     fn routes_primary_by_priority_no_alias_tiebreak() {
         // No alias-wins tiebreak (auto-* retired): the routable canonical
-        // successor with the lowest route_priority is primary. diagnose (50)
+        // successor with the lowest route_priority is primary. diagnosing-bugs (50)
         // beats the secondary systematic-debugging (70) for the debug demand.
         let inventory = inv(vec![
             healthy_skill("systematic-debugging", routing(&["debug"], false, 70)),
-            healthy_skill("diagnose", routing(&["debug", "root-cause"], false, 50)),
+            healthy_skill(
+                "diagnosing-bugs",
+                routing(&["debug", "root-cause"], false, 50),
+            ),
         ]);
         let r = derive_capability_route("测试挂了，帮我看下", &inventory, "claude-code");
         assert_eq!(r.demand_kind, DemandKind::Debug);
         assert_eq!(r.status, CapabilityRouteStatus::Routed);
-        assert_eq!(r.primary.as_deref(), Some("diagnose"));
-        assert_eq!(r.recommendations[0].capability_name, "diagnose");
+        assert_eq!(r.primary.as_deref(), Some("diagnosing-bugs"));
+        assert_eq!(r.recommendations[0].capability_name, "diagnosing-bugs");
         assert_eq!(r.recommendations[1].capability_name, "systematic-debugging");
     }
 
@@ -1107,11 +1110,11 @@ mod tests {
         let inventory = inv(vec![
             // A flagged alias with a WORSE (higher) priority must NOT win.
             healthy_skill("legacy-flagged", routing(&["debug"], true, 99)),
-            healthy_skill("diagnose", routing(&["debug"], false, 10)),
+            healthy_skill("diagnosing-bugs", routing(&["debug"], false, 10)),
         ]);
         let r = derive_capability_route("测试挂了", &inventory, "claude-code");
-        assert_eq!(r.primary.as_deref(), Some("diagnose"));
-        assert_eq!(r.recommendations[0].capability_name, "diagnose");
+        assert_eq!(r.primary.as_deref(), Some("diagnosing-bugs"));
+        assert_eq!(r.recommendations[0].capability_name, "diagnosing-bugs");
         assert_eq!(r.recommendations[1].capability_name, "legacy-flagged");
     }
 
@@ -1154,7 +1157,7 @@ mod tests {
         not_routable.routing.as_mut().unwrap().route_state = RouteState::NotRoutable;
         let mut retired = healthy_skill("old-debugger", routing(&["debug"], false, 20));
         retired.routing.as_mut().unwrap().route_state = RouteState::Retired;
-        let routable = healthy_skill("diagnose", routing(&["debug"], false, 50));
+        let routable = healthy_skill("diagnosing-bugs", routing(&["debug"], false, 50));
         let r = derive_capability_route(
             "测试挂了",
             &inv(vec![not_routable, retired, routable]),
@@ -1167,7 +1170,7 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            vec!["diagnose"],
+            vec!["diagnosing-bugs"],
             "only the explicitly-routable member routes; not-routable/retired excluded"
         );
     }
@@ -1389,7 +1392,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
         let home = base.join("rt");
 
-        // No enrollment evidence → fail-closed: diagnose still surfaces but as
+        // No enrollment evidence → fail-closed: diagnosing-bugs still surfaces but as
         // not-enrolled, with no primary; the route stays advisory.
         let r0 = route_request_with_runtime_home("测试挂了，帮我看下", &root, "claude-code", &home);
         assert!(r0.advisory);
@@ -1397,15 +1400,15 @@ mod tests {
         let ad0 = r0
             .recommendations
             .iter()
-            .find(|x| x.capability_name == "diagnose")
-            .expect("diagnose should still surface as a recommendation");
+            .find(|x| x.capability_name == "diagnosing-bugs")
+            .expect("diagnosing-bugs should still surface as a recommendation");
         assert_eq!(
             ad0.availability,
             CapabilityAvailability::CapabilityNotEnrolled
         );
         assert!(r0.primary.is_none());
 
-        // suite-only enrollment → diagnose (SuiteManaged) is enrolled; its final
+        // suite-only enrollment → diagnosing-bugs (SuiteManaged) is enrolled; its final
         // availability then depends on host visibility/health (machine dependent),
         // so we only assert it is no longer "not enrolled".
         let path = enrollment_file_path(&home);
@@ -1421,7 +1424,7 @@ mod tests {
         let ad1 = r1
             .recommendations
             .iter()
-            .find(|x| x.capability_name == "diagnose")
+            .find(|x| x.capability_name == "diagnosing-bugs")
             .unwrap();
         assert_ne!(
             ad1.availability,
@@ -1517,15 +1520,15 @@ mod tests {
         assert_eq!(route.demand_kind, DemandKind::Debug);
         assert_eq!(route.active_host, "claude-code");
         assert!(route.advisory, "capability route is always advisory");
-        // The suite manifests annotate diagnose (primary) + systematic-debugging
+        // The suite manifests annotate diagnosing-bugs (primary) + systematic-debugging
         // for the debug demand (auto-debug retired), so the request must route to
         // the canonical successor.
         assert!(
             route
                 .recommendations
                 .iter()
-                .any(|r| r.capability_name == "diagnose"),
-            "debug demand should surface diagnose from the suite manifests, got {:?}",
+                .any(|r| r.capability_name == "diagnosing-bugs"),
+            "debug demand should surface diagnosing-bugs from the suite manifests, got {:?}",
             route
                 .recommendations
                 .iter()
@@ -1635,10 +1638,10 @@ mod tests {
         );
     }
 
-    /// debug routes to the canonical primary diagnose (priority 50), NOT the
+    /// debug routes to the canonical primary diagnosing-bugs (priority 50), NOT the
     /// secondary systematic-debugging playbook (priority 70). (criterion 5)
     #[test]
-    fn debug_routes_to_diagnose_not_the_playbook() {
+    fn debug_routes_to_diagnosing_bugs_not_the_playbook() {
         let mut sysdbg = routing(&["debug"], false, 70);
         sysdbg.parent = Some(ParentRef {
             kind: ManagedKind::Skill,
@@ -1652,7 +1655,7 @@ mod tests {
         sp.route_state = RouteState::NotRoutable;
         let inventory = inv(vec![
             healthy_skill("superpowers", sp),
-            healthy_skill("diagnose", routing(&["debug"], false, 50)),
+            healthy_skill("diagnosing-bugs", routing(&["debug"], false, 50)),
             cap(
                 "systematic-debugging",
                 ManagedKind::Skill,
@@ -1664,7 +1667,7 @@ mod tests {
             ),
         ]);
         let r = derive_capability_route("测试挂了，帮我看下", &inventory, "claude-code");
-        assert_eq!(r.primary.as_deref(), Some("diagnose"));
+        assert_eq!(r.primary.as_deref(), Some("diagnosing-bugs"));
         assert!(r.entrypoint.is_none());
     }
 
@@ -1962,7 +1965,7 @@ mod tests {
 
     /// auto-* retirement is COMPLETE (2.7): every demand the retired aliases used
     /// to serve now has a NON-alias routable successor in the suite manifests, so
-    /// no demand is orphaned — debug → diagnose, brainstorm → grill-with-docs /
+    /// no demand is orphaned — debug → diagnosing-bugs, brainstorm → grill-with-docs /
     /// prototype, verify → verification-before-completion. The retired aliases are
     /// no longer routable (removed from suite.yaml; route_state: retired in the
     /// registry → never surface as routable capabilities).

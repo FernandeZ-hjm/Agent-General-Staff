@@ -92,5 +92,5 @@ Verification gate:
 按 protocol/agent-task-protocol.md 输出交付报告。
 Medium Review gate：实现和验证完成后，任务状态写为"部分完成 / 等待 Codex review"。
 
-[skill: zoom-out]
-[skill: verify]
+[skill: codebase-design]
+[skill: verification-before-completion]

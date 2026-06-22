@@ -110,7 +110,7 @@ Verification gate:
 交付：
 按 protocol/agent-task-protocol.md 输出 delivery report。
 
-[skill: verify]
+[skill: verification-before-completion]
 ~~~~
 
 ---

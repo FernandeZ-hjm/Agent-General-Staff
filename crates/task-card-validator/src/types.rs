@@ -34,4 +34,5 @@ pub mod error_code {
     pub const FIELD_ABUSE_DETECTED: &str = "FIELD_ABUSE_DETECTED";
     pub const AUTONOMOUS_LOW_RISK_NOT_IN_CANONICAL_GATE: &str =
         "AUTONOMOUS_LOW_RISK_NOT_IN_CANONICAL_GATE";
+    pub const RETIRED_SKILL_TAG: &str = "RETIRED_SKILL_TAG";
 }

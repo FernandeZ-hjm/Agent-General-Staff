@@ -200,11 +200,11 @@ Delegation default:
 Common skill tags:
 
 ```text
-[skill: verify]
+[skill: verification-before-completion]
 ```
 
-Add `[skill: tdd]` only when the user explicitly wants test-first work or the
-bug is best captured by a new regression test.
+Add `[skill: test-driven-development]` only when the user explicitly wants
+test-first work or the bug is best captured by a new regression test.
 
 ## Medium Task
 
@@ -244,14 +244,14 @@ Delegation default:
 Common skill tags:
 
 ```text
-[skill: diagnose]
-[skill: verify]
+[skill: diagnosing-bugs]
+[skill: verification-before-completion]
 ```
 
-Add `[skill: tdd]` for test-first work.
+Add `[skill: test-driven-development]` for test-first work.
 Add `[skill: review]` when the task is mostly code review.
-Add `[skill: commit]` only when the user asks for a commit message or
-commit-ready output.
+Do not add a commit-message skill tag; describe commit-message requirements in
+the task body unless a current commit skill exists.
 
 ## Heavy Task
 
@@ -305,12 +305,12 @@ Delegation default:
 Common skill tags:
 
 ```text
-[skill: diagnose]
-[skill: zoom-out]
-[skill: verify]
+[skill: diagnosing-bugs]
+[skill: codebase-design]
+[skill: verification-before-completion]
 ```
 
-Add `[skill: tdd]` when tests should drive the implementation.
+Add `[skill: test-driven-development]` when tests should drive the implementation.
 Add `[skill: database-migration]` if schema/data migration is involved.
 Add `[skill: supply-chain-risk-auditor]` only for dependency or package risk
 assessment.
@@ -354,15 +354,14 @@ For this project:
 
 - `auto-debug` / `auto-verify` / `auto-brainstorm` are **RETIRED**
   (`routing.route_state: retired`). AGS Capability Route never routes them as
-  primary; their demands now route to canonical successors — debug → `diagnose`,
-  verify → `superpowers` (verification-before-completion), brainstorm →
+  primary; their demands now route to canonical successors — debug → `diagnosing-bugs`,
+  verify → `verification-before-completion`, brainstorm →
   `grill-with-docs`.
-- Use `[skill: verify]` when deep verification should be forced.
-- Use `[skill: diagnose]` for complex root cause work.
-- Use `[skill: zoom-out]` for architecture context, dependency mapping, or risk
+- Use `[skill: verification-before-completion]` when deep verification should be forced.
+- Use `[skill: diagnosing-bugs]` for complex root cause work.
+- Use `[skill: codebase-design]` for architecture context, dependency mapping, or risk
   assessment.
-- Use `[skill: tdd]` for test-driven implementation.
-- Use `[skill: commit]` only for commit-message or commit-ready tasks.
+- Use `[skill: test-driven-development]` for test-driven implementation.
 - Use `[skill: review]` for actionable code review output.
 
 ## Task Handoff Protocol

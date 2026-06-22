@@ -21,6 +21,16 @@ registry:
       notes: >
         Crawl as an upstream comparison source only. Do not run npx skills,
         auto-install, or overwrite local suite skills from this repository.
+    superpowers:
+      type: git
+      url: https://github.com/obra/superpowers.git
+      web: https://github.com/obra/superpowers
+      ref: main
+      crawl: true
+      notes: >
+        Crawl as an upstream comparison source only (obra/superpowers, MIT).
+        Do not run npx skills, auto-install, or overwrite local suite skills
+        from this repository.
     graphify:
       type: git
       url: https://github.com/safishamsi/graphify.git
@@ -92,20 +102,20 @@ skills:
       relationship: suite_local
       update_policy: local_canonical_no_upstream
 
-  - name: tdd
+  - name: test-driven-development
     profile: required
-    local_path: global-skills/tdd
+    local_path: global-skills/test-driven-development
     description: Test-driven development with red-green-refactor
     source:
       type: upstream_git
-      upstream: mattpocock_skills
-      path: skills/engineering/tdd
+      upstream: superpowers
+      path: skills/test-driven-development
       relationship: upstream_aligned
       update_policy: crawl_then_diff_proposal
 
-  - name: diagnose
+  - name: diagnosing-bugs
     profile: required
-    local_path: global-skills/diagnose
+    local_path: global-skills/diagnosing-bugs
     description: Disciplined diagnosis loop for hard bugs
     routing:
       route_state: routable
@@ -114,53 +124,31 @@ skills:
       mutation_surface: read-only
       requires_auth: false
       cost_class: free
-      invoke_hint: "[skill: diagnose]"
+      invoke_hint: "[skill: diagnosing-bugs]"
       route_priority: 50
       is_compatibility_alias: false
       capability_group: [engineering-process]
-      upstream_group: "mattpocock/skills:diagnose"
+      upstream_group: "mattpocock/skills:diagnosing-bugs"
       examples:
         positive: ["帮我系统排查这个报错"]
         negative: ["帮我做代码审查"]
     source:
       type: upstream_git
       upstream: mattpocock_skills
-      path: skills/engineering/diagnose
+      path: skills/engineering/diagnosing-bugs
       relationship: local_enriched_from_upstream
       update_policy: crawl_then_diff_proposal
 
-  - name: zoom-out
+  - name: codebase-design
     profile: required
-    local_path: global-skills/zoom-out
-    description: Higher-level codebase and architecture context
+    local_path: global-skills/codebase-design
+    description: Architecture, boundary, and context pullback for deep-module design
     source:
       type: upstream_git
       upstream: mattpocock_skills
-      path: skills/engineering/zoom-out
+      path: skills/engineering/codebase-design
       relationship: local_enriched_from_upstream
       update_policy: crawl_then_diff_proposal
-
-  - name: caveman-commit
-    profile: required
-    local_path: global-skills/caveman-commit
-    description: Concise Conventional Commit message generator
-    source:
-      type: upstream_git
-      upstream: mattpocock_skills
-      path: skills/productivity/caveman
-      relationship: local_split_from_upstream_concept
-      update_policy: crawl_then_manual_review
-
-  - name: caveman-review
-    profile: required
-    local_path: global-skills/caveman-review
-    description: Ultra-compressed actionable code review comments
-    source:
-      type: upstream_git
-      upstream: mattpocock_skills
-      path: skills/productivity/caveman
-      relationship: local_split_from_upstream_concept
-      update_policy: crawl_then_manual_review
 
   - name: finishing-a-development-branch
     profile: required

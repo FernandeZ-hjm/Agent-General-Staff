@@ -33,6 +33,7 @@ use std::path::Path;
 /// Third-party skill & MCP management console (unified inventory, host
 /// visibility, confirmation-protected proposal/apply).
 pub mod console;
+pub mod recommendations;
 
 // ── Public types ──────────────────────────────────────────────────────────
 
@@ -1563,10 +1564,11 @@ mod tests {
         assert_eq!(result.schema_version, SCHEMA_VERSION);
         // The public edition exposes installable skill entries as optional
         // metadata only; private/personal skill profiles are not distributed.
-        // auto-brainstorm/auto-debug/auto-verify were retired in 2.7, reducing
-        // the optional set from 11 to 8.
+        // auto-brainstorm/auto-debug/auto-verify were retired in 2.7 (11 → 8),
+        // then the caveman-commit/caveman-review local aliases were removed in
+        // the upstream-name alignment (8 → 6).
         assert_eq!(result.summary.available, 0);
-        assert_eq!(result.summary.optional, 8);
+        assert_eq!(result.summary.optional, 6);
         assert_eq!(result.summary.personal, 0);
         assert_eq!(result.summary.disabled, 0);
     }
@@ -1760,7 +1762,10 @@ mod tests {
             .any(|u| u.name == "mattpocock_skills" && u.crawl));
         assert!(result.upstreams.iter().any(|u| u.name == "graphify"));
         // Skills that track an upstream are surfaced; purely-local ones are not.
-        assert!(result.watched_skills.iter().any(|s| s.name == "tdd"));
+        assert!(result
+            .watched_skills
+            .iter()
+            .any(|s| s.name == "diagnosing-bugs"));
         assert!(!result
             .watched_skills
             .iter()

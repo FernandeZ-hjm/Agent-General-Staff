@@ -250,6 +250,46 @@ fn allow_three_tilde_non_text_fence() {
     );
 }
 
+#[test]
+fn reject_retired_skill_tags() {
+    for (retired, _) in RETIRED_SKILL_TAGS {
+        let mut input = valid_card_fields();
+        input.push_str(&format!("[skill: {retired}]\n"));
+        let e = validate(&input);
+        assert!(
+            e.iter().any(|m| {
+                m.contains(error_code::RETIRED_SKILL_TAG)
+                    && m.contains(&format!("[skill: {retired}]"))
+            }),
+            "retired skill tag `{retired}` should be rejected: {e:?}"
+        );
+    }
+}
+
+#[test]
+fn allow_current_skill_tags() {
+    let mut input = valid_card_fields();
+    input.push_str("[skill: test-driven-development]\n");
+    input.push_str("[skill: diagnosing-bugs]\n");
+    input.push_str("[skill: codebase-design]\n");
+    input.push_str("[skill: review]\n");
+    input.push_str("[skill: verification-before-completion]\n");
+    let e = validate(&input);
+    assert!(e.is_empty(), "current skill tags should pass: {e:?}");
+}
+
+#[test]
+fn allow_retired_skill_tag_mentions_in_prose() {
+    let mut input = valid_card_fields();
+    input.push_str("交付备注：文档正文可以提到旧标记 `[skill: zoom-out]` 作为迁移说明。\n");
+    input.push_str("另一个正文例子：不要再生成 `[skill: auto-debug]`。\n");
+    let e = validate(&input);
+    assert!(
+        e.is_empty(),
+        "retired skill tags in prose should not be treated as metadata: {e:?}"
+    );
+}
+
 // ── single canonical format: classic accepted, compact rejected ──
 
 #[test]

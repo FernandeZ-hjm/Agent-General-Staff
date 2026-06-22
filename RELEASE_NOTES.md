@@ -77,9 +77,14 @@ project license from MIT to GPL-3.0-only.
 ### Capability and routing
 
 - Retired the `auto-brainstorm` / `auto-debug` / `auto-verify` aliases. Brainstorm
-  demand now routes to `grill-with-docs`, debugging to `diagnose`, and verification to
-  the `superpowers` verification-before-completion entrypoint. The aliases are no
-  longer suite-required or auto-triggered.
+  demand now routes to `grill-with-docs`, debugging to `diagnosing-bugs`, and
+  verification to `verification-before-completion`. The aliases are no longer
+  suite-required or auto-triggered.
+- Aligned skill names to upstream canonical names (no local aliases, no compat
+  rows). Rename map: `diagnose` → `diagnosing-bugs`, `tdd` →
+  `test-driven-development`, `code-review` / `caveman-review` → `review`,
+  `zoom-out` → `codebase-design`; `caveman-commit` removed (no replacement). The
+  Light review gate now names `requesting-code-review`.
 - Capability Route ships as a tracked advisory routing crate
   (`crates/capability-route`) — manifest-driven and advisory-only across the MCP, CLI,
   and skill-governance inventory surfaces.

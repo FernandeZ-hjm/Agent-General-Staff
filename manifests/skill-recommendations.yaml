@@ -1,159 +1,264 @@
 # AGS Public Edition — Third-Party Skill Recommendations
 #
-# This manifest lists recommended third-party development skills.
-# These are RECOMMENDATIONS ONLY — no skills are auto-installed.
-# Each entry documents: source, purpose, risk, install location, manual steps.
+# This manifest is the SINGLE public recommendation source consumed by
+# `ags setup` (the third-party core capability recommendation block) and by
+# docs/skill-recommendations.md.
 #
-# Schema version: 1.0-public
+# RECOMMENDATION-ONLY. Every entry here is an *external* recommendation:
+#   - AGS never clones, installs, downloads, copies, or packages these bodies.
+#   - AGS never writes host config or a skill thin-index for them.
+#   - `recommendation_only: true` + `source_kind: external` means the upstream
+#     URL is a pointer for manual install — it is NOT an AGS-locally-hosted
+#     canonical skill body. Only a real local `SKILL.md` under an AGS canonical
+#     store ever participates in thin-index writes (see capability/skill sync).
+#
+# Names are UPSTREAM canonical names. No local aliases. Intentionally excluded:
+#   - obsidian-vault  (user-personal skill; never a public core recommendation)
+#   - teach           (not recommended)
+# Retired local aliases were removed with no compatibility rows; upstream
+# canonical names are used throughout. See RELEASE_NOTES.md for the rename map.
+#
+# Schema version: 1.1-public
 
-schema_version: "1.0-public"
-generated: "2026-06-06"
+schema_version: "1.1-public"
+generated: "2026-06-22"
 principle: >
-  Third-party skills enhance the full development experience but are
-  NEVER installed by default. Every skill requires explicit manual
-  installation by the user. AGS will never clone repositories,
-  run external install commands, or write to user skill directories.
+  Third-party skills enhance the full development experience but are NEVER
+  installed by AGS. Each entry is an external recommendation with a manual
+  install path. recommendation_only/external sources are pointers, not
+  AGS-hosted bodies; AGS will never clone repositories, run external install
+  commands, write host config, or write skill thin-indexes for them.
+
+# Excluded by policy (documented so reviewers can see the intent, NOT recommended):
+excluded:
+  - id: obsidian-vault
+    reason: User-personal skill; never enters the public third-party core recommendation set.
+  - id: teach
+    reason: Not recommended for the public core development surface.
 
 skills:
-  # ── Core Development ────────────────────────────────────────────────
+  # ── Core engineering workflow ───────────────────────────────────────────
   - id: superpowers
     name: Engineering Workflow
-    category: core-development
-    purpose: Structured engineering workflow — brainstorm, plan, execute, review, verify, worktree, parallel
+    tier: core
+    purpose: Structured engineering workflow — brainstorm, plan, execute, review, verify, worktree, parallel.
+    recommendation_only: true
+    source_kind: external
+    upstream: "https://github.com/obra/superpowers"
+    source: "https://github.com/obra/superpowers"
+    license: "MIT"
+    attribution: "Copyright (c) 2025 Jesse Vincent; retain upstream MIT notice when copying or adapting Superpowers material."
     risk: low
-    risk_description: Read-only orchestration; no production writes
+    risk_description: Read-only orchestration; no production writes.
     install_location: $HOME/.agents/skills/superpowers/
     manual_steps:
       - "Review https://github.com/obra/superpowers and its MIT license"
       - "mkdir -p ~/.agents/skills/superpowers"
       - "Copy SKILL.md and playbooks/ into the directory"
-    source: "https://github.com/obra/superpowers"
+
+  # ── Matt flow (mattpocock/skills) ───────────────────────────────────────
+  - id: grill-me
+    name: Plan Grilling
+    tier: flow
+    purpose: Relentless plan/design interrogation before building.
+    recommendation_only: true
+    source_kind: external
+    upstream: "https://github.com/mattpocock/skills"
+    source: "https://github.com/mattpocock/skills/tree/main/skills/productivity/grill-me"
+    risk: low
+    risk_description: Read-only interview; no writes.
+    install_location: $HOME/.agents/skills/grill-me/
+    manual_steps:
+      - "Review the upstream skill and copy SKILL.md into ~/.agents/skills/grill-me"
+
+  - id: review
+    name: Branch / Change Review
+    tier: flow
+    purpose: Review changes since a fixed point across standards and spec axes.
+    recommendation_only: true
+    source_kind: external
+    upstream: "https://github.com/mattpocock/skills"
+    source: "https://github.com/mattpocock/skills/tree/main/skills/in-progress/review"
+    risk: low
+    risk_description: Read-only review; posts comments only when explicitly requested.
+    install_location: $HOME/.agents/skills/review/
+    manual_steps:
+      - "Review the upstream skill (in-progress) and copy SKILL.md into ~/.agents/skills/review"
+
+  - id: decision-mapping
+    name: Decision Mapping
+    tier: flow
+    purpose: Map decisions and trade-offs before committing to an approach.
+    recommendation_only: true
+    source_kind: external
+    upstream: "https://github.com/mattpocock/skills"
+    source: "https://github.com/mattpocock/skills/tree/main/skills/in-progress/decision-mapping"
+    risk: low
+    risk_description: Read-only analysis.
+    install_location: $HOME/.agents/skills/decision-mapping/
+    manual_steps:
+      - "Review the upstream skill (in-progress) and copy SKILL.md into ~/.agents/skills/decision-mapping"
+
+  - id: resolving-merge-conflicts
+    name: Resolving Merge Conflicts
+    tier: flow
+    purpose: Resolve an in-progress git merge/rebase conflict safely.
+    recommendation_only: true
+    source_kind: external
+    upstream: "https://github.com/mattpocock/skills"
+    source: "https://github.com/mattpocock/skills/tree/main/skills/engineering/resolving-merge-conflicts"
+    risk: low
+    risk_description: Local git operations; human-confirmed resolution.
+    install_location: $HOME/.agents/skills/resolving-merge-conflicts/
+    manual_steps:
+      - "Review the upstream skill and copy SKILL.md into ~/.agents/skills/resolving-merge-conflicts"
+
+  - id: to-prd
+    name: To PRD
+    tier: flow
+    purpose: Shape requirements into a PRD (optional task-card module; never replaces the task-card contract).
+    recommendation_only: true
+    source_kind: external
+    upstream: "https://github.com/mattpocock/skills"
+    source: "https://github.com/mattpocock/skills/tree/main/skills/engineering/to-prd"
+    risk: low
+    risk_description: Document generation; no production writes.
+    install_location: $HOME/.agents/skills/to-prd/
+    manual_steps:
+      - "Review the upstream skill and copy SKILL.md into ~/.agents/skills/to-prd"
+
+  - id: to-issues
+    name: To Issues
+    tier: flow
+    purpose: Break work into GitHub issues for issue-first projects.
+    recommendation_only: true
+    source_kind: external
+    upstream: "https://github.com/mattpocock/skills"
+    source: "https://github.com/mattpocock/skills/tree/main/skills/engineering/to-issues"
+    risk: low
+    risk_description: Issue drafting; creation only when explicitly requested.
+    install_location: $HOME/.agents/skills/to-issues/
+    manual_steps:
+      - "Review the upstream skill and copy SKILL.md into ~/.agents/skills/to-issues"
+
+  - id: triage
+    name: Triage
+    tier: flow
+    purpose: Backlog and issue triage.
+    recommendation_only: true
+    source_kind: external
+    upstream: "https://github.com/mattpocock/skills"
+    source: "https://github.com/mattpocock/skills/tree/main/skills/engineering/triage"
+    risk: low
+    risk_description: Read-only triage analysis.
+    install_location: $HOME/.agents/skills/triage/
+    manual_steps:
+      - "Review the upstream skill and copy SKILL.md into ~/.agents/skills/triage"
+
+  - id: handoff
+    name: Handoff
+    tier: flow
+    purpose: Hand work to another agent or session with a clean context handoff.
+    recommendation_only: true
+    source_kind: external
+    upstream: "https://github.com/mattpocock/skills"
+    source: "https://github.com/mattpocock/skills/tree/main/skills/productivity/handoff"
+    risk: low
+    risk_description: Read-only summarization.
+    install_location: $HOME/.agents/skills/handoff/
+    manual_steps:
+      - "Review the upstream skill and copy SKILL.md into ~/.agents/skills/handoff"
+
+  # ── Quality & verification ──────────────────────────────────────────────
+  - id: test-driven-development
+    name: Test-Driven Development
+    tier: quality
+    purpose: Red-green-refactor cycle with mocking and interface design from tests.
+    recommendation_only: true
+    source_kind: external
+    upstream: "https://github.com/obra/superpowers"
+    source: "https://github.com/obra/superpowers/tree/main/skills/test-driven-development"
     license: "MIT"
     attribution: "Copyright (c) 2025 Jesse Vincent; retain upstream MIT notice when copying or adapting Superpowers material."
-
-  - id: diagnose
-    name: Systematic Debugging
-    category: core-development
-    purpose: HITL debugging loop with evidence-chain tracing and root-cause isolation
     risk: low
-    risk_description: Read-only diagnosis; no production writes
-    install_location: $HOME/.agents/skills/diagnose/
+    risk_description: Local development only.
+    install_location: $HOME/.agents/skills/test-driven-development/
     manual_steps:
-      - "mkdir -p ~/.agents/skills/diagnose"
-      - "Copy SKILL.md, scripts/, references/ into the directory"
-    source: 需用户自行选择可信来源（community-maintained）
+      - "Review https://github.com/obra/superpowers and its MIT license"
+      - "Copy skills/test-driven-development/SKILL.md (and reference .md files) into ~/.agents/skills/test-driven-development"
 
-  - id: tdd
-    name: Test-Driven Development
-    category: core-development
-    purpose: Red-green-refactor cycle with mocking and interface design patterns
+  # ── Debugging ───────────────────────────────────────────────────────────
+  - id: diagnosing-bugs
+    name: Diagnosing Bugs
+    tier: debugging
+    purpose: HITL diagnosis loop with evidence-chain tracing and root-cause isolation.
+    recommendation_only: true
+    source_kind: external
+    upstream: "https://github.com/mattpocock/skills"
+    source: "https://github.com/mattpocock/skills/tree/main/skills/engineering/diagnosing-bugs"
     risk: low
-    risk_description: Local development only
-    install_location: $HOME/.agents/skills/tdd/
+    risk_description: Read-only diagnosis; no production writes.
+    install_location: $HOME/.agents/skills/diagnosing-bugs/
     manual_steps:
-      - "mkdir -p ~/.agents/skills/tdd"
-      - "Copy SKILL.md and reference .md files"
-    source: 需用户自行选择可信来源（community-maintained）
+      - "Review the upstream skill and copy SKILL.md (and scripts/) into ~/.agents/skills/diagnosing-bugs"
 
-  - id: code-review
-    name: Code Review
-    category: core-development
-    purpose: Code review across correctness, simplification, and efficiency
+  # ── Architecture & planning ─────────────────────────────────────────────
+  - id: grill-with-docs
+    name: Requirements Clarification
+    tier: architecture
+    purpose: Align requirements with project docs before implementation.
+    recommendation_only: true
+    source_kind: external
+    upstream: "https://github.com/mattpocock/skills"
+    source: "https://github.com/mattpocock/skills/tree/main/skills/engineering/grill-with-docs"
     risk: low
-    risk_description: Read-only review; posts comments only when explicitly requested
-    install_location: $HOME/.agents/skills/code-review/
+    risk_description: Read-only alignment check.
+    install_location: $HOME/.agents/skills/grill-with-docs/
     manual_steps:
-      - "mkdir -p ~/.agents/skills/code-review"
-      - "Copy SKILL.md and references/"
-    source: 需用户自行选择可信来源（community-maintained）
-
-  - id: using-git-worktrees
-    name: Git Worktrees
-    category: core-development
-    purpose: Isolated git worktree management for parallel feature branches
-    risk: low
-    risk_description: Local git operations only
-    install_location: $HOME/.agents/skills/using-git-worktrees/
-    manual_steps:
-      - "mkdir -p ~/.agents/skills/using-git-worktrees"
-      - "Copy SKILL.md"
-    source: 需用户自行选择可信来源（community-maintained）
-
-  # ── Quality & Verification ──────────────────────────────────────────
-  # auto-verify is RETIRED (2.7). Completion verification routes to the
-  # superpowers verification-before-completion entrypoint (see id: superpowers),
-  # not a standalone skill — so no separate auto-verify recommendation is listed.
-
-  - id: caveman-commit
-    name: Conventional Commits
-    category: quality
-    purpose: Generate concise Conventional Commit messages from diff analysis
-    risk: low
-    risk_description: Generates commit messages; does not commit without confirmation
-    install_location: $HOME/.agents/skills/caveman-commit/
-    manual_steps:
-      - "mkdir -p ~/.agents/skills/caveman-commit"
-      - "Copy SKILL.md and README.md"
-    source: 需用户自行选择可信来源（community-maintained）
-
-  - id: caveman-review
-    name: Code Review Lite
-    category: quality
-    purpose: Short, actionable code review feedback
-    risk: low
-    risk_description: Read-only review output
-    install_location: $HOME/.agents/skills/caveman-review/
-    manual_steps:
-      - "mkdir -p ~/.agents/skills/caveman-review"
-      - "Copy SKILL.md and README.md"
-    source: 需用户自行选择可信来源（community-maintained）
-
-  # ── Architecture & Planning ─────────────────────────────────────────
-  - id: zoom-out
-    name: Zoom Out
-    category: architecture
-    purpose: High-level architecture context and risk assessment before changes
-    risk: low
-    risk_description: Read-only architecture analysis
-    install_location: $HOME/.agents/skills/zoom-out/
-    manual_steps:
-      - "mkdir -p ~/.agents/skills/zoom-out"
-      - "Copy SKILL.md"
-    source: 需用户自行选择可信来源（community-maintained）
+      - "Review the upstream skill and copy SKILL.md (and reference .md files) into ~/.agents/skills/grill-with-docs"
 
   - id: improve-codebase-architecture
     name: Improve Codebase Architecture
-    category: architecture
-    purpose: Architecture improvement patterns — boundary hardening, testability
+    tier: architecture
+    purpose: Architecture improvement patterns — boundary hardening, testability.
+    recommendation_only: true
+    source_kind: external
+    upstream: "https://github.com/mattpocock/skills"
+    source: "https://github.com/mattpocock/skills/tree/main/skills/engineering/improve-codebase-architecture"
     risk: medium
-    risk_description: May propose structural refactors; always requires human approval
+    risk_description: May propose structural refactors; always requires human approval.
     install_location: $HOME/.agents/skills/improve-codebase-architecture/
     manual_steps:
-      - "mkdir -p ~/.agents/skills/improve-codebase-architecture"
-      - "Copy SKILL.md, DEEPENING.md, INTERFACE-DESIGN.md, LANGUAGE.md"
-    source: 需用户自行选择可信来源（community-maintained）
+      - "Review the upstream skill and copy SKILL.md (and reference .md files) into ~/.agents/skills/improve-codebase-architecture"
 
-  - id: grill-with-docs
-    name: Requirements Clarification
-    category: architecture
-    purpose: Align requirements with project docs before implementation
+  # ── Workflow ────────────────────────────────────────────────────────────
+  - id: using-git-worktrees
+    name: Git Worktrees
+    tier: workflow
+    purpose: Isolated git worktree management for parallel feature branches.
+    recommendation_only: true
+    source_kind: external
+    upstream: "https://github.com/obra/superpowers"
+    source: "https://github.com/obra/superpowers/tree/main/skills/using-git-worktrees"
+    license: "MIT"
+    attribution: "Copyright (c) 2025 Jesse Vincent; retain upstream MIT notice when copying or adapting Superpowers material."
     risk: low
-    risk_description: Read-only alignment check
-    install_location: $HOME/.agents/skills/grill-with-docs/
+    risk_description: Local git operations only.
+    install_location: $HOME/.agents/skills/using-git-worktrees/
     manual_steps:
-      - "mkdir -p ~/.agents/skills/grill-with-docs"
-      - "Copy SKILL.md and reference .md files"
-    source: 需用户自行选择可信来源（community-maintained）
+      - "Review https://github.com/obra/superpowers and its MIT license"
+      - "Copy skills/using-git-worktrees/SKILL.md into ~/.agents/skills/using-git-worktrees"
 
-  # ── Security ────────────────────────────────────────────────────────
+  # ── Security ────────────────────────────────────────────────────────────
   - id: supply-chain-risk-auditor
     name: Supply Chain Risk Auditor
-    category: security
-    purpose: Dependency supply chain risk audit
+    tier: security
+    purpose: Dependency supply-chain risk audit.
+    recommendation_only: true
+    source_kind: community
+    source: "需用户自行选择可信来源（community-maintained）"
     risk: low
-    risk_description: Read-only audit report
+    risk_description: Read-only audit report.
     install_location: $HOME/.agents/skills/supply-chain-risk-auditor/
     manual_steps:
-      - "mkdir -p ~/.agents/skills/supply-chain-risk-auditor"
-      - "Copy SKILL.md and resources/"
-    source: 需用户自行选择可信来源（community-maintained）
+      - "Select a trusted community source, review it, then copy SKILL.md (and resources/) into ~/.agents/skills/supply-chain-risk-auditor"

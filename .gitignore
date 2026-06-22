@@ -18,3 +18,9 @@ graphify-out/
 
 # Local runtime data
 /assets/local-runtime/
+
+# Landing page (Next.js) build & deps
+web/node_modules/
+web/.next/
+web/out/
+web/next-env.d.ts

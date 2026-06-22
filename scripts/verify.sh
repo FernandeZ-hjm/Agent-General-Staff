@@ -990,21 +990,35 @@ else
     failures=$((failures + 1))
 fi
 
-# Dry-run proposal in the public edition: optional skills are recommendations
-# with URL sources, not bundled canonical bodies. AGS must not write anything or
-# create dangling host thin indexes from a remote URL; the proposal is safely
-# blocked until a concrete local source exists.
-echo -n "[....] skill propose adopt diagnose (public recommendation) is blocked/no-write "
+# Dry-run proposal in the public edition: optional skills are recommendation-only
+# with external URL sources, not bundled canonical bodies. AGS must not write
+# anything or build a dangling host thin index from a remote URL. Instead of
+# blocking, AGS ADVISES a manual install: the proposal writes nothing, is NOT
+# blocked, surfaces an advised command, and a dry-run exits 0.
+echo -n "[....] skill propose adopt diagnosing-bugs (public recommendation) -> advised, no-write, no-block "
 set +e
-cargo run -q -p ags-cli -- skill propose --action adopt --skill diagnose --format json > /tmp/verify-skill-propose.json 2>&1
+cargo run -q -p ags-cli -- skill propose --action adopt --skill diagnosing-bugs --format json > /tmp/verify-skill-propose.json 2>&1
 skill_propose_rc=$?
 set -e
-if python3 -c "import json; d=json.load(open('/tmp/verify-skill-propose.json')); assert d['found'] is True; assert d['apply_requested'] is False; assert d['applied'] is False; assert d['apply_status']=='dry-run'; assert d['planned_writes'] == []; assert d['applied_writes'] == []; assert d['apply_errors'] == []; assert d['blocked_reasons'], d" \
-    && [ "$skill_propose_rc" -eq 1 ]; then
+if python3 -c "import json; d=json.load(open('/tmp/verify-skill-propose.json')); assert d['found'] is True; assert d['apply_requested'] is False; assert d['applied'] is False; assert d['apply_status']=='dry-run'; assert d['planned_writes'] == []; assert d['applied_writes'] == []; assert d['apply_errors'] == []; assert d['blocked_reasons'] == [], d; assert d['advised_commands'], d" \
+    && [ "$skill_propose_rc" -eq 0 ]; then
     echo "OK"
 else
-    echo "FAIL (public recommendation dry-run must exit 1, be blocked, and write nothing; got rc=$skill_propose_rc)"
+    echo "FAIL (public recommendation dry-run must advise, write nothing, not block, and exit 0; got rc=$skill_propose_rc)"
     cat /tmp/verify-skill-propose.json
+    failures=$((failures + 1))
+fi
+
+# Migration durability: no shipped task-card example or template may carry a
+# retired [skill: ...] tag — copies would fail the RETIRED_SKILL_TAG gate. Keep
+# this list aligned with RETIRED_SKILL_TAGS in task-card-validator/src/constants.rs.
+echo -n "[....] no retired [skill:] tags in bundled examples/templates "
+retired_tag_hits=$(grep -rnE "\[skill: (tdd|diagnose|zoom-out|caveman-review|caveman-commit|code-review|verify|commit)\]" examples/ templates/ 2>/dev/null || true)
+if [ -z "$retired_tag_hits" ]; then
+    echo "OK"
+else
+    echo "FAIL (retired skill tags in shipped examples/templates):"
+    echo "$retired_tag_hits"
     failures=$((failures + 1))
 fi
 

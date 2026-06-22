@@ -4,6 +4,7 @@ mod apply;
 mod global_entry;
 mod memory;
 mod plan;
+mod recommendations;
 pub(crate) mod rollback;
 mod templates;
 mod verify;
@@ -25,6 +26,9 @@ use crate::setup::global_entry::{
 use crate::setup::plan::{
     capability_route_enrollment_json, cleanup_install_dir, private_install_plan,
     render_capability_route_enrollment_text, render_private_plan_json, render_private_plan_text,
+};
+use crate::setup::recommendations::{
+    render_third_party_recommendations_text, third_party_recommendations_json,
 };
 use std::path::PathBuf;
 
@@ -90,6 +94,10 @@ pub(crate) fn cmd_private_plan(
                     "global_entry_protocol".to_string(),
                     global_entry_protocol_json(&global_entry_protocol_plan(&plan)),
                 );
+                obj.insert(
+                    "third_party_recommendations".to_string(),
+                    third_party_recommendations_json(&source_root, &home_dir()),
+                );
             }
             println!(
                 "{}",
@@ -109,6 +117,11 @@ pub(crate) fn cmd_private_plan(
             println!(
                 "{}",
                 render_global_entry_protocol_text(&global_entry_protocol_plan(&plan))
+            );
+            println!();
+            println!(
+                "{}",
+                render_third_party_recommendations_text(&source_root, &home_dir())
             );
         }
     }

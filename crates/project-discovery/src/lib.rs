@@ -626,7 +626,7 @@ pub fn check_protocol_status(target: &Path) -> ProtocolStatus {
 
     // ── Review requirements ────────────────────────────────────────────
     let review_requirements = ReviewRequirements {
-        light: "Complete verification then run caveman-review or equivalent light diff review. Upgrade to Medium if cross-file protocol, permission, hook, data writes, path migration, or artifact sync risks are found.".to_string(),
+        light: "Complete verification then run requesting-code-review or equivalent light diff review. Upgrade to Medium if cross-file protocol, permission, hook, data writes, path migration, or artifact sync risks are found.".to_string(),
         medium: "Codex final Review gate. Executor marks task as 'partially complete / awaiting Codex review' after verification. Codex reviews and approves before release.".to_string(),
         heavy: "Plan-first then execute. Human Adversarial Review gate. Executor marks task as 'partially complete / awaiting human adversarial review' and reminds operator to run /codex:adversarial-review before release.".to_string(),
     };
