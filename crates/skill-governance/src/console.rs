@@ -1592,12 +1592,11 @@ pub struct HostVerifySummary {
     pub all_visible: bool,
 }
 
-/// Read-only host thin-index DRIFT report: leftover `.bak*` entries, dangling
+/// Read-only host thin-index DRIFT report: legacy `.bak*` entries, dangling
 /// symlinks, and real-directory copies in a host's skills dir. AGS only REPORTS
-/// this — cleanup is a separate confirmed write path (`ags update repair-local
-/// --apply` / `sync --apply`), NEVER performed by this read-only scan. A clean
-/// host has exactly one thin-index symlink per capability pointing at the
-/// canonical store / `~/.agents/skills`.
+/// this — cleanup is a separate explicit hygiene action, NEVER performed by
+/// this read-only scan. A clean host has exactly one thin-index symlink per
+/// capability pointing at the canonical store / `~/.agents/skills`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThinIndexDrift {
     pub host: String,
@@ -1605,7 +1604,7 @@ pub struct ThinIndexDrift {
     pub total_entries: usize,
     /// Single thin-index symlinks pointing at a valid target (clean).
     pub clean_symlinks: usize,
-    /// `.bak` / `.bak.N` leftover entries (AGS relink backups).
+    /// `.bak` / `.bak.N` leftover entries from older host-entry relinks.
     pub bak_leftovers: usize,
     /// Dangling symlinks (target missing) — e.g. retired-skill fallout.
     pub broken_symlinks: usize,
@@ -1781,7 +1780,7 @@ pub fn verify_host(ctx: &ConsoleContext, host: &str) -> HostVerifyResult {
         },
         checks,
         thin_index_drift: scan_thin_index_drift(&ctx.home, host),
-        note: "Read-only host-visibility verify. status=incomplete means an expected capability is not visible. Restart the host after adopt/update so it re-scans entry points; use --strict to gate (exit nonzero unless status=ok). thin_index_drift reports `.bak`/dangling-symlink drift (read-only; clean via `ags update repair-local --apply`).".to_string(),
+        note: "Read-only host-visibility verify. status=incomplete means an expected capability is not visible. Restart the host after adopt/update so it re-scans entry points; use --strict to gate (exit nonzero unless status=ok). thin_index_drift reports legacy `.bak`/dangling-symlink drift only; capability sync no longer creates `.bak` backups.".to_string(),
     }
 }
 
@@ -2181,7 +2180,7 @@ fn plan_skill_entry(
                     path: entry_str.clone(),
                     from: Some(canonical.as_ref().unwrap().display().to_string()),
                     detail: format!(
-                        "[{host}] thin index → canonical skill dir (transactional; existing entry backed up to .bak; references travel with it)"
+                        "[{host}] thin index → canonical skill dir (transactional; existing entry replaced without .bak clutter; references travel with it)"
                     ),
                 });
             }
@@ -2352,6 +2351,19 @@ fn next_backup_path(dest: &Path) -> PathBuf {
     candidate
 }
 
+/// Pick a non-clobbering temporary rollback path used only during thin-index
+/// relink apply. Successful applies remove it before returning.
+fn next_replaced_path(dest: &Path) -> PathBuf {
+    let base = format!("{}.ags-replaced", dest.display());
+    let mut candidate = PathBuf::from(&base);
+    let mut i = 1;
+    while candidate.exists() {
+        candidate = PathBuf::from(format!("{base}.{i}"));
+        i += 1;
+    }
+    candidate
+}
+
 /// Outcome of a guarded apply: writes that succeeded, and per-write errors.
 /// Errors are kept separate from `applied_writes` so the caller has a real
 /// failure signal (rather than `ERROR ...` buried in the success list).
@@ -2366,7 +2378,7 @@ enum AppliedChange {
     CreatedDir(PathBuf),
     Relink {
         entry: PathBuf,
-        backup: Option<PathBuf>,
+        previous: Option<PathBuf>,
     },
     Unlink {
         entry: PathBuf,
@@ -2476,9 +2488,10 @@ fn ensure_parent_dirs(parent: &Path, changes: &mut Vec<AppliedChange>) -> std::i
     Ok(())
 }
 
-/// Transactionally install a thin-index symlink at `entry` → `canonical`,
-/// backing up any existing entry. On **any** failure the original entry is left
-/// exactly as it was (rolled back) — never half-removed.
+/// Transactionally install a thin-index symlink at `entry` → `canonical`.
+/// Existing entries are moved to a temporary rollback sibling during the batch,
+/// then removed after the whole apply succeeds. No `.bak` host clutter is left.
+/// On **any** failure before success cleanup, the original entry is restored.
 fn transactional_relink(
     entry: &Path,
     canonical: &Path,
@@ -2487,31 +2500,30 @@ fn transactional_relink(
     // 1. Stage the new symlink first. If this fails, nothing has moved.
     let _ = remove_host_entry(&tmp);
     make_symlink(canonical, &tmp)?;
-    // 2. Back up any existing entry.
-    let backup = if std::fs::symlink_metadata(entry).is_ok() {
-        let bak = next_backup_path(entry);
-        if let Err(e) = std::fs::rename(entry, &bak) {
+    // 2. Move any existing entry to a temporary rollback path.
+    let previous = if std::fs::symlink_metadata(entry).is_ok() {
+        let old = next_replaced_path(entry);
+        if let Err(e) = std::fs::rename(entry, &old) {
             let _ = remove_host_entry(&tmp);
             return Err(e);
         }
-        Some(bak)
+        Some(old)
     } else {
         None
     };
-    // 3. Swap the staged link into place. On failure, roll the backup back.
+    // 3. Swap the staged link into place. On failure, roll the previous entry back.
     if let Err(e) = std::fs::rename(&tmp, entry) {
-        if let Some(bak) = &backup {
-            let _ = std::fs::rename(bak, entry);
+        if let Some(old) = &previous {
+            let _ = std::fs::rename(old, entry);
         }
         let _ = remove_host_entry(&tmp);
         return Err(e);
     }
-    let msg = match &backup {
-        Some(bak) => format!(
-            "relink {} -> {} (old entry → {})",
+    let msg = match &previous {
+        Some(_) => format!(
+            "relink {} -> {} (old entry replaced; no .bak kept)",
             entry.display(),
-            canonical.display(),
-            bak.display()
+            canonical.display()
         ),
         None => format!("relink {} -> {}", entry.display(), canonical.display()),
     };
@@ -2519,7 +2531,7 @@ fn transactional_relink(
         msg,
         AppliedChange::Relink {
             entry: entry.to_path_buf(),
-            backup,
+            previous,
         },
     ))
 }
@@ -2547,11 +2559,11 @@ fn rollback_change(change: &AppliedChange) -> std::io::Result<()> {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(e),
         },
-        AppliedChange::Relink { entry, backup } => {
+        AppliedChange::Relink { entry, previous } => {
             remove_host_entry(entry)?;
-            if let Some(bak) = backup {
-                if bak.exists() {
-                    std::fs::rename(bak, entry)?;
+            if let Some(old) = previous {
+                if old.exists() {
+                    std::fs::rename(old, entry)?;
                 }
             }
             Ok(())
@@ -2578,13 +2590,29 @@ fn rollback_changes(changes: &[AppliedChange]) -> Vec<String> {
     errors
 }
 
+fn cleanup_successful_relinks(changes: &[AppliedChange]) -> Vec<String> {
+    let mut errors = Vec::new();
+    for change in changes {
+        if let AppliedChange::Relink {
+            previous: Some(old),
+            ..
+        } = change
+        {
+            if let Err(e) = remove_host_entry(old) {
+                errors.push(format!("cleanup replaced entry {}: {e}", old.display()));
+            }
+        }
+    }
+    errors
+}
+
 /// The single mutation gate. Returns which writes succeeded and which errored.
 ///
 /// When `confirmed` is false it performs **no** filesystem writes. It first
 /// PREFLIGHTS every planned write (containment + host skills dir creatable); if
 /// any host fails preflight, NOTHING is mutated — a later host's failure can
 /// never leave an earlier host half-changed. Each `relink`/`unlink` then runs
-/// transactionally (stage → backup → atomic swap). The batch also keeps a
+/// transactionally (stage → temporary rollback path → atomic swap). The batch also keeps a
 /// rollback stack, so a later host failure restores earlier hosts and removes
 /// directories created during this apply. Only thin-index ops run; no skill body
 /// is copied; no external command is executed.
@@ -2677,6 +2705,12 @@ fn guarded_apply(confirmed: bool, planned: &[PlannedWrite], ctx: &ConsoleContext
             },
             _ => {} // unknown ops already rejected in preflight
         }
+    }
+    let cleanup_errors = cleanup_successful_relinks(&changes);
+    if !cleanup_errors.is_empty() {
+        outcome.errors = cleanup_errors;
+        outcome.applied_writes.clear();
+        return outcome;
     }
     outcome
 }
@@ -3940,17 +3974,23 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn propose_apply_moves_existing_entry_aside() {
-        let (ctx, base) = ctx_with("applybackup", canned_list());
+    fn propose_apply_replaces_existing_entry_without_backup() {
+        let (ctx, base) = ctx_with("applyreplace", canned_list());
         // A pre-existing REAL dir entry on claude (e.g. a manual copy).
         let entry = ctx.home.join(".claude/skills/lark-shared");
         write_file(&entry.join("SKILL.md"), "OLD CONTENT");
         let res = propose_action(&ctx, ConsoleAction::Update, "lark-shared", true);
         assert!(res.applied);
-        // The whole old entry is moved aside to <name>.bak (not copied file).
-        let bak = ctx.home.join(".claude/skills/lark-shared.bak/SKILL.md");
-        assert!(bak.exists(), "existing entry moved aside before relinking");
-        assert_eq!(std::fs::read_to_string(&bak).unwrap(), "OLD CONTENT");
+        // Capability/skill thin-index relink replaces the host entry in place
+        // and must not leave backup clutter in the host skills directory.
+        assert!(
+            !ctx.home.join(".claude/skills/lark-shared.bak").exists(),
+            "thin-index relink must not leave .bak entries"
+        );
+        assert!(
+            !ctx.home.join(".claude/skills/lark-shared.bak.1").exists(),
+            "thin-index relink must not leave numbered .bak entries"
+        );
         // The active entry is now a symlink to the canonical body.
         assert!(std::fs::symlink_metadata(&entry)
             .unwrap()
@@ -4706,6 +4746,42 @@ mod tests {
                 w.path
             );
         }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sync_plan_apply_replaces_existing_thin_index_without_backup() {
+        let (ctx, base) = ctx_with("syncnobak", canned_list());
+        let entry = ctx.home.join(".claude/skills/demo-skill");
+        write_file(&entry.join("SKILL.md"), "OLD CONTENT");
+
+        let result = sync_plan(&ctx, &["claude-code"], true);
+
+        assert!(result.apply_requested);
+        assert_eq!(result.summary.failed, 0);
+        assert!(
+            std::fs::symlink_metadata(&entry)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "sync apply should replace the existing host entry with a thin-index symlink"
+        );
+        assert!(
+            std::fs::read_to_string(entry.join("SKILL.md"))
+                .unwrap()
+                .contains("name: demo-skill"),
+            "active entry should resolve to the canonical skill body"
+        );
+        assert!(
+            !ctx.home.join(".claude/skills/demo-skill.bak").exists(),
+            "capability sync must not leave .bak backups"
+        );
+        assert!(
+            !ctx.home.join(".claude/skills/demo-skill.bak.1").exists(),
+            "capability sync must not leave numbered .bak backups"
+        );
+
         let _ = std::fs::remove_dir_all(&base);
     }
 

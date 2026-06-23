@@ -8,7 +8,7 @@
 //! lifecycle scan/check/inventory/upstream paths are read-only; the
 //! management console ([`console`]) additionally exposes a
 //! confirmation-protected apply path that writes **only AGS-owned per-host
-//! thin-index entries** (with backup) and never runs external installers.
+//! thin-index entries** through transactional replace and never runs external installers.
 //!
 //! Cross-Agent host visibility (which capability is visible to which host)
 //! is exposed through [`console::verify_host`] / [`console::build_inventory`]
@@ -730,7 +730,7 @@ pub fn propose_skills(root: &Path, action: &str, skill_name: &str) -> SkillPropo
         target_skills,
         proposed_changes,
         blocked_reasons,
-        note: "DRY-RUN ONLY — this evaluate-only proposal path always returns dry_run and never modifies files. Real AGS-owned writes happen elsewhere via the console module (skill dedupe / propose --apply), with backup + receipt; external installers/registrars are always advised, never run by AGS. Human confirmation + explicit task-card authorization required before any apply.".to_string(),
+        note: "DRY-RUN ONLY — this evaluate-only proposal path always returns dry_run and never modifies files. Real AGS-owned thin-index writes happen elsewhere via the console module (skill propose --apply / capability sync --apply) using transactional replace with receipt; dedupe quarantines still use governance backups. External installers/registrars are always advised, never run by AGS. Human confirmation + explicit task-card authorization required before any apply.".to_string(),
     }
 }
 

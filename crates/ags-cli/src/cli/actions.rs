@@ -65,7 +65,7 @@ pub(crate) enum CapabilityAction {
     /// Plan (or, with `--apply`, perform) a single capability's cross-host entry.
     ///
     /// AGS-owned skill thin-index writes go through the confirmation guard
-    /// (with backup); MCP / CLI-backed registration is advised per host
+    /// (transactional replace; no .bak kept); MCP / CLI-backed registration is advised per host
     /// (Claude Code, Codex), never run by AGS.
     Install {
         /// Capability name (skill / MCP / CLI-backed).
@@ -95,8 +95,8 @@ pub(crate) enum CapabilityAction {
 ///
 /// `ags skill` is the skill-body governance face. `scan` / `check` /
 /// `inventory` / `upstream` are read-only; `propose --apply` writes ONLY
-/// AGS-owned per-host thin-index entries (with backup) through the console's
-/// single mutation guard and never runs external installers. `verify --host`
+/// AGS-owned per-host thin-index entries through the console's transactional
+/// mutation guard and never runs external installers. `verify --host`
 /// reports cross-Agent host visibility and is the seam slated to move under
 /// the `ags capability` command layer in a future release.
 #[derive(Subcommand)]
@@ -125,7 +125,7 @@ pub(crate) enum SkillAction {
     ///
     /// Actions: adopt, update, remove, uninstall, repair, verify. Without
     /// `--apply` nothing is written and no external installer runs. With
-    /// `--apply` only AGS-owned host entry files are written (with backup);
+    /// `--apply` only AGS-owned host entry files are written via transactional replace;
     /// external installers/registrars (npx skills, lark-cli, claude mcp) are
     /// advised, never executed.
     #[command(hide = true)]

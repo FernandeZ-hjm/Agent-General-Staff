@@ -31,7 +31,7 @@ fn cmd_skill_check(format: &str) {
 /// Shared dispatch: `skill propose` — management console proposal.
 ///
 /// Dry-run by default. `--apply` performs only AGS-owned host-entry writes
-/// (with backup) through the console's single mutation guard; external
+/// through the console's transactional mutation guard; external
 /// installers/registrars are advised, never executed.
 fn cmd_skill_propose(action: &str, skill_name: &str, apply: bool, format: &str) {
     use skill_governance::console;
@@ -246,7 +246,7 @@ fn cmd_skill_overview(format: &str, fix: bool) {
                 );
                 println!("  ags skill upstream                                       # upstream comparison (stub)");
                 println!(
-                    "Apply writes only AGS-owned host entries (with backup) and never runs external installers."
+                    "Apply writes only AGS-owned host entries via transactional replace and never runs external installers."
                 );
             } else {
                 println!(

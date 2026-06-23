@@ -271,7 +271,7 @@ discover → scan → propose → dry-run → confirm/apply → host restart →
 
 - **已落地**：本协议、`governance/skill-sync.md`、`governance/skill-adoption-log.yaml`、`governance/skill-ignore-list.yaml`、`manifests/suite.yaml`、`manifests/skills-registry.yaml`、`manifests/mcp-registry.yaml`、`global-skills/`、`skill-packs/optional/`、`skill-packs/personal/`
 - **已实现只读入口**：`ags skill`（统一 inventory）、`ags skill scan`、`ags skill check`、`ags skill propose`（dry-run）、`ags skill verify --host <host>`、`ags skill inventory`
-- **已实现受确认保护的 apply 路径**：`ags skill propose --action <verb> --skill <name> --apply` 经单一 guard 执行 AGS 自有宿主入口写入（覆盖前 backup）；无 `--apply` 时只 dry-run
+- **已实现受确认保护的 apply 路径**：`ags skill propose --action <verb> --skill <name> --apply` 经单一 guard 执行 AGS 自有宿主入口写入（事务化替换，成功后不留下 `.bak`）；无 `--apply` 时只 dry-run
 - **已迁移分类**：required 核心开发技能、optional 集成/第三方技能包、personal 用户风格技能、ignored 外部/不纳管技能
 - **仍不接管外部 CLI**：`npx skills add/remove/update`、`lark-cli update`、`claude mcp add/remove` 等外部安装/注册命令一律只 advise、永不执行；AGS 只做纳管、提案、确认保护、入口分发和验证
 
