@@ -33,22 +33,6 @@ pub(crate) const VALID_EXECUTION_EFFORT: &[&str] = &["normal", "ultracode", "unk
 pub(crate) const VALID_WORKFLOW_AUTHORITY: &[&str] =
     &["none", "within-card", "plan-only", "allowed"];
 
-/// Explicit task-card skill tags that have been retired from the active skill
-/// surface. Empty replacement means the old tag was deleted with no successor.
-pub(crate) const RETIRED_SKILL_TAGS: &[(&str, &str)] = &[
-    ("auto-brainstorm", "grill-with-docs"),
-    ("auto-debug", "diagnosing-bugs"),
-    ("auto-verify", "verification-before-completion"),
-    ("tdd", "test-driven-development"),
-    ("diagnose", "diagnosing-bugs"),
-    ("zoom-out", "codebase-design"),
-    ("caveman-review", "review"),
-    ("code-review", "review"),
-    ("verify", "verification-before-completion"),
-    ("commit", ""),
-    ("caveman-commit", ""),
-];
-
 /// Map Executor to its required Runtime adapter.
 pub(crate) fn expected_adapter(executor: &str) -> Option<&'static str> {
     match executor {

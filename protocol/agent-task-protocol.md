@@ -229,11 +229,13 @@ tracked manifest，**绝不**含真实凭据。证据缺失 / 损坏 / 未知 mo
 不改任何 gate。`auth_status` 仍按运行时推导（`requires_auth` 但无运行时凭据证据 →
 `required-unknown`），**绝不**在 tracked manifest 写 `configured`。
 
-**auto-* 已退役。** auto-brainstorm / auto-debug / auto-verify 现为 `routing.route_state: retired`，
-Capability Route **永不**把它们作为 primary、永不唤醒；其 demand 路由到 canonical 后继（debug →
+**自动别名已退役。** 旧自动别名不再作为 Capability Route primary，也不再作为任务卡
+`[skill: ...]` 元数据被接受；其 demand 路由到 canonical 后继（debug →
 `diagnosing-bugs`、verify → `verification-before-completion`、brainstorm → `grill-with-docs`）。
-`is_compatibility_alias` 仅保留为审计溯源，不再参与排序；排序与 primary 资格由 `route_state` 决定。
-退役记录见 `manifests/skills-registry.yaml` 的 `route_state: retired` 与 `governance/skill-adoption-log.yaml` 的 append-only 记录；`auto-*` 同时从 `manifests/suite.yaml` 的 suite-required 集合移除（不新增装饰性 `retired:` 块）。其 demand 现由指向已存在 superpowers playbook `SKILL.md` 的 route target 承接。
+任务卡 validator 只接受 `manifests/skills-registry.yaml` 中 `route_state: routable` 且
+`invoke_hint` 形如 `[skill: ...]` 的当前技能标记；未知、历史或非 active 标记统一按
+`UNKNOWN_OR_INACTIVE_SKILL_TAG` 拒绝。历史采纳/移除事实仍由 `governance/skill-adoption-log.yaml`
+append-only 审计记录承接，不再维护前台旧别名映射表。
 
 **doctor / update verify drift（只读）。** `ags doctor` 与 `ags update verify` 含 capability route
 drift 检查，覆盖：manifest routing metadata（auto-* 别名标注）、runtime enrollment（present + mode）、

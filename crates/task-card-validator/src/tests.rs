@@ -251,17 +251,17 @@ fn allow_three_tilde_non_text_fence() {
 }
 
 #[test]
-fn reject_retired_skill_tags() {
-    for (retired, _) in RETIRED_SKILL_TAGS {
+fn reject_unknown_or_inactive_skill_tags() {
+    for inactive in ["diagnose", "tdd"] {
         let mut input = valid_card_fields();
-        input.push_str(&format!("[skill: {retired}]\n"));
+        input.push_str(&format!("[skill: {inactive}]\n"));
         let e = validate(&input);
         assert!(
             e.iter().any(|m| {
-                m.contains(error_code::RETIRED_SKILL_TAG)
-                    && m.contains(&format!("[skill: {retired}]"))
+                m.contains("UNKNOWN_OR_INACTIVE_SKILL_TAG")
+                    && m.contains(&format!("[skill: {inactive}]"))
             }),
-            "retired skill tag `{retired}` should be rejected: {e:?}"
+            "unknown or inactive skill tag `{inactive}` should be rejected: {e:?}"
         );
     }
 }

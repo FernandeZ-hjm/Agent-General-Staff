@@ -133,26 +133,56 @@ pub(crate) fn find_text_fence(input: &str) -> Option<usize> {
     None
 }
 
-pub(crate) fn check_retired_skill_tags(input: &str, errors: &mut Vec<String>) {
+pub(crate) fn check_active_skill_tags(input: &str, errors: &mut Vec<String>) {
     let lines: Vec<&str> = input.lines().collect();
+    let active_tags = active_task_card_skill_tags();
 
     for (line_idx, tag) in trailing_skill_metadata_lines(&lines) {
-        if let Some((retired, replacement)) = RETIRED_SKILL_TAGS
+        if !active_tags
             .iter()
-            .find(|(name, _)| tag.eq_ignore_ascii_case(name))
+            .any(|active| tag.eq_ignore_ascii_case(active))
         {
-            let replacement_hint = if replacement.is_empty() {
-                "该标记已删除，不再提供替代标记".to_string()
-            } else {
-                format!("请改用 `[skill: {replacement}]`")
-            };
             errors.push(format!(
-                "[{}] 第 {} 行：旧技能标记 `[skill: {retired}]` 已删除，{replacement_hint}",
-                error_code::RETIRED_SKILL_TAG,
-                line_idx + 1
+                "[{}] 第 {} 行：未知或非当前可用技能标记 `[skill: {tag}]`；请只使用 manifests/skills-registry.yaml 中 route_state=routable 的 `[skill: ...]` invoke_hint",
+                error_code::UNKNOWN_OR_INACTIVE_SKILL_TAG,
+                line_idx + 1,
             ));
         }
     }
+}
+
+fn active_task_card_skill_tags() -> Vec<String> {
+    const SKILLS_REGISTRY: &str = include_str!("../../../manifests/skills-registry.yaml");
+    let mut tags = Vec::new();
+
+    for block in SKILLS_REGISTRY.split("\n  - name:").skip(1) {
+        if !block
+            .lines()
+            .any(|line| line.trim() == "route_state: routable")
+        {
+            continue;
+        }
+
+        for line in block.lines() {
+            let trimmed = line.trim();
+            let Some(hint) = trimmed.strip_prefix("invoke_hint:") else {
+                continue;
+            };
+            let hint = hint.trim().trim_matches('"').trim_matches('\'');
+            let Some(tag) = hint
+                .strip_prefix("[skill:")
+                .and_then(|rest| rest.strip_suffix(']'))
+                .map(str::trim)
+            else {
+                continue;
+            };
+            if !tag.is_empty() && !tags.iter().any(|existing| existing == tag) {
+                tags.push(tag.to_string());
+            }
+        }
+    }
+
+    tags
 }
 
 fn trailing_skill_metadata_lines<'a>(lines: &'a [&'a str]) -> Vec<(usize, &'a str)> {

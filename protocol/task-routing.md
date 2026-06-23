@@ -352,11 +352,13 @@ explicitly defines them as manual aliases.
 
 For this project:
 
-- `auto-debug` / `auto-verify` / `auto-brainstorm` are **RETIRED**
-  (`routing.route_state: retired`). AGS Capability Route never routes them as
-  primary; their demands now route to canonical successors — debug → `diagnosing-bugs`,
-  verify → `verification-before-completion`, brainstorm →
-  `grill-with-docs`.
+- The legacy automatic aliases are **not valid manual task-card tags**. AGS
+  Capability Route never routes them as primary; their demands now route to
+  canonical successors — debug → `diagnosing-bugs`, verify →
+  `verification-before-completion`, brainstorm → `grill-with-docs`.
+- Manual task-card tags are a positive allowlist: use only current
+  `route_state: routable` skills whose registry `invoke_hint` is shaped as
+  `[skill: ...]`.
 - Use `[skill: verification-before-completion]` when deep verification should be forced.
 - Use `[skill: diagnosing-bugs]` for complex root cause work.
 - Use `[skill: codebase-design]` for architecture context, dependency mapping, or risk
