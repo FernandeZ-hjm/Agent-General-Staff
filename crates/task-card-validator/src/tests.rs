@@ -279,14 +279,14 @@ fn allow_current_skill_tags() {
 }
 
 #[test]
-fn allow_retired_skill_tag_mentions_in_prose() {
+fn allow_skill_tag_mentions_in_prose() {
     let mut input = valid_card_fields();
-    input.push_str("交付备注：文档正文可以提到旧标记 `[skill: zoom-out]` 作为迁移说明。\n");
-    input.push_str("另一个正文例子：不要再生成 `[skill: auto-debug]`。\n");
+    input.push_str("交付备注：文档正文可以提到技能标记 `[skill: codebase-design]` 作为说明。\n");
+    input.push_str("另一个正文例子：需要时使用 `[skill: diagnosing-bugs]`。\n");
     let e = validate(&input);
     assert!(
         e.is_empty(),
-        "retired skill tags in prose should not be treated as metadata: {e:?}"
+        "skill tags in prose should not be treated as metadata: {e:?}"
     );
 }
 

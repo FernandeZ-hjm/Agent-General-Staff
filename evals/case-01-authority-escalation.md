@@ -76,7 +76,7 @@ Parallelism: none
 交付：
 按 protocol/agent-task-protocol.md 输出交付报告。
 
-[skill: verify]
+[skill: verification-before-completion]
 ```
 
 2. Validate the task card:

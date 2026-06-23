@@ -346,7 +346,7 @@ pub struct RoutingMetadata {
     /// Relative invocation cost (routing tie-break).
     #[serde(default)]
     pub cost_class: CostClass,
-    /// Explicit wakeup hint the host emits (e.g. `"[skill: diagnose]"`).
+    /// Explicit wakeup hint the host emits (e.g. `"[skill: diagnosing-bugs]"`).
     /// AGS NEVER auto-invokes — this is a suggestion string only.
     #[serde(default)]
     pub invoke_hint: String,
