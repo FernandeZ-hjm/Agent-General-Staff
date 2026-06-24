@@ -9,7 +9,7 @@ to ship the `ags` CLI, canonical task-card protocols, execution-policy checks,
 release-boundary verification, memory-capsule templates, and public
 skill-governance workflows.
 
-## Post-2.7.0 Changes
+## Release 0.2.7
 
 ### Unified routing model
 

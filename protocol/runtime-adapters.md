@@ -769,6 +769,19 @@ bypassing the resolver's writability gate entirely.
 5. Never read `Parallelism:`, `Execution surface:`, or `Permission mode:`
    from the raw task card to decide launch flags — those values have already
    been resolved, downgraded, and gated by the resolver.
+6. Run the runtime skill-tag availability gate (the third gate) on the
+   launch-plan path. After the policy gate, `ags run` extracts the card's
+   trailing `[skill: …]` tags, derives the active host from the resolved
+   `runtime_adapter` (`claude-code` / `codex-local`→`codex` / `cursor`;
+   `generic`/unknown → host-agnostic, fail-closed), and runs the equivalent of
+   `ags gate skill-tags`. Any tag the live machine snapshot does not judge
+   `available` forces `gate_decision=stop` (`gate_error_kind=skill_tags_unavailable`),
+   empties launch args, and skips the receipt. This makes the third gate
+   automatic on the main task-card execution chain — not only the manual
+   `ags gate skill-tags` subcommand. `--check-only` stops at the offline policy
+   gate and does NOT run the runtime skill-tag gate, preserving the validator's
+   offline static determinism. The `LaunchPlan.skill_tags_gate` field carries the
+   per-tag verdicts and `snapshot_hash` for audit.
 
 ### Example: resolved policy → launch flags
 
