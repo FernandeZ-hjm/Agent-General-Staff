@@ -987,17 +987,20 @@ mod tests {
     #[test]
     fn policy_resolve_current_task_approval_unlocks_heavy_edit() {
         // No MCP/CLI policy divergence: the MCP ags_policy_resolve carries the
-        // same structured current-task approval signal as the CLI gate, so a
-        // Heavy + edit-with-confirmation card resolves differently with and
-        // without the signal.
+        // same structured current-task approval signal as the CLI gate. The
+        // signal is audit/hint only; task level does not downgrade permission.
         let card = include_str!("../../../tests/fixtures/valid-full.md")
             .replace("任务级别：Light", "任务级别：Heavy")
             .replace(
                 "Permission mode: execute-and-verify",
                 "Permission mode: edit-with-confirmation",
+            )
+            .replace(
+                "- Light review",
+                "- 按 protocol/agent-task-protocol.md 的 Review Gate 规则执行当前任务级别。",
             );
 
-        // Without approval → Heavy defaults to plan-only.
+        // Without approval → still edit-with-confirmation (task level does not downgrade).
         let no = call_tool(
             TOOL_POLICY_RESOLVE,
             &serde_json::json!({ "task_card": card }),
@@ -1005,11 +1008,19 @@ mod tests {
         .expect("policy resolve ok");
         let vno: serde_json::Value = serde_json::from_str(&no).expect("valid json");
         assert_eq!(
-            vno["effective_permission_mode"], "plan-only",
-            "Heavy without approval must downgrade to plan-only: {vno}"
+            vno["effective_permission_mode"], "edit-with-confirmation",
+            "Heavy must NOT be downgraded by task level: {vno}"
+        );
+        assert_eq!(
+            vno["requires_confirmation_gate"], true,
+            "Heavy must still require a confirmation gate: {vno}"
+        );
+        assert_eq!(
+            vno["was_downgraded"], false,
+            "Heavy edit card must not record a downgrade: {vno}"
         );
 
-        // With current_task_approval → stays edit-with-confirmation (no downgrade).
+        // With current_task_approval → identical resolution.
         let yes = call_tool(
             TOOL_POLICY_RESOLVE,
             &serde_json::json!({ "task_card": card, "current_task_approval": true }),
@@ -1018,7 +1029,7 @@ mod tests {
         let vyes: serde_json::Value = serde_json::from_str(&yes).expect("valid json");
         assert_eq!(
             vyes["effective_permission_mode"], "edit-with-confirmation",
-            "current-task approval must unlock Heavy edit-with-confirmation over MCP: {vyes}"
+            "approval signal must not change the resolved mode: {vyes}"
         );
     }
 

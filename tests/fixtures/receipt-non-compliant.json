@@ -6,7 +6,7 @@
   "task_card_path": "tests/fixtures/valid-full.md",
   "gate_result": {
     "decision": "stop",
-    "reason": "heavy-requires-write-approval"
+    "reason": "writable-parallelism-blocked-by-permission"
   },
   "verification_results": [
     {

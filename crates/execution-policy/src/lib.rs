@@ -238,29 +238,31 @@ mod tests {
         assert_eq!(policy.approval_source, ApprovalSource::None);
     }
 
-    // ── T2: Heavy execute-and-verify without approval → downgrade ────
+    // ── T2: Heavy execute-and-verify without approval → NO downgrade ──
+    //
+    // Task LEVEL is decoupled from execution authority: a Heavy card keeps its
+    // declared permission mode and only gains a confirmation gate. No downgrade,
+    // no cap, no stop — approval is not required to execute a Heavy card.
 
     #[test]
-    fn heavy_execute_without_approval_downgrades_to_plan_only() {
+    fn heavy_execute_without_approval_is_executable_with_confirmation() {
         let input = heavy_execute_no_approval();
         let policy = resolve_policy(input);
 
-        // Downgraded: execute-and-verify → plan-only
-        assert_eq!(policy.effective_permission_mode, PermissionMode::PlanOnly);
-        assert!(policy.was_downgraded);
-        assert_eq!(policy.downgrade_reasons.len(), 1);
-        assert_eq!(policy.downgrade_reasons[0].rule_id, "M4");
-        assert_eq!(policy.downgrade_reasons[0].field, "permission_mode");
-        assert_eq!(policy.downgrade_reasons[0].before, "execute-and-verify");
-        assert_eq!(policy.downgrade_reasons[0].after, "plan-only");
+        // Declared permission preserved — NOT downgraded to plan-only.
+        assert_eq!(
+            policy.effective_permission_mode,
+            PermissionMode::ExecuteAndVerify
+        );
+        assert!(!policy.was_downgraded);
+        assert!(policy.downgrade_reasons.is_empty());
+
+        // Heavy still requires a confirmation gate.
         assert!(policy.requires_confirmation_gate);
 
-        // Stopped policies are not launchable, even with otherwise-safe plan args.
-        assert!(policy.stop_before_launch);
-        assert!(
-            policy.allowed_launch_args.is_empty(),
-            "stop_before_launch=true must clear allowed_launch_args"
-        );
+        // Executable: no stop, launch args are not cleared by a stop gate.
+        assert!(!policy.stop_before_launch);
+        assert!(policy.stop_reasons.is_empty());
     }
 
     // ── T3: Heavy edit-with-confirmation WITH approval → no downgrade ─
@@ -270,7 +272,8 @@ mod tests {
         let input = heavy_edit_with_approval();
         let policy = resolve_policy(input);
 
-        // No downgrade — explicit approval preserves the requested mode
+        // No downgrade — task level never rewrites the declared permission mode
+        // (the approval signal is audit/hint only, not what preserves the mode).
         assert_eq!(
             policy.effective_permission_mode,
             PermissionMode::EditWithConfirmation
@@ -417,7 +420,9 @@ mod tests {
 
     #[test]
     fn every_downgrade_has_recorded_reason() {
-        let input = heavy_execute_no_approval();
+        // Genuine downgrade vehicle: the M9 generic-adapter cap (task level no
+        // longer downgrades).
+        let input = generic_execute_input();
         let policy = resolve_policy(input);
 
         assert!(policy.was_downgraded);
@@ -788,9 +793,6 @@ mod tests {
 
         let input = TaskPolicyInput::from_fields(&fields);
         assert_eq!(input.approval_source, ApprovalSource::None);
-        // Heavy without approval → downgrade
-        let policy = resolve_policy(input);
-        assert_eq!(policy.effective_permission_mode, PermissionMode::PlanOnly);
     }
 
     #[test]
@@ -813,8 +815,9 @@ mod tests {
 
     #[test]
     fn heavy_edit_with_current_task_instruction_no_downgrade() {
-        // A current-task instruction unlocks Heavy + edit-with-confirmation
-        // directly (no plan-only round trip), without a stop.
+        // Heavy + edit-with-confirmation is executable directly (no plan-only
+        // round trip, no stop). The current-task-instruction signal is audit/hint
+        // only — the declared permission is what makes the card executable.
         let input = TaskPolicyInput {
             permission_mode: "edit-with-confirmation".into(),
             task_level: "Heavy".into(),
@@ -836,10 +839,10 @@ mod tests {
     }
 
     #[test]
-    fn heavy_execute_with_current_task_instruction_capped_to_edit() {
-        // execute-and-verify is default-forbidden under Heavy: a current-task
-        // instruction only unlocks edit-with-confirmation, so e&v is capped to
-        // edit-with-confirmation (downgraded, but NOT stopped).
+    fn heavy_execute_with_current_task_instruction_not_capped() {
+        // Task level no longer caps execute-and-verify: a Heavy card keeps its
+        // declared execute-and-verify regardless of the approval signal. No
+        // downgrade, no cap, no stop — only the confirmation gate is added.
         let input = TaskPolicyInput {
             permission_mode: "execute-and-verify".into(),
             task_level: "Heavy".into(),
@@ -849,21 +852,18 @@ mod tests {
         let policy = resolve_policy(input);
         assert_eq!(
             policy.effective_permission_mode,
-            PermissionMode::EditWithConfirmation
+            PermissionMode::ExecuteAndVerify
         );
-        assert!(policy.was_downgraded);
-        assert_eq!(policy.downgrade_reasons[0].rule_id, "M4");
-        assert_eq!(policy.downgrade_reasons[0].after, "edit-with-confirmation");
-        assert!(
-            !policy.stop_before_launch,
-            "capped e&v stays executable, not stopped"
-        );
+        assert!(!policy.was_downgraded);
+        assert!(policy.downgrade_reasons.is_empty());
+        assert!(!policy.stop_before_launch);
         assert!(policy.requires_confirmation_gate);
     }
 
     #[test]
-    fn heavy_execute_with_cli_flag_unlocks_execute_and_verify() {
-        // The stronger CLI-flag approval DOES unlock execute-and-verify.
+    fn heavy_execute_holds_execute_and_verify_regardless_of_approval() {
+        // execute-and-verify holds for a Heavy card with OR without an approval
+        // signal — task level never caps or downgrades the declared permission.
         let input = TaskPolicyInput {
             permission_mode: "execute-and-verify".into(),
             task_level: "Heavy".into(),
@@ -877,6 +877,7 @@ mod tests {
         );
         assert!(!policy.was_downgraded);
         assert!(!policy.stop_before_launch);
+        assert!(policy.requires_confirmation_gate);
     }
 
     #[test]
@@ -941,12 +942,13 @@ mod tests {
 
     #[test]
     fn json_downgrade_reason_has_structured_fields() {
-        let input = heavy_execute_no_approval();
+        // Genuine downgrade vehicle: the M9 generic-adapter cap.
+        let input = generic_execute_input();
         let policy = resolve_policy(input);
         let json = serde_json::to_string(&policy).unwrap();
 
         assert!(json.contains("\"rule_id\""));
-        assert!(json.contains("\"M4\""));
+        assert!(json.contains("\"M9\""));
         assert!(json.contains("\"field\""));
         assert!(json.contains("\"permission_mode\""));
         assert!(json.contains("\"before\""));
@@ -1068,13 +1070,13 @@ mod tests {
     }
 
     // ═════════════════════════════════════════════════════════════════════
-    // F8: Heavy stop_before_launch — Finding 1
+    // F8: Heavy never stops by task level — confirmation gate only
     // ═════════════════════════════════════════════════════════════════════
 
     #[test]
-    fn heavy_edit_without_approval_sets_stop_before_launch() {
-        // Heavy edit-with-confirmation without approval → stop with
-        // HeavyRequiresWriteApproval
+    fn heavy_edit_without_approval_is_executable_no_stop() {
+        // Heavy edit-with-confirmation without approval → executable with a
+        // confirmation gate. Task level does NOT downgrade or stop.
         let input = TaskPolicyInput {
             permission_mode: "edit-with-confirmation".into(),
             task_level: "Heavy".into(),
@@ -1082,39 +1084,31 @@ mod tests {
         };
         let policy = resolve_policy(input);
 
-        assert_eq!(policy.effective_permission_mode, PermissionMode::PlanOnly);
-        assert!(policy.was_downgraded);
+        assert_eq!(
+            policy.effective_permission_mode,
+            PermissionMode::EditWithConfirmation
+        );
+        assert!(!policy.was_downgraded);
         assert!(policy.requires_confirmation_gate);
         assert!(
-            policy.stop_before_launch,
-            "Heavy write without approval must set stop_before_launch=true"
+            !policy.stop_before_launch,
+            "Heavy write card must not stop by task level"
         );
-        assert!(
-            !policy.stop_reasons.is_empty(),
-            "Heavy write without approval must have stop_reasons"
-        );
-        let reason = policy.stop_reasons.first().unwrap();
-        let reason_str = reason.to_string();
-        assert!(
-            reason_str.contains("Heavy"),
-            "stop_reasons must mention Heavy: {}",
-            reason_str
-        );
+        assert!(policy.stop_reasons.is_empty());
     }
 
     #[test]
-    fn heavy_execute_without_approval_stop_reason_is_heavy_requires_write_approval() {
-        // Heavy execute-and-verify without approval → exact stop reason variant
+    fn heavy_execute_without_approval_has_no_heavy_write_stop_reason() {
+        // Regression guard: a Heavy execute-and-verify card must NOT produce a
+        // level-driven "requires write approval" stop. Task level never stops.
         let input = heavy_execute_no_approval();
         let policy = resolve_policy(input);
 
-        assert!(policy.stop_before_launch);
-        let reason = policy.stop_reasons.first().unwrap();
-        let reason_str = reason.to_string();
+        assert!(!policy.stop_before_launch);
         assert!(
-            reason_str.contains("explicit write approval"),
-            "stop_reasons must explain approval requirement: {}",
-            reason_str
+            policy.stop_reasons.is_empty(),
+            "Heavy task level must not introduce a stop reason: {:?}",
+            policy.stop_reasons
         );
     }
 
@@ -1517,8 +1511,10 @@ mod tests {
     fn stop_before_launch_implies_empty_allowed_launch_args() {
         let cases = [
             TaskPolicyInput {
-                permission_mode: "execute-and-verify".into(),
-                task_level: "Heavy".into(),
+                permission_mode: "read-only".into(),
+                parallelism: "worktree".into(),
+                workflow_authority: Some("allowed".into()),
+                task_level: "Medium".into(),
                 ..light_execute_input()
             },
             TaskPolicyInput {
@@ -1590,8 +1586,17 @@ mod tests {
     }
 
     #[test]
-    fn gate_check_heavy_execute_no_approval_returns_stop() {
-        let output = gate_check(&heavy_execute_no_approval());
+    fn gate_check_writability_stop_returns_stop() {
+        // Genuine resolver STOP: read-only + worktree (writability gate). Task
+        // level never stops, so Heavy alone is no longer a stop vehicle.
+        let input = TaskPolicyInput {
+            permission_mode: "read-only".into(),
+            parallelism: "worktree".into(),
+            workflow_authority: Some("allowed".into()),
+            task_level: "Medium".into(),
+            ..light_execute_input()
+        };
+        let output = gate_check(&input);
         assert_eq!(output.decision, GateDecision::Stop);
         let json = serde_json::to_string(&output).unwrap();
         assert!(json.contains("\"decision\":\"stop\""));
@@ -1656,7 +1661,7 @@ mod tests {
         }
     }
 
-    // ── 2.7: neutral exhaustive effort maps to is_exhaustive_mode ────
+    // ── 0.2.7: neutral exhaustive effort maps to is_exhaustive_mode ────
 
     #[test]
     fn neutral_exhaustive_effort_sets_exhaustive_mode_no_escalation() {

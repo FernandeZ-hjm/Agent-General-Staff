@@ -49,12 +49,16 @@ pub struct TaskPolicyInput {
     /// Workflow authority: "none" | "within-card" | "plan-only" | "allowed" (absent → "none")
     pub workflow_authority: Option<String>,
 
-    /// Where explicit write approval came from.
+    /// Structured write-approval **audit / hint** signal source.
     ///
     /// Task-card text is **never** an approval source.  Only a CLI flag
     /// (`--approve-writes`) or runner environment override can set this to
-    /// `CliFlag` or `RunnerEnv`.  The `from_fields()` constructor always
-    /// returns `ApprovalSource::None`.
+    /// `CliFlag` or `RunnerEnv`, and the `from_fields()` constructor always
+    /// returns `ApprovalSource::None`.  This signal is audit/hint only — it is
+    /// NOT a task-level execution unlock (the task LEVEL is decoupled from
+    /// execution authority; the permission MODE is the authority).  The M9
+    /// generic-adapter cap may consult `is_approved()` as an adapter-capability
+    /// override.
     pub approval_source: ApprovalSource,
 }
 
@@ -89,15 +93,17 @@ impl TaskPolicyInput {
     /// Build a TaskPolicyInput from parsed fields plus STRUCTURED approval
     /// signals. Approval is never read from task-card text (`from_fields` always
     /// yields `None`); callers pass the explicit signals they detected:
-    /// - `approve_writes` (CLI `--approve-writes` / runner env) → `CliFlag`,
-    ///   which unlocks up to `execute-and-verify`.
+    /// - `approve_writes` (CLI `--approve-writes` / runner env) → `CliFlag`.
     /// - `current_task_approval` (host detected an explicit live execution
-    ///   instruction) → `CurrentTaskInstruction`, which unlocks only
-    ///   `edit-with-confirmation`.
+    ///   instruction) → `CurrentTaskInstruction`.
     ///
-    /// The stronger source wins when both are set. This is the single canonical
-    /// mapping shared by the CLI gate and the AGS MCP `ags_policy_resolve` tool,
-    /// so CLI and MCP hosts resolve identical policy for the same approval signal.
+    /// These are audit/hint signals, NOT a Heavy execution unlock: the resolver
+    /// no longer downgrades a card by task level, so a Heavy card is executable
+    /// from its declared permission mode alone (gated by the confirmation/review
+    /// gate). `approve_writes` may still act as the M9 generic-adapter capability
+    /// override. The stronger source wins when both are set. This is the single
+    /// canonical mapping shared by the CLI gate and the AGS MCP
+    /// `ags_policy_resolve` tool, so CLI and MCP hosts resolve identical policy.
     pub fn from_fields_with_approval(
         fields: &HashMap<String, String>,
         approve_writes: bool,

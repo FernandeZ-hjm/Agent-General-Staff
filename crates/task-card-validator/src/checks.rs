@@ -47,10 +47,11 @@ pub(crate) const PARALLELISM_BODY_KEYWORDS: &[&str] = &[
     "工作流",
 ];
 
-/// Keywords that indicate ultracode is being abused as execution-authority
-/// rather than thinking-intensity.  Matched case-insensitively against the
-/// full action-bearing context.
-pub(crate) const ULTRACODE_AUTHORITY_ABUSE_KEYWORDS: &[&str] = &[
+/// Keywords that indicate the exhaustive execution-effort tier is being abused as
+/// execution-authority rather than thinking-intensity.  Matched case-insensitively
+/// against the full action-bearing context.  Covers the neutral `exhaustive`
+/// value and the legacy `ultracode` alias equally — effort is never authority.
+pub(crate) const EXHAUSTIVE_EFFORT_AUTHORITY_ABUSE_KEYWORDS: &[&str] = &[
     // Chinese — ultracode as authority / permission escalation
     "以 ultracode 权限",
     "以 ultracode 执行",
@@ -64,6 +65,13 @@ pub(crate) const ULTRACODE_AUTHORITY_ABUSE_KEYWORDS: &[&str] = &[
     "ultracode 无需人工",
     "ultracode 不需要 review",
     "ultracode 跳过 review",
+    // Chinese — neutral `exhaustive` value abuse
+    "以 exhaustive 权限",
+    "exhaustive 权限执行",
+    "exhaustive 自动执行",
+    "exhaustive 可以跳过",
+    "exhaustive 跳过 review",
+    "因为 exhaustive",
     // English — authority mapping
     "ultracode allows",
     "ultracode enables",
@@ -71,10 +79,16 @@ pub(crate) const ULTRACODE_AUTHORITY_ABUSE_KEYWORDS: &[&str] = &[
     "with ultracode authority",
     "ultracode mode enables",
     "because ultracode",
+    "exhaustive allows",
+    "exhaustive enables",
+    "exhaustive authorizes",
+    "with exhaustive authority",
     // English — review bypass
     "ultracode skip review",
     "ultracode bypass",
     "ultracode auto-approve",
+    "exhaustive skip review",
+    "exhaustive bypass",
 ];
 
 // ── Phase 1: format checks (existing) ──────────────────────────────────
@@ -183,6 +197,18 @@ fn active_task_card_skill_tags() -> Vec<String> {
     }
 
     tags
+}
+
+/// Extract the trailing `[skill: <tag>]` tags from a task card, in document
+/// order. The SAME parser the offline static gate uses, exposed so the runtime
+/// availability gate (`ags gate skill-tags`) checks exactly the tags the
+/// validator recognizes — no second, drifting parser.
+pub fn extract_skill_tags(content: &str) -> Vec<String> {
+    let lines: Vec<&str> = content.lines().collect();
+    trailing_skill_metadata_lines(&lines)
+        .into_iter()
+        .map(|(_, tag)| tag.to_string())
+        .collect()
 }
 
 fn trailing_skill_metadata_lines<'a>(lines: &'a [&'a str]) -> Vec<(usize, &'a str)> {
@@ -326,6 +352,21 @@ pub(crate) fn check_field_values(fields: &HashMap<String, String>, errors: &mut 
             ));
         }
     }
+
+    // 子任务编排 mode — validated only when the slot is present and declares a
+    // `mode:` value. Absent slot / absent mode line resolves to "none" (valid),
+    // so cards without the slot keep passing.
+    if fields.contains_key("子任务编排：") {
+        let mode = get_subtask_orchestration_mode(fields);
+        if !VALID_SUBTASK_ORCHESTRATION_MODES.contains(&mode) {
+            errors.push(format!(
+                "[{}] 子任务编排 mode 值 `{}` 非法，允许: {}",
+                error_code::INVALID_FIELD_VALUE,
+                mode,
+                VALID_SUBTASK_ORCHESTRATION_MODES.join(", ")
+            ));
+        }
+    }
 }
 
 // ── Phase 3: field-combination checks ──────────────────────────────────
@@ -352,13 +393,11 @@ pub(crate) fn check_field_combinations(fields: &HashMap<String, String>, errors:
         }
     }
 
-    // Heavy + execute-and-verify → forbidden
-    if level == "Heavy" && permission == "execute-and-verify" {
-        errors.push(format!(
-            "[{}] 任务级别 Heavy 不允许 Permission mode 为 execute-and-verify",
-            error_code::FIELD_COMBINATION_MISMATCH
-        ));
-    }
+    // NOTE: Heavy + execute-and-verify is NOT forbidden. Task LEVEL is a
+    // risk/review tier, not the execution authority — the permission MODE is.
+    // A Heavy card may declare execute-and-verify; the resolver adds a
+    // confirmation gate (it does not downgrade by level). The Heavy + plan-only
+    // delivery gate below still constrains plan/review cards.
 
     // Workflow authority: allowed only for Medium or Heavy
     if authority == "allowed" && level != "Medium" && level != "Heavy" {
@@ -458,6 +497,47 @@ pub(crate) fn check_field_combinations(fields: &HashMap<String, String>, errors:
             errors.push(format!(
                 "[{}] 任务级别 Heavy + Permission mode plan-only：停止条件 或 交付（含 Verification gate stop condition）必须明确要求返回用户/Codex 审阅、等待明确批准、不得直接修改。当前各段均未检测到审阅交还语义",
                 error_code::HEAVY_PLAN_ONLY_MISSING_REVIEW_HANDOFF
+            ));
+        }
+    }
+
+    // ── Heavy + executable permission → independent Review gate required ──
+    // Task level is decoupled from execution authority, so a Heavy card may be
+    // edit-with-confirmation / execute-and-verify. To keep the Heavy review
+    // boundary machine-enforced (not prose-only), an executable Heavy card must
+    // declare an INDEPENDENT Review gate — human / Codex / adversarial review, or
+    // delegation to the protocol Review Gate rules. A missing or self-review-only
+    // gate is rejected (the confirmation/review gate is what keeps Heavy execution
+    // safe once the level no longer forces plan-only).
+    if level == "Heavy"
+        && (permission == "edit-with-confirmation" || permission == "execute-and-verify")
+    {
+        let review = field_val(fields, "Review gate:");
+        let review_lower = review.to_lowercase();
+        let independent_review = [
+            "codex",
+            "人工",
+            "独立",
+            "adversarial",
+            "对抗",
+            "human",
+            "independent",
+            "审阅",
+            "审查",
+            "复核",
+            "评审",
+            "审核",
+        ]
+        .iter()
+        .any(|kw| review_lower.contains(&kw.to_lowercase()));
+        // The canonical card delegates to the protocol Review Gate rules
+        // ("按协议执行…" or "按 protocol … Review Gate 规则…").
+        let protocol_delegation = review_lower.contains("按协议")
+            || (review_lower.contains("protocol") && review_lower.contains("review gate"));
+        if review.trim().is_empty() || (!independent_review && !protocol_delegation) {
+            errors.push(format!(
+                "[{}] 任务级别 Heavy + 可执行 Permission mode（edit-with-confirmation / execute-and-verify）：Review gate 必须声明独立审查（人工 / Codex / adversarial / 审阅复核，或按 protocol Review Gate 规则），不得缺失或仅由执行者自我放行",
+                error_code::HEAVY_EXECUTABLE_MISSING_REVIEW_GATE
             ));
         }
     }

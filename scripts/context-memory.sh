@@ -95,9 +95,9 @@ extract_task_summary() {
 
 extract_task_level() {
     local file="$1"
-    awk -F: '
+    awk '
         /^任务级别/ {
-            sub(/^[^：:]*[：:]/, "", $0)
+            sub(/^任务级别(：|:)[[:space:]]*/, "", $0)
             gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
             print
             exit
@@ -277,8 +277,8 @@ EOF
 extract_report_conclusion() {
     local file="$1"
     awk '
-        /^一句话结论[：:]/ {
-            sub(/^一句话结论[：:][[:space:]]*/, "", $0)
+        /^一句话结论(：|:)/ {
+            sub(/^一句话结论(：|:)[[:space:]]*/, "", $0)
             if (NF) {
                 print
                 exit

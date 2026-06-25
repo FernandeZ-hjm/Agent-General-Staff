@@ -453,6 +453,7 @@ dependencies = [
 name = "runner"
 version = "0.2.7"
 dependencies = [
+ "capability-route",
  "execution-policy",
  "receipt",
  "serde",

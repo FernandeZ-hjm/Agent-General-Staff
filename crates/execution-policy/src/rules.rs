@@ -49,16 +49,30 @@ pub(crate) fn apply_ultracode_rules(input: &TaskPolicyInput, policy: &mut Resolv
     }
 }
 
-// ── M4: Heavy + non-plan-only → plan-only ───────────────────────────────
+// ── M4: Heavy → confirmation/review signal (NO permission downgrade) ─────
 //
-// Heavy tasks default to plan-only.  The downgrade is lifted ONLY when
-// `approval_source` is a trusted source (CliFlag or RunnerEnv).
+// Task LEVEL (Light / Medium / Heavy) is a risk/review tier — it is NOT the
+// execution authority. The permission MODE is the sole execution authority.
+// M4 therefore NEVER rewrites the permission mode: a Heavy task keeps its
+// declared permission and only gains a confirmation gate (the runner must
+// prompt before mutation) plus the Review gate / stop conditions declared
+// elsewhere in the card. Consequences:
+//   - Heavy + edit-with-confirmation / execute-and-verify → executable
+//     (GateDecision Confirm); execute-and-verify is NOT capped to edit.
+//   - Heavy + plan-only / read-only → stays a plan/review card.
+// The hard STOP boundaries (protected paths, the read-only/plan-only
+// writability gate M5/M6, the generic-adapter cap M9, and release / external /
+// destructive stop conditions) are enforced by their own rules, independent of
+// the task level. Approval sources (current-task instruction / CLI flag /
+// runner env) are audit/hint signals — they are no longer a Heavy execution
+// unlock (M9 may still consult `approve_writes` as an adapter-capability
+// override).
 
-/// Apply the Heavy task permission rule (M4).
+/// Apply the Heavy task confirmation rule (M4).
 ///
-/// If the task is Heavy and the permission mode is NOT plan-only, and there
-/// is no explicit write approval from a trusted source, downgrade to
-/// plan-only and record the reason.
+/// Heavy tasks require a confirmation gate. M4 does NOT downgrade the permission
+/// mode, does NOT cap execute-and-verify, and does NOT stop — task level is
+/// decoupled from execution authority. This is the only field M4 touches.
 pub(crate) fn apply_heavy_permission_rule(
     input: &TaskPolicyInput,
     policy: &mut ResolvedExecutionPolicy,
@@ -66,58 +80,10 @@ pub(crate) fn apply_heavy_permission_rule(
     if input.task_level != "Heavy" {
         return;
     }
-
-    if input.approval_source.is_approved() {
-        // Heavy with explicit approval — executable without a plan-only round
-        // trip. Still set the confirmation gate so the runner knows to prompt.
-        policy.requires_confirmation_gate = true;
-        // execute-and-verify is default-forbidden under Heavy: a current-task
-        // instruction unlocks only edit-with-confirmation. The stronger CLI-flag
-        // / runner-env approval is required to reach execute-and-verify. Cap it
-        // (no stop — the task stays executable in edit-with-confirmation).
-        if policy.effective_permission_mode == PermissionMode::ExecuteAndVerify
-            && !input.approval_source.unlocks_execute_and_verify()
-        {
-            let before = policy.effective_permission_mode.to_string();
-            let after = PermissionMode::EditWithConfirmation.to_string();
-            record_downgrade(
-                policy,
-                DowngradeReason::heavy_execute_capped_to_edit(&before, &after),
-            );
-            policy.effective_permission_mode = PermissionMode::EditWithConfirmation;
-        }
-        return;
-    }
-
-    // Heavy without explicit approval: downgrade execute-and-verify
-    // or edit-with-confirmation to plan-only.
-    if policy.effective_permission_mode == PermissionMode::ExecuteAndVerify
-        || policy.effective_permission_mode == PermissionMode::EditWithConfirmation
-    {
-        let before = policy.effective_permission_mode.to_string();
-        let after = PermissionMode::PlanOnly.to_string();
-        record_downgrade(
-            policy,
-            DowngradeReason::heavy_defaults_to_plan_only(&before, &after),
-        );
-        policy.effective_permission_mode = PermissionMode::PlanOnly;
-        policy.requires_confirmation_gate = true;
-        // M4: Heavy task requested mutation without explicit write approval —
-        // the runner must stop, not just prompt for confirmation.
-        record_stop(
-            policy,
-            StopReason::HeavyRequiresWriteApproval {
-                requested: before,
-                effective: after,
-            },
-        );
-    }
-
-    // Heavy + already plan-only or read-only: no downgrade needed,
-    // but confirmation gate still applies.
-    if policy.effective_permission_mode == PermissionMode::PlanOnly {
-        policy.requires_confirmation_gate = true;
-    }
+    // Heavy = risk/review tier: set the confirmation gate, leave the declared
+    // permission mode untouched. The runner presents a confirmation prompt
+    // before mutation; the card's Review gate and stop conditions still apply.
+    policy.requires_confirmation_gate = true;
 }
 
 // ── M5–M6: read-only / plan-only → no write-type launch args ────────────

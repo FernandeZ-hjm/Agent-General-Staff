@@ -834,7 +834,7 @@ fn reject_other_with_claude_code_adapter() {
 }
 
 #[test]
-fn reject_heavy_with_execute_and_verify() {
+fn heavy_with_execute_and_verify_and_review_gate_passes() {
     let input = card_body(
         "路径：\n- .\n\
              Executor: Claude Code\n\
@@ -853,11 +853,9 @@ fn reject_heavy_with_execute_and_verify() {
              交付：\n返回结果\n",
     );
     let e = validate(&input);
-    assert!(!e.is_empty());
     assert!(
-        e.iter()
-            .any(|m| m.contains(error_code::FIELD_COMBINATION_MISMATCH)),
-        "Heavy + execute-and-verify should fail: {:?}",
+        e.is_empty(),
+        "Heavy + execute-and-verify should pass when Review gate is present: {:?}",
         e
     );
 }

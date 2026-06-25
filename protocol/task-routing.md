@@ -285,7 +285,9 @@ Default execution mode:
 
 - Read existing code, docs, directories, and relevant data shape.
 - Return root cause, design, and implementation plan first.
-- Default to `Permission mode: plan-only`.
+- When `Permission mode:` is unspecified, default to `plan-only` (data-safety
+  default for this high-risk class). Task level does not downgrade an explicitly
+  declared permission; a declared edit/execute mode runs under the confirmation gate.
 - Wait for user confirmation before code changes.
 - First implementation pass must be dry-run or read-only audit when data safety
   matters.

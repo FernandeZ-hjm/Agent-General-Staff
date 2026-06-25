@@ -130,39 +130,20 @@ pub fn explain_policy(input: &TaskPolicyInput) -> PolicyExplainOutput {
         },
     });
 
-    // ── M4: Heavy permission downgrade ────────────────────────────────
-    let m4_reasons: Vec<_> = policy
-        .downgrade_reasons
-        .iter()
-        .filter(|r| r.rule_id == "M4")
-        .collect();
+    // ── M4: Heavy → confirmation gate (level ≠ permission) ────────────
+    // M4 never downgrades the permission mode: the task LEVEL is a risk/review
+    // tier, and the permission MODE is the sole execution authority. A Heavy
+    // task gains a confirmation gate only; its declared permission is preserved.
     let is_heavy = input.task_level == "Heavy";
     explanations.push(PolicyExplanation {
         rule_id: "M4".to_string(),
-        rule_name: "Heavy Task Permission".to_string(),
-        decision: if !m4_reasons.is_empty() {
-            "applied"
-        } else if is_heavy {
-            "passed"
-        } else {
-            "not_applicable"
-        }
-        .to_string(),
-        field: Some("permission_mode".to_string()),
-        detail: if !m4_reasons.is_empty() {
+        rule_name: "Heavy Confirmation Gate".to_string(),
+        decision: if is_heavy { "applied" } else { "not_applicable" }.to_string(),
+        field: None,
+        detail: if is_heavy {
             format!(
-                "Heavy task requested {} without explicit write approval; downgraded to {}. Runner must stop until approval is provided.",
-                m4_reasons[0].before, m4_reasons[0].after
-            )
-        } else if is_heavy {
-            let note = if input.approval_source.is_approved() {
-                "with explicit write approval"
-            } else {
-                "already in plan-only mode"
-            };
-            format!(
-                "Heavy task {} — no downgrade needed. Confirmation gate is set (requires_confirmation_gate=true).",
-                note
+                "Heavy task: confirmation gate set (requires_confirmation_gate=true). Task level does not change the permission mode — the declared '{}' is preserved (permission is the execution authority). Review gate and stop conditions still apply.",
+                policy.effective_permission_mode
             )
         } else {
             "Not a Heavy task; M4 does not apply.".to_string()
@@ -442,10 +423,19 @@ mod tests {
     }
 
     #[test]
-    fn gate_check_heavy_execute_no_approval_stop() {
+    fn gate_check_heavy_execute_no_approval_confirm() {
+        // Heavy + execute-and-verify is executable from its declared permission
+        // alone (task level ≠ execution authority): Confirm-gated, not stopped,
+        // not downgraded.
         let output = gate_check(&heavy_execute_no_approval());
-        assert_eq!(output.decision, GateDecision::Stop);
-        assert!(output.resolved_policy.stop_before_launch);
+        assert_eq!(output.decision, GateDecision::Confirm);
+        assert!(!output.resolved_policy.stop_before_launch);
+        assert!(output.resolved_policy.requires_confirmation_gate);
+        assert!(!output.resolved_policy.was_downgraded);
+        assert_eq!(
+            output.resolved_policy.effective_permission_mode.to_string(),
+            "execute-and-verify"
+        );
     }
 
     #[test]
@@ -459,7 +449,15 @@ mod tests {
 
     #[test]
     fn gate_check_stop_json_has_decision_stop() {
-        let output = gate_check(&heavy_execute_no_approval());
+        // A genuine STOP case is the writability gate (read-only + worktree),
+        // not Heavy alone.
+        let input = TaskPolicyInput {
+            permission_mode: "read-only".into(),
+            parallelism: "worktree".into(),
+            workflow_authority: Some("plan-only".into()),
+            ..light_input()
+        };
+        let output = gate_check(&input);
         let json = serde_json::to_string(&output).unwrap();
         assert!(json.contains("\"decision\":\"stop\""));
     }
@@ -551,6 +549,8 @@ mod tests {
 
     #[test]
     fn explain_heavy_write_shows_m4_applied() {
+        // Heavy → M4 "applied" (confirmation gate set), but task level does NOT
+        // block launch: no "LAUNCH BLOCKED" safety assertion comes from the level.
         let output = explain_policy(&heavy_execute_no_approval());
         let m4 = output
             .explanations
@@ -558,12 +558,15 @@ mod tests {
             .find(|e| e.rule_id == "M4")
             .unwrap();
         assert_eq!(m4.decision, "applied");
-        // Safety assertions must include LAUNCH BLOCKED
         let has_stop = output
             .safety_assertions
             .iter()
             .any(|a| a.contains("LAUNCH BLOCKED"));
-        assert!(has_stop);
+        assert!(
+            !has_stop,
+            "Heavy task level must not block launch: {:?}",
+            output.safety_assertions
+        );
     }
 
     #[test]

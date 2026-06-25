@@ -366,7 +366,10 @@ fn extra_protocol_files(source_root: &Path, target_root: &Path) -> Vec<String> {
 fn check_public_forbidden_payload(target_root: &Path, drifts: &mut Vec<Drift>) {
     for forbidden in manifest::PUBLIC_FORBIDDEN_PAYLOAD {
         let candidate = target_root.join(forbidden.trim_end_matches('/'));
-        if candidate.exists() && !is_git_ignored(target_root, &candidate) {
+        if candidate.exists()
+            && !is_git_ignored(target_root, &candidate)
+            && !is_untracked_external_symlink(target_root, &candidate)
+        {
             drifts.push(Drift::new(
                 error_code::PUBLIC_FORBIDDEN_PAYLOAD,
                 DriftKind::PublicForbiddenPayload,
@@ -378,6 +381,64 @@ fn check_public_forbidden_payload(target_root: &Path, drifts: &mut Vec<Drift>) {
             ));
         }
     }
+}
+
+/// Whether `candidate` is a **provably-non-publishable** local-dev symlink that
+/// should be exempt from the forbidden-payload check. ALL of the following must
+/// hold; anything short of this stays flagged (fail-closed):
+///
+/// 1. it is a symlink (not a real in-tree directory);
+/// 2. it resolves OUTSIDE `target_root` (e.g. `target` → an external cargo
+///    build-cache drive) — following it cannot pull repo content into a release;
+/// 3. the repo has a `.git` AND git does NOT track the entry — so it can never
+///    enter a git-based release payload, and its link text (which may embed a
+///    machine-specific path) is never committed / published.
+///
+/// A **tracked** symlink is still repo payload (its link text is published and
+/// can leak a machine path), so it is NEVER exempt. A symlink that stays inside
+/// the repo, a real directory, or any entry in a non-git tree is also NOT exempt:
+/// without a git repo we cannot prove the entry is excluded from the release, so
+/// we fail closed and flag it. This keeps the public-boundary check strict while
+/// removing only the false positive where a dir-only `.gitignore` pattern (e.g.
+/// `/target/`) fails to match an untracked external symlink.
+fn is_untracked_external_symlink(target_root: &Path, candidate: &Path) -> bool {
+    let Ok(meta) = std::fs::symlink_metadata(candidate) else {
+        return false;
+    };
+    if !meta.file_type().is_symlink() {
+        return false;
+    }
+    // Must resolve outside the repo root (external).
+    let external = match (
+        std::fs::canonicalize(candidate),
+        std::fs::canonicalize(target_root),
+    ) {
+        (Ok(real), Ok(root)) => !real.starts_with(&root),
+        // Unresolvable target (dangling / unmounted) → not in-tree content.
+        _ => true,
+    };
+    if !external {
+        return false;
+    }
+    // Must be PROVABLY untracked: a git repo exists and does not track the entry.
+    // Without a git repo we cannot prove exclusion from the release → not exempt.
+    target_root.join(".git").exists() && !is_git_tracked(target_root, candidate)
+}
+
+/// Whether git tracks `candidate` under `root`. `git ls-files --error-unmatch`
+/// exits 0 only for a tracked path. No `.git` → not tracked.
+fn is_git_tracked(root: &Path, candidate: &Path) -> bool {
+    if !root.join(".git").exists() {
+        return false;
+    }
+    let status = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("ls-files")
+        .arg("--error-unmatch")
+        .arg(candidate)
+        .output();
+    matches!(status, Ok(o) if o.status.success())
 }
 
 fn is_git_ignored(root: &Path, candidate: &Path) -> bool {
@@ -426,10 +487,25 @@ mod tests {
         fs::write(path, content).unwrap();
     }
 
+    /// Run a git subcommand under `root` for symlink-tracking tests. Asserts
+    /// success (git is available in dev/CI). `git add` stages into the index, so
+    /// no commit / user config is needed to mark a path tracked.
+    #[cfg(unix)]
+    fn git_in(root: &Path, args: &[&str]) {
+        let ok = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        assert!(ok, "git {args:?} failed under {}", root.display());
+    }
+
     fn write_manifest(root: &Path) {
         let safety = "protocol/runtime-adapters.md\n# Test\n\n\
             ultracode is thinking intensity only — it does not change permission mode.\n\
-            Heavy tasks need explicit approval, plan-only downgrade, and confirmation gate.\n\
+            Task level does not change the permission mode; a Heavy task keeps its declared permission mode and gains a confirmation gate.\n\
             read-only and plan-only must not produce write-type launch args and must strip parallelism.\n\
             Runners must consume allowed_launch_args and effective_permission_mode.\n";
         let default_fmt = |rel: &str| format!("{rel}\n# Test\n\ndefault content\n");
@@ -650,6 +726,116 @@ mod tests {
             "public target must fail when forbidden runtime payload is present: {result:?}"
         );
         assert!(forbidden.iter().all(|d| d.severity == Severity::Fail));
+        cleanup(&source, &target);
+    }
+
+    /// An UNTRACKED `target` symlink pointing OUTSIDE the public checkout (e.g.
+    /// → an external cargo build-cache drive) is a local developer convenience,
+    /// never part of the allowlist-based published payload. The dir-only
+    /// `.gitignore` pattern `/target/` does not match a symlink, so
+    /// `is_git_ignored` alone misses it; the untracked-external-symlink exemption
+    /// removes only that false positive.
+    #[cfg(unix)]
+    #[test]
+    fn untracked_external_symlink_forbidden_payload_is_exempt() {
+        use std::os::unix::fs::symlink;
+        let (source, target) = temp_dir("untracked_external_symlink");
+        git_in(&target, &["init", "-q"]);
+        for relative in crate::manifest::PUBLIC_MANIFEST.required_files {
+            write_file(&source, relative, "same\n# Test\n\ncontent\n");
+            write_file(&target, relative, "same\n# Test\n\ncontent\n");
+        }
+        // External build-cache dir OUTSIDE the public target root, linked but NOT
+        // tracked by git (mirrors the real public checkout's `?? target`).
+        let external = target.parent().unwrap().join("external-cargo-cache");
+        fs::create_dir_all(&external).unwrap();
+        symlink(&external, target.join("target")).unwrap();
+
+        let result = check_target(
+            &source,
+            &target,
+            "public",
+            &ProjectKind::PublicCoreOnly,
+            &allowlist::default_public_allowlist(),
+        );
+        let forbidden: Vec<&String> = result
+            .drifts
+            .iter()
+            .filter(|d| d.kind == DriftKind::PublicForbiddenPayload)
+            .map(|d| &d.message)
+            .collect();
+        assert!(
+            forbidden.is_empty(),
+            "an untracked external symlink (target → external cargo cache) must NOT be flagged: {forbidden:?}"
+        );
+        cleanup(&source, &target);
+    }
+
+    /// A TRACKED external symlink is still repo payload — its link text is
+    /// published and can leak a machine path — so it must remain a forbidden
+    /// payload failure even though it resolves outside the repo.
+    #[cfg(unix)]
+    #[test]
+    fn tracked_external_symlink_forbidden_payload_still_fails() {
+        use std::os::unix::fs::symlink;
+        let (source, target) = temp_dir("tracked_external_symlink");
+        git_in(&target, &["init", "-q"]);
+        for relative in crate::manifest::PUBLIC_MANIFEST.required_files {
+            write_file(&source, relative, "same\n# Test\n\ncontent\n");
+            write_file(&target, relative, "same\n# Test\n\ncontent\n");
+        }
+        let external = target.parent().unwrap().join("external-cargo-cache");
+        fs::create_dir_all(&external).unwrap();
+        symlink(&external, target.join("target")).unwrap();
+        // Track the symlink in git → it would ship in the release payload.
+        git_in(&target, &["add", "target"]);
+
+        let result = check_target(
+            &source,
+            &target,
+            "public",
+            &ProjectKind::PublicCoreOnly,
+            &allowlist::default_public_allowlist(),
+        );
+        assert!(
+            result
+                .drifts
+                .iter()
+                .any(|d| d.kind == DriftKind::PublicForbiddenPayload),
+            "a tracked external symlink must still be flagged as forbidden payload: {result:?}"
+        );
+        cleanup(&source, &target);
+    }
+
+    /// A symlink that resolves to a path INSIDE the public checkout is still real
+    /// in-tree payload and must remain a forbidden-payload failure.
+    #[cfg(unix)]
+    #[test]
+    fn in_tree_symlink_forbidden_payload_still_fails() {
+        use std::os::unix::fs::symlink;
+        let (source, target) = temp_dir("in_tree_symlink_target");
+        for relative in crate::manifest::PUBLIC_MANIFEST.required_files {
+            write_file(&source, relative, "same\n# Test\n\ncontent\n");
+            write_file(&target, relative, "same\n# Test\n\ncontent\n");
+        }
+        let real_build = target.join(".build-output");
+        fs::create_dir_all(&real_build).unwrap();
+        symlink(&real_build, target.join("target")).unwrap();
+
+        let result = check_target(
+            &source,
+            &target,
+            "public",
+            &ProjectKind::PublicCoreOnly,
+            &allowlist::default_public_allowlist(),
+        );
+        assert!(
+            result
+                .drifts
+                .iter()
+                .any(|d| d.kind == DriftKind::PublicForbiddenPayload),
+            "an in-tree symlink to a build dir inside the repo must still be flagged: {result:?}"
+        );
         cleanup(&source, &target);
     }
 

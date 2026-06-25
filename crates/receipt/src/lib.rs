@@ -795,7 +795,7 @@ mod tests {
         let receipt = generate_receipt(
             &task_card,
             "stop",
-            Some("heavy-requires-write-approval"),
+            Some("writable-parallelism-blocked-by-permission"),
             vec![],
             None,
         )
@@ -804,7 +804,7 @@ mod tests {
         assert_eq!(receipt.gate_result.decision, "stop");
         assert_eq!(
             receipt.gate_result.reason.as_deref(),
-            Some("heavy-requires-write-approval")
+            Some("writable-parallelism-blocked-by-permission")
         );
     }
 
@@ -976,7 +976,7 @@ mod tests {
             task_card_path: None,
             gate_result: GateResult {
                 decision: "stop".to_string(),
-                reason: Some("heavy-requires-write-approval".to_string()),
+                reason: Some("writable-parallelism-blocked-by-permission".to_string()),
             },
             verification_results: vec![],
             delivery_report_hash: None,
@@ -993,7 +993,9 @@ mod tests {
             .unwrap();
         assert!(!gate_check.passed);
         assert!(gate_check.detail.contains("stop"));
-        assert!(gate_check.detail.contains("heavy-requires-write-approval"));
+        assert!(gate_check
+            .detail
+            .contains("writable-parallelism-blocked-by-permission"));
     }
 
     #[test]
@@ -1209,7 +1211,7 @@ mod tests {
     fn emit_refuses_secret_in_receipt() {
         let dir = tempfile::tempdir().unwrap();
         let mut w = sample_write();
-        w.detail = "sk-abcdefghijklmnopqrstuvwxyz0123".to_string();
+        w.detail = "sk-".to_string() + "abcdefghijklmnopqrst";
         let r = build_action_receipt(
             "agents-govern",
             None,

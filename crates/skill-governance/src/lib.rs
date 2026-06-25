@@ -423,18 +423,16 @@ pub fn check_skills(root: &Path) -> SkillCheckResult {
     let manifest_status =
         check_file_status(&manifest_path, "manifests/suite.yaml", counts_suite_entries);
 
-    // Consistency: all adopted suite entries should have adoption log refs.
-    // Optional public recommendations are metadata only and may intentionally
-    // have no adoption log entry until a human confirms adoption.
+    // Consistency: all manifest required entries should have adoption log refs
     if let Ok(content) = std::fs::read_to_string(&manifest_path) {
         if let Ok(manifest) = serde_yaml::from_str::<SuiteManifest>(&content) {
             if let Some(suite) = manifest.suite {
-                let mut adopted_manifest_skill_names: Vec<String> = Vec::new();
+                let mut manifest_skill_names: Vec<String> = Vec::new();
 
                 if let Some(required) = suite.required {
                     for entry in &required {
                         if let Some(ref name) = entry.name {
-                            adopted_manifest_skill_names.push(name.clone());
+                            manifest_skill_names.push(name.clone());
                             if entry.entry_ref.is_none() {
                                 issues.push(SkillIssue {
                                     severity: "warn".to_string(),
@@ -449,31 +447,15 @@ pub fn check_skills(root: &Path) -> SkillCheckResult {
                     }
                 }
 
-                if let Some(personal) = suite.personal {
-                    if let Some(personal_map) = personal.as_mapping() {
-                        for (key, value) in personal_map {
-                            if let Some(name) = key.as_str() {
-                                adopted_manifest_skill_names.push(name.to_string());
-                                if !value
-                                    .as_mapping()
-                                    .is_some_and(|m| m.contains_key("entry_ref"))
-                                {
-                                    issues.push(SkillIssue {
-                                        severity: "warn".to_string(),
-                                        category: "missing_entry_ref".to_string(),
-                                        detail: format!(
-                                            "Personal skill '{}' has no entry_ref in manifest",
-                                            name
-                                        ),
-                                    });
-                                }
-                            }
+                if let Some(optional) = suite.optional {
+                    for entry in &optional {
+                        if let Some(ref name) = entry.name {
+                            manifest_skill_names.push(name.clone());
                         }
                     }
                 }
 
-                // Cross-reference: adoption log should contain adopted manifest
-                // skills. Optional recommendations are excluded.
+                // Cross-reference: adoption log should contain all manifest skills
                 if let Ok(adoption_content) = std::fs::read_to_string(&adoption_path) {
                     if let Ok(adoption) = serde_yaml::from_str::<AdoptionLog>(&adoption_content) {
                         if let Some(entries) = adoption.entries {
@@ -482,7 +464,7 @@ pub fn check_skills(root: &Path) -> SkillCheckResult {
                                 .filter_map(|e| e.get("skill_name").and_then(|v| v.as_str()))
                                 .collect();
 
-                            let missing_from_adoption: Vec<&String> = adopted_manifest_skill_names
+                            let missing_from_adoption: Vec<&String> = manifest_skill_names
                                 .iter()
                                 .filter(|n| !adopted_names.contains(&n.as_str()))
                                 .collect();
@@ -491,11 +473,10 @@ pub fn check_skills(root: &Path) -> SkillCheckResult {
                                 name: "manifest-to-adoption-log".to_string(),
                                 passed: missing_from_adoption.is_empty(),
                                 detail: if missing_from_adoption.is_empty() {
-                                    "All adopted manifest skills have adoption log entries"
-                                        .to_string()
+                                    "All manifest skills have adoption log entries".to_string()
                                 } else {
                                     format!(
-                                        "{} adopted manifest skill(s) missing from adoption log: {}",
+                                        "{} manifest skill(s) missing from adoption log: {}",
                                         missing_from_adoption.len(),
                                         missing_from_adoption
                                             .iter()
@@ -977,7 +958,7 @@ const RISK_HINT_KEYWORDS: &[&str] = &[
     "api key",
     "api_key",
     "bearer",
-    "node-local secret",
+    "node secret",
     "rm -rf",
     "sudo ",
     "git reset --hard",
@@ -1558,15 +1539,12 @@ mod tests {
 
     #[test]
     fn test_scan_migrated_manifest() {
-        // Scan the public suite manifest in the repo.
+        // Scan the migrated suite manifest in the repo.
         let root = repo_root();
         let result = scan_skills(&root);
         assert_eq!(result.schema_version, SCHEMA_VERSION);
-        // The public edition exposes installable skill entries as optional
-        // metadata only; private/personal skill profiles are not distributed.
-        // auto-brainstorm/auto-debug/auto-verify were retired in 2.7 (11 → 8),
-        // then the caveman-commit/caveman-review local aliases were removed in
-        // the upstream-name alignment (8 → 6).
+        // Public edition ships governance runtime only. Third-party skill bodies
+        // are recommendation-only optional entries, never bundled or auto-installed.
         assert_eq!(result.summary.available, 0);
         assert_eq!(result.summary.optional, 6);
         assert_eq!(result.summary.personal, 0);
@@ -1574,15 +1552,15 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_public_manifest_excludes_personal_profile() {
+    fn test_scan_personal_manifest_metadata() {
         let root = repo_root();
         let result = scan_skills(&root);
         assert!(
             result
                 .skills
                 .iter()
-                .all(|skill| skill.status != SkillStatus::Personal),
-            "public suite manifest must not expose personal skill metadata"
+                .all(|s| s.status != SkillStatus::Personal),
+            "public suite manifest must not bundle personal skills"
         );
     }
 

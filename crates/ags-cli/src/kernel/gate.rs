@@ -72,8 +72,17 @@ fn cmd_gate_check(path: &str, format: &str, approve_writes: bool, current_task_a
         }
     }
 
-    if output.decision == execution_policy::GateDecision::Stop {
-        std::process::exit(1);
+    // Exit code IS the gate contract for callers that gate on process status:
+    //   allow   → 0  (proceed autonomously)
+    //   confirm → 2  (executable, but the confirmation gate must be honored
+    //                 first — distinct from allow so an exit-code-based caller
+    //                 cannot auto-run a Heavy confirmation card without the
+    //                 confirmation handshake)
+    //   stop    → 1  (blocked / validation failure)
+    match output.decision {
+        execution_policy::GateDecision::Stop => std::process::exit(1),
+        execution_policy::GateDecision::Confirm => std::process::exit(2),
+        execution_policy::GateDecision::Allow => {}
     }
 }
 /// Compute the prompt-request gate `decision` + `block_reason`. Deliberately a
@@ -254,6 +263,13 @@ fn cmd_gate_prompt_request(
             match &capability_route.primary {
                 Some(p) => println!("  primary: {}", p),
                 None => println!("  primary: (none)"),
+            }
+            if let Some(subroute) = &capability_route.subroute {
+                println!(
+                    "  subroute: {} [{}]",
+                    subroute.family,
+                    subroute.selected_capabilities.join(", ")
+                );
             }
             for rec in &capability_route.recommendations {
                 println!(
@@ -469,6 +485,13 @@ fn cmd_gate_capability_request(request_arg: &str, target: &Path, for_agent: &str
                 Some(p) => println!("Primary: {}", p),
                 None => println!("Primary: (none)"),
             }
+            if let Some(subroute) = &route.subroute {
+                println!(
+                    "Subroute: {} [{}]",
+                    subroute.family,
+                    subroute.selected_capabilities.join(", ")
+                );
+            }
             for rec in &route.recommendations {
                 println!(
                     "  - {} [{} → {}] priority={} {}{}",
@@ -491,6 +514,88 @@ fn cmd_gate_capability_request(request_arg: &str, target: &Path, for_agent: &str
         }
     }
     // Advisory: never a blocking exit code.
+}
+
+/// Shared dispatch: `gate skill-tags` — runtime availability gate for a task
+/// card's trailing `[skill: …]` tags. Static gate (registry routable + legal
+/// invoke_hint) is enforced by the validator at compile time; this adds the live
+/// snapshot availability check. A rejected tag → decision = stop (exit 1).
+fn cmd_gate_skill_tags(path: &str, target: &Path, for_agent: &str, format: &str) {
+    use std::io::Read;
+
+    let display_path = if path == "-" {
+        "(stdin)".to_string()
+    } else {
+        path.to_string()
+    };
+    let content = if path == "-" {
+        let mut buf = String::new();
+        if let Err(e) = std::io::stdin().read_to_string(&mut buf) {
+            eprintln!("gate skill-tags: 读取失败 — {}", e);
+            std::process::exit(1);
+        }
+        buf
+    } else {
+        match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("{}: 读取失败 — {}", display_path, e);
+                std::process::exit(1);
+            }
+        }
+    };
+
+    let tags = task_card_validator::extract_skill_tags(&content);
+    let root = capability_route_root(target);
+    let gate = capability_route::verify_skill_tags(&tags, &root, for_agent);
+    let decision = if gate.all_accepted { "allow" } else { "stop" };
+
+    match format {
+        "json" => {
+            let out = serde_json::json!({
+                "gate": "skill_tags",
+                "decision": decision,
+                "active_host": gate.active_host,
+                "snapshot_hash": gate.snapshot_hash,
+                "all_accepted": gate.all_accepted,
+                "rejected": gate.rejected,
+                "verdicts": serde_json::to_value(&gate.verdicts).unwrap_or(serde_json::Value::Null),
+            });
+            match serde_json::to_string_pretty(&out) {
+                Ok(s) => println!("{}", s),
+                Err(e) => {
+                    eprintln!("JSON serialization error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        _ => {
+            println!("Gate: skill-tags");
+            println!("Path: {}", display_path);
+            println!("Active host: {}", gate.active_host);
+            println!("Snapshot: {}", gate.snapshot_hash);
+            println!("Decision: {}", decision);
+            if tags.is_empty() {
+                println!("  (no [skill: …] tags found)");
+            }
+            for v in &gate.verdicts {
+                println!(
+                    "  - [skill: {}] {} (routable={}, availability={})",
+                    v.tag,
+                    if v.accepted { "ACCEPT" } else { "REJECT" },
+                    v.registry_routable,
+                    val_str(serde_json::to_value(v.availability)),
+                );
+                if !v.accepted {
+                    println!("      {}", v.reason);
+                }
+            }
+        }
+    }
+
+    if !gate.all_accepted {
+        std::process::exit(1);
+    }
 }
 
 pub(crate) fn run(action: GateAction) {
@@ -519,6 +624,12 @@ pub(crate) fn run(action: GateAction) {
             for_agent,
             format,
         } => cmd_gate_capability_request(&request, &target, &for_agent, &format),
+        GateAction::SkillTags {
+            path,
+            target,
+            for_agent,
+            format,
+        } => cmd_gate_skill_tags(&path, &target, &for_agent, &format),
     }
 }
 

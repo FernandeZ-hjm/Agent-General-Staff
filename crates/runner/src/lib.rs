@@ -18,7 +18,9 @@
 //! - `cursor`: structured stub — reports launch plan, marks is_stub.
 //! - `generic`: capped at plan-only, requires human handoff.
 
+use capability_route::SkillTagGate;
 use execution_policy::{GateCheckOutput, ResolvedExecutionPolicy};
+use std::path::{Path, PathBuf};
 
 // ── Public types ──────────────────────────────────────────────────────────
 
@@ -45,6 +47,13 @@ pub struct LaunchPlan {
 
     // Adapter plan
     pub adapter: AdapterPlan,
+
+    // Runtime skill-tag availability gate (the third gate). `None` when the card
+    // carries no trailing `[skill: …]` tags or the runner stopped before the
+    // launch-plan phase (read/validation failure, check-only). Present on the
+    // launch-plan path; a non-`all_accepted` gate forces `gate_decision = stop`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill_tags_gate: Option<SkillTagGate>,
 
     // Receipt / verification / delivery report planning
     pub receipt_plan: ReceiptPlan,
@@ -90,10 +99,11 @@ pub const SCHEMA_VERSION: &str = "2.0-runner";
 ///
 /// `check_only` — stop after gate check, don't build full launch plan.
 /// `dry_run` — full pipeline, mark as dry run.
-/// `approve_writes` — pass write approval to the policy resolver.
+/// `approve_writes` — pass the write-approval audit/hint signal to the resolver
+/// (may act as the M9 generic-adapter capability override).
 /// `current_task_approval` — pass the host-detected, current-task execution
-/// instruction to the resolver. This unlocks Heavy `edit-with-confirmation`
-/// only; it never unlocks Heavy `execute-and-verify`.
+/// instruction to the resolver as an audit/hint signal. Task level does not
+/// downgrade the permission mode, so neither signal is a Heavy execution unlock.
 ///
 /// Returns `LaunchPlan` on validation pass, or a minimal stop plan on
 /// validation failure. The caller checks `validation_passed` and
@@ -104,6 +114,52 @@ pub fn run_task_card(
     dry_run: bool,
     approve_writes: bool,
     current_task_approval: bool,
+) -> LaunchPlan {
+    // The runtime skill-tag gate reads the manifest routing authority + the
+    // machine-local capability snapshot/enrollment. Resolve both from the real
+    // process cwd / runtime home; tests use `run_task_card_inner` to inject
+    // hermetic roots.
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let manifest_root = capability_route::locate_manifest_root(&cwd);
+    let runtime_home = capability_route::locate_runtime_home();
+    run_task_card_inner(
+        task_card_path,
+        check_only,
+        dry_run,
+        approve_writes,
+        current_task_approval,
+        &manifest_root,
+        &runtime_home,
+    )
+}
+
+/// Map a resolved runtime adapter to the host identifier the runtime skill-tag
+/// gate probes. `generic` / unknown → host-agnostic (`""`), which is fail-closed
+/// conservative: with no positive host visibility evidence, any `[skill: …]` tag
+/// reads as not-available and the launch stops.
+fn host_for_adapter(adapter: &str) -> &str {
+    match adapter {
+        "claude-code" => "claude-code",
+        "codex-local" => "codex",
+        "cursor" => "cursor",
+        _ => "",
+    }
+}
+
+/// Core of [`run_task_card`] with the skill-tag gate's `manifest_root` and
+/// `runtime_home` injected (hermetic in tests; real cwd / runtime home in
+/// production via the public wrapper). The runtime skill-tag availability gate
+/// (the third gate) runs on the launch-plan path only — read/validation failures
+/// and check-only return before it, so the offline policy gate stays static.
+#[allow(clippy::too_many_arguments)]
+pub fn run_task_card_inner(
+    task_card_path: &str,
+    check_only: bool,
+    dry_run: bool,
+    approve_writes: bool,
+    current_task_approval: bool,
+    manifest_root: &Path,
+    runtime_home: &Path,
 ) -> LaunchPlan {
     let mode = if check_only {
         "check-only"
@@ -133,6 +189,7 @@ pub fn run_task_card(
                 gate_error_kind: Some("read_error".to_string()),
                 resolved_policy: None,
                 adapter: stub_adapter("generic", "read error — cannot resolve adapter"),
+                skill_tags_gate: None,
                 receipt_plan: empty_receipt_plan(""),
                 verification_log_refs: vec![],
                 delivery_report_ref: String::new(),
@@ -156,6 +213,7 @@ pub fn run_task_card(
                 gate_error_kind: Some("validation_failed".to_string()),
                 resolved_policy: None,
                 adapter: stub_adapter("generic", "validation failed — cannot resolve adapter"),
+                skill_tags_gate: None,
                 receipt_plan: empty_receipt_plan(&task_card_hash),
                 verification_log_refs: vec![],
                 delivery_report_ref: String::new(),
@@ -169,8 +227,8 @@ pub fn run_task_card(
     // execution parameters come from the resolved policy.
     // Use the canonical approval builder shared with the CLI gate and the AGS
     // MCP. `--current-task-approval` is structured live-request evidence from
-    // the host/operator; it is never read from task-card prose and only unlocks
-    // Heavy edit-with-confirmation, not execute-and-verify.
+    // the host/operator; it is never read from task-card prose and is an
+    // audit/hint signal only — task level does not downgrade the permission mode.
     let input = execution_policy::TaskPolicyInput::from_fields_with_approval(
         &card.fields,
         approve_writes,
@@ -202,6 +260,9 @@ pub fn run_task_card(
                 stub_reason: Some("check-only mode — no adapter resolved".to_string()),
                 executor_binary: String::new(),
             },
+            // check-only stops at the offline policy gate; the runtime skill-tag
+            // gate belongs to the launch-plan path (dry-run / plan) below.
+            skill_tags_gate: None,
             receipt_plan: ReceiptPlan {
                 will_generate: false,
                 receipt_id_prefix: format!(
@@ -217,13 +278,51 @@ pub fn run_task_card(
         };
     }
 
+    // ── Phase 5.5: Runtime skill-tag availability gate (the third gate) ──
+    // The validator already enforced the static gates offline: (1) the tag is
+    // registry-routable and (2) it has a legal `[skill: …]` invoke_hint. This is
+    // the runtime gate (3): the live machine snapshot must judge each trailing
+    // `[skill: …]` tag Available for the active host (enrolled + canonical
+    // present + auth satisfied + host-visible + healthy). It runs automatically
+    // on every launch-plan path — this is the main task-card execution chain
+    // (`ags run` → `scripts/run-task-card.sh`), not a manual side command. A
+    // rejected tag is a launch blocker: deterministic and fail-closed.
+    let active_host = host_for_adapter(&policy.runtime_adapter);
+    let skill_tags = task_card_validator::extract_skill_tags(&content);
+    let skill_tags_gate: Option<SkillTagGate> = if skill_tags.is_empty() {
+        None
+    } else {
+        Some(capability_route::verify_skill_tags_with_runtime_home(
+            &skill_tags,
+            manifest_root,
+            active_host,
+            runtime_home,
+        ))
+    };
+    let skill_tags_blocked = skill_tags_gate
+        .as_ref()
+        .map(|g| !g.all_accepted)
+        .unwrap_or(false);
+
+    // The launch is blocked if the policy resolver stopped it OR a skill tag is
+    // unavailable at runtime. Either reason makes the card non-launchable.
+    let launch_blocked = policy.stop_before_launch || skill_tags_blocked;
+    let (decision_str, gate_error_kind) = if skill_tags_blocked {
+        (
+            "stop".to_string(),
+            Some("skill_tags_unavailable".to_string()),
+        )
+    } else {
+        (decision_str, None)
+    };
+
     // ── Phase 6: Adapter resolution ────────────────────────────────────
     let adapter_plan = resolve_adapter(&policy, &display_path);
 
     // ── Phase 7: Receipt / verification / delivery planning ────────────
     let gate_result_for_receipt = decision_str.clone();
     let receipt_plan = ReceiptPlan {
-        will_generate: !policy.stop_before_launch,
+        will_generate: !launch_blocked,
         receipt_id_prefix: format!(
             "receipt-{}",
             &task_card_hash[..12.min(task_card_hash.len())]
@@ -243,7 +342,10 @@ pub fn run_task_card(
         "delivery-report.md".to_string(),
     ];
 
-    let delivery_report_ref = if policy.stop_before_launch {
+    let delivery_report_ref = if skill_tags_blocked {
+        "BLOCKED — delivery report not applicable (runtime skill-tag gate rejected a tag)"
+            .to_string()
+    } else if policy.stop_before_launch {
         "BLOCKED — delivery report not applicable (stop_before_launch=true)".to_string()
     } else {
         "delivery-report.md (generate after execution)".to_string()
@@ -256,9 +358,10 @@ pub fn run_task_card(
         validation_passed: true,
         validation_errors: vec![],
         gate_decision: decision_str,
-        gate_error_kind: None,
+        gate_error_kind,
         resolved_policy: Some(policy),
         adapter: adapter_plan,
+        skill_tags_gate,
         receipt_plan,
         verification_log_refs,
         delivery_report_ref,
@@ -480,6 +583,27 @@ pub fn render_text(plan: &LaunchPlan) -> String {
         }
     }
     lines.push(String::new());
+
+    // Runtime skill-tag availability gate (the third gate)
+    if let Some(ref gate) = plan.skill_tags_gate {
+        lines.push("─ Skill-Tag Gate (runtime) ─".to_string());
+        lines.push(format!("  Active host:  {}", gate.active_host));
+        lines.push(format!("  Snapshot:     {}", gate.snapshot_hash));
+        lines.push(format!("  All accepted: {}", gate.all_accepted));
+        for v in &gate.verdicts {
+            lines.push(format!(
+                "    - [skill: {}] {} (routable={}, availability={})",
+                v.tag,
+                if v.accepted { "ACCEPT" } else { "REJECT" },
+                v.registry_routable,
+                serde_json::to_value(v.availability)
+                    .ok()
+                    .and_then(|x| x.as_str().map(String::from))
+                    .unwrap_or_default(),
+            ));
+        }
+        lines.push(String::new());
+    }
 
     // Receipt plan
     lines.push("─ Receipt / Verification / Delivery ─".to_string());
@@ -811,5 +935,137 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── Runtime skill-tag availability gate (the third gate) integration ─────
+
+    const VALID_CARD: &str = include_str!("../../../tests/fixtures/valid-full.md");
+
+    fn repo_root_for_test() -> PathBuf {
+        // crates/runner → repo root.
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("repo root resolves")
+    }
+
+    fn unique_tmp(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "ags-runner-skilltag-{}-{}",
+            label,
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn host_for_adapter_maps_known_adapters() {
+        assert_eq!(host_for_adapter("claude-code"), "claude-code");
+        assert_eq!(host_for_adapter("codex-local"), "codex");
+        assert_eq!(host_for_adapter("cursor"), "cursor");
+        // generic / unknown → host-agnostic (fail-closed).
+        assert_eq!(host_for_adapter("generic"), "");
+        assert_eq!(host_for_adapter("anything-else"), "");
+    }
+
+    #[test]
+    fn runtime_skill_tag_gate_stops_unavailable_tag() {
+        // The card PASSES the offline static validator (codebase-design is a
+        // routable registry tag), but its runtime availability fails: an empty
+        // runtime home has no enrollment evidence, so the capability fail-closes
+        // (`not-enrolled`) and the third gate stops the launch. This proves the
+        // runtime gate runs automatically on the `ags run` launch-plan path —
+        // not only as the manual `ags gate skill-tags` subcommand.
+        let dir = unique_tmp("stop");
+        std::fs::create_dir_all(&dir).unwrap();
+        let card_path = dir.join("card.md");
+        std::fs::write(
+            &card_path,
+            format!("{VALID_CARD}\n[skill: codebase-design]\n"),
+        )
+        .unwrap();
+        let runtime_home = dir.join("runtime-home"); // absent enrollment.json → off
+
+        let plan = run_task_card_inner(
+            &card_path.to_string_lossy(),
+            false, // not check-only
+            true,  // dry-run (launch-plan path)
+            false,
+            false,
+            &repo_root_for_test(),
+            &runtime_home,
+        );
+        assert!(plan.validation_passed, "card must pass static validation");
+        assert_eq!(plan.gate_decision, "stop");
+        assert_eq!(
+            plan.gate_error_kind.as_deref(),
+            Some("skill_tags_unavailable")
+        );
+        let gate = plan.skill_tags_gate.expect("skill_tags_gate present");
+        assert!(!gate.all_accepted);
+        assert!(gate.rejected.iter().any(|t| t == "codebase-design"));
+        assert!(
+            !plan.receipt_plan.will_generate,
+            "a blocked launch must not plan a receipt"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn runtime_skill_tag_gate_absent_when_card_has_no_tags() {
+        // The base valid-full fixture has no trailing [skill: …] tags, so the
+        // runtime gate has nothing to check and never appears / never stops.
+        let dir = unique_tmp("notags");
+        std::fs::create_dir_all(&dir).unwrap();
+        let card_path = dir.join("card.md");
+        std::fs::write(&card_path, VALID_CARD).unwrap();
+        let runtime_home = dir.join("runtime-home");
+
+        let plan = run_task_card_inner(
+            &card_path.to_string_lossy(),
+            false,
+            true,
+            false,
+            false,
+            &repo_root_for_test(),
+            &runtime_home,
+        );
+        assert!(plan.validation_passed);
+        assert!(plan.skill_tags_gate.is_none());
+        assert_ne!(
+            plan.gate_error_kind.as_deref(),
+            Some("skill_tags_unavailable")
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn check_only_skips_runtime_skill_tag_gate() {
+        // check-only stops at the offline policy gate; the runtime skill-tag gate
+        // belongs to the launch-plan path and must NOT run in check-only mode.
+        let dir = unique_tmp("checkonly");
+        std::fs::create_dir_all(&dir).unwrap();
+        let card_path = dir.join("card.md");
+        std::fs::write(
+            &card_path,
+            format!("{VALID_CARD}\n[skill: codebase-design]\n"),
+        )
+        .unwrap();
+        let runtime_home = dir.join("runtime-home");
+
+        let plan = run_task_card_inner(
+            &card_path.to_string_lossy(),
+            true, // check-only
+            false,
+            false,
+            false,
+            &repo_root_for_test(),
+            &runtime_home,
+        );
+        assert_eq!(plan.mode, "check-only");
+        assert!(plan.skill_tags_gate.is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

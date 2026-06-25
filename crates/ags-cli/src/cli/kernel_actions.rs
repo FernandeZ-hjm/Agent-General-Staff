@@ -64,11 +64,12 @@ pub(crate) enum PolicyAction {
         /// Output format: text (human-readable) or json (machine-readable)
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
-        /// Explicit approval for Heavy task writes (CLI flag).
+        /// Write-approval audit/hint signal (CLI flag); may act as the M9
+        /// generic-adapter capability override.
         #[arg(long, default_value_t = false)]
         approve_writes: bool,
-        /// Structured current-task approval from the live request. Unlocks
-        /// Heavy + edit-with-confirmation only (not execute-and-verify).
+        /// Structured current-task approval signal from the live request
+        /// (audit/hint only — task level does not downgrade the permission mode).
         #[arg(long, default_value_t = false)]
         current_task_approval: bool,
     },
@@ -80,27 +81,29 @@ pub(crate) enum PolicyAction {
         /// Output format: text (human-readable) or json (machine-readable)
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
-        /// Explicit approval for Heavy task writes (CLI flag).
+        /// Write-approval audit/hint signal (CLI flag); may act as the M9
+        /// generic-adapter capability override.
         #[arg(long, default_value_t = false)]
         approve_writes: bool,
-        /// Structured current-task approval from the live request. Unlocks
-        /// Heavy + edit-with-confirmation only (not execute-and-verify).
+        /// Structured current-task approval signal from the live request
+        /// (audit/hint only — task level does not downgrade the permission mode).
         #[arg(long, default_value_t = false)]
         current_task_approval: bool,
     },
 
-    /// Validate, resolve, and exit with decision: 0 = no stop, 1 = stop/validation fail.
+    /// Validate, resolve, and exit with decision: 0 = allow, 2 = confirm (honor confirmation gate), 1 = stop/validation fail.
     Check {
         /// Task card file (use "-" for stdin)
         path: String,
         /// Output format: text (human-readable) or json (machine-readable)
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
-        /// Explicit approval for Heavy task writes (CLI flag).
+        /// Write-approval audit/hint signal (CLI flag); may act as the M9
+        /// generic-adapter capability override.
         #[arg(long, default_value_t = false)]
         approve_writes: bool,
-        /// Structured current-task approval from the live request. Unlocks
-        /// Heavy + edit-with-confirmation only (not execute-and-verify).
+        /// Structured current-task approval signal from the live request
+        /// (audit/hint only — task level does not downgrade the permission mode).
         #[arg(long, default_value_t = false)]
         current_task_approval: bool,
     },
@@ -119,13 +122,13 @@ pub(crate) enum GateAction {
         /// Output format: text (human-readable) or json (machine-readable)
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
-        /// Explicit approval for Heavy task writes (CLI flag). Unlocks up to
-        /// execute-and-verify.
+        /// Write-approval audit/hint signal (CLI flag); may act as the M9
+        /// generic-adapter capability override.
         #[arg(long, default_value_t = false)]
         approve_writes: bool,
         /// Structured current-task approval: the host detected an explicit user
         /// execution instruction ("实现 / 修复 / 做完") on the live request.
-        /// Unlocks Heavy + edit-with-confirmation only (not execute-and-verify).
+        /// Audit/hint only — task level does not downgrade the permission mode.
         /// Never derived from task-card text.
         #[arg(long, default_value_t = false)]
         current_task_approval: bool,
@@ -193,6 +196,27 @@ pub(crate) enum GateAction {
         target: PathBuf,
         /// Active host the route targets (default `claude-code`). An empty value
         /// is host-agnostic (conservative, fail-closed).
+        #[arg(long = "for", default_value = "claude-code")]
+        for_agent: String,
+        /// Output format: text (human-readable) or json (machine-readable)
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Task-card skill-tag availability gate (the three-gate rule).
+    ///
+    /// Validates a task card's trailing `[skill: …]` tags against BOTH the static
+    /// registry (route_state: routable + legal invoke_hint) AND the live machine
+    /// snapshot (visible + healthy + auth-satisfied + enrolled for the host). A
+    /// degraded / auth-required / not-visible / unmanaged / not-routable tag is
+    /// REJECTED — decision = stop. Deterministic, fail-closed. This is the runtime
+    /// availability layer on top of the validator's offline static gate.
+    SkillTags {
+        /// Task card file (use "-" for stdin).
+        path: String,
+        /// Target repository path used to read capability manifests + snapshot.
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+        /// Active host the tags must be available for (default `claude-code`).
         #[arg(long = "for", default_value = "claude-code")]
         for_agent: String,
         /// Output format: text (human-readable) or json (machine-readable)
@@ -457,7 +481,8 @@ pub(crate) enum ReleaseAction {
     ///
     /// Public profiles include the public Rust workspace and governance
     /// runtime, while excluding build output, local/private runtime state, real
-    /// memory, preinstalled skill packs, and local agent config.
+    /// memory, preinstalled skill packs, local agent config, and local runtime
+    /// surfaces.
     /// `private-full` includes everything. Dry-run only, nothing is written.
     Package {
         /// Package profile: public-full or private-full

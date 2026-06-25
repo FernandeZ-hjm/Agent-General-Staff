@@ -325,13 +325,13 @@ Executor 收到任务卡后，必须先读取以下文件再开始工作：
 - 涉及数据、向量库、历史产物、迁移、不可逆操作、架构调整
 - Executor 先给 root cause / design / implementation plan / verification plan
 
-**任务级别与 Permission mode 解耦。** 任务级别（Light/Medium/Heavy）是**风险/审查**等级；Permission mode（plan-only / edit-with-confirmation / execute-and-verify）是**当前执行权限**。Heavy 不等于必须 plan-only：
+**任务级别与 Permission mode 解耦。** 任务级别（Light/Medium/Heavy）是**风险/审查**等级；Permission mode（plan-only / edit-with-confirmation / execute-and-verify）是**当前执行权限**，也是唯一的执行授权。任务级别不改写 Permission mode：
 
-- **默认**（无结构化 approval）：Heavy 写入型卡降级为 `plan-only` 并 stop——Executor 先给计划，等待确认。
-- **结构化 current-task approval**：当用户在**当前上下文**对**本任务**明确发出执行指令（"实现 / 修复 / 做完 / 一口气做完 / 做完核验" 等，由 `prompt-request-classifier` 确定性识别，**不**取自任务卡文本）时，允许直接生成并执行 `Heavy + edit-with-confirmation` 卡，**不必**先 plan-only 再回头改卡。此 approval 经 `ags gate check --current-task-approval` / runner policy 作为 `ApprovalSource::CurrentTaskInstruction` **可审计地**传递，resolver 不因级别是 Heavy 就把可执行卡降级。
-- **`Heavy + execute-and-verify` 默认禁止**：current-task instruction 只解锁 `edit-with-confirmation`；`execute-and-verify` 需更强的 `--approve-writes`（CliFlag）或 runner-env approval，否则 resolver 把它 cap 到 `edit-with-confirmation`。
-- **不得**让 Claude Code 常规先出 plan-only 再回头改卡——该收敛流程只用于高危发布、迁移、破坏性动作。
-- **安全边界不变**：stable/public 发布、外部写入（Lark/邮件/审批）、删除 runtime、credential/auth 仍各自单独确认或停止；任务卡自由文本不能替代结构化 approval。
+- **Heavy ≠ plan-only**：Heavy 卡保留其声明的 Permission mode，只额外获得 confirmation gate 与 review gate；resolver 不因级别是 Heavy 就降级可执行卡。只要 Permission mode 不是 read-only / plan-only，卡就进入可执行链路（带 confirmation gate），`execute-and-verify` 也不被 cap 到 `edit-with-confirmation`。
+- **未声明 Permission mode 的默认**：当 Heavy 卡未显式声明 Permission mode 时，compiler 填入保守默认 `plan-only`（这是对未声明字段的默认值，不是级别降级；**显式声明**的 Permission mode 一律保留）。
+- **approval 信号只是审计/提示**：`current-task-approval`（`实现 / 修复 / 做完` 等，由 `prompt-request-classifier` 确定性识别，**不**取自任务卡文本）与 `--approve-writes` 经 `ApprovalSource` **可审计地**传递，但**不再**是 Heavy 执行解锁条件；`--approve-writes` 仍可作为 generic adapter（M9）能力上限的 override。任务卡自由文本永远不是 approval 来源。
+- **plan-only 收敛流程仅按需使用**：只有当卡本身是 plan-only（显式声明或未声明时的默认）时，Executor 才先出 root cause / design / implementation plan / verification plan 并等待人工确认；该收敛流程用于高危发布、迁移、破坏性动作，不是所有 Heavy 卡的强制前置。
+- **安全边界不变**：stable/public 发布、外部写入（Lark/邮件/审批）、删除 runtime、credential/auth、删除/迁移/不可逆操作仍各自单独确认或停止；read-only / plan-only 仍不得产生 write-type launch args；Heavy 仍必须走 confirmation / review gate。
 
 任务卡骨架仍只有唯一 canonical card，不因解耦引入第二模板。任务卡中声明的级别优先于 Executor 自行判断。如 Executor 发现实际风险高于任务卡标注的级别，必须停止并报告，不得自行降级执行。
 

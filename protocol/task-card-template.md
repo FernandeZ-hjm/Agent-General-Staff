@@ -35,9 +35,13 @@ Permission mode: read-only / plan-only / edit-with-confirmation / execute-and-ve
 
 Parallelism: none / subagent / worktree / multi-session / agent-team
 
+Execution effort: low / normal / high / exhaustive
+
+Workflow authority: none / within-card / plan-only / allowed
+
 任务级别：Light / Medium / Heavy
 
-Heavy 写入批准规则按 protocol/agent-task-protocol.md 执行；“继续”、上下文压缩恢复或 task-notification 接续不算 Heavy 写入批准。
+Heavy 的 confirmation / review gate 规则按 protocol/agent-task-protocol.md 执行；任务级别不改写 Permission mode（未声明时 compiler 默认 plan-only，显式声明保留）。“继续”、上下文压缩恢复或 task-notification 接续不算执行 mutation 的批准。
 
 Review gate:
 - 按 protocol/agent-task-protocol.md 的 Review Gate 规则执行当前任务级别。
@@ -53,7 +57,7 @@ Review gate:
 
 记忆胶囊：
 - 无 / `$HOME/.agents/memory/projects/<project-slug>/context-capsule.md`
-- 若存在，同步读取同目录 `task-memory.md`；不得覆盖 `context-capsule.md`
+- AGS start hook 已注入时以注入上下文为准；否则同步读取同目录 `task-memory.md`；不得覆盖 `context-capsule.md`
 
 任务存档：
 - 无 / `$HOME/.agents/memory/projects/<project-slug>/task-memory.md`
@@ -79,6 +83,12 @@ Review gate:
 非目标：
 - non_goal_1
 - non_goal_2
+
+子任务编排：
+- mode: none / optional / required
+- <可选槽位：声明可拆分结构、子任务边界、只读/可写范围、回收要求；省略即 mode=none>
+- constraints:
+  - <子任务约束：只读/可写边界、禁止越界、结果汇总回主 executor>
 
 实施要求：
 - requirement_1
@@ -122,8 +132,8 @@ Verification gate:
 - 固定规则（安全、分级、runtime adapter、Review gate、验证、交付格式）在协议文件中，任务卡不再重复。
 - 为了保持执行稳定性和缓存友好性，任务卡必须使用固定骨架：标题、字段顺序、基础措辞保持不变；只在固定槽位填写动态任务内容。
 - `项目画像` 是稳定上下文入口。项目存在 `config/agent-project-profile.yaml` 时只引用路径或提取必要短事实，不把整份画像粘进任务卡；项目无画像时填写 `无`。
-- `记忆胶囊` 是人工项目宪章入口。存在本地 capsule 时只引用路径，不粘贴长记忆；没有 capsule 时填写 `无`。Executor 开始任务前必须读取 capsule；如同目录存在 `task-memory.md`，也必须读取。若任务目标与 capsule 的 `## 项目设计目的` 冲突，停止并报告。
-- `任务存档` 是自动任务记忆入口。存在本地 `task-memory.md` 时填写该路径；没有任务记忆时填写 `无`。使用 runner 执行会生成收据；启用 memory capture 时，`context-memory.sh capture` 会刷新本机 `task-memory.md` 并把完整证据归档到 `$HOME/.agents/memory/projects/<project-slug>/task-archive/`。
+- `记忆胶囊` 是人工项目宪章入口。存在本地 capsule 时只引用路径，不粘贴长记忆；没有 capsule 时填写 `无`。AGS-governed host 正常由只读 `SessionStart` memory hook 自动注入 capsule 和同目录 `task-memory.md`；hook 不可用、未安装或外部 executor 无法接收注入时，Executor 开始任务前必须按路径读取。若任务目标与 capsule 的 `## 项目设计目的` 冲突，停止并报告。
+- `任务存档` 是自动任务记忆入口。存在本地 `task-memory.md` 时填写该路径；没有任务记忆时填写 `无`。使用 runner 执行后，最终交付报告会先沉淀到本机 `task-memory.md` / `task-archive/`，再打印到前台；完整证据保存在 `$HOME/.agents/memory/projects/<project-slug>/task-archive/`。
 - `目标文件夹路径` 是本次任务的实际工作目录或目标仓库根目录，必须填写绝对路径；远程控制、挂载目录、跨仓库或启动目录与目标目录不一致时，以实际会被读写的目标文件夹为准。
 - 默认不生成 `.md` 文件产物；只有用户明确要求落盘或需要 runner 直接消费文件时，才创建任务卡文件。
 - 任务卡只有唯一形态：本文件 `protocol/task-card-template.md` 定义的固定骨架。跨仓库、外部 agent、或 Executor 无法访问本项目文件时，仍使用同一骨架，并把所需固定规则内联进去使其自包含；不得切换到第二套模板或按任务级别选用不同模板文件。任务级别 Light / Medium / Heavy 只是 `任务级别：` 字段值，不决定模板文件。
@@ -150,16 +160,19 @@ Verification gate:
 - 远程控制、SSH、挂载目录、跨仓库任务中，`cwd` 不一定等于实际修改仓库。任务卡必须显式要求 Executor 为本次任务重写 `.claude/review_targets.json`，让显式 review 的审查范围对准实际目标仓库。
 - Executor 启动后按固定顺序读取：
   1. 稳定协议文件：`AGENTS.md`、`CLAUDE.md`、`protocol/agent-task-protocol.md`、`protocol/task-routing.md`、`protocol/runtime-adapters.md`、`protocol/cursor-skill-index.md`。
-  2. 稳定上下文文件：任务卡声明的 `项目画像`、`记忆胶囊`、同目录 `task-memory.md` 和 `任务存档`，如存在。
+  2. 稳定上下文文件：任务卡声明的 `项目画像`、`记忆胶囊`、同目录 `task-memory.md` 和 `任务存档`，如存在；AGS start hook 已注入的记忆上下文可作为本项的已读证据，hook 不可用时按路径读取。
   3. 本次任务相关文件：任务卡中列出的目标文件夹路径、相关路径、治理文档、待审查代码或数据说明。
   4. 动态命令输出：如 `git status --short`、验证命令、脚本检查结果，只记录在执行过程或交付报告的验证/状态部分，不放进“读取并遵守”清单。
 - 跨仓库、外部 agent、或 Executor 无法访问本项目文件时，使用同一 canonical 骨架的自包含形态（内联所需固定规则），不另立 fallback 任务卡格式。
 - 任务级别按 `protocol/task-routing.md` 定义。
 - **Task-card request gate**：`ags task compile` 在没有 `--task-card-requested` 参数时拒绝输出可执行任务卡，报告 `executable_allowed=false`、`block_reason=task_card_not_requested`。只有用户明确发出任务卡指令后，generator 才能带 `--task-card-requested` 调用 compiler。参见 `protocol/agent-task-protocol.md` 生命周期阶段 3.5。
 - Executor、Runtime adapter、Execution surface、Permission mode、Parallelism、Verification gate 按 `protocol/runtime-adapters.md` 定义；Review gate 的唯一规则表在 `protocol/agent-task-protocol.md`。
-- 需要让 runner 自动选择执行层时，可以使用 `scripts/run-task-card.sh <task-card> --auto`；auto mode 不会提高任务卡声明的权限。
-- 未来若启用 transient compile / learning pipeline，其编译产物也不是第三种任务卡格式；任何可复用 proposal 都必须先进入人工可审查流程，不得自动提升为规则。
-- 涉及本地 Agent 技能同步、proposal、adoption log 或 ignore list 时，必须引用项目内对应治理文档；如无项目治理文档，使用套件级 `scripts/govern-new-skills.sh` 流程。最终输出仍使用本文件的固定任务卡骨架。
+- `Execution effort` 使用中性执行强度语义（`low` / `normal` / `high` / `exhaustive`），默认 `normal`；它只表示思考强度，绝不映射为权限、并行或 review 豁免。宿主私有深度/工作流触发词（如 `ultracode`）不得写进任务卡前台生成路径，只能由 claude-code adapter / runner 按 resolved policy 在执行层翻译；`ultracode` 仅作为旧值解析兼容保留，prompt-maker 不再生成。
+- `Workflow authority` 声明是否允许 subagent / workflow（`none` / `within-card` / `plan-only` / `allowed`），默认 `none`；它只声明授权，不直接点火。
+- `子任务编排` 是可选槽位，`mode` 取 `none` / `optional` / `required`，默认 `none`（省略即 `none`）。`mode != none` 时 validator 要求 `Workflow authority` 非 none 且 `Parallelism` 为 subagent/worktree/multi-session/agent-team；该槽位只声明可拆分结构、子任务边界与回收要求，真正 subagent / workflow 点火仍由 claude-code adapter / runner 按 resolved policy 翻译，不由任务卡正文触发。子任务只能装可并行工作（只读审计 / 实现 / 文档同步 / 测试补充）；最终验证、交付报告、commit、push、release gate 必须由主 executor 独做，子任务结果合并为单一 diff 后由主 executor 统一验证与交付（见 `protocol/runtime-adapters.md` §Subtask Scope Rules）。
+- `scripts/run-task-card.sh` 是薄包装层，把校验 / gate / policy / adapter / 收据规划全部委托给 Rust runner（`ags run`）。它实际只支持 `--check-only`（gate 预览后停止）、`--dry-run`（输出完整 launch plan 不执行）、`--current-task-approval`（向 resolver 传递当前任务执行批准，仅解锁 Heavy `edit-with-confirmation`）、`--approve-writes`（向 resolver 传递更强 Heavy 写入批准）、`--format text|json`（透传给 `ags run`）。包装层本身不实现执行层自动选择，不会提高任务卡声明的权限。
+- 自动执行层选择 / Learning Runner / 临时 Task IR / compiled brief 注入 / `learning-gaps/` 沉淀均为协议目标，planned（尚未实现）：当前 `scripts/run-task-card.sh` 与 `ags run` 不编译 Task IR，不注入 compiled brief，不沉淀 learning-gaps。任务卡不得假设这些行为已生效。
+- 涉及本地 Agent 技能同步、proposal、adoption log 或 ignore list 时，必须引用项目内对应治理文档；如无项目治理文档，使用前台技能治理控制台 `ags skill`（`inventory` / `dedupe` / `update` / `sync` / `verify`）。套件级 `scripts/govern-new-skills.sh` 为 Phase 2 规划项，尚未实现，不得作为可运行步骤引用。最终输出仍使用本文件的固定任务卡骨架。
 
 ## 与全局提示词生成器的关系
 
@@ -182,13 +195,13 @@ Verification gate:
 - `目标文件夹路径`：填写本次技能治理实际读写的仓库根目录或目标技能根目录的绝对路径。
 - `本次任务相关文件`：列出本次涉及的 skill 源目录、proposal、adoption log 或 ignore list。
 - `项目画像`：如存在，填写 `config/agent-project-profile.yaml`；不要复制无关画像内容。
-- `记忆胶囊`：如存在，填写 `$HOME/.agents/memory/projects/<project-slug>/context-capsule.md`；不要复制长记忆。开始执行前同步读取同目录 `task-memory.md`。
-- `任务存档`：如存在，填写 `$HOME/.agents/memory/projects/<project-slug>/task-memory.md`；没有任务记忆时填 `无`。启用 memory capture 时，`context-memory.sh capture` 刷新本机 `task-memory.md` 并归档完整收据；直接粘贴给 Claude Code 的任务卡在 Stop hook 检测到交付报告后也会自动归档。
+- `记忆胶囊`：如存在，填写 `$HOME/.agents/memory/projects/<project-slug>/context-capsule.md`；不要复制长记忆。AGS start hook 已注入时以注入上下文为准；hook 不可用时，开始执行前同步读取同目录 `task-memory.md`。
+- `任务存档`：如存在，填写 `$HOME/.agents/memory/projects/<project-slug>/task-memory.md`；没有任务记忆时填 `无`。任务开始由 Start hook 链路（`context-memory-start.py`）只读注入 capsule / `task-memory.md`；任务结束后由 Stop hook 链路（`claude-stop-memory-capture.py` → `context-memory.sh capture`）归档完整收据并刷新本机 `task-memory.md`；这些链路由 `ags setup --yes --register-claude` 安装脚本并挂载到工作区 SessionStart/Stop pipeline，`context-capsule.md` 绝不被自动覆盖。若本机尚未运行 setup 安装该链路，任务卡不得假设记忆注入或刷新会自动发生；可重新运行 setup 或由人工读取/沉淀。
 - `适用治理文档`：填写项目内治理文档；如无项目治理文档，填写 `AGENT_SUITE_PROTOCOL.md`。
 - `非目标`：明确不得写 `$HOME/.agents/skills`、`$HOME/.codex/skills`、`$HOME/.codex/plugins/cache`，不得运行 `lark-cli update`、`npx skills add/remove/update`，不得接管外部官方 CLI 或项目自管输出层技能，不得自动应用 patch。
 - `实施要求`：说明默认先 scan / dry-run，人工确认后才能 adopt / ignore。
-- `边界声明`：如任务涉及 `notebooklm`、项目自管输出层业务契约、`notebooklm_task_card`、`local_context_pack` 或 `fairness_check_questions`，必须写明它们只可被引用，不能被开发套件 adopt / update / 打包。
-- `Verification gate`：优先使用 `bash scripts/govern-new-skills.sh scan`、`bash -n` 脚本语法检查和 `bash scripts/verify.sh`。
+- `边界声明`：如任务涉及 `notebooklm`、Hermes 输出层技能、TempoFlow 输出层业务契约、`notebooklm_task_card`、`local_context_pack` 或 `fairness_check_questions`，必须写明它们只可被引用，不能被开发套件 adopt / update / 打包。
+- `Verification gate`：优先使用 `ags skill inventory`（前台技能治理控制台的只读盘点）、`bash -n` 脚本语法检查和 `bash scripts/verify.sh`。`scripts/govern-new-skills.sh scan` 为 Phase 2 规划项、尚未实现，不得作为 Verification gate 步骤引用。
 - `交付`：必须说明是否生成 proposal / adoption log / ignore list，是否触碰本地 skill 目录，仍需人工确认的事项。
 
 ## Heavy 任务补充

@@ -69,6 +69,7 @@ pub(crate) use validate::read_input;
 // compact task-card format (single canonical format = the classic skeleton).
 // This is an intentional breaking change to this crate's public API; no
 // in-workspace consumer read `card_type`.
+pub use checks::extract_skill_tags;
 pub use parse::parse_validated;
 pub use types::{error_code, ParsedTaskCard};
 pub use validate::{first_nonempty_line, output_is_canonical_header, validate, validate_files};

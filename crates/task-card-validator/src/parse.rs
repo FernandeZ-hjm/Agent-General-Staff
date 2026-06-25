@@ -96,6 +96,10 @@ pub(crate) const FIELD_DEFS: &[FieldDef] = &[
         is_inline: false,
     },
     FieldDef {
+        name: "子任务编排：",
+        is_inline: false,
+    },
+    FieldDef {
         name: "路径：",
         is_inline: false,
     },
@@ -220,4 +224,26 @@ pub(crate) fn get_workflow_authority(fields: &HashMap<String, String>) -> &str {
         .get("Workflow authority:")
         .map(|s| s.as_str())
         .unwrap_or("none")
+}
+
+/// Get the `子任务编排` (subtask orchestration) mode from the slot block.
+///
+/// The slot is a multi-line block; the mode lives on a `- mode: <value>` bullet
+/// (half- or full-width colon). Returns the parsed mode, or `"none"` when the
+/// slot is absent or carries no `mode:` line — so cards without the slot keep
+/// passing with the no-orchestration default.
+pub(crate) fn get_subtask_orchestration_mode(fields: &HashMap<String, String>) -> &str {
+    let Some(block) = fields.get("子任务编排：") else {
+        return "none";
+    };
+    for line in block.lines() {
+        let t = line
+            .trim()
+            .trim_start_matches('-')
+            .trim_start_matches(|c: char| c == '*' || c.is_whitespace());
+        if let Some(rest) = t.strip_prefix("mode:").or_else(|| t.strip_prefix("mode：")) {
+            return rest.trim();
+        }
+    }
+    "none"
 }

@@ -128,44 +128,41 @@ impl Serialize for Parallelism {
 
 // ── Approval source ─────────────────────────────────────────────────────
 
-/// Where explicit write approval came from.
+/// Where an explicit write-approval signal came from.
 ///
 /// Task-card text is **never** an approval source — the `from_fields()`
-/// constructor always returns `None`.  Approval is a STRUCTURED signal carried
-/// here, separate from the task LEVEL: a Heavy (risk/review) task can still be
-/// executable when an approval source is present.  The sources differ in how far
-/// they unlock — see [`ApprovalSource::unlocks_execute_and_verify`].
+/// constructor always returns `None`.  Approval is a STRUCTURED **audit / hint**
+/// signal: it is NO LONGER a Heavy execution unlock, because the task LEVEL is
+/// decoupled from execution authority (the permission MODE is the authority, and
+/// a Heavy task is executable from its declared permission alone, gated by the
+/// confirmation/review gate).  The signal is retained for audit and for the
+/// generic-adapter capability cap (M9), which may consult `is_approved()` as an
+/// adapter-capability override.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApprovalSource {
-    /// No explicit write approval — Heavy tasks default to plan-only and stop.
+    /// No explicit write-approval signal recorded.
     None,
-    /// Structured current-task approval derived from an explicit user execution
+    /// Structured current-task signal derived from an explicit user execution
     /// instruction on the live request ("实现 / 修复 / 做完 / 一口气做完 /
     /// 做完核验", detected deterministically by the classifier, NEVER from the
-    /// task-card text).  Unlocks Heavy + `edit-with-confirmation` WITHOUT a
-    /// plan-only round-trip, but does NOT unlock `execute-and-verify`.
+    /// task-card text).  Audit/hint only — it does not change permission or gate
+    /// a Heavy task.
     CurrentTaskInstruction,
-    /// Approval came from the `--approve-writes` CLI flag.  Unlocks up to
-    /// `execute-and-verify`.
+    /// Signal from the `--approve-writes` CLI flag.  Audit/hint; may act as the
+    /// generic-adapter (M9) capability override.
     CliFlag,
-    /// Approval came from a runner environment variable
-    /// (`AGS_APPROVE_WRITES=1` or equivalent).  Unlocks up to `execute-and-verify`.
+    /// Signal from a runner environment variable (`AGS_APPROVE_WRITES=1` or
+    /// equivalent).  Audit/hint; may act as the generic-adapter (M9) capability
+    /// override.
     RunnerEnv,
 }
 
 impl ApprovalSource {
-    /// Whether this source constitutes explicit write approval (allows the Heavy
-    /// task to proceed in an edit-capable mode rather than being forced to
-    /// plan-only).
+    /// Whether an explicit write-approval signal is present. Used by the
+    /// generic-adapter capability cap (M9) as an adapter-capability override;
+    /// it is NOT a task-level execution unlock.
     pub fn is_approved(&self) -> bool {
         !matches!(self, Self::None)
-    }
-
-    /// Whether this source is strong enough to unlock `execute-and-verify`.
-    /// A current-task instruction only unlocks `edit-with-confirmation`;
-    /// `execute-and-verify` requires the stronger CLI-flag / runner-env approval.
-    pub fn unlocks_execute_and_verify(&self) -> bool {
-        matches!(self, Self::CliFlag | Self::RunnerEnv)
     }
 }
 
@@ -196,13 +193,6 @@ impl Serialize for ApprovalSource {
 /// prompt before mutation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StopReason {
-    /// Heavy task requires explicit write approval from a trusted source
-    /// (CLI flag or runner env), but none was provided.  The task card
-    /// requested mutation; the resolver can only offer plan-only.
-    HeavyRequiresWriteApproval {
-        requested: String,
-        effective: String,
-    },
     /// Active parallelism requested but effective permission mode forbids
     /// writes — any parallelism flag would create filesystem side effects.
     WritableParallelismBlockedByPermission {
@@ -221,16 +211,6 @@ pub enum StopReason {
 impl fmt::Display for StopReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::HeavyRequiresWriteApproval {
-                requested,
-                effective,
-            } => {
-                write!(
-                    f,
-                    "Heavy task requested {} but no explicit write approval; effective mode is {}. Runner must stop until approval is provided.",
-                    requested, effective
-                )
-            }
             Self::WritableParallelismBlockedByPermission {
                 requested_parallelism,
                 effective_permission,
@@ -265,14 +245,6 @@ impl Serialize for StopReason {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut map = serializer.serialize_map(Some(5))?;
         match self {
-            Self::HeavyRequiresWriteApproval {
-                requested,
-                effective,
-            } => {
-                map.serialize_entry("kind", "heavy-requires-write-approval")?;
-                map.serialize_entry("requested", requested)?;
-                map.serialize_entry("effective", effective)?;
-            }
             Self::WritableParallelismBlockedByPermission {
                 requested_parallelism,
                 effective_permission,
@@ -318,34 +290,6 @@ pub struct DowngradeReason {
 }
 
 impl DowngradeReason {
-    /// Heavy task defaults to plan-only (no explicit write approval).
-    pub fn heavy_defaults_to_plan_only(requested: &str, effective: &str) -> Self {
-        Self {
-            rule_id: "M4".to_string(),
-            field: "permission_mode".to_string(),
-            before: requested.to_string(),
-            after: effective.to_string(),
-            reason: format!(
-                "Heavy task defaults to plan-only without explicit write approval; requested={}, effective={}",
-                requested, effective
-            ),
-        }
-    }
-
-    /// Heavy `execute-and-verify` capped to `edit-with-confirmation` because the
-    /// approval was a current-task instruction (which does not unlock e&v).
-    pub fn heavy_execute_capped_to_edit(requested: &str, effective: &str) -> Self {
-        Self {
-            rule_id: "M4".to_string(),
-            field: "permission_mode".to_string(),
-            before: requested.to_string(),
-            after: effective.to_string(),
-            reason: format!(
-                "Heavy execute-and-verify is default-forbidden; a current-task instruction unlocks only edit-with-confirmation. Capped: requested={requested}, effective={effective}. Use --approve-writes / runner-env approval for execute-and-verify."
-            ),
-        }
-    }
-
     /// Parallelism mode requires Workflow authority that was not granted.
     pub fn parallelism_requires_workflow_authority(requested: &str, authority: &str) -> Self {
         Self {

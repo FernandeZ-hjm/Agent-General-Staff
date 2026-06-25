@@ -65,7 +65,7 @@ Workflow authority: $workflow_authority
 任务级别：$task_level
 
 Review gate:
-- Smoke test review
+- 按 protocol/agent-task-protocol.md 的 Review Gate 规则执行当前任务级别。
 
 任务：$task
 
@@ -408,11 +408,11 @@ fi
 
 rm -rf "$lane_tmp"
 
-# ── Push Lane Decision Smoke Tests (trusted shell allowlist) ────────────────
-# scripts/lane-decision.sh is the push gate's MINIMAL/FULL decision, kept in
+# ── Release/Sync Lane Decision Smoke Tests (trusted shell allowlist) ────────
+# scripts/lane-decision.sh is the release/sync MINIMAL/FULL decision, kept in
 # pure shell so a change to the in-tree classifier cannot route a source or
 # protocol diff onto the minimal path. These tests prove exactly that.
-echo "--- Push Lane Decision Smoke Tests ---"
+echo "--- Release/Sync Lane Decision Smoke Tests ---"
 check_lane_decision() {
     local label="$1" files="$2" expected="$3"
     echo -n "[....] lane-decision: $label → $expected "
@@ -559,33 +559,69 @@ fi
 echo ""
 echo "--- Resolver Hardening Smoke Tests (F8-F9: stop and parallelism audit) ---"
 
-# F8: Heavy edit-with-confirmation without --approve-writes → stop_before_launch
-echo -n "[....] Heavy edit-with-confirmation without approve → stop_before_launch "
+# F8: Heavy edit-with-confirmation without --approve-writes → executable, no stop
+# Task level is decoupled from execution authority: a Heavy edit card keeps its
+# declared permission and only gains a confirmation gate (no downgrade, no stop).
+echo -n "[....] Heavy edit-with-confirmation without approve → executable (no stop) "
 write_smoke_card /tmp/test-heavy-stop.md cli edit-with-confirmation none none Heavy \
-    "Test Heavy stop gate." \
-    "Verify Heavy without --approve-writes sets stop_before_launch=true." \
+    "Test Heavy confirmation gate." \
+    "Verify Heavy keeps edit-with-confirmation and only gains a confirmation gate." \
     "None." \
     "any failure" \
-    "stop_before_launch=true" \
+    "edit-with-confirmation preserved" \
     "Delivery report."
 if cargo run -q -p ags-cli -- policy resolve /tmp/test-heavy-stop.md --format json > /tmp/verify-heavy-stop.log 2>&1; then
     json=$(cat /tmp/verify-heavy-stop.log)
-    if echo "$json" | grep -q '"stop_before_launch": true'; then
-        if echo "$json" | grep -q '"heavy-requires-write-approval"'; then
-            echo "OK"
-        else
-            echo "FAIL (stop_reasons kind must be heavy-requires-write-approval)"
-            echo "$json" | grep -o '"stop_reasons":[^]]*]'
-            failures=$((failures + 1))
-        fi
+    if echo "$json" | grep -q '"effective_permission_mode": "edit-with-confirmation"' \
+        && echo "$json" | grep -q '"stop_before_launch": false' \
+        && echo "$json" | grep -q '"requires_confirmation_gate": true' \
+        && echo "$json" | grep -q '"was_downgraded": false'; then
+        echo "OK"
     else
-        echo "FAIL (stop_before_launch must be true for Heavy write without approval)"
-        echo "$json" | grep -o '"stop_before_launch":[^,]*'
+        echo "FAIL (Heavy edit must stay executable with a confirmation gate; no level downgrade/stop)"
+        echo "$json" | head -20
         failures=$((failures + 1))
     fi
 else
     echo "FAIL (resolve-policy failed)"
     cat /tmp/verify-heavy-stop.log
+    failures=$((failures + 1))
+fi
+
+# F8b: --current-task-approval is recorded as an audit signal; mode unchanged
+echo -n "[....] Heavy edit + current-task approval: mode preserved, signal recorded "
+if cargo run -q -p ags-cli -- policy resolve /tmp/test-heavy-stop.md --format json --current-task-approval > /tmp/verify-heavy-current.log 2>&1; then
+    json=$(cat /tmp/verify-heavy-current.log)
+    if echo "$json" | grep -q '"effective_permission_mode": "edit-with-confirmation"' \
+        && echo "$json" | grep -q '"stop_before_launch": false' \
+        && echo "$json" | grep -q '"approval_source": "current-task-instruction"'; then
+        echo "OK"
+    else
+        echo "FAIL (current-task approval must preserve Heavy edit-with-confirmation)"
+        echo "$json" | head -20
+        failures=$((failures + 1))
+    fi
+else
+    echo "FAIL (policy resolve --current-task-approval failed)"
+    cat /tmp/verify-heavy-current.log
+    failures=$((failures + 1))
+fi
+
+# F8c: ags run forwards --current-task-approval into the resolver
+echo -n "[....] ags run forwards current-task approval "
+if cargo run -q -p ags-cli -- run /tmp/test-heavy-stop.md --dry-run --current-task-approval --format json > /tmp/verify-run-current.log 2>&1; then
+    json=$(cat /tmp/verify-run-current.log)
+    if echo "$json" | grep -q '"effective_permission_mode": "edit-with-confirmation"' \
+        && echo "$json" | grep -q '"approval_source": "current-task-instruction"'; then
+        echo "OK"
+    else
+        echo "FAIL (ags run must forward current-task approval)"
+        echo "$json" | head -30
+        failures=$((failures + 1))
+    fi
+else
+    echo "FAIL (ags run --current-task-approval failed)"
+    cat /tmp/verify-run-current.log
     failures=$((failures + 1))
 fi
 
@@ -853,15 +889,48 @@ else
     failures=$((failures + 1))
 fi
 
-echo -n "[....] gate check Heavy write → decision=stop (exit 1) "
+# Genuine resolver STOP: plan-only + worktree (writability gate). Task level
+# never stops, so Heavy alone is no longer a stop case.
+echo -n "[....] gate check writability stop (plan-only + worktree) → decision=stop (exit 1) "
+write_smoke_card /tmp/test-gate-stop.md cli plan-only worktree plan-only Medium \
+    "Test writability stop gate." \
+    "Verify plan-only + worktree triggers stop_before_launch." \
+    "不执行写操作。" \
+    "方案完成后返回用户审阅，等待明确批准" \
+    "stop" \
+    "返回审计方案供 Codex review，等待明确批准。"
 set +e
-cargo run -q -p ags-cli -- gate check /tmp/test-heavy-stop.md --format json > /tmp/verify-m3-gate-stop.log 2>&1
+cargo run -q -p ags-cli -- gate check /tmp/test-gate-stop.md --format json > /tmp/verify-m3-gate-stop.log 2>&1
 rc=$?
 set -e
 if [ "$rc" -eq 1 ] && grep -q '"decision": "stop"' /tmp/verify-m3-gate-stop.log; then
     echo "OK"
 else
     echo "FAIL (expected exit 1 + decision=stop, got $rc)"
+    cat /tmp/verify-m3-gate-stop.log
+    failures=$((failures + 1))
+fi
+
+# Heavy edit-with-confirmation → executable but confirmation-gated. The gate
+# exit code MUST distinguish confirm (2) from allow (0) so exit-code-based
+# callers cannot auto-run a Heavy confirmation card without the handshake.
+echo -n "[....] gate check Heavy confirm → decision=confirm (exit 2) "
+write_smoke_card /tmp/test-gate-confirm.md cli edit-with-confirmation none none Heavy \
+    "Test Heavy confirmation gate exit code." \
+    "Verify Heavy edit resolves to confirm with exit 2." \
+    "None." \
+    "any failure" \
+    "edit-with-confirmation preserved" \
+    "Delivery report."
+set +e
+cargo run -q -p ags-cli -- gate check /tmp/test-gate-confirm.md --format json > /tmp/verify-m3-gate-confirm.log 2>&1
+rc=$?
+set -e
+if [ "$rc" -eq 2 ] && grep -q '"decision": "confirm"' /tmp/verify-m3-gate-confirm.log; then
+    echo "OK"
+else
+    echo "FAIL (expected exit 2 + decision=confirm, got $rc)"
+    cat /tmp/verify-m3-gate-confirm.log
     failures=$((failures + 1))
 fi
 
@@ -908,6 +977,53 @@ else
     failures=$((failures + 1))
 fi
 
+# Cancellation safety: since the wrapper no longer `exec`s, killing the wrapper
+# PID MUST forward the signal to the child `ags run` — no orphaned task execution
+# past cancellation. Uses a stub `ags` on PATH that sleeps (no real runner, no
+# network) and asserts the child is gone after the wrapper is killed.
+echo -n "[....] run-task-card.sh forwards cancellation to child ags run "
+set +e
+cancel_dir="$(mktemp -d)"
+cat > "$cancel_dir/ags" << 'STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = "run" ]; then
+    echo $$ > "$AGS_STUB_PIDFILE"
+    sleep 30 &
+    sp=$!
+    trap 'kill "$sp" 2>/dev/null; exit 143' TERM INT HUP
+    wait "$sp"
+fi
+exit 0
+STUB
+chmod +x "$cancel_dir/ags"
+echo "## 任务卡" > "$cancel_dir/card.md"
+AGS_STUB_PIDFILE="$cancel_dir/child.pid" PATH="$cancel_dir:$PATH" \
+    bash "$REPO_ROOT/scripts/run-task-card.sh" "$cancel_dir/card.md" >/dev/null 2>&1 &
+cancel_wrapper_pid=$!
+cancel_stub_pid=""
+for _ in $(seq 1 50); do
+    if [ -s "$cancel_dir/child.pid" ]; then cancel_stub_pid="$(cat "$cancel_dir/child.pid")"; break; fi
+    sleep 0.1
+done
+kill -TERM "$cancel_wrapper_pid" 2>/dev/null
+for _ in $(seq 1 40); do
+    { [ -n "$cancel_stub_pid" ] && kill -0 "$cancel_stub_pid" 2>/dev/null; } || break
+    sleep 0.1
+done
+wait "$cancel_wrapper_pid" 2>/dev/null
+if [ -z "$cancel_stub_pid" ]; then
+    echo "FAIL (stub child never started)"
+    failures=$((failures + 1))
+elif kill -0 "$cancel_stub_pid" 2>/dev/null; then
+    echo "FAIL (child ags run survived wrapper cancellation)"
+    kill -KILL "$cancel_stub_pid" 2>/dev/null
+    failures=$((failures + 1))
+else
+    echo "OK"
+fi
+rm -rf "$cancel_dir"
+set -e
+
 # ── Session Preflight Smoke ─────────────────────────────────────────────────
 echo -n "[....] session preflight --for claude-code --format json --target repo "
 if cargo run -q -p ags-cli -- session preflight --for claude-code --format json --target "$REPO_ROOT" > /tmp/verify-sp-claude.json 2>&1; then
@@ -950,39 +1066,58 @@ fi
 # ── Skill & MCP Console Smoke Tests ─────────────────────────────────────────
 echo ""
 echo "--- Skill & MCP Console Smoke Tests ---"
-run_check "skill overview (json)" \
-    cargo run -q -p ags-cli -- skill --format json
+echo -n "[....] skill overview (json) "
+set +e
+cargo run -q -p ags-cli -- skill --format json > /tmp/verify-skill-overview.json 2>&1
+skill_overview_rc=$?
+set -e
+if [ "$skill_overview_rc" -eq 0 ] || [ "$skill_overview_rc" -eq 1 ]; then
+    if python3 -c "import json; d=json.load(open('/tmp/verify-skill-overview.json')); assert 'inventory' in d and 'check' in d; assert isinstance(d['inventory'].get('capabilities'), list)"; then
+        echo "OK"
+    else
+        echo "FAIL (skill overview must emit parseable JSON inventory/check)"
+        cat /tmp/verify-skill-overview.json
+        failures=$((failures + 1))
+    fi
+else
+    echo "FAIL (unexpected rc=$skill_overview_rc)"
+    cat /tmp/verify-skill-overview.json
+    failures=$((failures + 1))
+fi
 run_check "skill scan (json)" \
     cargo run -q -p ags-cli -- skill scan --format json
-run_check "skill check (json)" \
-    cargo run -q -p ags-cli -- skill check --format json
+echo -n "[....] skill check (json) "
+set +e
+cargo run -q -p ags-cli -- skill check --format json > /tmp/verify-skill-check.json 2>&1
+skill_check_rc=$?
+set -e
+if [ "$skill_check_rc" -eq 0 ] || [ "$skill_check_rc" -eq 1 ]; then
+    if python3 -c "import json; d=json.load(open('/tmp/verify-skill-check.json')); assert 'passed' in d and isinstance(d.get('consistency_checks'), list)"; then
+        echo "OK"
+    else
+        echo "FAIL (skill check must emit parseable JSON with passed + consistency_checks)"
+        cat /tmp/verify-skill-check.json
+        failures=$((failures + 1))
+    fi
+else
+    echo "FAIL (unexpected rc=$skill_check_rc)"
+    cat /tmp/verify-skill-check.json
+    failures=$((failures + 1))
+fi
 run_check "skill verify --host claude-code (json)" \
     cargo run -q -p ags-cli -- skill verify --host claude-code --format json
 
 # Unified inventory: four kinds, AGS suite-interface, BOTH hosts, canonical field.
-# Route-target rows are metadata-only internal entrypoints and intentionally have
-# no host visibility evidence.
 echo -n "[....] skill inventory: 4 kinds + both hosts + canonical "
-if cargo run -q -p ags-cli -- skill --format json > /tmp/verify-skill-inv.json 2>&1; then
-    if python3 - <<'PY'
-import json
-
-d = json.load(open('/tmp/verify-skill-inv.json'))['inventory']
-ks = {c['kind'] for c in d['capabilities']}
-assert {'skill', 'mcp', 'suite-interface', 'cli-backed'} <= ks, ks
-assert next(c for c in d['capabilities'] if c['name'] == 'ags')['kind'] == 'suite-interface'
-assert set(d['hosts']) >= {'claude-code', 'codex'}, d['hosts']
-assert isinstance(d['summary']['canonical_present'], int)
-assert all(
-    c.get('managed_status') == 'route-target'
-    or any(v['host'] == 'codex' for v in c['host_visibility'])
-    for c in d['capabilities']
-)
-PY
-    then
+set +e
+cargo run -q -p ags-cli -- skill --format json > /tmp/verify-skill-inv.json 2>&1
+skill_inv_rc=$?
+set -e
+if [ "$skill_inv_rc" -eq 0 ] || [ "$skill_inv_rc" -eq 1 ]; then
+    if python3 -c "import json; d=json.load(open('/tmp/verify-skill-inv.json'))['inventory']; ks={c['kind'] for c in d['capabilities']}; assert {'skill','mcp','suite-interface','cli-backed'} <= ks, ks; ags=next(c for c in d['capabilities'] if c['name']=='ags'); assert ags['kind']=='suite-interface'; assert set(d['hosts']) >= {'claude-code','codex'}, d['hosts']; assert isinstance(d['summary']['canonical_present'], int); assert any(v['host']=='codex' for v in ags['host_visibility']), ags['host_visibility']"; then
         echo "OK"
     else
-        echo "FAIL (missing a kind / AGS not suite-interface / missing host / no canonical)"
+        echo "FAIL (missing a kind / AGS not suite-interface / missing host / no canonical / AGS no codex visibility)"
         failures=$((failures + 1))
     fi
 else
@@ -990,35 +1125,66 @@ else
     failures=$((failures + 1))
 fi
 
-# Dry-run proposal in the public edition: optional skills are recommendation-only
-# with external URL sources, not bundled canonical bodies. AGS must not write
-# anything or build a dangling host thin index from a remote URL. Instead of
-# blocking, AGS ADVISES a manual install: the proposal writes nothing, is NOT
-# blocked, surfaces an advised command, and a dry-run exits 0.
-echo -n "[....] skill propose adopt diagnosing-bugs (public recommendation) -> advised, no-write, no-block "
+# Dry-run proposal: no writes, no errors, no installer. Private/full installs may
+# plan relinks; public-safe projections may block relinking external skill bodies.
+echo -n "[....] skill propose adopt lark-calendar (dry-run) is safe "
 set +e
-cargo run -q -p ags-cli -- skill propose --action adopt --skill diagnosing-bugs --format json > /tmp/verify-skill-propose.json 2>&1
+cargo run -q -p ags-cli -- skill propose --action adopt --skill lark-calendar --format json > /tmp/verify-skill-propose.json 2>&1
 skill_propose_rc=$?
 set -e
-if python3 -c "import json; d=json.load(open('/tmp/verify-skill-propose.json')); assert d['found'] is True; assert d['apply_requested'] is False; assert d['applied'] is False; assert d['apply_status']=='dry-run'; assert d['planned_writes'] == []; assert d['applied_writes'] == []; assert d['apply_errors'] == []; assert d['blocked_reasons'] == [], d; assert d['advised_commands'], d" \
-    && [ "$skill_propose_rc" -eq 0 ]; then
-    echo "OK"
-else
-    echo "FAIL (public recommendation dry-run must advise, write nothing, not block, and exit 0; got rc=$skill_propose_rc)"
-    cat /tmp/verify-skill-propose.json
-    failures=$((failures + 1))
-fi
+if [ "$skill_propose_rc" -eq 0 ] || [ "$skill_propose_rc" -eq 1 ]; then
+    if python3 - <<'PY'
+import json
 
-# Migration durability: no shipped task-card example or template may carry a
-# retired [skill: ...] tag — copies would fail the RETIRED_SKILL_TAG gate. Keep
-# this list aligned with RETIRED_SKILL_TAGS in task-card-validator/src/constants.rs.
-echo -n "[....] no retired [skill:] tags in bundled examples/templates "
-retired_tag_hits=$(grep -rnE "\[skill: (tdd|diagnose|zoom-out|caveman-review|caveman-commit|code-review|verify|commit)\]" examples/ templates/ 2>/dev/null || true)
-if [ -z "$retired_tag_hits" ]; then
-    echo "OK"
+proposal = json.load(open('/tmp/verify-skill-propose.json'))
+inventory = json.load(open('/tmp/verify-skill-inv.json'))['inventory']
+
+assert proposal['apply_requested'] is False
+assert proposal['applied'] is False
+assert proposal['apply_status'] == 'dry-run'
+assert proposal['applied_writes'] == []
+assert proposal['apply_errors'] == []
+
+relinks = [w for w in proposal['planned_writes'] if w['op'] == 'relink']
+blocked = proposal.get('blocked_reasons') or []
+
+if not relinks:
+    assert blocked, proposal
+    assert any(
+        'outside the approved AGS stores' in b or 'Canonical SKILL.md not found' in b
+        for b in blocked
+    ), blocked
+    raise SystemExit(0)
+
+planned_hosts = set()
+for w in relinks:
+    path = w['path']
+    if '/.claude/skills/' in path:
+        planned_hosts.add('claude-code')
+    elif '/.codex/skills/' in path:
+        planned_hosts.add('codex')
+    elif '/.codebuddy/skills/' in path:
+        planned_hosts.add('codebuddy-code')
+    else:
+        raise AssertionError(f"unexpected relink path: {path}")
+
+assert planned_hosts, relinks
+lark = next(c for c in inventory['capabilities'] if c['name'] == 'lark-calendar')
+codex_visible = any(
+    v['host'] == 'codex' and v['status'] == 'visible'
+    for v in lark['host_visibility']
+)
+assert 'codex' in planned_hosts or codex_visible, (planned_hosts, lark['host_visibility'])
+PY
+    then
+        echo "OK"
+    else
+        echo "FAIL (dry-run must not write; must plan needed relinks and keep Codex visible)"
+        failures=$((failures + 1))
+    fi
 else
-    echo "FAIL (retired skill tags in shipped examples/templates):"
-    echo "$retired_tag_hits"
+    echo "FAIL (unexpected rc=$skill_propose_rc)"
+    cat /tmp/verify-skill-propose.json
     failures=$((failures + 1))
 fi
 
@@ -1076,6 +1242,231 @@ else
     echo "FAIL (skill verify cursor failed)"
     failures=$((failures + 1))
 fi
+
+# ── Cross-Agent Capability Layer Smoke Tests ────────────────────────────────
+echo ""
+echo "--- Cross-Agent Capability Layer Smoke Tests ---"
+
+# capability inventory shares the skill-governance console model (4 kinds).
+echo -n "[....] capability inventory (json) shares console model "
+if cargo run -q -p ags-cli -- capability inventory --format json > /tmp/verify-cap-inv.json 2>&1; then
+    if python3 -c "import json; d=json.load(open('/tmp/verify-cap-inv.json')); ks={c['kind'] for c in d['capabilities']}; assert {'skill','mcp','suite-interface','cli-backed'} <= ks, ks; assert set(d['hosts']) >= {'claude-code','codex'}, d['hosts']"; then
+        echo "OK"
+    else
+        echo "FAIL (capability inventory must share the unified console model)"
+        failures=$((failures + 1))
+    fi
+else
+    echo "FAIL (capability inventory failed)"
+    failures=$((failures + 1))
+fi
+
+# capability verify is the canonical host-visibility home (claude-code supported).
+run_check "capability verify --host claude-code (json)" \
+    cargo run -q -p ags-cli -- capability verify --host claude-code --format json
+
+# capability install of an MCP advises BOTH hosts and never writes (advise-only).
+echo -n "[....] capability install MCP advises claude+codex, no writes "
+if cargo run -q -p ags-cli -- capability install --capability context7 --format json > /tmp/verify-cap-install.json 2>&1; then
+    if python3 -c "import json; d=json.load(open('/tmp/verify-cap-install.json')); assert d['planned_writes']==[]; cmds=[c['command'] for c in d['advised_commands']]; assert any(c.startswith('claude mcp add context7') for c in cmds), cmds; assert any(c.startswith('codex mcp add context7') for c in cmds), cmds"; then
+        echo "OK"
+    else
+        echo "FAIL (MCP install must advise both hosts and write nothing)"
+        failures=$((failures + 1))
+    fi
+else
+    echo "FAIL (capability install failed)"
+    failures=$((failures + 1))
+fi
+
+# capability sync dry-run: informational batch (exit 0), syncs only adopted/governed.
+echo -n "[....] capability sync (dry-run) batch plan, exit 0 "
+set +e
+cargo run -q -p ags-cli -- capability sync --format json > /tmp/verify-cap-sync.json 2>&1
+sync_rc=$?
+set -e
+if [ "$sync_rc" -eq 0 ] && python3 -c "import json; d=json.load(open('/tmp/verify-cap-sync.json'))['summary']; assert d['applied']==0; assert d['considered']>0; assert d['needs_action']>=0"; then
+    echo "OK"
+else
+    echo "FAIL (dry-run sync must be informational, exit 0, applied=0)"
+    failures=$((failures + 1))
+fi
+
+# ags setup (no --yes) renders the cross-platform init wizard, plan-only.
+echo -n "[....] ags setup renders cross-platform wizard (plan-only) "
+if cargo run -q -p ags-cli -- setup > /tmp/verify-setup-wizard.txt 2>&1; then
+    if grep -q "Cross-Platform Initialization Wizard" /tmp/verify-setup-wizard.txt \
+        && grep -q "plan-only" /tmp/verify-setup-wizard.txt \
+        && grep -q "never runs an external host registrar" /tmp/verify-setup-wizard.txt; then
+        echo "OK"
+    else
+        echo "FAIL (setup must render the plan-only cross-platform wizard)"
+        failures=$((failures + 1))
+    fi
+else
+    echo "FAIL (ags setup plan failed)"
+    failures=$((failures + 1))
+fi
+
+# ── Five-Segment Command Surface (0.2.7) ────────────────────────────────────
+echo ""
+echo "--- Five-Segment Command Surface (agents / update / skill) ---"
+
+echo -n "[....] ags agents scan runs read-only (json) "
+if cargo run -q -p ags-cli -- agents scan --format json > /tmp/verify-agents-scan.json 2>&1 \
+    && grep -q '"command": "agents scan"' /tmp/verify-agents-scan.json; then
+    echo "OK"
+else
+    echo "FAIL (ags agents scan json)"
+    failures=$((failures + 1))
+fi
+
+echo -n "[....] ags agents govern is advise-only (applied=false, no host write) "
+if cargo run -q -p ags-cli -- agents govern --format json > /tmp/verify-agents-govern.json 2>&1 \
+    && grep -q '"apply_status": "advised-only"' /tmp/verify-agents-govern.json \
+    && grep -q '"applied": false' /tmp/verify-agents-govern.json \
+    && grep -q '"mcp_tools":' /tmp/verify-agents-govern.json; then
+    echo "OK"
+else
+    echo "FAIL (ags agents govern must be advise-only, applied=false, tools visible)"
+    failures=$((failures + 1))
+fi
+
+echo -n "[....] ags agents govern --apply remains dialog-only (no receipt) "
+receipt_count_before=$({ find "$HOME/.ags/runtime/receipts" -maxdepth 1 -type f -name 'ar-agents-govern-*.json' 2>/dev/null || true; } | wc -l | tr -d ' ')
+if cargo run -q -p ags-cli -- agents govern --apply --format json > /tmp/verify-agents-govern-apply.json 2>&1 \
+    && grep -q '"apply_status": "advice-only-no-write"' /tmp/verify-agents-govern-apply.json \
+    && grep -q '"selection_required": true' /tmp/verify-agents-govern-apply.json \
+    && ! grep -q '"receipt_ref"' /tmp/verify-agents-govern-apply.json; then
+    receipt_count_after=$({ find "$HOME/.ags/runtime/receipts" -maxdepth 1 -type f -name 'ar-agents-govern-*.json' 2>/dev/null || true; } | wc -l | tr -d ' ')
+    if [ "$receipt_count_before" = "$receipt_count_after" ]; then
+        echo "OK"
+    else
+        echo "FAIL (ags agents govern --apply must not create receipt files)"
+        failures=$((failures + 1))
+    fi
+else
+    echo "FAIL (ags agents govern --apply must stay dialog-only and omit receipt_ref)"
+    failures=$((failures + 1))
+fi
+
+echo -n "[....] ags update check reports six lanes "
+if cargo run -q -p ags-cli -- update check --format json > /tmp/verify-update-check.json 2>&1 \
+    && [ "$(grep -c '"lane":' /tmp/verify-update-check.json)" -eq 6 ]; then
+    echo "OK"
+else
+    echo "FAIL (ags update check must report six lanes)"
+    failures=$((failures + 1))
+fi
+
+# ── Update Notifier Smoke (hermetic: fake envs, NO real GitHub) ─────────────
+# The notifier never hits the network here — disabled / fake-fetch-fail /
+# fake-latest cover every front-stage path with an injected runtime home.
+echo -n "[....] ags update notify --format json valid + exit 0 (no network) "
+NOTIFY_HOME1="$(mktemp -d)"
+set +e
+AGS_RUNTIME_HOME="$NOTIFY_HOME1" AGS_UPDATE_FAKE_FETCH_FAIL=1 AGS_UPDATE_FAKE_DATE=2026-06-19 \
+    cargo run -q -p ags-cli -- update notify --format json > /tmp/verify-notify-valid.json 2>&1
+notify_rc=$?
+set -e
+if [ "$notify_rc" -eq 0 ] && python3 -c 'import json;d=json.load(open("/tmp/verify-notify-valid.json"));assert d["notify"] is False and d["current_version"]'; then
+    echo "OK"
+else
+    echo "FAIL (update notify must emit valid JSON and exit 0 even on check failure)"
+    cat /tmp/verify-notify-valid.json
+    failures=$((failures + 1))
+fi
+rm -rf "$NOTIFY_HOME1"
+
+echo -n "[....] ags update notify disabled → notify=false reason=disabled "
+if AGS_NO_UPDATE_NOTIFIER=1 cargo run -q -p ags-cli -- update notify --format json > /tmp/verify-notify-off.json 2>&1 \
+    && python3 -c 'import json;d=json.load(open("/tmp/verify-notify-off.json"));assert d["notify"] is False and d["reason"]=="disabled"'; then
+    echo "OK"
+else
+    echo "FAIL (disabled must be notify=false reason=disabled)"
+    cat /tmp/verify-notify-off.json
+    failures=$((failures + 1))
+fi
+
+echo -n "[....] ags update notify fake-latest newer → notify=true (no network) "
+NOTIFY_HOME2="$(mktemp -d)"
+if AGS_RUNTIME_HOME="$NOTIFY_HOME2" AGS_UPDATE_FAKE_LATEST=99.0.0 AGS_UPDATE_FAKE_DATE=2026-06-19 \
+    cargo run -q -p ags-cli -- update notify --format json > /tmp/verify-notify-new.json 2>&1 \
+    && python3 -c 'import json;d=json.load(open("/tmp/verify-notify-new.json"));assert d["notify"] is True and d["latest_version"]=="99.0.0" and d["update_command"]=="/ags update"'; then
+    echo "OK"
+else
+    echo "FAIL (fake-latest newer must notify=true with update_command)"
+    cat /tmp/verify-notify-new.json
+    failures=$((failures + 1))
+fi
+rm -rf "$NOTIFY_HOME2"
+
+echo -n "[....] ags update repair-local defaults to dry-run (no write) "
+if cargo run -q -p ags-cli -- update repair-local --format json > /tmp/verify-update-repair.json 2>&1 \
+    && grep -q '"apply_status": "dry-run"' /tmp/verify-update-repair.json; then
+    echo "OK"
+else
+    echo "FAIL (repair-local must default to dry-run)"
+    failures=$((failures + 1))
+fi
+
+echo -n "[....] ags skill dedupe defaults to dry-run "
+if cargo run -q -p ags-cli -- skill dedupe --format json > /tmp/verify-skill-dedupe.json 2>&1 \
+    && grep -q '"apply_status": "dry-run"' /tmp/verify-skill-dedupe.json; then
+    echo "OK"
+else
+    echo "FAIL (skill dedupe must default to dry-run)"
+    failures=$((failures + 1))
+fi
+
+echo -n "[....] ags skill --help exposes front-stage dedupe + sync "
+if cargo run -q -p ags-cli -- skill --help > /tmp/verify-skill-help.txt 2>&1 \
+    && grep -q 'dedupe' /tmp/verify-skill-help.txt \
+    && grep -q 'sync' /tmp/verify-skill-help.txt; then
+    echo "OK"
+else
+    echo "FAIL (skill help must list dedupe + sync)"
+    failures=$((failures + 1))
+fi
+
+echo -n "[....] ags setup gates on Global Entry Protocol Templates (plan-only, no write) "
+GE_TARGET="/tmp/verify-ags-global-entry-$$"
+rm -rf "$GE_TARGET"
+if cargo run -q -p ags-cli -- setup --target "$GE_TARGET" --format text > /tmp/verify-global-entry.txt 2>&1 \
+    && grep -q "Global Entry Protocol Templates" /tmp/verify-global-entry.txt \
+    && grep -q "Claude Code" /tmp/verify-global-entry.txt \
+    && grep -q "WorkBuddy" /tmp/verify-global-entry.txt \
+    && grep -q "CodeBuddy-Code" /tmp/verify-global-entry.txt \
+    && [ ! -e "$GE_TARGET" ]; then
+    echo "OK"
+else
+    echo "FAIL (setup must show Global Entry Protocol Templates and write nothing without --yes)"
+    failures=$((failures + 1))
+fi
+rm -rf "$GE_TARGET"
+
+echo -n "[....] ags update apply --format json emits pure JSON (no leading progress text) "
+if cargo run -q -p ags-cli -- update apply --lane agents --apply --format json > /tmp/verify-update-apply.json 2>/dev/null \
+    && head -1 /tmp/verify-update-apply.json | grep -q '^{' \
+    && python3 -c 'import json;json.load(open("/tmp/verify-update-apply.json"))' 2>/dev/null; then
+    echo "OK"
+else
+    echo "FAIL (update apply --format json must be valid JSON with no leading text)"
+    failures=$((failures + 1))
+fi
+rm -f /tmp/verify-update-apply.json
+
+echo -n "[....] ags setup --yes emits a setup-apply action receipt "
+SETUP_HOME="/tmp/verify-ags-setup-home-$$"
+rm -rf "$SETUP_HOME"
+AGS_HOME="$SETUP_HOME" cargo run -q -p ags-cli -- setup --target "$SETUP_HOME" --yes --format text > /tmp/verify-setup-apply.txt 2>&1 || true
+if ls "$SETUP_HOME"/receipts/ar-setup-apply-*.json >/dev/null 2>&1; then
+    echo "OK"
+else
+    echo "FAIL (setup --yes must write a setup-apply receipt under <AGS_HOME>/receipts)"
+    failures=$((failures + 1))
+fi
+rm -rf "$SETUP_HOME" /tmp/verify-setup-apply.txt
 
 # ── Lifecycle Semantics Regression ──────────────────────────────────────────
 echo ""

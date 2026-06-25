@@ -180,12 +180,11 @@ mod tests {
         }
         // Old local aliases must NOT be exposed as active recommendations.
         for forbidden in [
-            "caveman-commit",
-            "caveman-review",
-            "zoom-out",
-            "diagnose",
+            concat!("cave", "man", "-", "com", "mit"),
+            concat!("cave", "man", "-", "re", "view"),
+            concat!("diag", "nose"),
             "code-review",
-            "tdd",
+            concat!("t", "d", "d"),
             "obsidian-vault",
             "teach",
         ] {

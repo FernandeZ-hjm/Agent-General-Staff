@@ -41,7 +41,7 @@ pub use types::{
 };
 
 /// Default stable suite root (used by CLI as default target).
-pub const DEFAULT_STABLE_ROOT: &str = "/Volumes/Projects/example-stable-suite";
+pub const DEFAULT_STABLE_ROOT: &str = "stable";
 
 /// Default public-full sanitized suite root.
 pub const DEFAULT_PUBLIC_ROOT: &str = "/Volumes/AI Project/ai-dev-env-bootstrap";
@@ -188,7 +188,7 @@ mod tests {
     fn write_manifest(root: &Path) {
         let safety = "protocol/runtime-adapters.md\n# Test\n\n\
             ultracode is thinking intensity only — it does not change permission mode.\n\
-            Heavy tasks need explicit approval, plan-only downgrade, and confirmation gate.\n\
+            Task level does not change the permission mode; a Heavy task keeps its declared permission mode and gains a confirmation gate.\n\
             read-only and plan-only must not produce write-type launch args and must strip parallelism.\n\
             Runners must consume allowed_launch_args and effective_permission_mode.\n";
         let default_fmt = |rel: &str| format!("{rel}\n# Test\n\ncontent\n");

@@ -53,19 +53,18 @@ fn all_assertions() -> Vec<Assertion> {
                 "ultracode mode allows editing",
             ],
         },
-        // ── A2: Heavy without approval → plan-only + confirmation gate ─
+        // ── A2: task level ≠ permission; Heavy adds a confirmation gate ─
         Assertion {
-            id: "heavy-downgrade-to-plan-only",
-            description: "Heavy tasks without explicit write approval must be downgraded to plan-only and require a confirmation gate",
+            id: "heavy-level-not-permission-downgrade",
+            description: "Task level is a risk/review tier, not the execution authority: a Heavy task keeps its declared permission mode and gains a confirmation gate; task level never rewrites the permission mode",
             file: "protocol/runtime-adapters.md",
             required_phrases: &[
-                "plan-only",
-                "confirmation",
-                "explicit",
+                "task level does not change the permission mode",
+                "confirmation gate",
             ],
             contradiction_phrases: &[
-                "Heavy tasks may execute without approval",
-                "Heavy tasks default to execute-and-verify",
+                "downgraded to plan-only",
+                "unlocks heavy",
             ],
         },
         // ── A3: read-only/plan-only must not produce write-type launch args ─
@@ -267,8 +266,8 @@ does not enable parallelism, and does not add launch args.
 
 ## Key resolution rules
 
-Heavy tasks without explicit write approval must be downgraded to plan-only
-and require a confirmation gate. The runner must consume the resolved
+Task level does not change the permission mode; a Heavy task keeps its declared
+permission mode and gains a confirmation gate and a review gate. The runner must consume the resolved
 execution policy JSON and use allowed_launch_args and effective_permission_mode.
 Runners must not derive launch flags directly from raw task-card fields.
 
@@ -338,7 +337,7 @@ must be stripped or stopped when the effective permission mode forbids writes.
 
 `ultracode` is thinking intensity only. It does **not** change permission mode,
 does not enable parallelism, and does not add launch args.
-Heavy tasks without explicit approval downgrade to plan-only and require confirmation.
+Task level does **not** change the permission mode; a Heavy task keeps its declared permission mode and gains a **confirmation gate**.
 read-only and plan-only modes must never produce write-type launch args and must strip active parallelism.
 The runner must consume allowed_launch_args and effective_permission_mode.
 It must NOT derive flags directly from raw task-card fields.
@@ -364,7 +363,7 @@ It must NOT derive flags directly from raw task-card fields.
         write_protocol(
             &target,
             "protocol/runtime-adapters.md",
-            "# Runtime Adapters\n\nHeavy tasks without approval are downgraded to plan-only with a confirmation gate.\nread-only and plan-only must not produce write-type launch args.\nRunners must consume allowed_launch_args and effective_permission_mode from the resolved policy.\n",
+            "# Runtime Adapters\n\nTask level does not change the permission mode; a Heavy task keeps its declared permission mode and gains a confirmation gate.\nread-only and plan-only must not produce write-type launch args.\nRunners must consume allowed_launch_args and effective_permission_mode from the resolved policy.\n",
         );
 
         let drifts = check_assertions(&target, "stable", &ProjectKind::Stable);
@@ -383,7 +382,7 @@ It must NOT derive flags directly from raw task-card fields.
     }
 
     #[test]
-    fn missing_heavy_downgrade_assertion_produces_fail() {
+    fn missing_heavy_assertion_produces_fail() {
         let target = temp_target("missing_heavy");
         write_protocol(
             &target,
@@ -393,13 +392,10 @@ It must NOT derive flags directly from raw task-card fields.
 
         let drifts = check_assertions(&target, "stable", &ProjectKind::Stable);
 
-        // The "heavy" assertion requires "plan-only", "confirmation", "explicit"
-        // All three must be present. "plan-only" is mentioned but in a different
-        // context. The checker looks for all required phrases anywhere in the file.
-        // Actually "plan-only" IS present in the content ("must not produce write-type
-        // launch args" doesn't mention plan-only by name though). Let me verify:
-        // Content: "read-only and plan-only must not produce write-type launch args"
-        // So "plan-only" IS present. "confirmation" is NOT present. "explicit" is NOT present.
+        // The A2 assertion requires "task level does not change the permission mode"
+        // and "confirmation gate". This fixture only mentions plan-only inside the
+        // read-only/plan-only writability rule, so neither A2 required phrase is
+        // present → A2 is reported missing (its id contains "heavy").
         let heavy_drift = drifts.iter().find(|d| d.message.contains("heavy"));
         assert!(
             heavy_drift.is_some(),
@@ -417,13 +413,14 @@ It must NOT derive flags directly from raw task-card fields.
         write_protocol(
             &target,
             "protocol/runtime-adapters.md",
-            "# Runtime Adapters\n\nUltracode is thinking intensity only — it does not change permission mode.\nHeavy tasks without explicit write approval are downgraded to plan-only with confirmation gate.\nRunners must consume allowed_launch_args and effective_permission_mode from the resolved policy.\n",
+            "# Runtime Adapters\n\nUltracode is thinking intensity only — it does not change permission mode.\nTask level does not change the permission mode; a Heavy task keeps its declared permission mode and gains a confirmation gate.\nRunners must consume allowed_launch_args and effective_permission_mode from the resolved policy.\n",
         );
 
         let drifts = check_assertions(&target, "stable", &ProjectKind::Stable);
 
-        // The read-only/plan-only assertion requires: "write-type launch args", "strip", "read-only", "plan-only"
-        // "plan-only" is in the content via "downgraded to plan-only", but "write-type launch args" and "strip" are not
+        // The read-only/plan-only assertion requires "write-type launch args",
+        // "strip", "read-only", "plan-only"; none of these appear in this
+        // fixture, so the assertion is reported missing.
         let ro_drift = drifts
             .iter()
             .find(|d| d.message.contains("readonly-planonly"));
@@ -443,7 +440,7 @@ It must NOT derive flags directly from raw task-card fields.
         write_protocol(
             &target,
             "protocol/runtime-adapters.md",
-            "# Runtime Adapters\n\nUltracode is thinking intensity only — it does not change permission mode.\nHeavy tasks without explicit write approval are downgraded to plan-only with confirmation.\nread-only and plan-only must not produce write-type launch args and strip parallelism.\n",
+            "# Runtime Adapters\n\nUltracode is thinking intensity only — it does not change permission mode.\nTask level does not change the permission mode; a Heavy task keeps its declared permission mode and gains a confirmation gate.\nread-only and plan-only must not produce write-type launch args and strip parallelism.\n",
         );
 
         let drifts = check_assertions(&target, "stable", &ProjectKind::Stable);
@@ -488,7 +485,7 @@ It must NOT derive flags directly from raw task-card fields.
         write_protocol(
             &target,
             "protocol/runtime-adapters.md",
-            "# Runtime Adapters\n\nUltracode is thinking intensity only — it does not change permission mode.\nUltracode grants write access and enables parallelism for all tasks.\nHeavy tasks without explicit write approval are downgraded to plan-only with confirmation gate.\nread-only and plan-only must not produce write-type launch args and must strip parallelism.\nRunners must consume allowed_launch_args and effective_permission_mode from the resolved policy JSON.\n",
+            "# Runtime Adapters\n\nUltracode is thinking intensity only — it does not change permission mode.\nUltracode grants write access and enables parallelism for all tasks.\nTask level does not change the permission mode; a Heavy task keeps its declared permission mode and gains a confirmation gate.\nread-only and plan-only must not produce write-type launch args and must strip parallelism.\nRunners must consume allowed_launch_args and effective_permission_mode from the resolved policy JSON.\n",
         );
 
         let drifts = check_assertions(&target, "stable", &ProjectKind::Stable);
@@ -525,8 +522,8 @@ It must NOT derive flags directly from raw task-card fields.
 The execution-policy resolver reads validated task cards.
 Ultracode is thinking intensity only — it does not change permission mode,
 does not enable parallelism, and does not add launch args.
-Heavy tasks without explicit write approval are downgraded to plan-only
-and require a confirmation gate.
+Task level does not change the permission mode; a Heavy task keeps its declared
+permission mode and gains a confirmation gate and a review gate.
 read-only and plan-only must never produce write-type launch args.
 Active parallelism and headless must be stripped.
 Runners must consume allowed_launch_args and effective_permission_mode

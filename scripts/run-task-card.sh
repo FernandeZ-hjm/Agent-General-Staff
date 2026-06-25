@@ -18,11 +18,11 @@ Compatibility wrapper for:
   ags run <task-card>
 
 Options:
-  --check-only       Stop after gate check; exit 0 if allowed/confirm, 1 if stopped.
+  --check-only       Stop after gate check; exit 0 if allowed, 2 if confirm, 1 if stopped.
   --dry-run          Output the full launch plan without executing.
-  --approve-writes   Pass write approval to the resolver for Heavy tasks.
+  --approve-writes   Pass the write-approval audit/hint signal to the resolver (may act as the M9 generic-adapter override).
   --current-task-approval
-                     Pass live current-task approval; unlocks Heavy edit-with-confirmation only.
+                     Pass live current-task approval as an audit/hint signal (task level does not downgrade the permission mode).
   --format text|json Output format passed through to ags run (default: text).
   --help             Show this message.
 

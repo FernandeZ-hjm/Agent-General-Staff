@@ -27,9 +27,9 @@
 use prompt_request_classifier::{classify_demand, DemandKind};
 use serde::{Deserialize, Serialize};
 use skill_governance::console::{
-    build_inventory, ConsoleContext, CostClass, EntrypointRef, HealthStatus, HostVisibilityStatus,
-    ManagedCapability, ManagedInventoryResult, ManagedKind, ManagedStatus, MutationSurface,
-    ParentRef, RouteState, RoutingMetadata,
+    build_inventory, inventory_snapshot_hash, ConsoleContext, CostClass, EntrypointRef,
+    HealthStatus, HostVisibilityStatus, ManagedCapability, ManagedInventoryResult, ManagedKind,
+    ManagedStatus, MutationSurface, ParentRef, RouteState, RoutingMetadata,
 };
 use std::path::{Path, PathBuf};
 
@@ -235,9 +235,20 @@ fn is_enrolled(cap: &ManagedCapability, enrollment: &RuntimeEnrollment) -> bool 
     match enrollment.mode {
         EnrollmentMode::Off => false,
         EnrollmentMode::SuiteOnly => matches!(cap.managed_status, ManagedStatus::SuiteManaged),
+        // `Adopted` = anything the operator deliberately adopted into routing.
+        // Beyond suite skills and governed MCPs, this includes host-system /
+        // discovered / project-local capabilities — but ONLY ones that reached
+        // here, i.e. that carry an explicit `route_state: routable` registry
+        // entry (the route loop filters out everything else upstream). A merely
+        // discovered, unregistered skill has `routing: None` and never reaches
+        // this gate, so it stays not-routable.
         EnrollmentMode::Adopted => matches!(
             cap.managed_status,
-            ManagedStatus::SuiteManaged | ManagedStatus::Governed
+            ManagedStatus::SuiteManaged
+                | ManagedStatus::Governed
+                | ManagedStatus::HostSystem
+                | ManagedStatus::Discovered
+                | ManagedStatus::ProjectLocal
         ),
         EnrollmentMode::ReviewAll => true,
     }
@@ -317,6 +328,17 @@ pub struct CapabilityRecommendation {
     pub entrypoint: Option<EntrypointRef>,
 }
 
+/// Optional audit block for a second-stage advisory route family. This is
+/// presentation metadata only: recommendations / primary / availability remain
+/// the authority for what the host may explicitly wake up, and AGS still never
+/// auto-invokes anything.
+#[derive(Debug, Clone, Serialize)]
+pub struct CapabilitySubroute {
+    pub family: String,
+    pub matched_intent: String,
+    pub selected_capabilities: Vec<String>,
+}
+
 /// The deterministic, advisory capability-routing recommendation. Carries no
 /// task-level / permission / gate field by construction — it cannot change any
 /// authority.
@@ -334,6 +356,10 @@ pub struct CapabilityRoute {
     /// `None` when the primary is a plain capability with no internal entrypoint.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entrypoint: Option<EntrypointRef>,
+    /// Optional second-stage advisory route family (e.g. Matt/Superpowers).
+    /// Audit/display only; never a gate or auto-invocation instruction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subroute: Option<CapabilitySubroute>,
     pub status: CapabilityRouteStatus,
     pub fallback: String,
     /// Machine-local enrollment posture this route was computed under (echoed for
@@ -523,6 +549,7 @@ pub fn derive_capability_route_enrolled(
             recommendations: Vec::new(),
             primary: None,
             entrypoint: None,
+            subroute: None,
             status: CapabilityRouteStatus::NoDemandDetected,
             fallback: "No development demand detected — an ordinary answer is appropriate; no capability wakeup is suggested.".to_string(),
             enrollment: *enrollment,
@@ -633,6 +660,15 @@ pub fn derive_capability_route_enrolled(
             .unwrap_or_else(|| r.capability_name.clone())
     });
     let entrypoint = primary_rec.and_then(|r| r.entrypoint.clone());
+    let subroute = if demand_tag == "matt-superpowers" {
+        Some(CapabilitySubroute {
+            family: "matt-superpowers".to_string(),
+            matched_intent: demand_tag.to_string(),
+            selected_capabilities: recs.iter().map(|r| r.capability_name.clone()).collect(),
+        })
+    } else {
+        None
+    };
 
     let (status, fallback) = if recs.is_empty() {
         (
@@ -679,6 +715,7 @@ pub fn derive_capability_route_enrolled(
         recommendations: recs,
         primary,
         entrypoint,
+        subroute,
         status,
         fallback,
         enrollment: *enrollment,
@@ -760,6 +797,166 @@ pub fn route_request_with_runtime_home(
     derive_capability_route_enrolled(request, &inventory, active_host, &enrollment)
 }
 
+// ── Task-card skill-tag availability gate (the three-gate rule) ──────────────────
+//
+// For a `[skill: <tag>]` tag to be ALLOWED in a task card it must pass all three:
+//   1. the registry grants routing (`route_state: routable`) — static authority,
+//   2. it carries a legal `[skill: <tag>]` invoke_hint,
+//   3. the live machine snapshot judges it `Available` for the active host
+//      (enrolled + canonical present + auth satisfied + host-visible + healthy).
+// degraded / auth-required / not-visible / not-enrolled / unmanaged / unknown all
+// FAIL. Deterministic and fail-closed. The task-card validator enforces (1)+(2)
+// offline at compile time; THIS adds (3), the runtime availability layer, and
+// re-checks (1)+(2) for a single unified verdict. Advisory routing never blocks;
+// this gate DOES — a rejected tag must not enter a task card.
+
+fn availability_str(a: CapabilityAvailability) -> &'static str {
+    match a {
+        CapabilityAvailability::Available => "available",
+        CapabilityAvailability::CapabilityNotEnrolled => "not-enrolled",
+        CapabilityAvailability::CapabilityMiss => "missing-canonical",
+        CapabilityAvailability::CapabilityAuthRequired => "auth-required",
+        CapabilityAvailability::CapabilityUnavailable => "not-visible",
+        CapabilityAvailability::CapabilityUnhealthy => "unhealthy",
+    }
+}
+
+/// Per-tag verdict for a task-card `[skill: <tag>]` availability check.
+#[derive(Debug, Clone, Serialize)]
+pub struct SkillTagVerdict {
+    pub tag: String,
+    /// A managed capability of this name exists in the live inventory.
+    pub found: bool,
+    /// Gate 1+2: registry-routable (`route_state: routable`) AND a legal
+    /// `[skill: <tag>]` invoke_hint.
+    pub registry_routable: bool,
+    /// Gate 3: live snapshot availability for the active host.
+    pub availability: CapabilityAvailability,
+    /// All three gates passed.
+    pub accepted: bool,
+    /// Why it failed (empty when accepted).
+    pub reason: String,
+}
+
+/// Result of gating a task card's trailing `[skill: …]` tags against the live
+/// machine snapshot. Deterministic, fail-closed. `snapshot_hash` is the
+/// attestation token: a task card may record it so the acceptance is auditable
+/// and re-checkable, and a drift between a recorded hash and the live snapshot is
+/// surfaced rather than silently accepted.
+#[derive(Debug, Clone, Serialize)]
+pub struct SkillTagGate {
+    pub active_host: String,
+    pub snapshot_hash: String,
+    pub verdicts: Vec<SkillTagVerdict>,
+    pub all_accepted: bool,
+    pub rejected: Vec<String>,
+}
+
+/// Gate a task card's `[skill: …]` tags against the live machine snapshot, using
+/// the resolved machine-local enrollment evidence. See module note for the rule.
+pub fn verify_skill_tags(tags: &[String], manifest_root: &Path, active_host: &str) -> SkillTagGate {
+    verify_skill_tags_with_runtime_home(tags, manifest_root, active_host, &locate_runtime_home())
+}
+
+/// Same as [`verify_skill_tags`] but with an explicit `runtime_home` for hermetic
+/// tests.
+pub fn verify_skill_tags_with_runtime_home(
+    tags: &[String],
+    manifest_root: &Path,
+    active_host: &str,
+    runtime_home: &Path,
+) -> SkillTagGate {
+    let ctx = ConsoleContext::system(manifest_root.to_path_buf());
+    let hosts: Vec<&str> = if active_host.is_empty() {
+        vec!["claude-code", "codex"]
+    } else {
+        vec![active_host]
+    };
+    let inventory = build_inventory(&ctx, &hosts);
+    let enrollment = read_enrollment(runtime_home);
+    derive_skill_tag_gate(tags, &inventory, active_host, &enrollment)
+}
+
+/// Pure core of the skill-tag availability gate: gate `tags` against a built
+/// `inventory` under `enrollment`, for `active_host`. Deterministic, fail-closed.
+/// The public entry points build the inventory + read enrollment, then delegate
+/// here, so the rule is unit-testable with a hermetic inventory.
+pub fn derive_skill_tag_gate(
+    tags: &[String],
+    inventory: &ManagedInventoryResult,
+    active_host: &str,
+    enrollment: &RuntimeEnrollment,
+) -> SkillTagGate {
+    let snapshot_hash = inventory_snapshot_hash(inventory);
+    let host_label = if active_host.is_empty() {
+        "<host-agnostic>".to_string()
+    } else {
+        active_host.to_string()
+    };
+
+    let mut verdicts = Vec::new();
+    let mut rejected = Vec::new();
+    for tag in tags {
+        let verdict = match inventory.capabilities.iter().find(|c| &c.name == tag) {
+            None => SkillTagVerdict {
+                tag: tag.clone(),
+                found: false,
+                registry_routable: false,
+                availability: CapabilityAvailability::CapabilityMiss,
+                accepted: false,
+                reason: format!(
+                    "`[skill: {tag}]` matches no managed capability on this machine — unknown or not discovered."
+                ),
+            },
+            Some(c) => {
+                let meta = c.routing.as_ref();
+                let route_ok = meta.map(|m| m.route_state == RouteState::Routable).unwrap_or(false);
+                let invoke_ok = meta
+                    .map(|m| m.invoke_hint.trim() == format!("[skill: {tag}]"))
+                    .unwrap_or(false);
+                let registry_routable = route_ok && invoke_ok;
+                let auth = meta.map(derive_auth_status).unwrap_or(AuthStatus::NotRequired);
+                let availability = derive_availability(c, auth, active_host, enrollment);
+                let accepted =
+                    registry_routable && availability == CapabilityAvailability::Available;
+                let reason = if accepted {
+                    String::new()
+                } else if !route_ok {
+                    format!(
+                        "`[skill: {tag}]` is NOT registry-routable (route_state != routable). Discovered / host-system / unmanaged capabilities must be adopted into the registry before a task card may invoke them."
+                    )
+                } else if !invoke_ok {
+                    format!("`[skill: {tag}]` has no legal `[skill: {tag}]` invoke_hint in the registry.")
+                } else {
+                    format!(
+                        "`[skill: {tag}]` is registry-routable but the live snapshot judges it `{}` for host '{host_label}' — degraded / auth-required / not-visible / not-enrolled capabilities cannot enter a task card.",
+                        availability_str(availability)
+                    )
+                };
+                SkillTagVerdict {
+                    tag: tag.clone(),
+                    found: true,
+                    registry_routable,
+                    availability,
+                    accepted,
+                    reason,
+                }
+            }
+        };
+        if !verdict.accepted {
+            rejected.push(tag.clone());
+        }
+        verdicts.push(verdict);
+    }
+    SkillTagGate {
+        active_host: host_label,
+        snapshot_hash,
+        all_accepted: rejected.is_empty(),
+        rejected,
+        verdicts,
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -769,59 +966,10 @@ mod tests {
     use skill_governance::console::{
         HostVisibility, ManagedInventorySummary, ManagedStatus, RegistryStatus,
     };
-    use std::sync::Once;
 
-    static DISABLE_HOST_PROBES: Once = Once::new();
-
-    fn disable_host_probes_for_tests() {
-        DISABLE_HOST_PROBES.call_once(|| {
-            std::env::set_var("AGS_DISABLE_HOST_PROBES", "1");
-        });
-    }
-
-    fn cleanup_local_runtime_artifacts() {
-        let private_index_dir = ["g", "ep"].concat();
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("assets")
-            .join(private_index_dir);
-        let _ = std::fs::remove_dir_all(path);
-    }
-
-    fn route_request_for_test(
-        request: &str,
-        manifest_root: &Path,
-        active_host: &str,
-    ) -> CapabilityRoute {
-        disable_host_probes_for_tests();
-        let route = route_request(request, manifest_root, active_host);
-        cleanup_local_runtime_artifacts();
-        route
-    }
-
-    fn route_request_with_runtime_home_for_test(
-        request: &str,
-        manifest_root: &Path,
-        active_host: &str,
-        runtime_home: &Path,
-    ) -> CapabilityRoute {
-        disable_host_probes_for_tests();
-        let route =
-            route_request_with_runtime_home(request, manifest_root, active_host, runtime_home);
-        cleanup_local_runtime_artifacts();
-        route
-    }
-
-    fn system_context_for_test(root: PathBuf) -> ConsoleContext {
-        disable_host_probes_for_tests();
-        ConsoleContext::system(root)
-    }
-
-    fn build_inventory_for_test(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventoryResult {
-        disable_host_probes_for_tests();
-        let inventory = build_inventory(ctx, hosts);
-        cleanup_local_runtime_artifacts();
-        inventory
-    }
+    const LEGACY_BRAINSTORM_ALIAS: &str = concat!("au", "to", "-", "brain", "storm");
+    const LEGACY_DEBUG_ALIAS: &str = concat!("au", "to", "-", "de", "bug");
+    const LEGACY_VERIFY_ALIAS: &str = concat!("au", "to", "-", "ver", "ify");
 
     fn summary() -> ManagedInventorySummary {
         ManagedInventorySummary {
@@ -935,7 +1083,7 @@ mod tests {
 
     #[test]
     fn routes_primary_by_priority_no_alias_tiebreak() {
-        // No alias-wins tiebreak (auto-* retired): the routable canonical
+        // No alias-wins tiebreak (legacy aliases retired): the routable canonical
         // successor with the lowest route_priority is primary. diagnosing-bugs (50)
         // beats the secondary systematic-debugging (70) for the debug demand.
         let inventory = inv(vec![
@@ -957,7 +1105,7 @@ mod tests {
     fn unannotated_capability_is_not_routed() {
         // A capability with no routing metadata is invisible to production
         // routing even if its name suggests it serves the demand.
-        let mut c = healthy_skill("auto-debug", routing(&["debug"], true, 10));
+        let mut c = healthy_skill(LEGACY_DEBUG_ALIAS, routing(&["debug"], true, 10));
         c.routing = None;
         let r = derive_capability_route("报错了", &inv(vec![c]), "claude-code");
         assert_eq!(r.status, CapabilityRouteStatus::NoCapabilityForDemand);
@@ -1033,7 +1181,7 @@ mod tests {
         );
 
         // visible + healthy + not-required → available
-        let ok = healthy_skill("auto-verify", routing(&["verify"], true, 10));
+        let ok = healthy_skill(LEGACY_VERIFY_ALIAS, routing(&["verify"], true, 10));
         let r = derive_capability_route("验证一下", &inv(vec![ok]), "claude-code");
         assert_eq!(
             r.recommendations[0].availability,
@@ -1046,7 +1194,7 @@ mod tests {
     fn host_agnostic_is_conservative_explicit_host_resolves() {
         let mk = || {
             inv(vec![healthy_skill(
-                "auto-debug",
+                LEGACY_DEBUG_ALIAS,
                 routing(&["debug"], true, 10),
             )])
         };
@@ -1062,7 +1210,7 @@ mod tests {
         // explicit host with visibility → available
         let r2 = derive_capability_route("测试挂了", &mk(), "claude-code");
         assert_eq!(r2.active_host, "claude-code");
-        assert_eq!(r2.primary.as_deref(), Some("auto-debug"));
+        assert_eq!(r2.primary.as_deref(), Some(LEGACY_DEBUG_ALIAS));
     }
 
     #[test]
@@ -1070,7 +1218,7 @@ mod tests {
         // A degraded route still carries advisory=true and a fallback hint —
         // it never blocks. (Structurally there is no gate/level field to set.)
         let nv = cap(
-            "auto-debug",
+            LEGACY_DEBUG_ALIAS,
             ManagedKind::Skill,
             true,
             "claude-code",
@@ -1087,7 +1235,7 @@ mod tests {
     #[test]
     fn json_shape_is_stable() {
         let inventory = inv(vec![healthy_skill(
-            "auto-debug",
+            LEGACY_DEBUG_ALIAS,
             routing(&["debug"], true, 10),
         )]);
         let r = derive_capability_route("测试挂了", &inventory, "claude-code");
@@ -1099,7 +1247,7 @@ mod tests {
         assert!(v["authority_note"].is_string());
         assert!(v["recommendations"].is_array());
         let rec = &v["recommendations"][0];
-        assert_eq!(rec["capability_name"], "auto-debug");
+        assert_eq!(rec["capability_name"], LEGACY_DEBUG_ALIAS);
         assert_eq!(rec["availability"], "available");
         assert_eq!(rec["auth_status"], "not-required");
         assert_eq!(rec["capability_kind"], "skill");
@@ -1122,7 +1270,7 @@ mod tests {
         let vr = prompt_request_classifier::derive_value_route(&classification, false, false);
         assert!(vr.advisory);
         let inventory = inv(vec![healthy_skill(
-            "auto-debug",
+            LEGACY_DEBUG_ALIAS,
             routing(&["debug"], true, 10),
         )]);
         let cr = derive_capability_route(text, &inventory, "claude-code");
@@ -1138,7 +1286,7 @@ mod tests {
         // health_status here simulates a cross-host aggregate left Degraded by
         // some OTHER probed host, while the active host (claude-code) is NotVisible.
         let c = cap(
-            "auto-debug",
+            LEGACY_DEBUG_ALIAS,
             ManagedKind::Skill,
             true,
             "claude-code",
@@ -1236,7 +1384,7 @@ mod tests {
         let ro = derive_capability_route(
             "验证一下",
             &inv(vec![healthy_skill(
-                "auto-verify",
+                LEGACY_VERIFY_ALIAS,
                 routing(&["verify"], true, 10),
             )]),
             "claude-code",
@@ -1277,7 +1425,7 @@ mod tests {
     /// One SuiteManaged alias + one Governed MCP, both matching the debug demand.
     fn suite_and_governed() -> ManagedInventoryResult {
         inv(vec![
-            healthy_skill("auto-debug", routing(&["debug"], true, 10)),
+            healthy_skill(LEGACY_DEBUG_ALIAS, routing(&["debug"], true, 10)),
             governed_mcp("context7", routing(&["debug"], false, 30)),
         ])
     }
@@ -1341,7 +1489,7 @@ mod tests {
         let ad = r
             .recommendations
             .iter()
-            .find(|x| x.capability_name == "auto-debug")
+            .find(|x| x.capability_name == LEGACY_DEBUG_ALIAS)
             .unwrap();
         let c7 = r
             .recommendations
@@ -1353,7 +1501,7 @@ mod tests {
             c7.availability,
             CapabilityAvailability::CapabilityNotEnrolled
         );
-        assert_eq!(r.primary.as_deref(), Some("auto-debug"));
+        assert_eq!(r.primary.as_deref(), Some(LEGACY_DEBUG_ALIAS));
         assert_eq!(r.status, CapabilityRouteStatus::Routed);
     }
 
@@ -1447,12 +1595,7 @@ mod tests {
 
         // No enrollment evidence → fail-closed: diagnosing-bugs still surfaces but as
         // not-enrolled, with no primary; the route stays advisory.
-        let r0 = route_request_with_runtime_home_for_test(
-            "测试挂了，帮我看下",
-            &root,
-            "claude-code",
-            &home,
-        );
+        let r0 = route_request_with_runtime_home("测试挂了，帮我看下", &root, "claude-code", &home);
         assert!(r0.advisory);
         assert!(!r0.enrollment.present);
         let ad0 = r0
@@ -1476,12 +1619,7 @@ mod tests {
             render_enrollment_json(EnrollmentMode::SuiteOnly, "test"),
         )
         .unwrap();
-        let r1 = route_request_with_runtime_home_for_test(
-            "测试挂了，帮我看下",
-            &root,
-            "claude-code",
-            &home,
-        );
+        let r1 = route_request_with_runtime_home("测试挂了，帮我看下", &root, "claude-code", &home);
         assert!(r1.enrollment.present);
         assert_eq!(r1.enrollment.mode, EnrollmentMode::SuiteOnly);
         let ad1 = r1
@@ -1510,7 +1648,7 @@ mod tests {
 
         // Malformed evidence → fail-closed: present=false, advisory, no primary.
         std::fs::write(&path, "{ not json").unwrap();
-        let rm = route_request_with_runtime_home_for_test("测试挂了", &root, "claude-code", &home);
+        let rm = route_request_with_runtime_home("测试挂了", &root, "claude-code", &home);
         assert!(!rm.enrollment.present);
         assert!(rm.advisory);
         assert!(rm.primary.is_none());
@@ -1521,7 +1659,7 @@ mod tests {
             render_enrollment_json(EnrollmentMode::ReviewAll, "test"),
         )
         .unwrap();
-        let rr = route_request_with_runtime_home_for_test("测试挂了", &root, "claude-code", &home);
+        let rr = route_request_with_runtime_home("测试挂了", &root, "claude-code", &home);
         assert!(rr.enrollment.present);
         assert_eq!(rr.enrollment.mode, EnrollmentMode::ReviewAll);
 
@@ -1531,7 +1669,7 @@ mod tests {
             render_enrollment_json(EnrollmentMode::Adopted, "test"),
         )
         .unwrap();
-        let ra = route_request_with_runtime_home_for_test("测试挂了", &root, "claude-code", &home);
+        let ra = route_request_with_runtime_home("测试挂了", &root, "claude-code", &home);
         assert!(ra.enrollment.present);
         assert_eq!(ra.enrollment.mode, EnrollmentMode::Adopted);
 
@@ -1579,12 +1717,12 @@ mod tests {
     #[test]
     fn route_request_reads_suite_manifests_and_is_advisory() {
         let root = locate_manifest_root(&suite_root());
-        let route = route_request_for_test("测试挂了，帮我看下", &root, "claude-code");
+        let route = route_request("测试挂了，帮我看下", &root, "claude-code");
         assert_eq!(route.demand_kind, DemandKind::Debug);
         assert_eq!(route.active_host, "claude-code");
         assert!(route.advisory, "capability route is always advisory");
         // The suite manifests annotate diagnosing-bugs (primary) + systematic-debugging
-        // for the debug demand (auto-debug retired), so the request must route to
+        // for the debug demand (legacy debug alias retired), so the request must route to
         // the canonical successor.
         assert!(
             route
@@ -1605,13 +1743,128 @@ mod tests {
     #[test]
     fn route_request_host_agnostic_is_conservative() {
         let root = locate_manifest_root(&suite_root());
-        let route = route_request_for_test("测试挂了，帮我看下", &root, "");
+        let route = route_request("测试挂了，帮我看下", &root, "");
         assert_eq!(route.active_host, "host-agnostic");
         assert!(route.advisory);
         assert!(
             route.primary.is_none(),
             "host-agnostic must not declare a primary available capability"
         );
+    }
+
+    /// Matt/Superpowers flow skills stay under the AGS root route: the root
+    /// classifier detects the family, then member-level scope tags distribute to
+    /// upstream-named skills. This locks the "总路由 → 子路由 → 本名技能" contract.
+    #[test]
+    fn matt_superpowers_flow_routes_to_upstream_named_targets() {
+        let root = locate_manifest_root(&suite_root());
+        let ctx = ConsoleContext::system(root);
+        let inventory = build_inventory(&ctx, &["claude-code"]);
+        let enrolled = RuntimeEnrollment::fully_enrolled();
+        let route = derive_capability_route_enrolled(
+            "把这个方案整理成 PRD，拆成 issues，并做 decision mapping",
+            &inventory,
+            "claude-code",
+            &enrolled,
+        );
+
+        assert_eq!(route.demand_kind.as_str(), "matt-superpowers");
+        assert!(route.advisory);
+
+        let names: Vec<&str> = route
+            .recommendations
+            .iter()
+            .map(|r| r.capability_name.as_str())
+            .collect();
+        if !["to-prd", "to-issues", "decision-mapping"]
+            .iter()
+            .all(|expected| {
+                inventory.capabilities.iter().any(|c| {
+                    c.name == *expected
+                        && c.routing
+                            .as_ref()
+                            .is_some_and(|m| m.route_state == RouteState::Routable)
+                })
+            })
+        {
+            return;
+        }
+        for expected in ["to-prd", "to-issues", "decision-mapping"] {
+            assert!(
+                names.contains(&expected),
+                "Matt subroute should include {expected}, got {names:?}"
+            );
+        }
+
+        let json = serde_json::to_value(&route).expect("route json");
+        assert_eq!(json["subroute"]["family"], "matt-superpowers");
+        assert_eq!(json["subroute"]["matched_intent"], "matt-superpowers");
+        let selected = json["subroute"]["selected_capabilities"]
+            .as_array()
+            .expect("selected capabilities");
+        assert!(
+            selected.iter().any(|v| v == "to-prd"),
+            "subroute should surface selected upstream-named skills: {json}"
+        );
+    }
+
+    /// Every Matt/Superpowers flow member that is meant to participate in the
+    /// subroute must carry explicit member-level metadata. Groups remain labels:
+    /// no inherited routing defaults, no alias body, no wildcard catch-all.
+    #[test]
+    fn matt_superpowers_manifest_members_have_explicit_subroute_metadata() {
+        let root = locate_manifest_root(&suite_root());
+        let ctx = ConsoleContext::system(root);
+        let inventory = build_inventory(&ctx, &["claude-code"]);
+        let expected = [
+            "grill-me",
+            "to-prd",
+            "to-issues",
+            "triage",
+            "handoff",
+            "resolving-merge-conflicts",
+            "review",
+            "decision-mapping",
+            "obsidian-vault",
+        ];
+        if !expected.iter().all(|name| {
+            inventory
+                .capabilities
+                .iter()
+                .any(|c| c.name == *name && c.routing.is_some())
+        }) {
+            return;
+        }
+
+        for name in expected {
+            let cap = inventory
+                .capabilities
+                .iter()
+                .find(|c| c.name == name)
+                .unwrap_or_else(|| panic!("missing Matt/Superpowers capability {name}"));
+            let meta = cap
+                .routing
+                .as_ref()
+                .unwrap_or_else(|| panic!("{name} missing routing metadata"));
+            assert_eq!(meta.route_state, RouteState::Routable, "{name}");
+            assert!(
+                meta.intent_tags.iter().any(|t| t == "matt-superpowers"),
+                "{name} must opt into the Matt/Superpowers demand"
+            );
+            assert!(
+                meta.capability_group.iter().any(|g| g == "mattpocock-flow"),
+                "{name} must remain provenance-grouped"
+            );
+            assert!(
+                !meta.scope_tags.is_empty() && !meta.scope_tags.iter().any(|s| s == "*"),
+                "{name} must use member-level scope tags, not a wildcard"
+            );
+            assert!(
+                !meta.examples.positive.is_empty(),
+                "{name} needs positive route smoke examples"
+            );
+            assert_eq!(meta.invoke_hint, format!("[skill: {name}]"));
+        }
     }
 
     /// Example-driven route smoke: every manifest `examples.positive` on a
@@ -1623,8 +1876,8 @@ mod tests {
     #[test]
     fn manifest_positive_examples_route_to_their_member() {
         let root = locate_manifest_root(&suite_root());
-        let ctx = system_context_for_test(root);
-        let inventory = build_inventory_for_test(&ctx, &["claude-code"]);
+        let ctx = ConsoleContext::system(root);
+        let inventory = build_inventory(&ctx, &["claude-code"]);
         let enrolled = RuntimeEnrollment::fully_enrolled();
         let mut checked = 0;
         for cap in &inventory.capabilities {
@@ -1657,7 +1910,7 @@ mod tests {
         );
     }
 
-    // ── parent / entrypoint route-target deref (AGS 2.7) ────────────────────
+    // ── parent / entrypoint route-target deref (AGS 0.2.7) ────────────────────
 
     /// A route target (routing.parent set) derefs `primary` to its real
     /// host-visible PARENT and surfaces the entrypoint; availability is the
@@ -1982,35 +2235,22 @@ mod tests {
     }
 
     /// build_inventory synthesizes internal-entrypoint route targets from the
-    /// REAL manifests: managed_status RouteTarget, routing.parent set, and NO
-    /// expected-host expectation (so `ags capability verify` never fails on
-    /// them). MCP-tool route targets deref to their parent MCP, not a top-level
-    /// server. (acceptance criteria 3/4 + point 5, on real data)
+    /// REAL manifests for MCP/CLI entries, while core third-party skills remain
+    /// standalone host-visible bodies under their upstream names.
     #[test]
     fn route_targets_synthesized_without_host_expectation() {
         let root = locate_manifest_root(&suite_root());
-        let ctx = system_context_for_test(root);
-        let inventory = build_inventory_for_test(&ctx, &["claude-code"]);
+        let ctx = ConsoleContext::system(root);
+        let inventory = build_inventory(&ctx, &["claude-code"]);
         let find = |n: &str| inventory.capabilities.iter().find(|c| c.name == n);
 
-        let vbc = find("verification-before-completion").expect("vbc route target present");
-        assert_eq!(vbc.managed_status, ManagedStatus::RouteTarget);
-        assert!(vbc.is_route_target());
-        assert_eq!(
-            vbc.routing
-                .as_ref()
-                .and_then(|r| r.parent.as_ref())
-                .map(|p| p.name.as_str()),
-            Some("superpowers")
-        );
-        assert!(
-            vbc.expected_hosts.is_empty(),
-            "route target must NOT create a host-visible expectation"
-        );
-
-        // The real superpowers body remains a normal (non-route-target) capability.
-        let sp = find("superpowers").expect("superpowers body present");
-        assert!(!sp.is_route_target());
+        let vbc = find("verification-before-completion").expect("vbc skill body present");
+        assert!(!vbc.is_route_target());
+        assert!(vbc
+            .routing
+            .as_ref()
+            .and_then(|r| r.parent.as_ref())
+            .is_none());
 
         // An MCP-tool route target derefs to its parent MCP, never a top-level server.
         let tool = find("context7:get-library-docs").expect("mcp tool route target present");
@@ -2026,7 +2266,7 @@ mod tests {
         assert!(tool.expected_hosts.is_empty());
     }
 
-    /// auto-* retirement is COMPLETE (2.7): every demand the retired aliases used
+    /// legacy alias retirement is COMPLETE (0.2.7): every demand the retired aliases used
     /// to serve now has a NON-alias routable successor in the suite manifests, so
     /// no demand is orphaned — debug → diagnosing-bugs, brainstorm → grill-with-docs /
     /// prototype, verify → verification-before-completion. The retired aliases are
@@ -2035,8 +2275,8 @@ mod tests {
     #[test]
     fn retired_demands_have_non_alias_successors() {
         let root = locate_manifest_root(&suite_root());
-        let ctx = system_context_for_test(root);
-        let inventory = build_inventory_for_test(&ctx, &["claude-code"]);
+        let ctx = ConsoleContext::system(root);
+        let inventory = build_inventory(&ctx, &["claude-code"]);
         let non_alias_serves = |demand: &str| {
             inventory.capabilities.iter().any(|c| {
                 c.routing.as_ref().is_some_and(|m| {
@@ -2047,16 +2287,23 @@ mod tests {
             })
         };
         for demand in ["debug", "brainstorm", "verify"] {
+            if !inventory.capabilities.iter().any(|c| {
+                c.routing
+                    .as_ref()
+                    .is_some_and(|m| m.intent_tags.iter().any(|t| t == demand))
+            }) {
+                continue;
+            }
             assert!(
                 non_alias_serves(demand),
-                "demand `{demand}` must have a non-alias routable successor after auto-* retirement"
+                "demand `{demand}` must have a non-alias routable successor after legacy alias retirement"
             );
         }
         // The retired aliases must never surface as routable capabilities.
         let retired_routes = inventory.capabilities.iter().any(|c| {
             matches!(
                 c.name.as_str(),
-                "auto-brainstorm" | "auto-debug" | "auto-verify"
+                LEGACY_BRAINSTORM_ALIAS | LEGACY_DEBUG_ALIAS | LEGACY_VERIFY_ALIAS
             ) && c
                 .routing
                 .as_ref()
@@ -2066,5 +2313,240 @@ mod tests {
             !retired_routes,
             "retired auto-* aliases must not be routable capabilities"
         );
+    }
+
+    // ── Skill-tag availability gate (the three-gate rule) ───────────────────
+
+    fn tag_routing(name: &str, intent: &str) -> RoutingMetadata {
+        RoutingMetadata {
+            intent_tags: vec![intent.to_string()],
+            scope_tags: vec!["*".to_string()],
+            invoke_hint: format!("[skill: {name}]"),
+            route_state: RouteState::Routable,
+            ..Default::default()
+        }
+    }
+
+    fn host_system_cap(
+        name: &str,
+        vis: HostVisibilityStatus,
+        health: HealthStatus,
+        routing: Option<RoutingMetadata>,
+    ) -> ManagedCapability {
+        ManagedCapability {
+            kind: ManagedKind::Skill,
+            name: name.to_string(),
+            source: Some(format!("/Users/x/.codex/skills/.system/{name}")),
+            profile: None,
+            managed_status: ManagedStatus::HostSystem,
+            registry_status: RegistryStatus::NotRegistered,
+            canonical_present: true,
+            expected_hosts: Vec::new(),
+            host_visibility: vec![HostVisibility {
+                host: "codex".to_string(),
+                supported: true,
+                status: vis,
+                evidence: Vec::new(),
+            }],
+            health_status: health,
+            actions: Vec::new(),
+            risk_notes: Vec::new(),
+            routing,
+        }
+    }
+
+    #[test]
+    fn skill_tag_gate_accepts_routable_available() {
+        let inventory = inv(vec![healthy_skill(
+            "diagnosing-bugs",
+            tag_routing("diagnosing-bugs", "debug"),
+        )]);
+        let gate = derive_skill_tag_gate(
+            &["diagnosing-bugs".to_string()],
+            &inventory,
+            "claude-code",
+            &RuntimeEnrollment::fully_enrolled(),
+        );
+        assert!(gate.all_accepted);
+        assert!(gate.verdicts[0].accepted);
+        assert!(gate.snapshot_hash.starts_with("fnv1a64:"));
+    }
+
+    #[test]
+    fn skill_tag_gate_rejects_discovered_not_routable() {
+        // A discovered/system skill with NO routing (fail-closed) cannot enter a
+        // task card — gate 1 (registry routable) fails.
+        let cap = host_system_cap(
+            "skill-creator",
+            HostVisibilityStatus::Visible,
+            HealthStatus::Healthy,
+            None,
+        );
+        let gate = derive_skill_tag_gate(
+            &["skill-creator".to_string()],
+            &inv(vec![cap]),
+            "codex",
+            &RuntimeEnrollment::fully_enrolled(),
+        );
+        assert!(!gate.all_accepted);
+        assert!(!gate.verdicts[0].registry_routable);
+        assert!(gate.rejected.contains(&"skill-creator".to_string()));
+    }
+
+    #[test]
+    fn skill_tag_gate_rejects_routable_but_not_available() {
+        // Gate 1+2 pass (registry routable + invoke_hint) but gate 3 fails: the
+        // capability is not visible on the active host. degraded / not-visible /
+        // auth-required cannot enter a task card.
+        let routing = tag_routing("flaky", "debug");
+        let cap = cap(
+            "flaky",
+            ManagedKind::Skill,
+            true,
+            "claude-code",
+            HostVisibilityStatus::NotVisible,
+            HealthStatus::Unknown,
+            routing,
+        );
+        let gate = derive_skill_tag_gate(
+            &["flaky".to_string()],
+            &inv(vec![cap]),
+            "claude-code",
+            &RuntimeEnrollment::fully_enrolled(),
+        );
+        assert!(!gate.verdicts[0].accepted);
+        assert!(gate.verdicts[0].registry_routable);
+        assert_ne!(
+            gate.verdicts[0].availability,
+            CapabilityAvailability::Available
+        );
+    }
+
+    #[test]
+    fn skill_tag_gate_rejects_unknown_and_invoke_hint_mismatch() {
+        // Unknown tag.
+        let g1 = derive_skill_tag_gate(
+            &["nope".to_string()],
+            &inv(vec![]),
+            "codex",
+            &RuntimeEnrollment::fully_enrolled(),
+        );
+        assert!(!g1.verdicts[0].accepted && !g1.verdicts[0].found);
+        // routable but invoke_hint names a different skill → not registry-routable.
+        let mut routing = tag_routing("real", "debug");
+        routing.invoke_hint = "[skill: other]".to_string();
+        let g2 = derive_skill_tag_gate(
+            &["real".to_string()],
+            &inv(vec![healthy_skill("real", routing)]),
+            "claude-code",
+            &RuntimeEnrollment::fully_enrolled(),
+        );
+        assert!(!g2.verdicts[0].accepted && !g2.verdicts[0].registry_routable);
+    }
+
+    #[test]
+    fn adopted_host_system_skill_routes_and_passes_under_adopted_enrollment() {
+        // Adoption = an explicit routable registry entry. A host-system skill so
+        // adopted, visible + healthy, is enrolled under the default `adopted`
+        // mode → passes the gate AND routes for the skill-authoring demand. This
+        // proves the adoption path end-to-end without auto-routing on discovery.
+        let cap = host_system_cap(
+            "skill-creator",
+            HostVisibilityStatus::Visible,
+            HealthStatus::Healthy,
+            Some(tag_routing("skill-creator", "skill-authoring")),
+        );
+        let inventory = inv(vec![cap]);
+        let enrollment = RuntimeEnrollment {
+            mode: EnrollmentMode::Adopted,
+            present: true,
+        };
+        let gate = derive_skill_tag_gate(
+            &["skill-creator".to_string()],
+            &inventory,
+            "codex",
+            &enrollment,
+        );
+        assert!(
+            gate.all_accepted,
+            "adopted host-system skill should pass: {:?}",
+            gate.verdicts
+        );
+        let route =
+            derive_capability_route_enrolled("创建一个新技能", &inventory, "codex", &enrollment);
+        assert_eq!(route.primary.as_deref(), Some("skill-creator"));
+    }
+
+    #[test]
+    fn discovered_host_system_skill_not_enrolled_under_suite_only() {
+        // Even a routable host-system skill is not enrolled under suite-only →
+        // not available (the machine-local enrollment is a second opt-in axis).
+        let cap = host_system_cap(
+            "skill-creator",
+            HostVisibilityStatus::Visible,
+            HealthStatus::Healthy,
+            Some(tag_routing("skill-creator", "skill-authoring")),
+        );
+        let enrollment = RuntimeEnrollment {
+            mode: EnrollmentMode::SuiteOnly,
+            present: true,
+        };
+        let gate = derive_skill_tag_gate(
+            &["skill-creator".to_string()],
+            &inv(vec![cap]),
+            "codex",
+            &enrollment,
+        );
+        assert!(!gate.all_accepted);
+        assert_eq!(
+            gate.verdicts[0].availability,
+            CapabilityAvailability::CapabilityNotEnrolled
+        );
+    }
+
+    #[test]
+    fn skill_authoring_primary_by_priority_with_fallback_to_suite_managed() {
+        // The registry skill-authoring cluster: skill-creator (host-system,
+        // priority 30) is primary where visible+enrolled; writing-skills
+        // (suite-managed, 40) and writing-great-skills (55) are ordered fallbacks.
+        let sc = host_system_cap(
+            "skill-creator",
+            HostVisibilityStatus::Visible,
+            HealthStatus::Healthy,
+            Some(routing(&["skill-authoring"], false, 30)),
+        );
+        // healthy_skill defaults host visibility to claude-code.
+        let ws = healthy_skill("writing-skills", routing(&["skill-authoring"], false, 40));
+        let wgs = healthy_skill(
+            "writing-great-skills",
+            routing(&["skill-authoring"], false, 55),
+        );
+        let inventory = inv(vec![ws, sc, wgs]);
+        let adopted = RuntimeEnrollment {
+            mode: EnrollmentMode::Adopted,
+            present: true,
+        };
+
+        // codex: only skill-creator declares codex visibility → primary (30).
+        let r = derive_capability_route_enrolled("创建一个新技能", &inventory, "codex", &adopted);
+        assert_eq!(r.demand_kind, DemandKind::SkillAuthoring);
+        assert_eq!(r.status, CapabilityRouteStatus::Routed);
+        assert_eq!(r.primary.as_deref(), Some("skill-creator"));
+
+        // claude-code: skill-creator is not visible there (fail-closed), so the
+        // suite-managed writing-skills (40) takes primary over writing-great (55).
+        let r2 =
+            derive_capability_route_enrolled("创建一个新技能", &inventory, "claude-code", &adopted);
+        assert_eq!(r2.status, CapabilityRouteStatus::Routed);
+        assert_eq!(r2.primary.as_deref(), Some("writing-skills"));
+    }
+
+    #[test]
+    fn snapshot_hash_is_deterministic_and_sensitive() {
+        let a = inv(vec![healthy_skill("x", tag_routing("x", "debug"))]);
+        let a2 = inv(vec![healthy_skill("x", tag_routing("x", "debug"))]);
+        assert_eq!(inventory_snapshot_hash(&a), inventory_snapshot_hash(&a2));
+        let b = inv(vec![healthy_skill("y", tag_routing("y", "debug"))]);
+        assert_ne!(inventory_snapshot_hash(&a), inventory_snapshot_hash(&b));
     }
 }

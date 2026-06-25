@@ -31,16 +31,20 @@ pub(crate) fn check_execution_authority_gate(
     let action_lower = action_text.to_lowercase();
     let workflow_lower = normalize_workflow_request_text(&workflow_text.to_lowercase());
 
-    // ── Execution effort: ultracode must not be abused as authority ──
+    // ── Execution effort: the exhaustive tier must not be abused as authority ──
+    // `exhaustive` is the neutral value; `ultracode` is the legacy alias. Either
+    // way, effort is thinking-intensity only, never permission / review-skip /
+    // auto-execute authority.
     let execution_effort = get_execution_effort(fields);
-    if execution_effort == "ultracode" {
-        let ultracode_abuse = ULTRACODE_AUTHORITY_ABUSE_KEYWORDS
+    if is_exhaustive_effort(execution_effort) {
+        let effort_abuse = EXHAUSTIVE_EFFORT_AUTHORITY_ABUSE_KEYWORDS
             .iter()
             .any(|kw| action_lower.contains(&kw.to_lowercase()));
-        if ultracode_abuse {
+        if effort_abuse {
             errors.push(format!(
-                "[{}] Execution effort 为 ultracode，但任务行动区域将 ultracode 当作执行权限/跳过 review/自动执行的依据。ultracode 只能表示思考强度，不能映射为 plan、parallel、permission escalation 或 workflow authority",
-                error_code::ULTRACODE_AUTHORITY_ABUSE
+                "[{}] Execution effort 为 {}（exhaustive 强度），但任务行动区域将其当作执行权限/跳过 review/自动执行的依据。Execution effort 只能表示思考强度，不能映射为 plan、parallel、permission escalation 或 workflow authority",
+                error_code::ULTRACODE_AUTHORITY_ABUSE,
+                execution_effort
             ));
         }
     }
@@ -123,6 +127,34 @@ pub(crate) fn check_execution_authority_gate(
             errors.push(format!(
                 "[{}] Parallelism 为 {}，但任务行动区域要求 subagent/multi-session/agent-team/dynamic workflow",
                 error_code::PARALLELISM_POLICY_VIOLATION,
+                parallelism
+            ));
+        }
+    }
+
+    // ── 子任务编排 (subtask orchestration) ↔ Workflow authority / Parallelism ──
+    // A non-`none` mode declares splittable subtask structure. It must be backed
+    // by BOTH a non-`none` Workflow authority AND a delegation-capable
+    // Parallelism — the slot only DECLARES structure; actual subagent / workflow
+    // ignition is translated by the claude-code adapter / runner from the
+    // resolved policy, never fired by the task-card body itself.
+    let subtask_mode = get_subtask_orchestration_mode(fields);
+    if subtask_mode != "none" {
+        if authority == "none" {
+            errors.push(format!(
+                "[{}] 子任务编排 mode 为 {}，要求 Workflow authority 非 none（不允许 mode != none 但 authority=none）",
+                error_code::SUBTASK_ORCHESTRATION_VIOLATION,
+                subtask_mode
+            ));
+        }
+        if !matches!(
+            parallelism,
+            "subagent" | "worktree" | "multi-session" | "agent-team"
+        ) {
+            errors.push(format!(
+                "[{}] 子任务编排 mode 为 {}，要求 Parallelism 为 subagent/worktree/multi-session/agent-team，当前为 `{}`",
+                error_code::SUBTASK_ORCHESTRATION_VIOLATION,
+                subtask_mode,
                 parallelism
             ));
         }

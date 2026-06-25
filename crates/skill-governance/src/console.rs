@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-pub const CONSOLE_SCHEMA_VERSION: &str = "2.7.0-skill-console";
+pub const CONSOLE_SCHEMA_VERSION: &str = "0.2.7-skill-console";
 
 // ── Command runner seam ─────────────────────────────────────────────────────
 
@@ -62,28 +62,6 @@ impl CommandRunner for SystemCommandRunner {
     }
 }
 
-/// Runner used when host probes are explicitly disabled, for hermetic tests and
-/// CI environments that should not touch user-local agent tooling.
-pub struct DisabledCommandRunner;
-
-impl CommandRunner for DisabledCommandRunner {
-    fn run(&self, _program: &str, _args: &[&str]) -> CommandOutcome {
-        CommandOutcome::Unavailable
-    }
-}
-
-fn host_probes_disabled() -> bool {
-    std::env::var_os("AGS_DISABLE_HOST_PROBES").is_some()
-}
-
-fn system_runner() -> Box<dyn CommandRunner> {
-    if host_probes_disabled() {
-        Box::new(DisabledCommandRunner)
-    } else {
-        Box::new(SystemCommandRunner)
-    }
-}
-
 // ── Injectable context (testability seam) ───────────────────────────────────
 
 /// All filesystem roots and the command runner the console reads through.
@@ -114,7 +92,7 @@ impl ConsoleContext {
         Self {
             repo_root: repo_root.into(),
             home: default_home(),
-            runner: system_runner(),
+            runner: Box::new(SystemCommandRunner),
         }
     }
 }
@@ -153,8 +131,17 @@ pub enum ManagedStatus {
     Governed,
     /// AGS self — host initialization adapter (governance authority).
     SuiteInterface,
-    /// Present/known but not yet adopted — an opt-in candidate.
+    /// Present/known but not yet adopted — an opt-in candidate. Covers
+    /// repo-local skills outside the manifest AND user-installed skills
+    /// discovered on disk in a host skills dir (discovered-local).
     Discovered,
+    /// A host built-in / system skill (e.g. a Codex `.system` skill such as
+    /// `skill-creator`). Recognized READ-ONLY: AGS never holds, copies, or
+    /// relinks the body. Fail-closed not-routable until explicitly adopted.
+    HostSystem,
+    /// A skill scoped to a project repo other than the AGS suite (its canonical
+    /// body resolves inside another git project). Read-only recognition only.
+    ProjectLocal,
     /// Explicitly ignored (in the ignore list / rejected in adoption log).
     Ignored,
     /// Present but outside AGS governance.
@@ -222,7 +209,7 @@ pub enum MutationSurface {
     /// Read / analyze only (e.g. diagnosing-bugs, codebase-design).
     #[default]
     ReadOnly,
-    /// Writes inside the local working tree (e.g. test-driven-development).
+    /// Writes inside the local working tree (e.g. tdd).
     LocalWrite,
     /// Talks to an external account / service (e.g. lark-*).
     ExternalWrite,
@@ -328,7 +315,7 @@ pub struct EntrypointRef {
 /// in a tracked manifest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoutingMetadata {
-    /// Demand categories this capability serves (e.g. `["debug","diagnose"]`).
+    /// Demand categories this capability serves (e.g. `["debug","root-cause"]`).
     #[serde(default)]
     pub intent_tags: Vec<String>,
     /// Domain scopes (e.g. `["rust"]`; `["*"]` for any).
@@ -363,10 +350,10 @@ pub struct RoutingMetadata {
     pub route_state: RouteState,
     /// Capability (demand) groups this member belongs to — LABELS ONLY, no
     /// inherited routing / policy values. A member may serve several demand
-    /// pools (e.g. review ∈ {code-review, verification}).
+    /// pools (e.g. requesting-code-review in {code-review, verification}).
     #[serde(default)]
     pub capability_group: Vec<String>,
-    /// Upstream source group (e.g. `"mattpocock/skills:review"`) — LABEL ONLY,
+    /// Upstream source group (e.g. `"obra/superpowers:requesting-code-review"`) — LABEL ONLY,
     /// for update / dedupe / provenance; never inherits routing values.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upstream_group: Option<String>,
@@ -802,6 +789,47 @@ fn host_skills_subdir(host: &str) -> Option<&'static str> {
     }
 }
 
+/// Additional shared skill source loaded by a host. Codex Desktop currently
+/// indexes both `~/.codex/skills` and the multi-agent `~/.agents/skills` store;
+/// writing the same suite skill into both roots creates duplicate slash-picker
+/// entries.
+fn shared_skill_dirs_for_host(ctx: &ConsoleContext, host: &str) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if host == "codex" {
+        dirs.push(ctx.home.join(".agents/skills"));
+        dirs.extend(codex_plugin_skill_dirs(&ctx.home));
+    }
+    dirs
+}
+
+fn codex_plugin_skill_dirs(home: &Path) -> Vec<PathBuf> {
+    let cache = home.join(".codex/plugins/cache");
+    let mut dirs = Vec::new();
+    collect_plugin_skill_dirs(&cache, 0, &mut dirs);
+    dirs.sort();
+    dirs.dedup();
+    dirs
+}
+
+fn collect_plugin_skill_dirs(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
+    if depth > 5 {
+        return;
+    }
+    if dir.file_name().and_then(|n| n.to_str()) == Some("skills") {
+        out.push(dir.to_path_buf());
+        return;
+    }
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in rd.flatten() {
+        let path = e.path();
+        if path.is_dir() {
+            collect_plugin_skill_dirs(&path, depth + 1, out);
+        }
+    }
+}
+
 /// Compute one capability's visibility for one host. `probe` is that host's
 /// MCP probe (`None` for reserved hosts).
 fn host_visibility(
@@ -814,9 +842,13 @@ fn host_visibility(
 ) -> HostVisibility {
     if let Some(subdir) = host_skills_subdir(host) {
         return match cap_kind {
-            ManagedKind::Skill => {
-                skill_path_visibility(host, &ctx.home.join(subdir), cap_name, canonical_source)
-            }
+            ManagedKind::Skill => skill_path_visibility_for_host(
+                ctx,
+                host,
+                &ctx.home.join(subdir),
+                cap_name,
+                canonical_source,
+            ),
             ManagedKind::Mcp | ManagedKind::CliBacked | ManagedKind::SuiteInterface => {
                 host_mcp_visibility(host, cap_name, probe)
             }
@@ -836,6 +868,53 @@ fn host_visibility(
         evidence: vec![format!(
             "Host '{host}' visibility check is not implemented in this version (model fields are stable)."
         )],
+    }
+}
+
+fn skill_path_visibility_for_host(
+    ctx: &ConsoleContext,
+    host: &str,
+    primary_skills_dir: &Path,
+    name: &str,
+    canonical_source: Option<&Path>,
+) -> HostVisibility {
+    let primary = skill_path_visibility(host, primary_skills_dir, name, canonical_source);
+    let shared_visible =
+        shared_skill_dirs_for_host(ctx, host)
+            .into_iter()
+            .find_map(|shared_skills_dir| {
+                let shared = skill_path_visibility(host, &shared_skills_dir, name, None);
+                if shared.status == HostVisibilityStatus::Visible {
+                    Some((shared_skills_dir, shared))
+                } else {
+                    None
+                }
+            });
+    let Some((shared_skills_dir, shared)) = shared_visible else {
+        return primary;
+    };
+
+    let mut evidence = Vec::new();
+    evidence.push(format!(
+        "shared skill source visible under {}",
+        shared_skills_dir.display()
+    ));
+    if primary.status == HostVisibilityStatus::Visible {
+        evidence.push(format!(
+            "duplicate host entry also exists under {}",
+            primary_skills_dir.display()
+        ));
+    }
+    evidence.extend(shared.evidence);
+    if primary.status != HostVisibilityStatus::NotVisible {
+        evidence.extend(primary.evidence);
+    }
+
+    HostVisibility {
+        host: host.to_string(),
+        supported: true,
+        status: HostVisibilityStatus::Visible,
+        evidence,
     }
 }
 
@@ -1182,6 +1261,10 @@ fn actions_for(kind: &ManagedKind, status: &ManagedStatus) -> Vec<String> {
         }
         // The AGS host initialization adapter cannot be adopted/removed here.
         ManagedStatus::SuiteInterface => {}
+        // Host-system / project-local skills are recognized READ-ONLY: AGS never
+        // holds the body, so the console offers no adopt/relink — making them
+        // routable is a deliberate manifest adoption edit, not a console action.
+        ManagedStatus::HostSystem | ManagedStatus::ProjectLocal => {}
         // Route targets are routing-only — no adopt / update / relink / verify.
         ManagedStatus::RouteTarget => return Vec::new(),
     }
@@ -1201,6 +1284,312 @@ fn actions_for(kind: &ManagedKind, status: &ManagedStatus) -> Vec<String> {
 
 /// Build the unified managed-capability inventory. Read-only. Includes
 /// host-visibility evidence for each requested host (default: claude-code).
+/// Walk up from `start` (inclusive) looking for a `.git` entry; the nearest
+/// ancestor that has one is the project root. `None` when none is found.
+fn find_git_root(start: &Path) -> Option<PathBuf> {
+    let mut cur: Option<&Path> = Some(start);
+    while let Some(p) = cur {
+        if p.join(".git").exists() {
+            return Some(p.to_path_buf());
+        }
+        cur = p.parent();
+    }
+    None
+}
+
+/// Host thin-index visibility for a capability discovered on disk in a host's
+/// skills dir. Checks BOTH the normal entry (`<subdir>/<name>`) and the host
+/// system area (`<subdir>/.system/<name>`), so a `.system` skill reads visible
+/// where it actually lives. Read-only.
+fn host_dir_entry_visibility(home: &Path, host: &str, name: &str) -> HostVisibility {
+    let Some(subdir) = host_skills_subdir(host) else {
+        let deferred = DEFERRED_HOSTS.contains(&host);
+        return HostVisibility {
+            host: host.to_string(),
+            supported: false,
+            status: if deferred {
+                HostVisibilityStatus::Deferred
+            } else {
+                HostVisibilityStatus::Unsupported
+            },
+            evidence: vec![if deferred {
+                "host check reserved for a later phase".to_string()
+            } else {
+                "host has no skills directory".to_string()
+            }],
+        };
+    };
+    let base = home.join(subdir);
+    let mk = |status, evidence| HostVisibility {
+        host: host.to_string(),
+        supported: true,
+        status,
+        evidence,
+    };
+    // Track the first degraded reason so a valid match at the other location can
+    // still win, but a present-but-invalid SKILL.md is never silently passed as
+    // Visible.
+    let mut degraded: Option<HostVisibility> = None;
+    for (loc, dir) in [
+        ("entry", base.join(name)),
+        ("system", base.join(".system").join(name)),
+    ] {
+        let Ok(meta) = std::fs::symlink_metadata(&dir) else {
+            continue;
+        };
+        if meta.file_type().is_symlink() && !dir.exists() {
+            if degraded.is_none() {
+                degraded = Some(mk(
+                    HostVisibilityStatus::Degraded,
+                    vec![format!(
+                        "dangling symlink (target missing): {}",
+                        dir.display()
+                    )],
+                ));
+            }
+            continue;
+        }
+        let skill_md = dir.join("SKILL.md");
+        if !skill_md.is_file() {
+            continue;
+        }
+        // Validate SKILL.md front-matter identity exactly like
+        // `skill_path_visibility`: a present SKILL.md whose declared `name`
+        // differs (or is unparseable / unreadable) is NOT the capability being
+        // gated and must read Degraded, never Visible — so a mismatched or
+        // replaced `.system/<name>` (or host-dir `<name>`) body cannot pass the
+        // runtime skill-tag gate as the adopted capability.
+        match std::fs::read_to_string(&skill_md) {
+            Ok(text) => match crate::parse_front_matter(&text).0.as_deref().map(str::trim) {
+                Some(found) if found == name => {
+                    return mk(
+                        HostVisibilityStatus::Visible,
+                        vec![format!(
+                            "{loc} present; SKILL.md front-matter name matches: {}",
+                            skill_md.display()
+                        )],
+                    );
+                }
+                Some(found) => {
+                    if degraded.is_none() {
+                        degraded = Some(mk(
+                            HostVisibilityStatus::Degraded,
+                            vec![format!(
+                                "SKILL.md name mismatch: declares '{found}' but expected '{name}' at {}",
+                                skill_md.display()
+                            )],
+                        ));
+                    }
+                }
+                None => {
+                    if degraded.is_none() {
+                        degraded = Some(mk(
+                            HostVisibilityStatus::Degraded,
+                            vec![format!(
+                                "SKILL.md present but front-matter not parseable: {}",
+                                skill_md.display()
+                            )],
+                        ));
+                    }
+                }
+            },
+            Err(e) => {
+                if degraded.is_none() {
+                    degraded = Some(mk(
+                        HostVisibilityStatus::Degraded,
+                        vec![format!("SKILL.md unreadable: {} ({e})", skill_md.display())],
+                    ));
+                }
+            }
+        }
+    }
+    degraded.unwrap_or_else(|| {
+        mk(
+            HostVisibilityStatus::NotVisible,
+            vec![format!("not found under {}", base.display())],
+        )
+    })
+}
+
+/// One discovered host-dir skill candidate before per-host visibility is filled.
+struct HostDirCandidate {
+    source: PathBuf,
+    managed_status: ManagedStatus,
+    canonical_present: bool,
+    risk_notes: Vec<String>,
+}
+
+/// Classify one host skills-dir entry that is NOT already a known suite/repo
+/// skill. Returns `None` when the entry should be ignored (housekeeping names).
+/// READ-ONLY: never writes, never copies, never relinks. System (`.system`)
+/// skills, sibling-suite bodies, other-project bodies, real user dirs, and
+/// arbitrary external symlink targets are each classified distinctly, and all
+/// land fail-closed `routing: None` (not-routable) until explicitly adopted.
+fn classify_host_dir_entry(
+    repo_root: &Path,
+    entry: &Path,
+    name: &str,
+    is_system: bool,
+) -> Option<HostDirCandidate> {
+    if name.is_empty()
+        || name.starts_with('.')
+        || name.contains(".bak")
+        || name.starts_with(".ags-")
+    {
+        return None;
+    }
+    let link_meta = std::fs::symlink_metadata(entry).ok()?;
+    let is_symlink = link_meta.file_type().is_symlink();
+    // Dangling symlink → recognized but broken / unmanaged.
+    if is_symlink && !entry.exists() {
+        return Some(HostDirCandidate {
+            source: entry.to_path_buf(),
+            managed_status: ManagedStatus::Unmanaged,
+            canonical_present: false,
+            risk_notes: vec![format!(
+                "Dangling host thin index (symlink target missing): {}. Recognized read-only; not routable.",
+                entry.display()
+            )],
+        });
+    }
+    let real = std::fs::canonicalize(entry).ok()?;
+    let has_skill_md = real.join("SKILL.md").is_file();
+
+    // System skills (host built-ins under `.system`) — read-only recognition.
+    if is_system {
+        return Some(HostDirCandidate {
+            source: real,
+            managed_status: ManagedStatus::HostSystem,
+            canonical_present: has_skill_md,
+            risk_notes: vec![
+                "Host system skill — recognized read-only. AGS never holds/copies/relinks the body. Adopt via the registry to make it routable.".to_string(),
+            ],
+        });
+    }
+    // A thin index into THIS repo's AGS store is the same body already covered
+    // by the suite/repo passes — skip to avoid a duplicate row.
+    if canonical_within_store(repo_root, entry) {
+        return None;
+    }
+    // A body inside a sibling AGS suite mirror (private<->stable) — recognized.
+    if split_suite_runtime_path(&real).is_some() {
+        return Some(HostDirCandidate {
+            source: real,
+            managed_status: ManagedStatus::Discovered,
+            canonical_present: has_skill_md,
+            risk_notes: vec![
+                "Discovered from a sibling AGS suite mirror. Opt-in candidate; not routable until registered.".to_string(),
+            ],
+        });
+    }
+    // A body inside another git project (not the AGS suite) — project-local.
+    if let Some(proj) = find_git_root(&real) {
+        if proj != *repo_root {
+            return Some(HostDirCandidate {
+                source: real,
+                managed_status: ManagedStatus::ProjectLocal,
+                canonical_present: has_skill_md,
+                risk_notes: vec![format!(
+                    "Project-local skill (body under {}). Read-only recognition; not routable until registered.",
+                    proj.display()
+                )],
+            });
+        }
+    }
+    // A real directory the user dropped directly into the host skills dir.
+    if !is_symlink && real.is_dir() {
+        return Some(HostDirCandidate {
+            source: real,
+            managed_status: ManagedStatus::Discovered,
+            canonical_present: has_skill_md,
+            risk_notes: vec![
+                "User-installed local skill (real dir in host skills dir). Opt-in candidate; not routable until registered.".to_string(),
+            ],
+        });
+    }
+    // Anything else: a symlink to an arbitrary external location AGS does not
+    // govern (e.g. an app bundle, a non-suite tool root) — unmanaged.
+    Some(HostDirCandidate {
+        source: real,
+        managed_status: ManagedStatus::Unmanaged,
+        canonical_present: has_skill_md,
+        risk_notes: vec![format!(
+            "External user-installed skill outside AGS governance ({}). Recognized read-only; not routable.",
+            entry.display()
+        )],
+    })
+}
+
+/// Full-machine discovery: scan every supported host's skills dir (and its
+/// `.system` area) for skills not already known from the suite/repo passes, and
+/// model each as a `ManagedCapability` with per-host thin-index visibility.
+/// READ-ONLY. Bodies are never copied; classification is fail-closed
+/// (`routing: None` ⇒ not-routable) — adoption into the registry is the only
+/// way one of these becomes routable.
+fn discover_host_dir_capabilities(
+    ctx: &ConsoleContext,
+    hosts: &[String],
+    known: &mut Vec<String>,
+) -> Vec<ManagedCapability> {
+    let mut by_name: std::collections::BTreeMap<String, HostDirCandidate> =
+        std::collections::BTreeMap::new();
+    for host in hosts {
+        let Some(subdir) = host_skills_subdir(host) else {
+            continue;
+        };
+        let base = ctx.home.join(subdir);
+        // Normal entries.
+        if let Ok(rd) = std::fs::read_dir(&base) {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if known.iter().any(|n| n == &name) || by_name.contains_key(&name) {
+                    continue;
+                }
+                if let Some(c) = classify_host_dir_entry(&ctx.repo_root, &e.path(), &name, false) {
+                    by_name.insert(name, c);
+                }
+            }
+        }
+        // Host system area.
+        let sys = base.join(".system");
+        if let Ok(rd) = std::fs::read_dir(&sys) {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if known.iter().any(|n| n == &name) || by_name.contains_key(&name) {
+                    continue;
+                }
+                if let Some(c) = classify_host_dir_entry(&ctx.repo_root, &e.path(), &name, true) {
+                    by_name.insert(name, c);
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (name, cand) in by_name {
+        known.push(name.clone());
+        let host_visibility: Vec<HostVisibility> = hosts
+            .iter()
+            .map(|h| host_dir_entry_visibility(&ctx.home, h, &name))
+            .collect();
+        out.push(ManagedCapability {
+            kind: ManagedKind::Skill,
+            name,
+            source: Some(cand.source.to_string_lossy().to_string()),
+            profile: None,
+            managed_status: cand.managed_status,
+            registry_status: RegistryStatus::NotRegistered,
+            canonical_present: cand.canonical_present,
+            expected_hosts: Vec::new(),
+            host_visibility,
+            health_status: HealthStatus::Unknown,
+            actions: Vec::new(),
+            risk_notes: cand.risk_notes,
+            routing: None,
+        });
+    }
+    out
+}
+
 pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventoryResult {
     let hosts: Vec<String> = if hosts.is_empty() {
         SUPPORTED_HOSTS.iter().map(|s| s.to_string()).collect()
@@ -1310,6 +1699,13 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
         });
     }
 
+    // 2.5. Full-machine discovery: host skills dirs (incl. `.system`) — system,
+    //      external, sibling-suite, project-local, and user-installed skills not
+    //      already known. READ-ONLY, fail-closed not-routable until adopted.
+    for cap in discover_host_dir_capabilities(ctx, &hosts, &mut known_skill_names) {
+        caps.push(cap);
+    }
+
     // 3. Governed MCPs + AGS suite interface + CLI-backed MCPs from the registry.
     for e in read_mcp_registry(&ctx.repo_root) {
         let is_cli = e.manager.as_deref() == Some("external-cli");
@@ -1414,23 +1810,27 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
     for cap in &mut caps {
         let cli_backed_external = matches!(cap.kind, ManagedKind::CliBacked)
             && matches!(cap.managed_status, ManagedStatus::Unmanaged);
-        for host in &hosts {
-            let probe = probes.iter().find(|(h, _)| h == host).map(|(_, p)| p);
-            let canonical_source = if matches!(cap.kind, ManagedKind::Skill) {
-                cap.source
-                    .as_deref()
-                    .map(|source| resolve_source(&ctx.repo_root, source))
-            } else {
-                None
-            };
-            cap.host_visibility.push(host_visibility(
-                ctx,
-                host,
-                &cap.kind,
-                &cap.name,
-                canonical_source.as_deref(),
-                probe,
-            ));
+        // Host-dir-discovered capabilities pre-fill their own visibility (they
+        // may live under `.system`), so only fill when not already populated.
+        if cap.host_visibility.is_empty() {
+            for host in &hosts {
+                let probe = probes.iter().find(|(h, _)| h == host).map(|(_, p)| p);
+                let canonical_source = if matches!(cap.kind, ManagedKind::Skill) {
+                    cap.source
+                        .as_deref()
+                        .map(|source| resolve_source(&ctx.repo_root, source))
+                } else {
+                    None
+                };
+                cap.host_visibility.push(host_visibility(
+                    ctx,
+                    host,
+                    &cap.kind,
+                    &cap.name,
+                    canonical_source.as_deref(),
+                    probe,
+                ));
+            }
         }
         cap.health_status = derive_health(
             &cap.kind,
@@ -1441,7 +1841,24 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
         );
         cap.actions = actions_for(&cap.kind, &cap.managed_status);
         // Stable routing facts (or None when the manifest declares none).
+        //
+        // A host-dir discovered capability can be explicitly adopted by adding a
+        // skills-registry member with routing metadata (for example a
+        // host-system `skill-creator` entry). In that case the manifest is the
+        // registry authority even though AGS still does not hold or relink the
+        // external body, so inventory must not report the row as
+        // `not-registered`.
         cap.routing = routing_meta.map.get(&cap.name).cloned();
+        if cap.routing.is_some() {
+            cap.registry_status = RegistryStatus::Registered;
+            if matches!(cap.managed_status, ManagedStatus::HostSystem) {
+                cap.risk_notes
+                    .retain(|note| !note.contains("Adopt via the registry to make it routable"));
+                cap.risk_notes.push(
+                    "Host system skill is registry-adopted for routing; AGS still recognizes it read-only and never holds/copies/relinks the body.".to_string(),
+                );
+            }
+        }
     }
 
     // 6. Synthesize route-target rows for internal entrypoints (playbook / MCP
@@ -1552,16 +1969,88 @@ fn summarize(caps: &[ManagedCapability]) -> ManagedInventorySummary {
     }
 }
 
+/// Deterministic content hash of the machine-local capability snapshot. Hashes a
+/// CANONICAL projection (sorted `name|kind|managed_status|registry|route_state|
+/// canonical|host=visibility…|health` lines) with FNV-1a — dependency-free and
+/// stable across runs for identical machine state. Used as the task-card snapshot
+/// attestation token. Contains capability NAMES + statuses only — NO absolute
+/// paths — so it is safe to record in a (machine-local) snapshot or a task card.
+pub fn inventory_snapshot_hash(inv: &ManagedInventoryResult) -> String {
+    fn vis_str(s: &HostVisibilityStatus) -> &'static str {
+        match s {
+            HostVisibilityStatus::Visible => "visible",
+            HostVisibilityStatus::NotVisible => "not-visible",
+            HostVisibilityStatus::Degraded => "degraded",
+            HostVisibilityStatus::Unsupported => "unsupported",
+            HostVisibilityStatus::Deferred => "deferred",
+        }
+    }
+    fn health_str(h: &HealthStatus) -> &'static str {
+        match h {
+            HealthStatus::Healthy => "healthy",
+            HealthStatus::Degraded => "degraded",
+            HealthStatus::Unknown => "unknown",
+            HealthStatus::Unhealthy => "unhealthy",
+        }
+    }
+    fn kind_str(k: &ManagedKind) -> &'static str {
+        match k {
+            ManagedKind::Skill => "skill",
+            ManagedKind::Mcp => "mcp",
+            ManagedKind::SuiteInterface => "suite-interface",
+            ManagedKind::CliBacked => "cli-backed",
+        }
+    }
+    let route_str = |c: &ManagedCapability| -> &'static str {
+        match c.routing.as_ref().map(|r| r.route_state) {
+            Some(RouteState::Routable) => "routable",
+            Some(RouteState::NotRoutable) => "not-routable",
+            Some(RouteState::Retired) => "retired",
+            None => "none",
+        }
+    };
+    let mut lines: Vec<String> = inv
+        .capabilities
+        .iter()
+        .map(|c| {
+            let mut vis: Vec<String> = c
+                .host_visibility
+                .iter()
+                .map(|v| format!("{}={}", v.host, vis_str(&v.status)))
+                .collect();
+            vis.sort();
+            format!(
+                "{}|{}|{}|{}|{}|{}|{}|{}",
+                c.name,
+                kind_str(&c.kind),
+                managed_status_str(&c.managed_status),
+                if matches!(c.registry_status, RegistryStatus::Registered) {
+                    "registered"
+                } else {
+                    "not-registered"
+                },
+                route_str(c),
+                c.canonical_present,
+                vis.join(","),
+                health_str(&c.health_status),
+            )
+        })
+        .collect();
+    lines.sort();
+    let joined = lines.join("\n");
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in joined.as_bytes() {
+        hash ^= *b as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("fnv1a64:{hash:016x}")
+}
+
 /// Whether AGS holds the canonical skill body: the resolved source dir contains
 /// a `SKILL.md`. Read-only.
 fn canonical_skill_present(repo_root: &Path, source: Option<&str>) -> bool {
     source
-        .map(|s| {
-            // External recommendation-only sources (URLs) are never an
-            // AGS-hosted canonical body. Short-circuit so we never build a
-            // bogus `repo_root/https:/.../SKILL.md` path.
-            !source_is_external(s) && resolve_source(repo_root, s).join("SKILL.md").is_file()
-        })
+        .map(|s| resolve_source(repo_root, s).join("SKILL.md").is_file())
         .unwrap_or(false)
 }
 
@@ -1959,6 +2448,8 @@ fn managed_status_str(s: &ManagedStatus) -> &'static str {
         ManagedStatus::Governed => "governed",
         ManagedStatus::SuiteInterface => "suite-interface",
         ManagedStatus::Discovered => "discovered",
+        ManagedStatus::HostSystem => "host-system",
+        ManagedStatus::ProjectLocal => "project-local",
         ManagedStatus::Ignored => "ignored",
         ManagedStatus::Unmanaged => "unmanaged",
         ManagedStatus::RouteTarget => "route-target",
@@ -1986,7 +2477,7 @@ fn plan_action(ctx: &ConsoleContext, cap: &ManagedCapability, action: ConsoleAct
 
     // Retired capabilities (route_state: retired) keep a registry row for
     // history/dedupe and may still have a canonical body on disk, but they must
-    // never be (re)adopted, updated, or repaired into a host — that would
+    // NEVER be (re)adopted, updated, or repaired into a host — that would
     // resurrect a deliberately retired front-stage entry. `remove`/`uninstall`
     // (cleanup) and `verify` stay available.
     if matches!(
@@ -2042,6 +2533,15 @@ fn thin_index_needs_repair(entry: &Path, name: &str) -> bool {
     }
 }
 
+fn shared_skill_entry_is_loadable(ctx: &ConsoleContext, host: &str, name: &str) -> Option<PathBuf> {
+    shared_skill_dirs_for_host(ctx, host)
+        .into_iter()
+        .map(|dir| dir.join(name))
+        .find(|entry| {
+            std::fs::symlink_metadata(entry).is_ok() && !thin_index_needs_repair(entry, name)
+        })
+}
+
 /// Plan per-host thin-index distribution. AGS keeps ONE canonical skill body;
 /// each supported host gets a symlink (thin index) at `<host>/skills/<name>`
 /// pointing back at that canonical directory, so reference files travel with it
@@ -2065,50 +2565,10 @@ fn plan_skill_entry(
         return;
     }
 
-    // External recommendation-only sources (e.g. a GitHub URL) are NOT
-    // AGS-hosted bodies: AGS never clones/installs them or writes a thin index.
-    // Resolving the URL as a repo path would produce a dangling
-    // `repo_root/https:/.../SKILL.md` and block the sync. Instead, surface
-    // install/onboarding ADVICE and stop. `remove`/`uninstall`/`verify` fall
-    // through unchanged (there is no local body to touch).
-    // External recommendation-only sources (a URL) are NOT AGS-hosted bodies:
-    // AGS never clones the URL. BUT if the user has already installed a local
-    // canonical body at the conventional store path for this name, link THAT —
-    // so the advised recovery (install locally, then re-adopt) actually works.
-    // Otherwise surface install advice and stop (no dangling URL path, no block).
-    let mut effective_source = cap.source.clone();
-    if matches!(
-        action,
-        ConsoleAction::Adopt | ConsoleAction::Update | ConsoleAction::Repair
-    ) {
-        if let Some(src) = cap.source.as_deref() {
-            if source_is_external(src) {
-                let local = format!("global-skills/{}", cap.name);
-                if ctx.repo_root.join(&local).join("SKILL.md").is_file() {
-                    // A local canonical body exists by name — link it instead of
-                    // the URL; validation below enforces store containment + name.
-                    effective_source = Some(local);
-                } else {
-                    plan.notes.push(format!(
-                        "'{}' has an external recommendation-only source ({src}); it is not an AGS-hosted skill body, so AGS writes no thin index for it.",
-                        cap.name
-                    ));
-                    plan.advised.push(AdvisedCommand {
-                        command: format!(
-                            "install the skill body at global-skills/{0}/ (or skill-packs/.../{0}/), then re-run `ags skill propose --action adopt --skill {0}`",
-                            cap.name
-                        ),
-                        reason: "Recommendation-only external skill — AGS never clones or installs it. Once a local canonical body exists under an approved store at this name, the next adopt links the thin index.".to_string(),
-                    });
-                    return;
-                }
-            }
-        }
-    }
-
     // Resolve and validate the canonical body for actions that link to it. We
     // refuse to create a dangling thin index.
-    let canonical = effective_source
+    let canonical = cap
+        .source
         .as_ref()
         .map(|s| resolve_source(&ctx.repo_root, s));
     let canonical = if matches!(
@@ -2175,6 +2635,14 @@ fn plan_skill_entry(
 
         match action {
             ConsoleAction::Adopt | ConsoleAction::Update => {
+                if let Some(shared_entry) = shared_skill_entry_is_loadable(ctx, host, &cap.name) {
+                    plan.notes.push(format!(
+                        "[{host}] shared skill source already visible at {}; skip {} to avoid duplicate picker entries.",
+                        shared_entry.display(),
+                        entry_str
+                    ));
+                    continue;
+                }
                 plan.writes.push(PlannedWrite {
                     op: "relink".to_string(),
                     path: entry_str.clone(),
@@ -2201,6 +2669,13 @@ fn plan_skill_entry(
                 }
             }
             ConsoleAction::Repair => {
+                if let Some(shared_entry) = shared_skill_entry_is_loadable(ctx, host, &cap.name) {
+                    plan.notes.push(format!(
+                        "[{host}] shared skill source already visible at {}; no host-specific repair needed.",
+                        shared_entry.display()
+                    ));
+                    continue;
+                }
                 if thin_index_needs_repair(&entry, &cap.name) {
                     plan.writes.push(PlannedWrite {
                         op: "relink".to_string(),
@@ -2294,21 +2769,6 @@ fn plan_mcp_or_cli(cap: &ManagedCapability, action: ConsoleAction, plan: &mut Ac
     plan.notes.push(
         "MCP / CLI-backed capabilities have no AGS-owned host file; AGS advises the per-host command (Claude Code, Codex) but never runs it.".to_string(),
     );
-}
-
-/// True when a manifest `source` is an EXTERNAL recommendation pointer (a URL or
-/// remote ref), not a local repo path. External sources are recommendation-only:
-/// AGS never resolves them to a canonical body or writes a host thin index for
-/// them — it advises a manual install instead. Keeps URLs from being joined onto
-/// `repo_root` (which would yield a dangling `repo_root/https:/.../SKILL.md`).
-fn source_is_external(source: &str) -> bool {
-    let s = source.trim();
-    s.starts_with("http://")
-        || s.starts_with("https://")
-        || s.starts_with("git://")
-        || s.starts_with("ssh://")
-        || s.starts_with("git@")
-        || s.contains("://")
 }
 
 /// Resolve a suite source path; absolute paths are used as-is.
@@ -3675,7 +4135,7 @@ mod tests {
     /// plain labels / fixtures.
     #[test]
     fn capability_group_upstream_and_examples_parse_as_labels() {
-        let yaml = "route_state: routable\ncapability_group: [code-review, verification]\nupstream_group: \"mattpocock/skills:review\"\nexamples:\n\x20 positive: [\"帮我做一次代码审查\"]\n\x20 negative: [\"帮我查飞书日历\"]\n";
+        let yaml = "route_state: routable\ncapability_group: [code-review, verification]\nupstream_group: \"obra/superpowers:requesting-code-review\"\nexamples:\n\x20 positive: [\"帮我做一次代码审查\"]\n\x20 negative: [\"帮我查飞书日历\"]\n";
         let meta: RoutingMetadata = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(
             meta.capability_group,
@@ -3683,7 +4143,7 @@ mod tests {
         );
         assert_eq!(
             meta.upstream_group.as_deref(),
-            Some("mattpocock/skills:review")
+            Some("obra/superpowers:requesting-code-review")
         );
         assert_eq!(
             meta.examples.positive,
@@ -3697,6 +4157,16 @@ mod tests {
         let parent = ctx.home.join(host_subdir);
         std::fs::create_dir_all(&parent).unwrap();
         make_symlink(&ctx.repo_root.join(source), &parent.join(name)).unwrap();
+    }
+
+    fn write_codex_plugin_skill(ctx: &ConsoleContext, name: &str) {
+        write_file(
+            &ctx.home
+                .join(".codex/plugins/cache/openai-curated/superpowers/test/skills")
+                .join(name)
+                .join("SKILL.md"),
+            &format!("---\nname: {name}\ndescription: plugin skill.\n---\nbody\n"),
+        );
     }
 
     fn find<'a>(inv: &'a ManagedInventoryResult, name: &str) -> &'a ManagedCapability {
@@ -3848,6 +4318,52 @@ mod tests {
         assert_eq!(
             find(&inv, "codegraph").host_visibility[0].status,
             HostVisibilityStatus::NotVisible
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_skill_path_can_use_shared_agents_source() {
+        let (ctx, base) = ctx_with("codexshared", canned_list());
+        link_skill_entry(
+            &ctx,
+            ".agents/skills",
+            "lark-shared",
+            "skill-packs/optional/lark-shared",
+        );
+        let inv = build_inventory(&ctx, &["codex"]);
+
+        let lark = &find(&inv, "lark-shared").host_visibility[0];
+        assert_eq!(lark.host, "codex");
+        assert!(lark.supported);
+        assert_eq!(lark.status, HostVisibilityStatus::Visible);
+        assert!(
+            lark.evidence
+                .iter()
+                .any(|e| e.contains("shared skill source visible")),
+            "Codex visibility should cite the shared .agents source: {:?}",
+            lark.evidence
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_skill_path_can_use_plugin_source() {
+        let (ctx, base) = ctx_with("codexplugin", canned_list());
+        write_codex_plugin_skill(&ctx, "lark-shared");
+        let inv = build_inventory(&ctx, &["codex"]);
+
+        let lark = &find(&inv, "lark-shared").host_visibility[0];
+        assert_eq!(lark.host, "codex");
+        assert_eq!(lark.status, HostVisibilityStatus::Visible);
+        assert!(
+            lark.evidence
+                .iter()
+                .any(|e| e.contains(".codex/plugins/cache")),
+            "Codex visibility should cite the plugin source: {:?}",
+            lark.evidence
         );
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -4096,7 +4612,6 @@ mod tests {
 
     /// Read-only thin-index drift scan classifies `.bak` leftovers and dangling
     /// symlinks as drift and a valid symlink as clean — never mutating. (point 2)
-    #[cfg(unix)]
     #[test]
     fn scan_thin_index_drift_classifies_bak_and_dangling() {
         let base = std::env::temp_dir().join(format!("ags-drift-{}", std::process::id()));
@@ -4534,13 +5049,12 @@ mod tests {
             "---\nname: sneaky\ndescription: x.\n---\n",
         );
         // Register it with an ABSOLUTE outside source.
-        let evil_source = evil.display().to_string().replace('\\', "/");
         write_file(
             &ctx.repo_root.join("manifests/suite.yaml"),
             &format!(
                 "schema_version: \"1.0\"\nsuite:\n  name: t\n  version: \"9\"\n  optional:\n\
                  \x20   - name: \"sneaky\"\n      version: \"1\"\n      source: \"{}\"\n      hash: h\n      adopted: \"2026-01-01T00:00:00Z\"\n      entry_ref: r\n",
-                evil_source
+                evil.display()
             ),
         );
         let res = propose_action(&ctx, ConsoleAction::Adopt, "sneaky", true);
@@ -4554,70 +5068,6 @@ mod tests {
         );
         assert!(!res.applied);
         assert!(res.applied_writes.is_empty());
-        let _ = std::fs::remove_dir_all(&base);
-    }
-
-    // Recommendation-only external source (a URL) must NOT be resolved to a repo
-    // path or blocked. AGS surfaces install advice instead of a dangling
-    // `repo_root/https:/.../SKILL.md` thin index, so `capability sync` stays green.
-    #[test]
-    fn external_url_source_is_advised_not_blocked() {
-        let (ctx, base) = ctx_with("externalsrc", canned_list());
-        write_file(
-            &ctx.repo_root.join("manifests/suite.yaml"),
-            "schema_version: \"1.0\"\nsuite:\n  name: t\n  version: \"9\"\n  optional:\n\
-             \x20   - name: \"diagnosing-bugs\"\n      version: \"1\"\n      source: \"https://github.com/mattpocock/skills/tree/main/skills/engineering/diagnosing-bugs\"\n      hash: h\n      adopted: \"2026-01-01T00:00:00Z\"\n      entry_ref: r\n",
-        );
-        let res = propose_action(&ctx, ConsoleAction::Adopt, "diagnosing-bugs", true);
-        assert!(res.found);
-        // No dangling-path block (or any other block) for a URL source.
-        assert!(
-            res.blocked_reasons.is_empty(),
-            "external URL source must not block: {:?}",
-            res.blocked_reasons
-        );
-        // AGS performed nothing; it only advised a manual install.
-        assert_eq!(res.apply_status, "advised-only");
-        assert!(!res.applied);
-        assert!(res.applied_writes.is_empty());
-        assert!(
-            !res.advised_commands.is_empty(),
-            "external recommendation-only source should advise a manual install"
-        );
-        let _ = std::fs::remove_dir_all(&base);
-    }
-
-    // Recovery path: when an external-source skill ALSO has a local canonical
-    // body installed at the conventional store path, adopt links THAT body
-    // (the advised "install locally, then re-adopt" path must actually work,
-    // not loop forever on advice).
-    #[test]
-    fn external_url_source_with_local_body_links_it() {
-        let (ctx, base) = ctx_with("externalsrclocal", canned_list());
-        write_file(
-            &ctx.repo_root.join("manifests/suite.yaml"),
-            "schema_version: \"1.0\"\nsuite:\n  name: t\n  version: \"9\"\n  optional:\n\
-             \x20   - name: \"diagnosing-bugs\"\n      version: \"1\"\n      source: \"https://github.com/mattpocock/skills/tree/main/skills/engineering/diagnosing-bugs\"\n      hash: h\n      adopted: \"2026-01-01T00:00:00Z\"\n      entry_ref: r\n",
-        );
-        // User installed a local canonical body under the approved store by name.
-        write_file(
-            &ctx.repo_root.join("global-skills/diagnosing-bugs/SKILL.md"),
-            "---\nname: diagnosing-bugs\ndescription: local body.\n---\nbody\n",
-        );
-        let res = propose_action(&ctx, ConsoleAction::Adopt, "diagnosing-bugs", true);
-        assert!(res.found);
-        assert!(
-            res.blocked_reasons.is_empty(),
-            "local body present must not block: {:?}",
-            res.blocked_reasons
-        );
-        // AGS links the local body — recovery path works, not stuck advising.
-        assert_eq!(
-            res.apply_status, "applied",
-            "local body should be linked; got writes={:?} advised={:?}",
-            res.planned_writes, res.advised_commands
-        );
-        assert!(!res.planned_writes.is_empty());
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -4751,6 +5201,69 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn sync_plan_skips_codex_thin_index_when_shared_agents_source_exists() {
+        let (ctx, base) = ctx_with("syncsharedcodex", canned_list());
+        link_skill_entry(
+            &ctx,
+            ".agents/skills",
+            "demo-skill",
+            "global-skills/demo-skill",
+        );
+
+        let result = sync_plan(&ctx, &["codex"], false);
+        let demo = result
+            .items
+            .iter()
+            .find(|i| i.capability == "demo-skill")
+            .expect("demo-skill considered");
+
+        assert!(
+            demo.planned_writes
+                .iter()
+                .all(|w| !w.path.contains(".codex/skills/demo-skill")),
+            "sync must not create a duplicate Codex thin-index when .agents already exposes the skill: {:?}",
+            demo.planned_writes
+        );
+        assert!(
+            demo.note.contains("shared skill source already visible"),
+            "operator note should explain why Codex was skipped: {}",
+            demo.note
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sync_plan_skips_codex_thin_index_when_plugin_source_exists() {
+        let (ctx, base) = ctx_with("syncplugincodex", canned_list());
+        write_codex_plugin_skill(&ctx, "demo-skill");
+
+        let result = sync_plan(&ctx, &["codex"], false);
+        let demo = result
+            .items
+            .iter()
+            .find(|i| i.capability == "demo-skill")
+            .expect("demo-skill considered");
+
+        assert!(
+            demo.planned_writes
+                .iter()
+                .all(|w| !w.path.contains(".codex/skills/demo-skill")),
+            "sync must not create a duplicate Codex thin-index when a plugin already exposes the skill: {:?}",
+            demo.planned_writes
+        );
+        assert!(
+            demo.note.contains(".codex/plugins/cache"),
+            "operator note should explain the plugin source: {}",
+            demo.note
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn sync_plan_apply_replaces_existing_thin_index_without_backup() {
         let (ctx, base) = ctx_with("syncnobak", canned_list());
         let entry = ctx.home.join(".claude/skills/demo-skill");
@@ -4785,9 +5298,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    /// Regression: a capability marked `route_state: retired` must never be
-    /// (re)adopted/synced into a host, even though its canonical body is still
-    /// on disk — this closes the resurrection path
+    /// Regression (adversarial review): a capability marked `route_state: retired`
+    /// must never be (re)adopted/synced into a host, even though its canonical
+    /// body is still on disk — this closes the resurrection path
     /// (`ags capability install --capability <retired>`).
     #[test]
     fn retired_capability_is_blocked_from_adoption_and_sync() {
@@ -4796,6 +5309,9 @@ mod tests {
         let repo = base.join("repo");
         let home = base.join("home");
 
+        // A suite-required skill whose routing is `retired` (a deliberately
+        // constructed edge case: even a still-required retired skill must be
+        // gated) plus a normal required skill as a control.
         write_file(
             &repo.join("manifests/suite.yaml"),
             "schema_version: \"1.0\"\n\
@@ -4828,6 +5344,7 @@ mod tests {
             }),
         );
 
+        // Adopt / Update / Repair of the retired skill are blocked with NO writes.
         for action in [
             ConsoleAction::Adopt,
             ConsoleAction::Update,
@@ -4850,6 +5367,7 @@ mod tests {
             );
         }
 
+        // Sync never considers the retired skill; the control IS synced.
         let sync = sync_plan(&ctx, &["claude-code", "codex"], false);
         let names: Vec<&str> = sync.items.iter().map(|i| i.capability.as_str()).collect();
         assert!(
@@ -4885,6 +5403,154 @@ mod tests {
         );
         // Still advise-only — AGS never registers MCP servers itself.
         assert!(res.planned_writes.is_empty());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Full-machine discovery classifies host-dir skills into the taxonomy and is
+    /// fail-closed: every discovered host-dir skill is `routing: None`
+    /// (not-routable) until adopted. Also exercises symlink safety — dangling
+    /// links, external targets, and symlink loops are recognized without panic
+    /// and never linked into the AGS store.
+    #[test]
+    fn discovers_host_dir_system_user_and_unmanaged_skills_fail_closed() {
+        let (ctx, base) = ctx_with("hostdir-discovery", canned_list());
+        let skills = ctx.home.join(".codex/skills");
+        // Real-dir user skill → discovered-local.
+        write_file(
+            &skills.join("myuserskill/SKILL.md"),
+            "---\nname: myuserskill\ndescription: x.\n---\nbody\n",
+        );
+        // System skill under `.system` → host-system.
+        write_file(
+            &skills.join(".system/sys-creator/SKILL.md"),
+            "---\nname: sys-creator\ndescription: x.\n---\nbody\n",
+        );
+        // Dangling symlink → unmanaged (no panic).
+        std::os::unix::fs::symlink(base.join("does-not-exist-xyz"), skills.join("broken")).unwrap();
+        // Symlink to an external location outside any store → unmanaged.
+        let external = base.join("external/extskill");
+        write_file(
+            &external.join("SKILL.md"),
+            "---\nname: extskill\ndescription: x.\n---\nbody\n",
+        );
+        std::os::unix::fs::symlink(&external, skills.join("extskill")).unwrap();
+        // Symlink loop → must not panic.
+        std::os::unix::fs::symlink(skills.join("loopb"), skills.join("loopa")).unwrap();
+        std::os::unix::fs::symlink(skills.join("loopa"), skills.join("loopb")).unwrap();
+
+        let inv = build_inventory(&ctx, &["codex"]);
+        let by = |n: &str| {
+            inv.capabilities
+                .iter()
+                .find(|c| c.name == n)
+                .cloned()
+                .unwrap_or_else(|| panic!("capability {n} not discovered"))
+        };
+
+        assert_eq!(by("myuserskill").managed_status, ManagedStatus::Discovered);
+        assert_eq!(by("sys-creator").managed_status, ManagedStatus::HostSystem);
+        assert_eq!(by("extskill").managed_status, ManagedStatus::Unmanaged);
+        assert_eq!(by("broken").managed_status, ManagedStatus::Unmanaged);
+        // Fail-closed: NONE of the discovered host-dir skills are routable.
+        for n in ["myuserskill", "sys-creator", "extskill", "broken"] {
+            assert!(
+                by(n).routing.is_none(),
+                "{n} must be fail-closed not-routable until adopted"
+            );
+            assert_eq!(by(n).registry_status, RegistryStatus::NotRegistered);
+        }
+        // The system skill is canonical-present (its body exists) but never
+        // copied — its source is the external `.system` path, not the AGS store.
+        assert!(by("sys-creator").canonical_present);
+        assert!(by("sys-creator").source.unwrap().contains(".system"));
+        // Public boundary: the snapshot hash (a recordable attestation token)
+        // embeds capability NAMES + statuses only — never an absolute machine
+        // path or a system-skill body — so it is safe to publish / record.
+        let hash = inventory_snapshot_hash(&inv);
+        assert!(hash.starts_with("fnv1a64:"));
+        assert!(!hash.contains('/') && !hash.contains("Users") && !hash.contains(".system"));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A discovered host-system `.system/<name>` whose SKILL.md front-matter
+    /// declares a DIFFERENT name must read Degraded (not Visible): a mismatched
+    /// or replaced body cannot masquerade as the adopted capability for the
+    /// runtime skill-tag gate. A matching body reads Visible. (adversarial-review
+    /// hardening — host-dir visibility now validates SKILL.md identity like
+    /// `skill_path_visibility`.)
+    #[test]
+    fn host_dir_skill_visibility_validates_front_matter_identity() {
+        let (ctx, base) = ctx_with("hostdir-frontmatter", canned_list());
+        let skills = ctx.home.join(".codex/skills");
+        let codex_vis = |inv: &ManagedInventoryResult| -> HostVisibilityStatus {
+            inv.capabilities
+                .iter()
+                .find(|c| c.name == "skill-creator")
+                .and_then(|c| c.host_visibility.iter().find(|v| v.host == "codex"))
+                .map(|v| v.status.clone())
+                .expect("skill-creator codex visibility")
+        };
+
+        // Directory named `skill-creator` but the body declares another name.
+        write_file(
+            &skills.join(".system/skill-creator/SKILL.md"),
+            "---\nname: not-skill-creator\ndescription: impostor.\n---\nbody\n",
+        );
+        assert_eq!(
+            codex_vis(&build_inventory(&ctx, &["codex"])),
+            HostVisibilityStatus::Degraded,
+            "mismatched SKILL.md front-matter name must be Degraded, not Visible"
+        );
+
+        // A body whose front-matter name matches the directory reads Visible.
+        write_file(
+            &skills.join(".system/skill-creator/SKILL.md"),
+            "---\nname: skill-creator\ndescription: real.\n---\nbody\n",
+        );
+        assert_eq!(
+            codex_vis(&build_inventory(&ctx, &["codex"])),
+            HostVisibilityStatus::Visible,
+            "matching SKILL.md front-matter name must be Visible"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// If a host-system skill is explicitly adopted in skills-registry.yaml, the
+    /// inventory row must reflect that registry authority consistently: routable
+    /// AND registered. It remains host-system/read-only; only the routing
+    /// authority changes.
+    #[test]
+    fn adopted_host_system_skill_is_registered_in_inventory() {
+        let (ctx, base) = ctx_with("hostdir-adopted-registered", canned_list());
+        let skills = ctx.home.join(".codex/skills");
+        write_file(
+            &skills.join(".system/skill-creator/SKILL.md"),
+            "---\nname: skill-creator\ndescription: real.\n---\nbody\n",
+        );
+        write_file(
+            &ctx.repo_root.join("manifests/skills-registry.yaml"),
+            "skills:\n\
+             \x20 - name: skill-creator\n    routing:\n      route_state: routable\n      intent_tags: [skill-authoring]\n      invoke_hint: \"[skill: skill-creator]\"\n",
+        );
+
+        let inv = build_inventory(&ctx, &["codex"]);
+        let cap = find(&inv, "skill-creator");
+        assert_eq!(cap.managed_status, ManagedStatus::HostSystem);
+        assert_eq!(cap.registry_status, RegistryStatus::Registered);
+        assert_eq!(
+            cap.routing.as_ref().map(|r| r.route_state),
+            Some(RouteState::Routable)
+        );
+        assert!(cap
+            .risk_notes
+            .iter()
+            .any(|note| note.contains("registry-adopted for routing")));
+        assert!(cap
+            .risk_notes
+            .iter()
+            .all(|note| !note.contains("Adopt via the registry to make it routable")));
+
         let _ = std::fs::remove_dir_all(&base);
     }
 }

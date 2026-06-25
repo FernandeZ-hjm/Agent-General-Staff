@@ -251,10 +251,11 @@ const EXECUTION_OVERRIDES: &[(&str, &str)] = &[
 /// Deterministic detection of a STRUCTURED current-task execution approval on the
 /// live user request (an explicit imperative instruction to implement / fix /
 /// finish — see [`EXECUTION_OVERRIDES`]). This is the signal the gate / compiler
-/// maps to `execution_policy::ApprovalSource::CurrentTaskInstruction`, which
-/// unlocks Heavy + edit-with-confirmation without a plan-only round trip. It is
-/// NEVER derived from task-card text — only from the live request. Bare "执行"
-/// is intentionally excluded (it reads as a topic word, not an authorization).
+/// maps to `execution_policy::ApprovalSource::CurrentTaskInstruction`, an
+/// audit/hint signal (task level does not downgrade the permission mode, so it is
+/// no longer a Heavy execution unlock). It is NEVER derived from task-card text —
+/// only from the live request. Bare "执行" is intentionally excluded (it reads as
+/// a topic word, not an authorization).
 pub fn detect_current_task_approval(request: &str) -> bool {
     let lower = request.to_lowercase();
     let lower_collapsed = collapse_ws(&lower);
@@ -433,9 +434,9 @@ pub fn classify(request: &str) -> Classification {
 /// The kind of development demand detected in a request, used to route to a
 /// managed capability. Precedence (highest first — development demands win over
 /// external mutations per governance policy):
-/// `TaskCardHandoff > Debug > Verify > CodeReview > Commit > Architecture >
-/// Brainstorm > MailSend > Messaging > Approval > CalendarQuery > LarkDoc >
-/// SheetOp > LarkCollab > DocsLookup > None`.
+/// `TaskCardHandoff > Debug > Verify > CodeReview > Commit > SkillAuthoring >
+/// MattSuperpowers > Architecture > Brainstorm > MailSend > Messaging > Approval >
+/// CalendarQuery > LarkDoc > SheetOp > LarkCollab > DocsLookup > None`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DemandKind {
@@ -450,6 +451,16 @@ pub enum DemandKind {
     CodeReview,
     /// Generate a commit message.
     Commit,
+    /// Authoring / creating / installing a SKILL or plugin (e.g. `skill-creator`,
+    /// `skill-installer`, `plugin-creator`). Routes only to an EXPLICITLY adopted
+    /// (registry-routable) authoring capability — a merely discovered host-system
+    /// skill stays fail-closed not-routable until adopted.
+    SkillAuthoring,
+    /// Matt Pocock / Superpowers workflow asks: PRD synthesis, issue slicing,
+    /// decision maps, issue triage, branch/spec review, merge conflicts, or
+    /// context handoff. Routed through AGS first, then subrouted to upstream
+    /// named skills.
+    MattSuperpowers,
     /// Refactoring, technical debt, boundary/coupling cleanup.
     Architecture,
     /// Open-ended feature, design, or recommendation work.
@@ -483,6 +494,8 @@ impl DemandKind {
             DemandKind::Verify => "verify",
             DemandKind::CodeReview => "code-review",
             DemandKind::Commit => "commit",
+            DemandKind::SkillAuthoring => "skill-authoring",
+            DemandKind::MattSuperpowers => "matt-superpowers",
             DemandKind::Architecture => "architecture",
             DemandKind::Brainstorm => "brainstorm",
             DemandKind::MailSend => "mail-send",
@@ -560,6 +573,93 @@ const DEMAND_TRIGGERS: &[(&str, DemandKind, &str)] = &[
     ("commit message", DemandKind::Commit, "en"),
     ("commit msg", DemandKind::Commit, "en"),
     ("conventional commit", DemandKind::Commit, "en"),
+    // ── SkillAuthoring (create / author / install a skill or plugin) ──
+    // Verb-bound so a benign mention of "skill" / "技能" does not route here.
+    ("创建技能", DemandKind::SkillAuthoring, "zh"),
+    ("新建技能", DemandKind::SkillAuthoring, "zh"),
+    ("新增技能", DemandKind::SkillAuthoring, "zh"),
+    ("新技能", DemandKind::SkillAuthoring, "zh"),
+    ("做一个技能", DemandKind::SkillAuthoring, "zh"),
+    ("做个技能", DemandKind::SkillAuthoring, "zh"),
+    ("写一个技能", DemandKind::SkillAuthoring, "zh"),
+    ("写个技能", DemandKind::SkillAuthoring, "zh"),
+    ("开发技能", DemandKind::SkillAuthoring, "zh"),
+    ("技能开发", DemandKind::SkillAuthoring, "zh"),
+    ("封装技能", DemandKind::SkillAuthoring, "zh"),
+    ("封装成技能", DemandKind::SkillAuthoring, "zh"),
+    ("创建一个技能", DemandKind::SkillAuthoring, "zh"),
+    ("做一个插件", DemandKind::SkillAuthoring, "zh"),
+    ("创建插件", DemandKind::SkillAuthoring, "zh"),
+    ("安装技能", DemandKind::SkillAuthoring, "zh"),
+    ("create a skill", DemandKind::SkillAuthoring, "en"),
+    ("create a new skill", DemandKind::SkillAuthoring, "en"),
+    ("new skill", DemandKind::SkillAuthoring, "en"),
+    ("author a skill", DemandKind::SkillAuthoring, "en"),
+    ("authoring a skill", DemandKind::SkillAuthoring, "en"),
+    ("write a skill", DemandKind::SkillAuthoring, "en"),
+    ("make a skill", DemandKind::SkillAuthoring, "en"),
+    ("build a skill", DemandKind::SkillAuthoring, "en"),
+    ("skill creator", DemandKind::SkillAuthoring, "en"),
+    ("skill-creator", DemandKind::SkillAuthoring, "en"),
+    ("skill installer", DemandKind::SkillAuthoring, "en"),
+    ("skill-installer", DemandKind::SkillAuthoring, "en"),
+    ("create a plugin", DemandKind::SkillAuthoring, "en"),
+    ("new plugin", DemandKind::SkillAuthoring, "en"),
+    ("plugin creator", DemandKind::SkillAuthoring, "en"),
+    // ── Matt/Superpowers flow ──
+    // These are specific workflow verbs/nouns. Generic `review` and generic
+    // `handoff` stay with AGS root governance unless paired with Matt-style
+    // artifacts (PRD/issues/decision map/etc.).
+    ("prd", DemandKind::MattSuperpowers, "en"),
+    ("product requirements", DemandKind::MattSuperpowers, "en"),
+    (
+        "break this prd into issues",
+        DemandKind::MattSuperpowers,
+        "en",
+    ),
+    (
+        "break this plan into issues",
+        DemandKind::MattSuperpowers,
+        "en",
+    ),
+    ("decision map", DemandKind::MattSuperpowers, "en"),
+    ("decision mapping", DemandKind::MattSuperpowers, "en"),
+    ("investigation tickets", DemandKind::MattSuperpowers, "en"),
+    ("triage issue", DemandKind::MattSuperpowers, "en"),
+    ("ready-for-agent", DemandKind::MattSuperpowers, "en"),
+    ("merge conflict", DemandKind::MattSuperpowers, "en"),
+    ("merge conflicts", DemandKind::MattSuperpowers, "en"),
+    ("rebase conflict", DemandKind::MattSuperpowers, "en"),
+    ("handoff document", DemandKind::MattSuperpowers, "en"),
+    ("handoff doc", DemandKind::MattSuperpowers, "en"),
+    ("handoff note", DemandKind::MattSuperpowers, "en"),
+    ("two-axis review", DemandKind::MattSuperpowers, "en"),
+    ("review since", DemandKind::MattSuperpowers, "en"),
+    ("standards and spec", DemandKind::MattSuperpowers, "en"),
+    ("grill me", DemandKind::MattSuperpowers, "en"),
+    ("grill-me", DemandKind::MattSuperpowers, "en"),
+    ("obsidian vault", DemandKind::MattSuperpowers, "en"),
+    ("obsidian", DemandKind::MattSuperpowers, "en"),
+    ("需求文档", DemandKind::MattSuperpowers, "zh"),
+    ("产品需求", DemandKind::MattSuperpowers, "zh"),
+    ("拆成issues", DemandKind::MattSuperpowers, "zh"),
+    ("拆成issue", DemandKind::MattSuperpowers, "zh"),
+    ("拆成工单", DemandKind::MattSuperpowers, "zh"),
+    ("任务拆分", DemandKind::MattSuperpowers, "zh"),
+    ("决策地图", DemandKind::MattSuperpowers, "zh"),
+    ("决策映射", DemandKind::MattSuperpowers, "zh"),
+    ("松散想法", DemandKind::MattSuperpowers, "zh"),
+    ("工单分诊", DemandKind::MattSuperpowers, "zh"),
+    ("问题分诊", DemandKind::MattSuperpowers, "zh"),
+    ("合并冲突", DemandKind::MattSuperpowers, "zh"),
+    ("解决冲突", DemandKind::MattSuperpowers, "zh"),
+    ("上下文交接", DemandKind::MattSuperpowers, "zh"),
+    ("交接文档", DemandKind::MattSuperpowers, "zh"),
+    ("交接说明", DemandKind::MattSuperpowers, "zh"),
+    ("两轴审查", DemandKind::MattSuperpowers, "zh"),
+    ("评审分支", DemandKind::MattSuperpowers, "zh"),
+    ("方案拷问", DemandKind::MattSuperpowers, "zh"),
+    ("黑曜石", DemandKind::MattSuperpowers, "zh"),
     // ── Architecture ──
     ("重构", DemandKind::Architecture, "zh"),
     ("技术债", DemandKind::Architecture, "zh"),
@@ -655,13 +755,62 @@ const DEMAND_TRIGGERS: &[(&str, DemandKind, &str)] = &[
     ("feishu", DemandKind::LarkCollab, "en"),
 ];
 
+/// Verb-bound creation/authoring lead-ins for the skill-authoring co-occurrence
+/// rule. Locked, lowercased, space-free (Chinese) / natural-space (English) like
+/// [`DEMAND_TRIGGERS`].
+const SKILL_AUTHORING_VERBS: &[&str] = &[
+    "创建",
+    "新建",
+    "新增",
+    "做一个",
+    "做个",
+    "写一个",
+    "写个",
+    "搭一个",
+    "搞一个",
+    "搞个",
+    "开发",
+    "封装",
+    "create",
+    "build",
+    "make",
+    "author",
+    "authoring",
+    "write",
+    "develop",
+    "scaffold",
+];
+
+/// Skill / plugin nouns for the skill-authoring co-occurrence rule.
+const SKILL_AUTHORING_NOUNS: &[&str] = &["技能", "skill", "插件", "plugin"];
+
+/// Detect a skill-authoring request where a creation/authoring verb co-occurs
+/// with a skill/plugin noun even though a skill NAME sits between them — e.g.
+/// "创建一个新的 Hermes skill" (创建 … skill) or "build the Foo skill". A single
+/// locked substring cannot span the intervening name, so the bounded
+/// [`DEMAND_TRIGGERS`] table misses these; this co-occurrence pass closes the gap
+/// without a free-form rule. Returns the matched `(verb, noun)` pair for trigger
+/// transparency, or `None`. Recall-biased and advisory-only — higher-precedence
+/// demands (Debug / Verify / …) still win in the precedence chain, so a bug
+/// report that merely names a skill is never stolen by this rule.
+fn skill_authoring_cooccurrence(
+    collapsed: &str,
+    compact: &str,
+) -> Option<(&'static str, &'static str)> {
+    let hit =
+        |pat: &str| contains_bounded(collapsed, pat) || contains_bounded(compact, &despace(pat));
+    let verb = SKILL_AUTHORING_VERBS.iter().copied().find(|v| hit(v))?;
+    let noun = SKILL_AUTHORING_NOUNS.iter().copied().find(|n| hit(n))?;
+    Some((verb, noun))
+}
+
 /// Classify a request's development demand for Capability Route. Deterministic:
 /// same input → same demand. Task-card / handoff demand is delegated to
 /// [`classify`] (so the handoff trigger table is not duplicated); the remaining
 /// kinds come from [`DEMAND_TRIGGERS`]. Precedence:
-/// `TaskCardHandoff > Debug > Verify > CodeReview > Commit > Architecture >
-/// Brainstorm > MailSend > Messaging > Approval > CalendarQuery > LarkDoc >
-/// SheetOp > LarkCollab > DocsLookup > None`.
+/// `TaskCardHandoff > Debug > Verify > CodeReview > Commit > SkillAuthoring >
+/// MattSuperpowers > Architecture > Brainstorm > MailSend > Messaging > Approval >
+/// CalendarQuery > LarkDoc > SheetOp > LarkCollab > DocsLookup > None`.
 pub fn classify_demand(request: &str) -> DemandClassification {
     let base = classify(request);
 
@@ -675,10 +824,14 @@ pub fn classify_demand(request: &str) -> DemandClassification {
         mut has_verify,
         mut has_review,
         mut has_commit,
+        mut has_matt,
         mut has_arch,
         mut has_brain,
         mut has_docs,
-    ) = (false, false, false, false, false, false, false);
+        mut has_skill_authoring,
+    ) = (
+        false, false, false, false, false, false, false, false, false,
+    );
     let (mut has_mail, mut has_msg, mut has_approval, mut has_calendar) =
         (false, false, false, false);
     let (mut has_lark_doc, mut has_sheet, mut has_lark) = (false, false, false);
@@ -696,6 +849,8 @@ pub fn classify_demand(request: &str) -> DemandClassification {
             DemandKind::Verify => has_verify = true,
             DemandKind::CodeReview => has_review = true,
             DemandKind::Commit => has_commit = true,
+            DemandKind::SkillAuthoring => has_skill_authoring = true,
+            DemandKind::MattSuperpowers => has_matt = true,
             DemandKind::Architecture => has_arch = true,
             DemandKind::Brainstorm => has_brain = true,
             DemandKind::MailSend => has_mail = true,
@@ -711,13 +866,34 @@ pub fn classify_demand(request: &str) -> DemandClassification {
         }
     }
 
+    // Skill-authoring co-occurrence: catch "创建一个新的 Hermes skill" /
+    // "build the Foo skill" where a creation verb and a skill noun are split by a
+    // skill name. Only when no bounded trigger already fired (no double count),
+    // and it does not change precedence — the chain below still lets higher
+    // demands win.
+    if !has_skill_authoring {
+        if let Some((verb, noun)) = skill_authoring_cooccurrence(&lower_collapsed, &compact) {
+            has_skill_authoring = true;
+            matched_triggers.push(format!("{verb} … {noun} (skill-authoring co-occurrence)"));
+        }
+    }
+
     // Precedence (development demands win over external mutations per policy;
     // platform-bound Lark doc/sheet outrank generic docs-lookup):
-    // TaskCardHandoff > Debug > Verify > CodeReview > Commit > Architecture >
-    // Brainstorm > MailSend > Messaging > Approval > CalendarQuery > LarkDoc >
-    // SheetOp > LarkCollab > DocsLookup > None.
-    // Handoff reuses the `classify` signal.
-    if base.is_task_card_request {
+    // TaskCardHandoff > Debug > Verify > CodeReview > Commit > MattSuperpowers >
+    // Architecture > Brainstorm > MailSend > Messaging > Approval > CalendarQuery >
+    // LarkDoc > SheetOp > LarkCollab > DocsLookup > None.
+    // Handoff reuses the `classify` signal, with one narrow exception: a bare
+    // English `handoff` trigger paired with Matt artifact words such as
+    // "handoff document" means the upstream `handoff` skill, not executor
+    // delegation. Explicit executor / prompt triggers still win.
+    let bare_handoff_artifact = has_matt
+        && base.kind == PromptRequestKind::Handoff
+        && base
+            .matched_triggers
+            .iter()
+            .all(|t| matches!(t.as_str(), "handoff" | "hand off"));
+    if base.is_task_card_request && !bare_handoff_artifact {
         return DemandClassification {
             kind: DemandKind::TaskCardHandoff,
             matched_triggers: base.matched_triggers,
@@ -731,6 +907,10 @@ pub fn classify_demand(request: &str) -> DemandClassification {
         DemandKind::CodeReview
     } else if has_commit {
         DemandKind::Commit
+    } else if has_skill_authoring {
+        DemandKind::SkillAuthoring
+    } else if has_matt {
+        DemandKind::MattSuperpowers
     } else if has_arch {
         DemandKind::Architecture
     } else if has_brain {
@@ -1396,6 +1576,51 @@ mod tests {
         }
     }
 
+    /// Matt/Superpowers flow requests are specific engineering workflow asks:
+    /// PRDs, issue slicing, decision maps, issue triage, branch/spec review,
+    /// merge-conflict resolution, and context handoff. They should enter the
+    /// Matt/Superpowers subroute instead of reading as ordinary prose.
+    #[test]
+    fn demand_matt_superpowers_flow_fires_on_specific_workflow_phrases() {
+        let cases = [
+            "turn this conversation into a PRD",
+            "把这个方案整理成 PRD",
+            "break this PRD into issues",
+            "把这个计划拆成 issues",
+            "make a decision map for this loose idea",
+            "给这个松散想法做决策映射",
+            "triage issue #42 into ready-for-agent",
+            "resolve these merge conflicts",
+            "write a handoff document for the next agent",
+            "run a two-axis review since main",
+        ];
+        for input in cases {
+            let d = classify_demand(input);
+            assert_eq!(
+                d.kind.as_str(),
+                "matt-superpowers",
+                "input {input:?} -> {:?}",
+                d.kind
+            );
+            assert!(!d.matched_triggers.is_empty(), "no triggers for {input:?}");
+        }
+    }
+
+    /// The Matt/Superpowers subroute must not steal AGS's existing executor
+    /// handoff gate or broad code-review demand. Those are root governance
+    /// concepts, not Matt workflow shortcuts.
+    #[test]
+    fn demand_matt_superpowers_does_not_steal_core_governance_demands() {
+        assert_eq!(
+            classify_demand("交给 Claude Code 执行").kind,
+            DemandKind::TaskCardHandoff
+        );
+        assert_eq!(
+            classify_demand("please review my code").kind,
+            DemandKind::CodeReview
+        );
+    }
+
     /// Inflected English debug phrasings still route (recall hardening).
     #[test]
     fn demand_debug_inflections_fire() {
@@ -1495,6 +1720,7 @@ mod tests {
             (DemandKind::Verify, "verify"),
             (DemandKind::CodeReview, "code-review"),
             (DemandKind::Commit, "commit"),
+            (DemandKind::MattSuperpowers, "matt-superpowers"),
             (DemandKind::Architecture, "architecture"),
             (DemandKind::Brainstorm, "brainstorm"),
             (DemandKind::MailSend, "mail-send"),
@@ -1575,6 +1801,75 @@ mod tests {
         assert_eq!(
             classify_demand("报错了，把崩溃日志发邮件给我").kind,
             DemandKind::Debug
+        );
+    }
+
+    #[test]
+    fn demand_skill_authoring_detected() {
+        for req in [
+            "创建一个新技能",
+            "帮我新建技能",
+            "create a new skill",
+            "author a skill for me",
+            "use the skill-creator",
+        ] {
+            assert_eq!(
+                classify_demand(req).kind,
+                DemandKind::SkillAuthoring,
+                "request `{req}` should classify as skill-authoring"
+            );
+        }
+    }
+
+    /// A bug report that merely mentions a skill must stay Debug (higher
+    /// precedence), not be stolen by the skill-authoring triggers.
+    #[test]
+    fn demand_skill_authoring_does_not_steal_debug() {
+        assert_eq!(
+            classify_demand("这个新技能模块报错了").kind,
+            DemandKind::Debug
+        );
+    }
+
+    /// Co-occurrence: a creation verb + skill noun split by a skill NAME (which a
+    /// single bounded substring cannot span) must still classify as
+    /// skill-authoring. These are the exact reproduction phrases from the task.
+    #[test]
+    fn demand_skill_authoring_cooccurrence_spans_skill_name() {
+        for req in [
+            "创建一个新的 Hermes skill",
+            "帮我创建一个新的 Hermes 技能",
+            "build the Foo skill for me",
+            "create a TempoFlow plugin",
+            "做一个叫 Hermes 的技能",
+        ] {
+            let d = classify_demand(req);
+            assert_eq!(
+                d.kind,
+                DemandKind::SkillAuthoring,
+                "request `{req}` should classify as skill-authoring (matched {:?})",
+                d.matched_triggers
+            );
+            assert!(
+                !d.matched_triggers.is_empty(),
+                "co-occurrence must record a matched trigger for `{req}`"
+            );
+        }
+    }
+
+    /// The co-occurrence rule must not over-fire: a creation verb with no skill
+    /// noun, or a skill noun with no creation verb, stays out of skill-authoring.
+    #[test]
+    fn demand_skill_authoring_cooccurrence_requires_both_verb_and_noun() {
+        // Verb, but no skill/plugin noun → must not become skill-authoring.
+        assert_ne!(
+            classify_demand("创建一个登录页面").kind,
+            DemandKind::SkillAuthoring
+        );
+        // Skill noun, but no creation verb → not skill-authoring (plain prose).
+        assert_eq!(
+            classify_demand("这个 skill 在哪个目录").kind,
+            DemandKind::None
         );
     }
 

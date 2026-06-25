@@ -13,7 +13,7 @@ pub(crate) use kernel_actions::*;
     name = "ags",
     about = "Agent Governance Suite CLI",
     after_help = "Common flow:\n  ags setup --yes      Initialize the global AGS runtime\n  ags init             Onboard the current project\n  ags doctor           Diagnose AGS health\n  ags skill            Review local skills",
-    version = env!("CARGO_PKG_VERSION"),
+    version = crate::context::AGS_VERSION,
 )]
 pub(crate) struct Cli {
     #[command(subcommand)]
@@ -320,7 +320,7 @@ pub(crate) enum Commands {
         /// Task card file (use "-" for stdin)
         path: String,
 
-        /// Stop after gate check; exit 0 if allowed/confirm, 1 if stop.
+        /// Stop after gate check; exit 0 if allow, 2 if confirm, 1 if stop.
         #[arg(long, default_value_t = false)]
         check_only: bool,
 
@@ -328,12 +328,13 @@ pub(crate) enum Commands {
         #[arg(long, default_value_t = false)]
         dry_run: bool,
 
-        /// Pass write approval to the policy resolver for Heavy tasks.
+        /// Write-approval audit/hint signal for the policy resolver; may act as
+        /// the M9 generic-adapter capability override.
         #[arg(long, default_value_t = false)]
         approve_writes: bool,
 
-        /// Structured current-task approval from the live request. Unlocks
-        /// Heavy + edit-with-confirmation only (not execute-and-verify).
+        /// Structured current-task approval signal from the live request
+        /// (audit/hint only — task level does not downgrade the permission mode).
         #[arg(long, default_value_t = false)]
         current_task_approval: bool,
 
@@ -377,11 +378,12 @@ pub(crate) enum Commands {
         /// Output format: text or json
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
-        /// Explicit approval for Heavy task writes
+        /// Write-approval audit/hint signal; may act as the M9 generic-adapter
+        /// capability override.
         #[arg(long, default_value_t = false)]
         approve_writes: bool,
-        /// Structured current-task approval from the live request. Unlocks
-        /// Heavy + edit-with-confirmation only (not execute-and-verify).
+        /// Structured current-task approval signal from the live request
+        /// (audit/hint only — task level does not downgrade the permission mode).
         #[arg(long, default_value_t = false)]
         current_task_approval: bool,
     },

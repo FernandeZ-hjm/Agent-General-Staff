@@ -29,9 +29,36 @@ pub(crate) const VALID_PARALLELISM: &[&str] = &[
     "agent-team",
 ];
 pub(crate) const VALID_TASK_LEVELS: &[&str] = &["Light", "Medium", "Heavy"];
-pub(crate) const VALID_EXECUTION_EFFORT: &[&str] = &["normal", "ultracode", "unknown"];
+/// Allowed `Execution effort` values. `low` / `normal` / `high` / `exhaustive`
+/// are the NEUTRAL canonical execution-intensity values that the front-stage
+/// task-card generation path uses. `ultracode` is retained ONLY as a
+/// parse-compatible legacy alias (a host-private trigger word) that maps to the
+/// same exhaustive semantics; prompt-maker must not generate it. `unknown` is the
+/// absent default.
+pub(crate) const VALID_EXECUTION_EFFORT: &[&str] = &[
+    "low",
+    "normal",
+    "high",
+    "exhaustive",
+    "ultracode",
+    "unknown",
+];
 pub(crate) const VALID_WORKFLOW_AUTHORITY: &[&str] =
     &["none", "within-card", "plan-only", "allowed"];
+/// Allowed `子任务编排` (subtask orchestration) mode values. `none` = no
+/// orchestration declared; `optional` / `required` declare splittable subtask
+/// structure. A non-`none` mode requires a delegation-capable Parallelism and a
+/// non-`none` Workflow authority (checked in the execution authority gate). The
+/// slot only DECLARES splittable structure — actual subagent/workflow ignition is
+/// translated by the claude-code adapter / runner from the resolved policy.
+pub(crate) const VALID_SUBTASK_ORCHESTRATION_MODES: &[&str] = &["none", "optional", "required"];
+
+/// Whether an `Execution effort` value is the exhaustive tier. `exhaustive` is
+/// the neutral canonical value; `ultracode` is the parse-compatible legacy alias
+/// mapping to the same semantics.
+pub(crate) fn is_exhaustive_effort(effort: &str) -> bool {
+    matches!(effort, "exhaustive" | "ultracode")
+}
 
 /// Map Executor to its required Runtime adapter.
 pub(crate) fn expected_adapter(executor: &str) -> Option<&'static str> {

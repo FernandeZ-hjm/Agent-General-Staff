@@ -123,10 +123,14 @@ Allowed values:
 
 Use the narrowest permission mode that can complete the task safely.
 
-Heavy tasks default to `plan-only`. They may move to
-`edit-with-confirmation` or `execute-and-verify` only after explicit human
-approval for the current task. Runtime capability, previous context, or a
-continuation message is not approval.
+Task level does not change the permission mode. Task level (Light / Medium /
+Heavy) is a risk/review tier; the permission mode is the execution authority.
+A Heavy task keeps its declared permission mode and gains a confirmation gate
+plus a review gate — it is never downgraded by task level. When a Heavy card
+does not declare a permission mode, the compiler fills the conservative
+`plan-only` default (an explicit permission mode is always preserved). Runtime
+capability, previous context, or a continuation message is not approval to skip
+the confirmation or review gate.
 
 ### Parallelism
 
@@ -279,14 +283,16 @@ and Claude Code may execute bounded implementation work.
 
 ## Task-Level Defaults
 
-Use task level to choose the initial permission mode. Do not escalate permission
-just because the runtime supports it.
+Task level is a risk/review tier, not the execution authority. The table below is
+the compiler's permission default *when a card omits `Permission mode:`* — it does
+not override an explicitly declared permission. Do not escalate permission just
+because the runtime supports it.
 
-| Task level | Default permission | Default parallelism | Confirmation behavior |
+| Task level | Default permission (when unspecified) | Default parallelism | Confirmation behavior |
 |---|---|---|---|
 | Light | `execute-and-verify` | `none` | no extra confirmation unless stop condition triggers |
 | Medium | `edit-with-confirmation` | `none` | give short root cause or design note, then execute if scope is clear |
-| Heavy | `plan-only` | `none` | return root cause, design, implementation plan, and verification plan; wait for explicit human approval before mutation |
+| Heavy | `plan-only` | `none` | confirmation gate + review gate (never a level downgrade). If the card is plan-only, return root cause, design, implementation plan, and verification plan and wait for approval; if it declares edit-with-confirmation / execute-and-verify, prompt for confirmation before mutation |
 
 Upgrade to `plan-only` when any of these are true:
 
@@ -468,7 +474,9 @@ Execution notes:
   all fixed protocol text.
 - The task card should include exact verification commands when known.
 - Claude Code must output the delivery report required by the project protocol.
-- For Heavy tasks, start with `plan-only` and wait before mutation.
+- For Heavy tasks: if the card is `plan-only`, return the plan and wait before
+  mutation; if it declares an edit/execute mode, work under the confirmation
+  gate. Task level does not downgrade the permission mode.
 - On Heavy resume, reread the task card, `git status --short`, and
   `review_targets`; if mutation approval is not explicit in the current
   context, stop in plan mode.
@@ -581,7 +589,7 @@ The resolver enforces the following MUST rules (canonical rule IDs M1–M10).
 | Rule | Description |
 |---|---|
 | M1–M3 | `ultracode` is thinking intensity only. It does **not** change permission mode, enable parallelism, or inject any launch arg. |
-| M4 | Heavy tasks without structured approval are downgraded to `plan-only` and require a confirmation gate. `current-task-approval` unlocks Heavy `edit-with-confirmation` only; `approve-writes` / runner-env can unlock stronger write modes. |
+| M4 | Task level is a risk/review tier, not the execution authority: a Heavy task keeps its declared permission mode and only gains a confirmation gate (it is never downgraded by task level). `current-task-approval` / `approve-writes` are audit/hint signals — they no longer unlock anything; `approve-writes` may still act as the M9 generic-adapter capability override. |
 | M5–M6 | `read-only` / `plan-only` effective permission modes must **never** produce write-type launch args. Active parallelism flags (`--parallel`, `--worktree`) and `--headless` are stripped. |
 | M7 | `subagent`, `multi-session`, `agent-team` require Workflow authority `within-card` or `allowed`. `worktree` requires Workflow authority **not** `none`. |
 | M8 | Every downgrade records a structured `DowngradeReason` with the before/after values and the triggering rule.  The `downgrade_reasons` list provides a full audit trail. |
@@ -604,15 +612,14 @@ policy in text or JSON format.  It is **read-only** — it never launches a
 runner.
 
 The optional `--current-task-approval` flag sets `approval_source` to
-`current-task-instruction`, allowing Heavy tasks to retain
-`edit-with-confirmation` when the live user request explicitly approved this
-task's execution. It does not unlock Heavy `execute-and-verify`.
+`current-task-instruction`. It is an audit/hint signal only — task level no
+longer downgrades the permission mode, so a Heavy card is already executable
+from its declared permission (gated by the confirmation gate).
 
-The optional `--approve-writes` flag sets `approval_source` to `cli-flag`,
-allowing Heavy tasks to retain stronger write-mode permissions when the current
-task contract explicitly allows them. Without either structured approval signal
-(or a runner environment override), Heavy mutation requests are downgraded to
-`plan-only`.
+The optional `--approve-writes` flag sets `approval_source` to `cli-flag`. It is
+likewise an audit/hint signal; it may additionally act as the M9 generic-adapter
+capability override. Neither signal is required for a Heavy card to execute —
+task level never downgrades an explicitly declared permission mode.
 
 ### Default semantics
 
@@ -643,11 +650,9 @@ The resolver has two distinct launch-blocking mechanisms:
 | Mechanism | Meaning | Runner behavior |
 |---|---|---|
 | `stop_before_launch=true` | Do **not** launch at all. | Runner must refuse to start. Task card must be rewritten or approval obtained. |
-| `requires_confirmation_gate=true` | Launch but present a confirmation prompt before mutation. | Runner launches in plan mode, presents plan, waits for human approval before editing. |
+| `requires_confirmation_gate=true` | Launch but present a confirmation prompt before mutation. | Runner launches in the declared permission mode and presents a confirmation prompt before mutation; for plan-only cards this means returning the plan and waiting for human approval before editing. |
 
 `stop_before_launch` is set when:
-- A Heavy task requests mutation without the structured approval required for
-  that permission mode.
 - Active parallelism (subagent, worktree, multi-session, agent-team) is
   requested but the effective permission mode forbids writes — the
   parallelism flags would create filesystem side effects incompatible
@@ -710,13 +715,14 @@ resolver-first launch contract described below.
 
 The wrapper's only real flags are:
 
-- `--check-only` — stop after the gate check; exit `0` if allowed/confirm, `1`
-  if stopped.
+- `--check-only` — stop after the gate check; exit `0` if allowed, `2` if
+  confirm (the confirmation gate must be honored before mutation), `1` if stopped.
 - `--dry-run` — emit the full launch plan without executing.
 - `--current-task-approval` — pass live current-task approval through to the
-  resolver; unlocks Heavy `edit-with-confirmation` only.
-- `--approve-writes` — pass write approval through to the resolver for Heavy
-  tasks.
+  resolver as an audit/hint signal (task level does not downgrade the permission
+  mode).
+- `--approve-writes` — pass the write-approval audit/hint signal through to the
+  resolver (may act as the M9 generic-adapter capability override).
 - `--format text|json` — output format passed through to `ags run`
   (default `text`).
 
@@ -805,10 +811,10 @@ no launch args at all because stopped policies expose `allowed_launch_args: []`.
 
 ### Defaults preserved
 
-`ags run` never upgrades `Permission mode`; Heavy tasks still default to
-`plan-only` and require structured current-task approval before
-`edit-with-confirmation` mutation. Heavy `execute-and-verify` still requires the
-stronger `--approve-writes` / runner-env approval path.
+`ags run` never upgrades `Permission mode`. Task level never downgrades it
+either: a Heavy card keeps its declared permission mode and only gains a
+confirmation gate. When a Heavy card omits `Permission mode:`, the compiler
+default is `plan-only` (an explicit permission mode is always preserved).
 Receipt-first execution remains an explicit runner flag; it is never enabled
 implicitly.
 

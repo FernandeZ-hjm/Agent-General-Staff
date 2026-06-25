@@ -61,11 +61,13 @@ pub(in crate::kernel) fn read_and_validate_task_card(
 /// Build a TaskPolicyInput from parsed fields + structured approval signals.
 ///
 /// Approval is decoupled from the task LEVEL and never read from task-card text.
-/// `approve_writes` (CLI flag / runner env) is the strong approval that unlocks
-/// up to execute-and-verify. `current_task_approval` is the structured
-/// current-task instruction signal (the host detected an explicit "实现 / 修复 /
-/// 做完" on the live request via `prompt_request_classifier`) and unlocks only
-/// edit-with-confirmation. The stronger source wins when both are present.
+/// Both signals are audit/hint only — the resolver no longer downgrades a card
+/// by task level, so a Heavy card is executable from its declared permission
+/// mode (gated by the confirmation gate). `approve_writes` (CLI flag / runner
+/// env) may additionally act as the M9 generic-adapter capability override.
+/// `current_task_approval` is the host-detected current-task instruction signal
+/// (an explicit "实现 / 修复 / 做完" on the live request via
+/// `prompt_request_classifier`). The stronger source wins when both are present.
 pub(in crate::kernel) fn build_policy_input(
     fields: &std::collections::HashMap<String, String>,
     approve_writes: bool,

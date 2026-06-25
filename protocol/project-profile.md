@@ -67,6 +67,8 @@ defaults:
   executor: ""
   runtime_adapter: ""
   execution_surface: ""
+  # Default permission mode when a card omits `Permission mode:`. Task level is a
+  # risk/review tier — it never downgrades an explicitly declared permission mode.
   permission_mode_by_level:
     light: execute-and-verify
     medium: edit-with-confirmation
