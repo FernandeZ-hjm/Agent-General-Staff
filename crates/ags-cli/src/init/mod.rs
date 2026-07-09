@@ -168,6 +168,10 @@ defaults:
   executor: {}
   runtime_adapter: {}
   execution_surface: {}
+  # Omitted-field defaults only: use these values only when a generated task card
+  # does not declare `Permission mode:`. Task level is a risk/review tier, not an
+  # execution cap. A Heavy card that explicitly declares execute-and-verify remains
+  # executable and still goes through the Heavy Review gate.
   permission_mode_by_level:
     light: execute-and-verify
     medium: edit-with-confirmation

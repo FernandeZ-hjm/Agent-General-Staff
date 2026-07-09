@@ -49,41 +49,42 @@ pub(crate) fn apply_ultracode_rules(input: &TaskPolicyInput, policy: &mut Resolv
     }
 }
 
-// ── M4: Heavy → confirmation/review signal (NO permission downgrade) ─────
+// ── M4: Confirmation gate from the permission mode (NOT the task level) ───
 //
-// Task LEVEL (Light / Medium / Heavy) is a risk/review tier — it is NOT the
-// execution authority. The permission MODE is the sole execution authority.
-// M4 therefore NEVER rewrites the permission mode: a Heavy task keeps its
-// declared permission and only gains a confirmation gate (the runner must
-// prompt before mutation) plus the Review gate / stop conditions declared
-// elsewhere in the card. Consequences:
-//   - Heavy + edit-with-confirmation / execute-and-verify → executable
-//     (GateDecision Confirm); execute-and-verify is NOT capped to edit.
-//   - Heavy + plan-only / read-only → stays a plan/review card.
+// The confirmation gate is a property of the PERMISSION MODE, not the task
+// LEVEL. `edit-with-confirmation` is the only built-in confirmation trigger:
+// it asks the runner to pause for confirmation before each mutation. Task
+// level (Light / Medium / Heavy) is a risk/review tier and NEVER sets this
+// gate — a Heavy card executes under its declared permission mode like any
+// other card. The Heavy review boundary is enforced by the task-card
+// validator's independent Review-gate requirement, not by a resolver
+// confirmation gate. Consequences:
+//   - any-level + edit-with-confirmation → confirmation-gated (GateDecision
+//     Confirm) because of the permission mode, regardless of task level.
+//   - any-level + execute-and-verify → executes directly (GateDecision Allow);
+//     execute-and-verify is NOT capped to edit and gets no extra mutation gate.
+//   - plan-only / read-only → no confirmation gate (writes are forbidden).
+// This rule runs AFTER the generic-adapter cap (M9): if a declared
+// edit-with-confirmation was capped to plan-only, the effective mode forbids
+// writes and no confirmation gate is set.
+//
 // The hard STOP boundaries (protected paths, the read-only/plan-only
 // writability gate M5/M6, the generic-adapter cap M9, and release / external /
 // destructive stop conditions) are enforced by their own rules, independent of
 // the task level. Approval sources (current-task instruction / CLI flag /
-// runner env) are audit/hint signals — they are no longer a Heavy execution
-// unlock (M9 may still consult `approve_writes` as an adapter-capability
-// override).
+// runner env) are audit/hint signals (M9 may still consult `approve_writes`
+// as an adapter-capability override).
 
-/// Apply the Heavy task confirmation rule (M4).
+/// Apply the confirmation-gate rule (M4).
 ///
-/// Heavy tasks require a confirmation gate. M4 does NOT downgrade the permission
-/// mode, does NOT cap execute-and-verify, and does NOT stop — task level is
-/// decoupled from execution authority. This is the only field M4 touches.
-pub(crate) fn apply_heavy_permission_rule(
-    input: &TaskPolicyInput,
-    policy: &mut ResolvedExecutionPolicy,
-) {
-    if input.task_level != "Heavy" {
-        return;
+/// Sets `requires_confirmation_gate` iff the EFFECTIVE permission mode is
+/// `edit-with-confirmation`. Task level never sets this gate, never downgrades
+/// the permission mode, and never stops. This is the only field M4 touches.
+/// Must run after M9 so a capped permission mode is reflected.
+pub(crate) fn apply_confirmation_gate_rule(policy: &mut ResolvedExecutionPolicy) {
+    if policy.effective_permission_mode == PermissionMode::EditWithConfirmation {
+        policy.requires_confirmation_gate = true;
     }
-    // Heavy = risk/review tier: set the confirmation gate, leave the declared
-    // permission mode untouched. The runner presents a confirmation prompt
-    // before mutation; the card's Review gate and stop conditions still apply.
-    policy.requires_confirmation_gate = true;
 }
 
 // ── M5–M6: read-only / plan-only → no write-type launch args ────────────

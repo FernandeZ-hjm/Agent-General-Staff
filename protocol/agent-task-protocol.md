@@ -189,6 +189,11 @@ Review gate、Verification gate 或任务卡 gate。只有 AGS gate 能阻断；
 内部入口并在输出中展示 `entrypoint`，但 `primary` **必须**解引用到真实 host-visible parent（绝不是内部
 入口本身，也绝不是 `capability_group` / `upstream_group`）；入口可用性继承 parent。
 
+**子路由仍是 advisory。** 对 Matt/Superpowers 这类第三方技能族，Capability Route 可先命中
+根 demand（如 `matt-superpowers`），再依据每个本名技能自己的 `scope_tags` / `route_priority`
+给出 `subroute` 审计块和普通 `recommendations[]`。`subroute` 只展示 family 与已选本名技能，
+不产生别名、不自动调用、不改变任何 gate。
+
 **fail-closed 只关乎可达性，不阻断请求。** `auth_status` 在路由时按运行时推导，
 **绝不**写入 tracked manifest（`requires_auth` 但无运行时凭据证据 → `required-unknown`，
 非 `configured`）。能力非 `available`（canonical 缺失 / 当前 host 不可见 / 需鉴权 /
@@ -204,7 +209,8 @@ manifest 根。
 （CLI）输出中暴露 `capability_route` 块，与 `value_route` 并列。字段至少包括：
 `demand_kind`、`matched_demand_triggers`、`active_host`、`recommendations[]`
 （`capability_name` / `capability_kind` / `availability` / `auth_status` / `invoke_hint` /
-`route_priority` / `is_compatibility_alias` …）、`primary`、`status`
+`route_priority` / `is_compatibility_alias` …）、`primary`、可选 `entrypoint`、可选 `subroute`
+（`family` / `matched_intent` / `selected_capabilities`）、`status`
 （`routed` / `degraded` / `no-demand-detected` / `no-capability-for-demand`）、`fallback`、
 `advisory`（恒为 true）、`authority_note`（固定边界声明：只建议显式唤醒、不自动调用、
 不阻断、不改任何 AGS gate）。
@@ -236,6 +242,22 @@ tracked manifest，**绝不**含真实凭据。证据缺失 / 损坏 / 未知 mo
 `invoke_hint` 形如 `[skill: ...]` 的当前技能标记；未知、历史或非 active 标记统一按
 `UNKNOWN_OR_INACTIVE_SKILL_TAG` 拒绝。历史采纳/移除事实仍由 `governance/skill-adoption-log.yaml`
 append-only 审计记录承接，不再维护前台旧别名映射表。
+
+**任务卡 skill tag 三闸（静态 + 运行期）。** validator 的编译期 `include_str!` 静态门只覆盖
+前两闸（registry routable + 合法 invoke_hint）。`[skill: xxx]` 进入任务卡还须过第三闸——
+**运行期可用性**：当前机器 capability snapshot 判定该能力对目标 host `available`（enrolled +
+canonical present + auth 满足 + host-visible + healthy）。`degraded` / `auth-required` /
+`not-visible` / `not-enrolled` / `unmanaged` / not-routable 一律拒绝。运行期闸由
+`ags gate skill-tags --for <host> <card>`（消费机器本地快照，决策 stop/allow，确定性 fail-closed）
+执行，且**已接入任务卡执行主链路**：`ags run`（`scripts/run-task-card.sh` 委托的 canonical
+runner）在 launch-plan 阶段自动对任务卡尾部 `[skill: …]` 跑等价检查，按 runtime adapter
+推导 host（`claude-code` / `codex` / `cursor`；`generic` → host-agnostic fail-closed），任一
+tag 不可用即 `gate_decision=stop`（`gate_error_kind=skill_tags_unavailable`）、不出 launch
+args、不生成 receipt。`check-only` 仍只过离线 policy 闸、不触发运行期 skill 闸，保证 validator
+静态确定性不变。registry 仍是"是否允许路由"的静态权威，运行期发现/快照永不把 not-routable 提权为 routable。
+被发现的系统/用户技能（`host-system`/`discovered`/`project-local`）默认 not-routable，必须先在
+registry 显式纳管（`route_state: routable`，系统技能用 `source.type: host-system` 不写机器路径）
+才可被任务卡显式调用。详见 `protocol/skill-governance.md` 的"动态全机能力路由"章。
 
 **doctor / update verify drift（只读）。** `ags doctor` 与 `ags update verify` 含 capability route
 drift 检查，覆盖：manifest routing metadata（auto-* 别名标注）、runtime enrollment（present + mode）、
@@ -323,15 +345,16 @@ Executor 收到任务卡后，必须先读取以下文件再开始工作：
 ### Heavy
 
 - 涉及数据、向量库、历史产物、迁移、不可逆操作、架构调整
-- Executor 先给 root cause / design / implementation plan / verification plan
+- Heavy plan（Permission mode: plan-only）：Executor 只读产出 root cause / design / implementation plan / verification plan，待人工批准后再进入修改阶段
+- Heavy execute（Permission mode: execute-and-verify）：按任务卡直接执行并验证，不再追加 mutation 前的确认环节；完成后仍标为"部分完成 / 待人工 adversarial review"
 
 **任务级别与 Permission mode 解耦。** 任务级别（Light/Medium/Heavy）是**风险/审查**等级；Permission mode（plan-only / edit-with-confirmation / execute-and-verify）是**当前执行权限**，也是唯一的执行授权。任务级别不改写 Permission mode：
 
-- **Heavy ≠ plan-only**：Heavy 卡保留其声明的 Permission mode，只额外获得 confirmation gate 与 review gate；resolver 不因级别是 Heavy 就降级可执行卡。只要 Permission mode 不是 read-only / plan-only，卡就进入可执行链路（带 confirmation gate），`execute-and-verify` 也不被 cap 到 `edit-with-confirmation`。
+- **Heavy ≠ plan-only**：Heavy 卡保留其声明的 Permission mode，只额外获得 review gate；resolver 不因级别是 Heavy 就降级可执行卡。只要 Permission mode 不是 read-only / plan-only，卡就进入可执行链路，`execute-and-verify` 也不被 cap 到 `edit-with-confirmation`。confirmation 由 Permission mode 决定：`edit-with-confirmation` 在每次改动前暂停确认，`execute-and-verify` 直接执行并验证，级别本身不追加 mutation 确认。
 - **未声明 Permission mode 的默认**：当 Heavy 卡未显式声明 Permission mode 时，compiler 填入保守默认 `plan-only`（这是对未声明字段的默认值，不是级别降级；**显式声明**的 Permission mode 一律保留）。
 - **approval 信号只是审计/提示**：`current-task-approval`（`实现 / 修复 / 做完` 等，由 `prompt-request-classifier` 确定性识别，**不**取自任务卡文本）与 `--approve-writes` 经 `ApprovalSource` **可审计地**传递，但**不再**是 Heavy 执行解锁条件；`--approve-writes` 仍可作为 generic adapter（M9）能力上限的 override。任务卡自由文本永远不是 approval 来源。
 - **plan-only 收敛流程仅按需使用**：只有当卡本身是 plan-only（显式声明或未声明时的默认）时，Executor 才先出 root cause / design / implementation plan / verification plan 并等待人工确认；该收敛流程用于高危发布、迁移、破坏性动作，不是所有 Heavy 卡的强制前置。
-- **安全边界不变**：stable/public 发布、外部写入（Lark/邮件/审批）、删除 runtime、credential/auth、删除/迁移/不可逆操作仍各自单独确认或停止；read-only / plan-only 仍不得产生 write-type launch args；Heavy 仍必须走 confirmation / review gate。
+- **安全边界不变**：stable/public 发布、外部写入（Lark/邮件/审批）、删除 runtime、credential/auth、删除/迁移/不可逆操作仍各自单独确认或停止；read-only / plan-only 仍不得产生 write-type launch args；可执行 Heavy 卡仍必须走独立 review gate（confirmation 仅由 `edit-with-confirmation` permission mode 触发，不由级别触发）。
 
 任务卡骨架仍只有唯一 canonical card，不因解耦引入第二模板。任务卡中声明的级别优先于 Executor 自行判断。如 Executor 发现实际风险高于任务卡标注的级别，必须停止并报告，不得自行降级执行。
 
@@ -340,9 +363,9 @@ Executor 收到任务卡后，必须先读取以下文件再开始工作：
 遇到"继续"、上下文压缩恢复、task-notification 接续或后台任务恢复时：
 
 - 如果任务级别是 Heavy，Executor 必须重新读取任务卡、运行 `git status --short`，并重新确认 `review_targets`。
-- 如果当前上下文没有明确的人工批准执行 mutation，Executor 必须停在 plan / confirmation gate。
-- 不得把"继续"、恢复通知、上一轮计划或压缩摘要理解为自动批准 Heavy 写入。
-- 如果无法确认当前任务卡、目标仓库或批准状态，停止并报告，不得继续执行。
+- Executor 必须按当前可确认任务卡的 `Permission mode` 行动：`plan-only` 等待明确批准；`edit-with-confirmation` 停在该 permission mode 的确认提示；`execute-and-verify` 可恢复执行并验证。
+- 不得把"继续"、恢复通知、上一轮计划或压缩摘要理解为新的 Heavy 写入批准；它们只能触发重新读取任务卡与复核目标。
+- 如果无法确认当前任务卡、目标仓库、`Permission mode` 或 review 状态，停止并报告，不得继续执行。
 
 ## 安全规则
 
@@ -397,7 +420,7 @@ Stop review hook 已废弃，不再是最终执行点，也不是自动阻塞依
 |---|---|
 | Light | 完成验证后运行 `requesting-code-review` 或等价轻量 diff review；如发现风险高于 Light，升级 Medium。 |
 | Medium | Codex 最终 Review gate；Executor 完成验证后将任务状态标为"部分完成 / 等待 Codex review"，由 Codex 审查通过后再放行。 |
-| Heavy | 先计划后执行；人工 Adversarial Review gate；Executor 完成验证后将任务状态标为"部分完成 / 等待人工 adversarial review"，并提醒操作者手动运行 `/codex:adversarial-review` 后再放行。 |
+| Heavy | 人工 Adversarial Review gate；Executor 完成验证后将任务状态标为"部分完成 / 等待人工 adversarial review"，并提醒操作者手动运行 `/codex:adversarial-review` 后再放行。Heavy plan 与 Heavy execute 完成后都必须经此人工 adversarial review。 |
 
 Executor 完成交付前必须报告 review gate 状态；Medium / Heavy 在对应人工 review 完成前只能标为"部分完成"。Light 若在 `requesting-code-review` 或等价轻量 diff review 中发现跨文件协议、权限、hook、数据写入、路径迁移或生成物同步风险，必须升级为 Medium 并等待 Codex review。
 

@@ -134,8 +134,8 @@ impl Serialize for Parallelism {
 /// constructor always returns `None`.  Approval is a STRUCTURED **audit / hint**
 /// signal: it is NO LONGER a Heavy execution unlock, because the task LEVEL is
 /// decoupled from execution authority (the permission MODE is the authority, and
-/// a Heavy task is executable from its declared permission alone, gated by the
-/// confirmation/review gate).  The signal is retained for audit and for the
+/// a Heavy task is executable from its declared permission alone, with the
+/// Review gate as its guardrail).  The signal is retained for audit and for the
 /// generic-adapter capability cap (M9), which may consult `is_approved()` as an
 /// adapter-capability override.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -429,8 +429,10 @@ pub struct ResolvedExecutionPolicy {
     /// One entry per downgrade, for audit trail (M8).
     pub downgrade_reasons: Vec<DowngradeReason>,
 
-    /// Whether the executor must present a confirmation prompt before proceeding.
-    /// True for Heavy tasks entering edit phase (requires explicit human approval).
+    /// Whether the executor must present a confirmation prompt before each
+    /// mutation. Tied to the `edit-with-confirmation` permission mode, NOT the
+    /// task level. A card carries no confirmation gate unless its effective
+    /// permission mode is edit-with-confirmation.
     pub requires_confirmation_gate: bool,
 
     /// The declared execution effort from the task card.

@@ -67,8 +67,9 @@ defaults:
   executor: ""
   runtime_adapter: ""
   execution_surface: ""
-  # Default permission mode when a card omits `Permission mode:`. Task level is a
-  # risk/review tier — it never downgrades an explicitly declared permission mode.
+  # Omitted-field defaults only: use these values only when a generated card does
+  # not declare `Permission mode:`. Task level is a risk/review tier — it never
+  # downgrades an explicitly declared permission mode.
   permission_mode_by_level:
     light: execute-and-verify
     medium: edit-with-confirmation
@@ -105,6 +106,11 @@ user_preferences:
 ## Governance
 
 - The profile is project-owned, not suite-owned.
+- `permission_mode_by_level` is not an execution cap. It fills an omitted field
+  during task-card generation only. A Heavy card that explicitly declares
+  `execute-and-verify` remains executable and still requires the Heavy Review
+  gate; only a Heavy card with omitted or explicit `plan-only` waits for approval
+  before mutation.
 - Suite bootstrap installs only a template; it must not overwrite a project's
   real profile.
 - Profile changes are normal project changes and should be reviewed with the

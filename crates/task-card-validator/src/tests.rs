@@ -834,7 +834,12 @@ fn reject_other_with_claude_code_adapter() {
 }
 
 #[test]
-fn heavy_with_execute_and_verify_and_review_gate_passes() {
+fn accept_heavy_with_execute_and_verify() {
+    // Decoupling: Heavy + execute-and-verify is allowed. Task LEVEL is a
+    // risk/review tier, not the execution authority — the resolver adds a
+    // confirmation gate rather than rejecting the combination. With an
+    // independent Review gate declared, validation must raise neither
+    // FIELD_COMBINATION_MISMATCH nor HEAVY_EXECUTABLE_MISSING_REVIEW_GATE.
     let input = card_body(
         "路径：\n- .\n\
              Executor: Claude Code\n\
@@ -843,6 +848,7 @@ fn heavy_with_execute_and_verify_and_review_gate_passes() {
              Permission mode: execute-and-verify\n\
              Parallelism: none\n\
              任务级别：Heavy\n\
+             Review gate:\n- 按 protocol/agent-task-protocol.md 的 Review Gate 规则执行当前任务级别。\n\
              读取：\n- .\n\
              任务：运行测试\n\
              目标：验证功能\n\
@@ -854,8 +860,141 @@ fn heavy_with_execute_and_verify_and_review_gate_passes() {
     );
     let e = validate(&input);
     assert!(
-        e.is_empty(),
-        "Heavy + execute-and-verify should pass when Review gate is present: {:?}",
+        !e.iter()
+            .any(|m| m.contains(error_code::FIELD_COMBINATION_MISMATCH)),
+        "Heavy + execute-and-verify must NOT be rejected as a field-combination mismatch: {:?}",
+        e
+    );
+    assert!(
+        !e.iter()
+            .any(|m| m.contains(error_code::HEAVY_EXECUTABLE_MISSING_REVIEW_GATE)),
+        "Heavy + execute-and-verify with a protocol-delegated Review gate must pass the review-gate check: {:?}",
+        e
+    );
+}
+
+#[test]
+fn reject_heavy_executable_generic_review_gate() {
+    // An executable Heavy card with a generic / level-name Review gate (no
+    // independent human / Codex / protocol-delegated review) must be rejected —
+    // the Heavy review boundary is machine enforced, not prose-only.
+    let input = card_body(
+        "路径：\n- .\n\
+             Executor: Claude Code\n\
+             Runtime adapter: claude-code\n\
+             Execution surface: cli\n\
+             Permission mode: execute-and-verify\n\
+             Parallelism: none\n\
+             任务级别：Heavy\n\
+             Review gate:\n- Heavy review\n\
+             读取：\n- .\n\
+             任务：运行测试\n\
+             目标：验证功能\n\
+             非目标：不修改文件\n\
+             关键路径：\n- .\n\
+             验证：\ncargo test\n\
+             停止条件：\ntest 失败时停止\n\
+             交付：\n返回结果\n",
+    );
+    let e = validate(&input);
+    assert!(
+        e.iter()
+            .any(|m| m.contains(error_code::HEAVY_EXECUTABLE_MISSING_REVIEW_GATE)),
+        "Heavy executable card with a generic Review gate must be rejected: {:?}",
+        e
+    );
+}
+
+#[test]
+fn reject_heavy_executable_self_review_only() {
+    // A self-review-only Review gate on an executable Heavy card is rejected:
+    // it declares no independent (human / Codex / protocol) review.
+    let input = card_body(
+        "路径：\n- .\n\
+             Executor: Claude Code\n\
+             Runtime adapter: claude-code\n\
+             Execution surface: cli\n\
+             Permission mode: edit-with-confirmation\n\
+             Parallelism: none\n\
+             任务级别：Heavy\n\
+             Review gate:\n- executor self review\n\
+             读取：\n- .\n\
+             任务：运行测试\n\
+             目标：验证功能\n\
+             非目标：不修改文件\n\
+             关键路径：\n- .\n\
+             验证：\ncargo test\n\
+             停止条件：\ntest 失败时停止\n\
+             交付：\n返回结果\n",
+    );
+    let e = validate(&input);
+    assert!(
+        e.iter()
+            .any(|m| m.contains(error_code::HEAVY_EXECUTABLE_MISSING_REVIEW_GATE)),
+        "Heavy executable card with self-review-only Review gate must be rejected: {:?}",
+        e
+    );
+}
+
+#[test]
+fn reject_heavy_executable_chinese_self_review_with_verb() {
+    // Bypass guard: a Chinese self-review gate that uses a review verb (审查/复核)
+    // but names no independent party must STILL be rejected — a review verb alone
+    // does not make executor self-review an independent handoff.
+    let input = card_body(
+        "路径：\n- .\n\
+             Executor: Claude Code\n\
+             Runtime adapter: claude-code\n\
+             Execution surface: cli\n\
+             Permission mode: execute-and-verify\n\
+             Parallelism: none\n\
+             任务级别：Heavy\n\
+             Review gate:\n- 由执行者自我审查复核后放行\n\
+             读取：\n- .\n\
+             任务：运行测试\n\
+             目标：验证功能\n\
+             非目标：不修改文件\n\
+             关键路径：\n- .\n\
+             验证：\ncargo test\n\
+             停止条件：\ntest 失败时停止\n\
+             交付：\n返回结果\n",
+    );
+    let e = validate(&input);
+    assert!(
+        e.iter()
+            .any(|m| m.contains(error_code::HEAVY_EXECUTABLE_MISSING_REVIEW_GATE)),
+        "Heavy executable card with Chinese self-review (verb but no independent party) must be rejected: {:?}",
+        e
+    );
+}
+
+#[test]
+fn accept_heavy_executable_self_check_then_independent_review() {
+    // Self-check framing is fine when an INDEPENDENT party is also named: an
+    // executor self-check that hands off to Codex review must pass.
+    let input = card_body(
+        "路径：\n- .\n\
+             Executor: Claude Code\n\
+             Runtime adapter: claude-code\n\
+             Execution surface: cli\n\
+             Permission mode: execute-and-verify\n\
+             Parallelism: none\n\
+             任务级别：Heavy\n\
+             Review gate:\n- 执行者自查后交 Codex 复核放行\n\
+             读取：\n- .\n\
+             任务：运行测试\n\
+             目标：验证功能\n\
+             非目标：不修改文件\n\
+             关键路径：\n- .\n\
+             验证：\ncargo test\n\
+             停止条件：\ntest 失败时停止\n\
+             交付：\n返回结果\n",
+    );
+    let e = validate(&input);
+    assert!(
+        !e.iter()
+            .any(|m| m.contains(error_code::HEAVY_EXECUTABLE_MISSING_REVIEW_GATE)),
+        "Heavy executable card with self-check + named Codex review must pass the review gate: {:?}",
         e
     );
 }
@@ -3623,4 +3762,225 @@ fn parse_validated_fields_match_parse_card() {
     assert!(result.is_ok());
     let card = result.unwrap();
     assert_eq!(card.fields, direct_fields);
+}
+
+// ── 0.2.7: execution-intent fields — neutral Execution effort + 子任务编排 slot ──
+
+/// Build a complete classic card varying the execution-intent fields under test.
+/// `extra` is appended after `交付` so a `子任务编排：` block can be supplied.
+fn intent_card(
+    permission: &str,
+    parallelism: &str,
+    level: &str,
+    effort: &str,
+    authority: &str,
+    extra: &str,
+) -> String {
+    card_body(&format!(
+        "Executor: Claude Code\n\
+         Runtime adapter: claude-code\n\
+         Execution surface: cli\n\
+         Permission mode: {permission}\n\
+         Parallelism: {parallelism}\n\
+         Execution effort: {effort}\n\
+         Workflow authority: {authority}\n\
+         任务级别：{level}\n\
+         任务：执行意图字段回归用例\n\
+         目标：验证 Execution effort 与子任务编排槽位\n\
+         非目标：不修改无关文件\n\
+         验证：\ncargo test -p task-card-validator\n\
+         交付：\n返回测试结论\n\
+         {extra}"
+    ))
+}
+
+#[test]
+fn execution_effort_neutral_values_accepted() {
+    for effort in ["low", "normal", "high", "exhaustive"] {
+        let card = intent_card(
+            "edit-with-confirmation",
+            "none",
+            "Medium",
+            effort,
+            "none",
+            "",
+        );
+        let errors = validate(&card);
+        assert!(
+            errors.is_empty(),
+            "neutral effort `{effort}` should pass, got: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn execution_effort_ultracode_legacy_alias_still_accepted() {
+    let card = intent_card(
+        "edit-with-confirmation",
+        "none",
+        "Medium",
+        "ultracode",
+        "none",
+        "",
+    );
+    let errors = validate(&card);
+    assert!(
+        errors.is_empty(),
+        "legacy ultracode alias must still parse: {errors:?}"
+    );
+}
+
+#[test]
+fn execution_effort_invalid_value_rejected() {
+    let card = intent_card(
+        "edit-with-confirmation",
+        "none",
+        "Medium",
+        "turbo",
+        "none",
+        "",
+    );
+    let errors = validate(&card);
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains(error_code::INVALID_FIELD_VALUE) && e.contains("Execution effort")),
+        "invalid effort must be rejected: {errors:?}"
+    );
+}
+
+#[test]
+fn subtask_orchestration_required_with_subagent_and_within_card_passes() {
+    let card = intent_card(
+        "edit-with-confirmation",
+        "subagent",
+        "Heavy",
+        "normal",
+        "within-card",
+        "子任务编排：\n- mode: required\n- 子任务1：只读审计\n",
+    );
+    let errors = validate(&card);
+    assert!(
+        errors.is_empty(),
+        "valid orchestration card should pass: {errors:?}"
+    );
+}
+
+#[test]
+fn subtask_orchestration_required_without_authority_rejected() {
+    let card = intent_card(
+        "edit-with-confirmation",
+        "none",
+        "Medium",
+        "normal",
+        "none",
+        "子任务编排：\n- mode: required\n",
+    );
+    let errors = validate(&card);
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains(error_code::SUBTASK_ORCHESTRATION_VIOLATION)),
+        "mode!=none + authority=none must be rejected: {errors:?}"
+    );
+}
+
+#[test]
+fn subtask_orchestration_required_without_delegation_parallelism_rejected() {
+    let card = intent_card(
+        "edit-with-confirmation",
+        "none",
+        "Medium",
+        "normal",
+        "within-card",
+        "子任务编排：\n- mode: required\n",
+    );
+    let errors = validate(&card);
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains(error_code::SUBTASK_ORCHESTRATION_VIOLATION)
+                && e.contains("Parallelism")),
+        "mode!=none + Parallelism none must be rejected: {errors:?}"
+    );
+}
+
+#[test]
+fn subtask_orchestration_none_with_no_authority_passes() {
+    let card = intent_card(
+        "edit-with-confirmation",
+        "none",
+        "Medium",
+        "normal",
+        "none",
+        "子任务编排：\n- mode: none\n",
+    );
+    let errors = validate(&card);
+    assert!(
+        errors.is_empty(),
+        "mode none must pass with authority none: {errors:?}"
+    );
+}
+
+#[test]
+fn subtask_orchestration_absent_passes() {
+    let card = intent_card(
+        "edit-with-confirmation",
+        "none",
+        "Medium",
+        "normal",
+        "none",
+        "",
+    );
+    let errors = validate(&card);
+    assert!(
+        errors.is_empty(),
+        "absent orchestration slot must pass: {errors:?}"
+    );
+}
+
+#[test]
+fn subtask_orchestration_invalid_mode_rejected() {
+    let card = intent_card(
+        "edit-with-confirmation",
+        "subagent",
+        "Heavy",
+        "normal",
+        "within-card",
+        "子任务编排：\n- mode: turbo\n",
+    );
+    let errors = validate(&card);
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains(error_code::INVALID_FIELD_VALUE) && e.contains("子任务编排")),
+        "invalid subtask mode must be rejected: {errors:?}"
+    );
+}
+
+#[test]
+fn exhaustive_effort_authority_abuse_detected() {
+    // The neutral `exhaustive` value, abused as authority, is caught the same way
+    // the legacy `ultracode` alias is.
+    let input = card_body(
+        "Executor: Claude Code\n\
+             Runtime adapter: claude-code\n\
+             Execution surface: cli\n\
+             Permission mode: edit-with-confirmation\n\
+             Parallelism: none\n\
+             Execution effort: exhaustive\n\
+             Workflow authority: none\n\
+             任务级别：Medium\n\
+             任务：以 exhaustive 权限执行所有代码修改\n\
+             目标：因为 exhaustive 可以跳过 review 直接部署\n\
+             非目标：不修改 private\n\
+             验证：\ncargo test\n\
+             交付：\n返回结果\n",
+    );
+    let e = validate(&input);
+    assert!(
+        e.iter()
+            .any(|m| m.contains(error_code::ULTRACODE_AUTHORITY_ABUSE)),
+        "exhaustive-effort authority abuse should be detected: {e:?}"
+    );
 }

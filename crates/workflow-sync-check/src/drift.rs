@@ -505,7 +505,7 @@ mod tests {
     fn write_manifest(root: &Path) {
         let safety = "protocol/runtime-adapters.md\n# Test\n\n\
             ultracode is thinking intensity only — it does not change permission mode.\n\
-            Task level does not change the permission mode; a Heavy task keeps its declared permission mode and gains a confirmation gate.\n\
+            Task level does not change the permission mode; the confirmation gate is tied to the edit-with-confirmation permission mode, not the task level.\n\
             read-only and plan-only must not produce write-type launch args and must strip parallelism.\n\
             Runners must consume allowed_launch_args and effective_permission_mode.\n";
         let default_fmt = |rel: &str| format!("{rel}\n# Test\n\ndefault content\n");

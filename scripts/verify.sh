@@ -560,12 +560,13 @@ echo ""
 echo "--- Resolver Hardening Smoke Tests (F8-F9: stop and parallelism audit) ---"
 
 # F8: Heavy edit-with-confirmation without --approve-writes → executable, no stop
-# Task level is decoupled from execution authority: a Heavy edit card keeps its
-# declared permission and only gains a confirmation gate (no downgrade, no stop).
+# Task level is decoupled from execution authority: the card keeps its declared
+# permission; the confirmation gate comes from edit-with-confirmation (the
+# permission mode), not the Heavy level. No downgrade, no stop.
 echo -n "[....] Heavy edit-with-confirmation without approve → executable (no stop) "
 write_smoke_card /tmp/test-heavy-stop.md cli edit-with-confirmation none none Heavy \
-    "Test Heavy confirmation gate." \
-    "Verify Heavy keeps edit-with-confirmation and only gains a confirmation gate." \
+    "Test edit-with-confirmation gate." \
+    "Verify edit-with-confirmation is preserved and gains a confirmation gate from the permission mode." \
     "None." \
     "any failure" \
     "edit-with-confirmation preserved" \
@@ -578,7 +579,7 @@ if cargo run -q -p ags-cli -- policy resolve /tmp/test-heavy-stop.md --format js
         && echo "$json" | grep -q '"was_downgraded": false'; then
         echo "OK"
     else
-        echo "FAIL (Heavy edit must stay executable with a confirmation gate; no level downgrade/stop)"
+        echo "FAIL (edit-with-confirmation must stay executable with a confirmation gate; no level downgrade/stop)"
         echo "$json" | head -20
         failures=$((failures + 1))
     fi
@@ -625,22 +626,24 @@ else
     failures=$((failures + 1))
 fi
 
-# F8: Heavy plan-only without --approve-writes → no stop (it's a plan card)
-echo -n "[....] Heavy plan-only without approve → no stop "
+# F8: Heavy plan-only without --approve-writes → no stop, no gate.
+# Heavy plan is a read-only plan/review card: it never stops, and it carries no
+# confirmation gate (the gate is tied to edit-with-confirmation, not the level).
+echo -n "[....] Heavy plan-only without approve → no stop, no gate "
 write_smoke_card /tmp/test-heavy-plan.md cli plan-only none none Heavy \
     "Test Heavy plan-only gate." \
-    "Verify Heavy plan-only does NOT trigger stop_before_launch." \
+    "Verify Heavy plan-only triggers neither stop_before_launch nor a confirmation prompt." \
     "不执行写操作。" \
     "方案完成后返回用户审阅，等待明确批准" \
-    "no stop" \
+    "no stop, no confirmation gate" \
     "返回审计方案供 Codex review，等待明确批准。"
 if cargo run -q -p ags-cli -- policy resolve /tmp/test-heavy-plan.md --format json > /tmp/verify-heavy-plan.log 2>&1; then
     json=$(cat /tmp/verify-heavy-plan.log)
     if echo "$json" | grep -q '"stop_before_launch": false'; then
-        if echo "$json" | grep -q '"requires_confirmation_gate": true'; then
+        if echo "$json" | grep -q '"requires_confirmation_gate": false'; then
             echo "OK"
         else
-            echo "FAIL (Heavy plan-only must still have requires_confirmation_gate)"
+            echo "FAIL (Heavy plan-only must NOT set requires_confirmation_gate — it is read-only)"
             failures=$((failures + 1))
         fi
     else
@@ -911,13 +914,14 @@ else
     failures=$((failures + 1))
 fi
 
-# Heavy edit-with-confirmation → executable but confirmation-gated. The gate
-# exit code MUST distinguish confirm (2) from allow (0) so exit-code-based
-# callers cannot auto-run a Heavy confirmation card without the handshake.
-echo -n "[....] gate check Heavy confirm → decision=confirm (exit 2) "
+# edit-with-confirmation → executable but confirmation-gated (from the permission
+# mode, not the level). The gate exit code MUST distinguish confirm (2) from
+# allow (0) so exit-code-based callers cannot auto-run an edit-with-confirmation
+# card without the handshake.
+echo -n "[....] gate check edit-with-confirmation → decision=confirm (exit 2) "
 write_smoke_card /tmp/test-gate-confirm.md cli edit-with-confirmation none none Heavy \
-    "Test Heavy confirmation gate exit code." \
-    "Verify Heavy edit resolves to confirm with exit 2." \
+    "Test edit-with-confirmation gate exit code." \
+    "Verify edit-with-confirmation resolves to confirm with exit 2." \
     "None." \
     "any failure" \
     "edit-with-confirmation preserved" \
@@ -931,6 +935,34 @@ if [ "$rc" -eq 2 ] && grep -q '"decision": "confirm"' /tmp/verify-m3-gate-confir
 else
     echo "FAIL (expected exit 2 + decision=confirm, got $rc)"
     cat /tmp/verify-m3-gate-confirm.log
+    failures=$((failures + 1))
+fi
+
+# Heavy + execute-and-verify is a direct execution card: decision=allow (exit 0),
+# no confirmation gate (the gate is tied to edit-with-confirmation, not the
+# level), no stop, no downgrade. This is the headline decoupling regression.
+echo -n "[....] gate check Heavy execute-and-verify → decision=allow (exit 0) "
+write_smoke_card /tmp/test-gate-heavy-exec.md cli execute-and-verify none none Heavy \
+    "Test Heavy execute-and-verify direct execution." \
+    "Verify Heavy execute-and-verify resolves to allow and runs directly." \
+    "None." \
+    "any failure" \
+    "execute-and-verify runs directly" \
+    "Delivery report."
+set +e
+cargo run -q -p ags-cli -- gate check /tmp/test-gate-heavy-exec.md --format json > /tmp/verify-m3-gate-heavy-exec.log 2>&1
+rc=$?
+set -e
+if [ "$rc" -eq 0 ] \
+    && grep -q '"decision": "allow"' /tmp/verify-m3-gate-heavy-exec.log \
+    && grep -q '"effective_permission_mode": "execute-and-verify"' /tmp/verify-m3-gate-heavy-exec.log \
+    && grep -q '"requires_confirmation_gate": false' /tmp/verify-m3-gate-heavy-exec.log \
+    && grep -q '"stop_before_launch": false' /tmp/verify-m3-gate-heavy-exec.log \
+    && grep -q '"was_downgraded": false' /tmp/verify-m3-gate-heavy-exec.log; then
+    echo "OK"
+else
+    echo "FAIL (Heavy execute-and-verify must be allow/exit0, no gate, no stop, no downgrade; got rc=$rc)"
+    cat /tmp/verify-m3-gate-heavy-exec.log
     failures=$((failures + 1))
 fi
 

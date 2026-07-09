@@ -33,6 +33,7 @@ pub const FULL_MANIFEST: SyncManifest = SyncManifest {
         "protocol/agent-task-protocol.md",
         "protocol/context-memory.md",
         "protocol/cursor-skill-index.md",
+        "protocol/evolution-memory.md",
         "protocol/project-profile.md",
         "protocol/runtime-adapters.md",
         "protocol/task-card-template.md",
@@ -48,7 +49,7 @@ pub const FULL_MANIFEST: SyncManifest = SyncManifest {
 /// Manifest for public-full sanitized targets.
 ///
 /// Public-full includes the Rust AGS runtime and governance framework, while
-/// keeping local runtime state outside the public sync surface.
+/// keeping private advisory/runtime surfaces outside the public sync surface.
 pub const PUBLIC_MANIFEST: SyncManifest = SyncManifest {
     required_files: &[
         "AGENTS.md",
@@ -102,13 +103,19 @@ pub const PUBLIC_FORBIDDEN_PAYLOAD: &[&str] = &[
     "global-skills/",
     "skill-packs/",
     ".agents/",
-    ".ags/",
-    ".ags-local/",
     ".codex/",
     ".claude/local/",
-    "assets/local-runtime/",
+    "private-advisory/",
+    "assets/private-method-memory/",
+    "crates/ags-mcp/assets/private-method-memory/",
+    "crates/capability-route/assets/private-method-memory/",
+    "mcp/private-advisory.mcp.json",
+    "hosts/claude-code.private-advisory-mcp.snippet.json",
+    "bin/private-advisory-proxy-mcp",
     "manifests/runtime-profiles.yaml",
     "manifests/templates/",
+    "crates/ags-mcp/src/resources/private_advisory_boundary.md",
+    "protocol/evolution-memory.md",
     "memory/",
     "task-archive/",
 ];
@@ -279,8 +286,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn full_manifest_has_18_files() {
-        assert_eq!(FULL_MANIFEST.required_files.len(), 18);
+    fn full_manifest_has_19_files() {
+        assert_eq!(FULL_MANIFEST.required_files.len(), 19);
     }
 
     #[test]
@@ -316,7 +323,7 @@ mod tests {
     #[test]
     fn stable_uses_full_manifest() {
         let m = manifest_for(&ProjectKind::Stable);
-        assert_eq!(m.required_files.len(), 18);
+        assert_eq!(m.required_files.len(), 19);
     }
 
     #[test]
@@ -333,7 +340,6 @@ mod tests {
             "global-skills/custom/SKILL.md",
             "skill-packs/personal/example/SKILL.md",
             ".agents/memory/projects/demo/context-capsule.md",
-            ".ags-local/private-public-update.sh",
             ".codex/skills/example/SKILL.md",
         ] {
             assert!(
@@ -351,17 +357,27 @@ mod tests {
         assert!(is_public_forbidden_payload(
             "global-skills/example/SKILL.md"
         ));
-        assert!(is_public_forbidden_payload(".ags/runtime-state.json"));
+        assert!(is_public_forbidden_payload("private-advisory/memory.json"));
         assert!(is_public_forbidden_payload(
-            ".ags-local/private-public-update.sh"
+            "assets/private-method-memory/capsules.json"
         ));
-        assert!(!is_public_forbidden_payload(".ags-locality/file.txt"));
         assert!(is_public_forbidden_payload(
-            "assets/local-runtime/capsules.json"
+            "crates/ags-mcp/assets/private-method-memory/capsules.json"
+        ));
+        assert!(is_public_forbidden_payload(
+            "crates/capability-route/assets/private-method-memory/genes.json"
+        ));
+        assert!(is_public_forbidden_payload("mcp/private-advisory.mcp.json"));
+        assert!(is_public_forbidden_payload(
+            "hosts/claude-code.private-advisory-mcp.snippet.json"
+        ));
+        assert!(is_public_forbidden_payload(
+            "bin/private-advisory-proxy-mcp"
         ));
         assert!(is_public_forbidden_payload(
             "manifests/templates/runtime-profiles.template.yaml"
         ));
+        assert!(is_public_forbidden_payload("protocol/evolution-memory.md"));
         assert!(!is_public_forbidden_payload("global-skills.md"));
         assert!(!is_public_forbidden_payload("governance/skill-sync.md"));
     }
@@ -400,7 +416,7 @@ mod tests {
     #[test]
     fn custom_target_uses_full_manifest() {
         let m = manifest_for(&ProjectKind::Custom("test".into()));
-        assert_eq!(m.required_files.len(), 18);
+        assert_eq!(m.required_files.len(), 19);
     }
 
     // ── verify_release_manifest tests ─────────────────────────────────

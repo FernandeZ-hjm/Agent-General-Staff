@@ -281,16 +281,22 @@ Examples:
 - Audit and quarantine low-value historical outputs.
 - Add traceable manifests and quality reports.
 
-Default execution mode:
+Default execution mode (task level never downgrades an explicitly declared
+permission mode — it only sets the default when `Permission mode:` is omitted):
 
 - Read existing code, docs, directories, and relevant data shape.
-- Return root cause, design, and implementation plan first.
-- When `Permission mode:` is unspecified, default to `plan-only` (data-safety
-  default for this high-risk class). Task level does not downgrade an explicitly
-  declared permission; a declared edit/execute mode runs under the confirmation gate.
-- Wait for user confirmation before code changes.
+- **Heavy plan** (`plan-only`, declared or the default when `Permission mode:` is
+  unspecified for this high-risk class): return root cause, design, implementation
+  plan, and verification plan first, then wait for explicit human approval before
+  any code change.
+- **Heavy execute** (`edit-with-confirmation` / `execute-and-verify`): run and
+  verify per the task card. `edit-with-confirmation` pauses for confirmation
+  before each mutation; `execute-and-verify` runs directly. The level adds no
+  extra mutation confirmation.
 - First implementation pass must be dry-run or read-only audit when data safety
   matters.
+- An independent Review gate (human / Codex / adversarial) is required for an
+  executable Heavy card regardless of class.
 - Generate audit evidence for automatic judgments.
 - Keep old baselines untouched unless the user explicitly approves mutation.
 - Produce a delivery report with verification evidence.
@@ -395,8 +401,12 @@ Heavy prompts must additionally include:
 - Staged execution flow.
 - Dry-run or audit-first requirement.
 - Traceability and rollback requirements.
-- Explicit confirmation gate before mutation.
+- Independent Review gate (human / Codex / adversarial); for
+  `edit-with-confirmation` cards, a confirmation prompt before each mutation.
 - Resume / compression recovery rules: on "继续", context compression, or
   task-notification resume, reread the task card, run `git status --short`,
-  reconfirm `review_targets`, and stop at the confirmation gate unless mutation
-  approval is explicit in the current context.
+  reconfirm `review_targets`, and honor the card's permission mode before
+  mutation (`edit-with-confirmation` pauses at its confirmation prompt;
+  `plan-only` awaits explicit approval; `execute-and-verify` resumes execution
+  and verification). A resume token is not new approval; the confirmed task card
+  is the authority source.

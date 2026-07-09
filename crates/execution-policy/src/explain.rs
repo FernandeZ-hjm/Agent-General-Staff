@@ -130,23 +130,28 @@ pub fn explain_policy(input: &TaskPolicyInput) -> PolicyExplainOutput {
         },
     });
 
-    // ── M4: Heavy → confirmation gate (level ≠ permission) ────────────
-    // M4 never downgrades the permission mode: the task LEVEL is a risk/review
-    // tier, and the permission MODE is the sole execution authority. A Heavy
-    // task gains a confirmation gate only; its declared permission is preserved.
-    let is_heavy = input.task_level == "Heavy";
+    // ── M4: Confirmation gate from the permission mode (level ≠ permission) ──
+    // The confirmation gate is tied to the edit-with-confirmation permission
+    // mode, NOT the task level. Any-level card resolved to edit-with-confirmation
+    // gains the gate; task level never sets it and never downgrades the
+    // permission mode. The Heavy review boundary is enforced by the validator's
+    // independent Review-gate requirement, not by a resolver confirmation gate.
+    let confirmation = policy.requires_confirmation_gate;
     explanations.push(PolicyExplanation {
         rule_id: "M4".to_string(),
-        rule_name: "Heavy Confirmation Gate".to_string(),
-        decision: if is_heavy { "applied" } else { "not_applicable" }.to_string(),
-        field: None,
-        detail: if is_heavy {
+        rule_name: "Confirmation Gate (Permission Mode)".to_string(),
+        decision: if confirmation { "applied" } else { "not_applicable" }.to_string(),
+        field: Some("permission_mode".to_string()),
+        detail: if confirmation {
             format!(
-                "Heavy task: confirmation gate set (requires_confirmation_gate=true). Task level does not change the permission mode — the declared '{}' is preserved (permission is the execution authority). Review gate and stop conditions still apply.",
+                "Effective permission mode '{}' sets the confirmation gate (requires_confirmation_gate=true): the runner pauses for confirmation before each mutation. Task level does not set this gate.",
                 policy.effective_permission_mode
             )
         } else {
-            "Not a Heavy task; M4 does not apply.".to_string()
+            format!(
+                "Effective permission mode '{}' requires no confirmation gate. The gate is tied to edit-with-confirmation, not the task level.",
+                policy.effective_permission_mode
+            )
         },
     });
 
@@ -416,26 +421,44 @@ mod tests {
     }
 
     #[test]
-    fn gate_check_heavy_plan_only_confirm() {
+    fn gate_check_heavy_plan_only_allow() {
+        // plan-only is a read-only plan card: the confirmation gate is tied to
+        // edit-with-confirmation, not the level, so a Heavy plan-only card has
+        // none, and there is no stop → Allow.
         let output = gate_check(&heavy_plan_only());
-        assert_eq!(output.decision, GateDecision::Confirm);
-        assert!(output.resolved_policy.requires_confirmation_gate);
+        assert_eq!(output.decision, GateDecision::Allow);
+        assert!(!output.resolved_policy.requires_confirmation_gate);
     }
 
     #[test]
-    fn gate_check_heavy_execute_no_approval_confirm() {
-        // Heavy + execute-and-verify is executable from its declared permission
-        // alone (task level ≠ execution authority): Confirm-gated, not stopped,
-        // not downgraded.
+    fn gate_check_heavy_execute_no_approval_allow() {
+        // Heavy + execute-and-verify is a direct execution card (task level ≠
+        // execution authority): Allow, not Confirm — no confirmation gate, no
+        // stop, no downgrade. The Heavy review boundary is the validator's Review
+        // gate, not a resolver confirmation gate.
         let output = gate_check(&heavy_execute_no_approval());
-        assert_eq!(output.decision, GateDecision::Confirm);
+        assert_eq!(output.decision, GateDecision::Allow);
         assert!(!output.resolved_policy.stop_before_launch);
-        assert!(output.resolved_policy.requires_confirmation_gate);
+        assert!(!output.resolved_policy.requires_confirmation_gate);
         assert!(!output.resolved_policy.was_downgraded);
         assert_eq!(
             output.resolved_policy.effective_permission_mode.to_string(),
             "execute-and-verify"
         );
+    }
+
+    #[test]
+    fn gate_check_heavy_edit_with_confirmation_confirm() {
+        // Confirmation comes from the edit-with-confirmation permission mode,
+        // independent of the task level.
+        let input = TaskPolicyInput {
+            permission_mode: "edit-with-confirmation".into(),
+            task_level: "Heavy".into(),
+            ..light_input()
+        };
+        let output = gate_check(&input);
+        assert_eq!(output.decision, GateDecision::Confirm);
+        assert!(output.resolved_policy.requires_confirmation_gate);
     }
 
     #[test]
@@ -548,16 +571,35 @@ mod tests {
     }
 
     #[test]
-    fn explain_heavy_write_shows_m4_applied() {
-        // Heavy → M4 "applied" (confirmation gate set), but task level does NOT
-        // block launch: no "LAUNCH BLOCKED" safety assertion comes from the level.
-        let output = explain_policy(&heavy_execute_no_approval());
+    fn explain_edit_with_confirmation_shows_m4_applied() {
+        // M4 "applied" comes from the edit-with-confirmation permission mode, not
+        // the task level.
+        let input = TaskPolicyInput {
+            permission_mode: "edit-with-confirmation".into(),
+            task_level: "Heavy".into(),
+            ..light_input()
+        };
+        let output = explain_policy(&input);
         let m4 = output
             .explanations
             .iter()
             .find(|e| e.rule_id == "M4")
             .unwrap();
         assert_eq!(m4.decision, "applied");
+    }
+
+    #[test]
+    fn explain_heavy_execute_shows_m4_not_applicable() {
+        // Heavy + execute-and-verify: M4 is "not_applicable" (no confirmation
+        // gate from the task level), and task level does NOT block launch — no
+        // "LAUNCH BLOCKED" safety assertion comes from the level.
+        let output = explain_policy(&heavy_execute_no_approval());
+        let m4 = output
+            .explanations
+            .iter()
+            .find(|e| e.rule_id == "M4")
+            .unwrap();
+        assert_eq!(m4.decision, "not_applicable");
         let has_stop = output
             .safety_assertions
             .iter()

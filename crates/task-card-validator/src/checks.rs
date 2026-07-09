@@ -395,9 +395,11 @@ pub(crate) fn check_field_combinations(fields: &HashMap<String, String>, errors:
 
     // NOTE: Heavy + execute-and-verify is NOT forbidden. Task LEVEL is a
     // risk/review tier, not the execution authority — the permission MODE is.
-    // A Heavy card may declare execute-and-verify; the resolver adds a
-    // confirmation gate (it does not downgrade by level). The Heavy + plan-only
-    // delivery gate below still constrains plan/review cards.
+    // A Heavy card may declare execute-and-verify and executes directly; the
+    // resolver adds no confirmation gate by level (the gate is tied to the
+    // edit-with-confirmation permission mode). The Heavy + plan-only delivery
+    // gate and the Heavy executable Review-gate requirement below keep the
+    // review boundary machine-enforced.
 
     // Workflow authority: allowed only for Medium or Heavy
     if authority == "allowed" && level != "Medium" && level != "Heavy" {
@@ -503,18 +505,26 @@ pub(crate) fn check_field_combinations(fields: &HashMap<String, String>, errors:
 
     // ── Heavy + executable permission → independent Review gate required ──
     // Task level is decoupled from execution authority, so a Heavy card may be
-    // edit-with-confirmation / execute-and-verify. To keep the Heavy review
-    // boundary machine-enforced (not prose-only), an executable Heavy card must
-    // declare an INDEPENDENT Review gate — human / Codex / adversarial review, or
-    // delegation to the protocol Review Gate rules. A missing or self-review-only
-    // gate is rejected (the confirmation/review gate is what keeps Heavy execution
-    // safe once the level no longer forces plan-only).
+    // edit-with-confirmation / execute-and-verify. Because the resolver no longer
+    // adds a confirmation gate by level, the INDEPENDENT Review gate is now the
+    // sole machine-enforced guard for an executable Heavy card, so it fails
+    // closed: it must name a distinct reviewer — human / Codex / adversarial /
+    // 第三方 — or delegate to the protocol Review Gate rules. A missing gate, a
+    // generic level-name gate, OR an executor self-review / 自查 gate (even one
+    // that uses a review verb like 审查 / 复核) is rejected — self-review is not
+    // an independent handoff.
     if level == "Heavy"
         && (permission == "edit-with-confirmation" || permission == "execute-and-verify")
     {
         let review = field_val(fields, "Review gate:");
         let review_lower = review.to_lowercase();
-        let independent_review = [
+        // A review VERB says some review happens, but not who performs it. On its
+        // own this only counts when it is NOT framed as executor self-review.
+        let review_verb = ["审阅", "审查", "复核", "评审", "审核"]
+            .iter()
+            .any(|kw| review_lower.contains(&kw.to_lowercase()));
+        // A distinct, NAMED independent reviewer / method (never the executor).
+        let names_independent_party = [
             "codex",
             "人工",
             "独立",
@@ -522,11 +532,26 @@ pub(crate) fn check_field_combinations(fields: &HashMap<String, String>, errors:
             "对抗",
             "human",
             "independent",
-            "审阅",
-            "审查",
-            "复核",
-            "评审",
-            "审核",
+            "第三方",
+            "reviewer",
+        ]
+        .iter()
+        .any(|kw| review_lower.contains(&kw.to_lowercase()));
+        // Executor self-review / self-check framing — NOT an independent handoff.
+        let self_or_executor_review = [
+            "自我",
+            "自行",
+            "自查",
+            "自审",
+            "自评",
+            "由执行者",
+            "执行者自",
+            "self-review",
+            "self review",
+            "selfreview",
+            "executor self",
+            "executor-only",
+            "executor only",
         ]
         .iter()
         .any(|kw| review_lower.contains(&kw.to_lowercase()));
@@ -534,9 +559,16 @@ pub(crate) fn check_field_combinations(fields: &HashMap<String, String>, errors:
         // ("按协议执行…" or "按 protocol … Review Gate 规则…").
         let protocol_delegation = review_lower.contains("按协议")
             || (review_lower.contains("protocol") && review_lower.contains("review gate"));
-        if review.trim().is_empty() || (!independent_review && !protocol_delegation) {
+        // Independent review = a named party, or protocol delegation, or a review
+        // verb that is NOT framed as executor self-review. A self-review-framed
+        // gate counts ONLY when it ALSO names an independent party or delegates to
+        // the protocol (e.g. "执行者自查后交 Codex 复核").
+        let independent_review = names_independent_party
+            || protocol_delegation
+            || (review_verb && !self_or_executor_review);
+        if review.trim().is_empty() || !independent_review {
             errors.push(format!(
-                "[{}] 任务级别 Heavy + 可执行 Permission mode（edit-with-confirmation / execute-and-verify）：Review gate 必须声明独立审查（人工 / Codex / adversarial / 审阅复核，或按 protocol Review Gate 规则），不得缺失或仅由执行者自我放行",
+                "[{}] 任务级别 Heavy + 可执行 Permission mode（edit-with-confirmation / execute-and-verify）：Review gate 必须声明独立审查方（人工 / Codex / adversarial / 第三方，或按 protocol Review Gate 规则），不得缺失、仅写泛化级别名，或仅由执行者自我审查 / 自查放行",
                 error_code::HEAVY_EXECUTABLE_MISSING_REVIEW_GATE
             ));
         }

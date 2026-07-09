@@ -120,7 +120,7 @@ pub fn list_tools() -> ToolListResult {
             ),
             tool_def(
                 TOOL_POLICY_RESOLVE,
-                "Resolve execution policy for a validated task card. Returns effective permission mode, effective parallelism, allowed launch args, downgrade reasons, stop reasons, and confirmation gate requirements. Read-only — never launches a runner. Structured approval signals (never read from the task-card text) are accepted so MCP hosts resolve identical policy to the CLI gate: `approve_writes` (unlocks up to execute-and-verify) and `current_task_approval` (a host-detected live execution instruction; unlocks Heavy edit-with-confirmation only).",
+                "Resolve execution policy for a validated task card. Returns effective permission mode, effective parallelism, allowed launch args, downgrade reasons, stop reasons, and confirmation gate requirements. Read-only — never launches a runner. Structured approval signals (never read from the task-card text) are accepted so MCP hosts resolve identical policy to the CLI gate: `approve_writes` and `current_task_approval`. These are audit/hint signals only — the resolver does NOT downgrade a card by task level, so a card is executable from its declared permission mode. The confirmation gate is tied to the edit-with-confirmation permission mode, not the task level. `approve_writes` may still act as the M9 generic-adapter capability override.",
                 serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -130,11 +130,11 @@ pub fn list_tools() -> ToolListResult {
                         },
                         "approve_writes": {
                             "type": "boolean",
-                            "description": "Strong write approval (CLI flag / runner env). Unlocks up to execute-and-verify. Default false."
+                            "description": "Structured write-approval audit/hint signal (CLI flag / runner env). NOT a task-level execution unlock; may act as the M9 generic-adapter capability override. Default false."
                         },
                         "current_task_approval": {
                             "type": "boolean",
-                            "description": "Structured current-task approval: the host detected an explicit user execution instruction (实现/修复/做完) on the live request. Unlocks Heavy + edit-with-confirmation only (not execute-and-verify). Never derived from task-card text. Default false."
+                            "description": "Audit/hint signal: the host detected an explicit user execution instruction (实现/修复/做完) on the live request. NOT a task-level execution unlock — task level no longer downgrades the permission mode. Never derived from task-card text. Default false."
                         }
                     },
                     "required": ["task_card"]
@@ -985,16 +985,20 @@ mod tests {
     }
 
     #[test]
-    fn policy_resolve_current_task_approval_unlocks_heavy_edit() {
-        // No MCP/CLI policy divergence: the MCP ags_policy_resolve carries the
-        // same structured current-task approval signal as the CLI gate. The
-        // signal is audit/hint only; task level does not downgrade permission.
+    fn policy_resolve_heavy_edit_not_downgraded_over_mcp() {
+        // Task level is decoupled from execution authority: a Heavy +
+        // edit-with-confirmation card resolves to edit-with-confirmation over MCP
+        // regardless of the approval signal — no level-driven downgrade. The MCP
+        // ags_policy_resolve carries the same signals as the CLI gate, so both
+        // resolve identical policy.
         let card = include_str!("../../../tests/fixtures/valid-full.md")
             .replace("任务级别：Light", "任务级别：Heavy")
             .replace(
                 "Permission mode: execute-and-verify",
                 "Permission mode: edit-with-confirmation",
             )
+            // An executable Heavy card must declare an independent Review gate
+            // (HEAVY_EXECUTABLE_MISSING_REVIEW_GATE); delegate to the protocol.
             .replace(
                 "- Light review",
                 "- 按 protocol/agent-task-protocol.md 的 Review Gate 规则执行当前任务级别。",
@@ -1013,14 +1017,14 @@ mod tests {
         );
         assert_eq!(
             vno["requires_confirmation_gate"], true,
-            "Heavy must still require a confirmation gate: {vno}"
+            "edit-with-confirmation must require a confirmation gate: {vno}"
         );
         assert_eq!(
             vno["was_downgraded"], false,
             "Heavy edit card must not record a downgrade: {vno}"
         );
 
-        // With current_task_approval → identical resolution.
+        // With current_task_approval → identical resolution (signal is audit/hint only).
         let yes = call_tool(
             TOOL_POLICY_RESOLVE,
             &serde_json::json!({ "task_card": card, "current_task_approval": true }),
