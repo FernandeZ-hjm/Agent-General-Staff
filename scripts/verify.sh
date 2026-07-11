@@ -1146,7 +1146,7 @@ blocked = proposal.get('blocked_reasons') or []
 if not relinks:
     assert blocked, proposal
     assert any(
-        'outside the approved AGS stores' in b or 'Canonical SKILL.md not found' in b
+        'outside the store approved' in b or 'Canonical SKILL.md not found' in b
         for b in blocked
     ), blocked
     raise SystemExit(0)

@@ -21,6 +21,8 @@ ignore / rollback 仍保持协议门禁，不自动执行。
 - `global-skills/` — required suite-managed skills
 - `skill-packs/optional/` — curated optional skill packs
 - `skill-packs/personal/` — user-profile skills excluded from public/core-only
+- `~/.agents/skills/` — machine-local canonical store for registry-governed
+  external CLI skills; referenced at runtime, never packaged or written by AGS
 
 Rust CLI 当前支持：
 
@@ -32,9 +34,10 @@ Rust CLI 当前支持：
 - `ags skill inventory`
 
 写入型 `adopt/update/remove/uninstall/repair` 现已实现为**受确认保护的 apply 路径**，
-并采用 **canonical 本体 + per-host thin index** 模型：AGS 只保留一套技能本体，apply
-只为每个支持宿主（claude-code + codex）在 `<host>/skills/<name>` 写入指回 canonical
-目录的 **symlink thin index**（覆盖前把旧入口 rename 到 `.bak`），绝不复制本体——
+并采用 **canonical 本体 + per-host thin index** 模型：每个技能只保留一套由声明 owner
+持有的本体；suite-owned 由 AGS 持有，externally governed 由外部 manager 持有。apply
+只为支持宿主在 `<host>/skills/<name>` 写入指回 canonical
+目录的 **symlink thin index**（事务替换，成功后不留 `.bak`），绝不复制本体——
 `references/` 等依赖文件随本体一起可达。默认 dry-run；只有显式 `--apply` 才经单一
 guard 执行写入，且写入目标必经 containment 断言。AGS 永不运行 `npx skills
 add/remove/update`、`lark-cli update`、`claude mcp add/remove`、`codex mcp

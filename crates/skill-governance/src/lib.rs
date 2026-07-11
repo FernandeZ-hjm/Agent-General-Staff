@@ -1431,7 +1431,7 @@ pub fn upstream_proposal(root: &Path) -> UpstreamProposalResult {
     result
 }
 
-const UPSTREAM_STUB_NOTE: &str = "STUB — no network crawl, clone, or fetch was performed and no concrete diff is proposed. This lists the upstream comparison sources and the suite skills that watch them, per manifests/skills-registry.yaml. Local suite files remain canonical; real crawl_then_diff_proposal is deferred to a future task. AGS never runs `npx skills` or auto-installs from upstream.";
+const UPSTREAM_STUB_NOTE: &str = "STUB — no network crawl, clone, or fetch was performed and no concrete diff is proposed. This lists the upstream comparison sources and the suite skills that watch them, per manifests/skills-registry.yaml. Suite-owned local files and declared external-manager bodies retain their respective canonical ownership; real crawl_then_diff_proposal is deferred to a future task. AGS never runs `npx skills` or auto-installs from upstream.";
 
 /// Render upstream proposal as human-readable text.
 pub fn render_upstream_text(result: &UpstreamProposalResult) -> String {

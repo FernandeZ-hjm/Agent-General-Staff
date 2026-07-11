@@ -516,6 +516,13 @@ struct RegistryEntry {
     installed_clients: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegistrySkillBody {
+    name: String,
+    profile: Option<String>,
+    manager: String,
+}
+
 /// Read `manifests/mcp-registry.yaml` and return entries from both the
 /// `suite_interfaces:` (AGS self) and `mcps:` (governed) sections. Lenient:
 /// returns an empty list when the file is missing or unparseable.
@@ -571,6 +578,7 @@ fn read_mcp_registry(repo_root: &Path) -> Vec<RegistryEntry> {
 #[derive(Debug, Clone, Default)]
 pub struct RoutingRead {
     pub map: HashMap<String, RoutingMetadata>,
+    external_skill_bodies: HashMap<String, RegistrySkillBody>,
     /// Internal-entrypoint route targets declared under a `route_targets:`
     /// section — (name, routing) pairs synthesized into route-target inventory
     /// rows. Each routing carries a `parent`; these are NEVER standalone bodies.
@@ -588,44 +596,33 @@ pub struct RoutingRead {
 fn read_routing_metadata(repo_root: &Path) -> RoutingRead {
     let mut read = RoutingRead::default();
 
-    let skills_path = repo_root.join("manifests/skills-registry.yaml");
-    if let Ok(content) = std::fs::read_to_string(&skills_path) {
-        if let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
-            if let Some(seq) = doc.get("skills").and_then(|v| v.as_sequence()) {
+    let manifests = [
+        (
+            repo_root.join("manifests/skills-registry.yaml"),
+            &["skills"][..],
+        ),
+        (
+            repo_root.join("manifests/mcp-registry.yaml"),
+            &["suite_interfaces", "mcps"][..],
+        ),
+    ];
+    for (path, member_sections) in manifests {
+        let Ok(content) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(&content) else {
+            continue;
+        };
+        for section in member_sections {
+            if let Some(seq) = doc.get(*section).and_then(|v| v.as_sequence()) {
                 for item in seq {
                     collect_routing(item, &mut read);
                 }
             }
         }
-    }
-
-    let mcp_path = repo_root.join("manifests/mcp-registry.yaml");
-    if let Ok(content) = std::fs::read_to_string(&mcp_path) {
-        if let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
-            for section in ["suite_interfaces", "mcps"] {
-                if let Some(seq) = doc.get(section).and_then(|v| v.as_sequence()) {
-                    for item in seq {
-                        collect_routing(item, &mut read);
-                    }
-                }
-            }
-        }
-    }
-
-    // `route_targets:` — internal entrypoints (playbook / MCP tool / CLI
-    // subcommand) declared as registry-only route targets in either manifest.
-    // Synthesized into route-target inventory rows, NEVER standalone bodies.
-    for path in [
-        repo_root.join("manifests/skills-registry.yaml"),
-        repo_root.join("manifests/mcp-registry.yaml"),
-    ] {
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            if let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
-                if let Some(seq) = doc.get("route_targets").and_then(|v| v.as_sequence()) {
-                    for item in seq {
-                        collect_route_target(item, &mut read);
-                    }
-                }
+        if let Some(seq) = doc.get("route_targets").and_then(|v| v.as_sequence()) {
+            for item in seq {
+                collect_route_target(item, &mut read);
             }
         }
     }
@@ -641,6 +638,29 @@ fn collect_routing(item: &serde_yaml::Value, read: &mut RoutingRead) {
     let Some(name) = item.get("name").and_then(|v| v.as_str()) else {
         return;
     };
+    if let Some(source) = item.get("source") {
+        let external = source.get("type").and_then(|v| v.as_str()) == Some("external_cli_skill");
+        let manager = source
+            .get("manager")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|manager| !manager.is_empty());
+        if external && is_safe_path_component(name) {
+            if let Some(manager) = manager {
+                read.external_skill_bodies.insert(
+                    name.to_string(),
+                    RegistrySkillBody {
+                        name: name.to_string(),
+                        profile: item
+                            .get("profile")
+                            .and_then(|v| v.as_str())
+                            .map(ToString::to_string),
+                        manager: manager.to_string(),
+                    },
+                );
+            }
+        }
+    }
     let Some(routing_val) = item.get("routing") else {
         return;
     };
@@ -838,6 +858,7 @@ fn host_visibility(
     cap_kind: &ManagedKind,
     cap_name: &str,
     canonical_source: Option<&Path>,
+    external_shared: bool,
     probe: Option<&HostMcpProbe>,
 ) -> HostVisibility {
     if let Some(subdir) = host_skills_subdir(host) {
@@ -848,6 +869,7 @@ fn host_visibility(
                 &ctx.home.join(subdir),
                 cap_name,
                 canonical_source,
+                external_shared,
             ),
             ManagedKind::Mcp | ManagedKind::CliBacked | ManagedKind::SuiteInterface => {
                 host_mcp_visibility(host, cap_name, probe)
@@ -877,13 +899,41 @@ fn skill_path_visibility_for_host(
     primary_skills_dir: &Path,
     name: &str,
     canonical_source: Option<&Path>,
+    external_shared: bool,
 ) -> HostVisibility {
+    if external_shared
+        && canonical_source
+            .map(|source| !canonical_within_shared_store(&ctx.home, name, source))
+            .unwrap_or(true)
+    {
+        return HostVisibility {
+            host: host.to_string(),
+            supported: true,
+            status: HostVisibilityStatus::Degraded,
+            evidence: vec![format!(
+                "external canonical body is missing or escapes the shared skill store: {}",
+                ctx.home.join(".agents/skills").join(name).display()
+            )],
+        };
+    }
     let primary = skill_path_visibility(host, primary_skills_dir, name, canonical_source);
     let shared_visible =
         shared_skill_dirs_for_host(ctx, host)
             .into_iter()
             .find_map(|shared_skills_dir| {
-                let shared = skill_path_visibility(host, &shared_skills_dir, name, None);
+                let direct_external_body = external_shared
+                    && canonical_source
+                        .is_some_and(|canonical| shared_skills_dir.join(name) == canonical);
+                let shared = skill_path_visibility(
+                    host,
+                    &shared_skills_dir,
+                    name,
+                    if external_shared && !direct_external_body {
+                        canonical_source
+                    } else {
+                        None
+                    },
+                );
                 if shared.status == HostVisibilityStatus::Visible {
                     Some((shared_skills_dir, shared))
                 } else {
@@ -1664,6 +1714,40 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
         });
     }
 
+    // 1.5. Registry-governed external skill bodies. The external manager owns
+    // the body under the shared multi-agent store; AGS owns only metadata and
+    // per-host thin indexes.
+    for body in routing_meta.external_skill_bodies.values() {
+        if known_skill_names.iter().any(|name| name == &body.name) {
+            continue;
+        }
+        known_skill_names.push(body.name.clone());
+        let source = ctx.home.join(".agents/skills").join(&body.name);
+        let canonical_present = canonical_within_shared_store(&ctx.home, &body.name, &source)
+            && source.join("SKILL.md").is_file();
+        caps.push(ManagedCapability {
+            kind: ManagedKind::Skill,
+            name: body.name.clone(),
+            source: Some(source.to_string_lossy().to_string()),
+            profile: body.profile.clone(),
+            managed_status: ManagedStatus::Governed,
+            registry_status: RegistryStatus::Registered,
+            canonical_present,
+            expected_hosts: supported_skill_hosts()
+                .into_iter()
+                .map(ToString::to_string)
+                .collect(),
+            host_visibility: Vec::new(),
+            health_status: HealthStatus::Unknown,
+            actions: Vec::new(),
+            risk_notes: vec![format!(
+                "External skill body managed by `{}`; AGS owns only governance metadata and host thin indexes.",
+                body.manager
+            )],
+            routing: None,
+        });
+    }
+
     // 2. Local skill directories not in the manifest → Discovered (opt-in).
     let inv = crate::scan_skill_inventory(&ctx.repo_root);
     for e in &inv.entries {
@@ -1822,12 +1906,14 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
                 } else {
                     None
                 };
+                let external_shared = is_external_shared_skill(ctx, cap);
                 cap.host_visibility.push(host_visibility(
                     ctx,
                     host,
                     &cap.kind,
                     &cap.name,
                     canonical_source.as_deref(),
+                    external_shared,
                     probe,
                 ));
             }
@@ -2533,6 +2619,25 @@ fn thin_index_needs_repair(entry: &Path, name: &str) -> bool {
     }
 }
 
+fn thin_index_matches_canonical(entry: &Path, canonical: &Path, name: &str) -> bool {
+    if std::fs::symlink_metadata(entry)
+        .map(|meta| !meta.file_type().is_symlink())
+        .unwrap_or(true)
+        || thin_index_needs_repair(entry, name)
+    {
+        return false;
+    }
+    match (
+        std::fs::canonicalize(entry),
+        std::fs::canonicalize(canonical),
+    ) {
+        (Ok(real_entry), Ok(real_canonical)) => {
+            thin_index_target_match(&real_entry, &real_canonical).is_some()
+        }
+        _ => false,
+    }
+}
+
 fn shared_skill_entry_is_loadable(ctx: &ConsoleContext, host: &str, name: &str) -> Option<PathBuf> {
     shared_skill_dirs_for_host(ctx, host)
         .into_iter()
@@ -2542,10 +2647,9 @@ fn shared_skill_entry_is_loadable(ctx: &ConsoleContext, host: &str, name: &str) 
         })
 }
 
-/// Plan per-host thin-index distribution. AGS keeps ONE canonical skill body;
-/// each supported host gets a symlink (thin index) at `<host>/skills/<name>`
-/// pointing back at that canonical directory, so reference files travel with it
-/// and nothing is copied. `remove`/`uninstall` move only the thin index aside —
+/// Plan per-host thin-index distribution. The declared owner keeps ONE
+/// canonical skill body; each host that lacks shared discovery gets a symlink
+/// at `<host>/skills/<name>`. `remove`/`uninstall` touch only the thin index;
 /// the canonical body is never touched here. `verify` plans nothing.
 fn plan_skill_entry(
     ctx: &ConsoleContext,
@@ -2590,13 +2694,13 @@ fn plan_skill_entry(
             ));
             return;
         }
-        // Containment: the symlink target must live inside an approved canonical
-        // store. A bad/stale manifest source must not expose an arbitrary local
-        // directory as a host-loadable skill body.
-        if !canonical_within_store(&ctx.repo_root, &dir) {
+        // Containment follows declared ownership: suite bodies stay inside the
+        // repository stores; external bodies stay inside the shared skill root.
+        if !canonical_source_allowed(ctx, cap, &dir) {
             plan.blocked.push(format!(
-                "Canonical source {} is outside the approved AGS stores (global-skills/, skill-packs/) — refusing to link a host to it.",
-                dir.display()
+                "Canonical source {} is outside the store approved for '{}' — refusing to link a host to it.",
+                dir.display(),
+                cap.name
             ));
             return;
         }
@@ -2643,6 +2747,12 @@ fn plan_skill_entry(
                     ));
                     continue;
                 }
+                if thin_index_matches_canonical(&entry, canonical.as_ref().unwrap(), &cap.name) {
+                    plan.notes.push(format!(
+                        "[{host}] thin index already resolves to the canonical body at {entry_str}; nothing to change."
+                    ));
+                    continue;
+                }
                 plan.writes.push(PlannedWrite {
                     op: "relink".to_string(),
                     path: entry_str.clone(),
@@ -2676,7 +2786,7 @@ fn plan_skill_entry(
                     ));
                     continue;
                 }
-                if thin_index_needs_repair(&entry, &cap.name) {
+                if !thin_index_matches_canonical(&entry, canonical.as_ref().unwrap(), &cap.name) {
                     plan.writes.push(PlannedWrite {
                         op: "relink".to_string(),
                         path: entry_str.clone(),
@@ -2797,6 +2907,42 @@ fn canonical_within_store(repo_root: &Path, canonical_dir: &Path) -> bool {
             .map(|root| real.starts_with(&root))
             .unwrap_or(false)
     })
+}
+
+fn canonical_within_shared_store(home: &Path, name: &str, canonical_dir: &Path) -> bool {
+    if !is_safe_path_component(name) {
+        return false;
+    }
+    let shared_root = home.join(".agents/skills");
+    let expected = shared_root.join(name);
+    match (
+        std::fs::canonicalize(canonical_dir),
+        std::fs::canonicalize(expected),
+        std::fs::canonicalize(shared_root),
+    ) {
+        (Ok(actual), Ok(expected), Ok(root)) => actual == expected && actual.starts_with(root),
+        _ => false,
+    }
+}
+
+fn is_external_shared_skill(ctx: &ConsoleContext, cap: &ManagedCapability) -> bool {
+    let expected = ctx.home.join(".agents/skills").join(&cap.name);
+    matches!(cap.kind, ManagedKind::Skill)
+        && matches!(cap.managed_status, ManagedStatus::Governed)
+        && cap.source.as_deref().map(Path::new) == Some(expected.as_path())
+}
+
+/// Accept a skill body only from the store declared by its owner.
+fn canonical_source_allowed(
+    ctx: &ConsoleContext,
+    cap: &ManagedCapability,
+    canonical_dir: &Path,
+) -> bool {
+    if is_external_shared_skill(ctx, cap) {
+        canonical_within_shared_store(&ctx.home, &cap.name, canonical_dir)
+    } else {
+        canonical_within_store(&ctx.repo_root, canonical_dir)
+    }
 }
 
 /// Pick a non-clobbering backup path: `<dest>.bak`, then `.bak.1`, `.bak.2`, …
@@ -4037,6 +4183,103 @@ mod tests {
         std::fs::write(path, content).unwrap();
     }
 
+    fn seed_external_skill(ctx: &ConsoleContext) -> PathBuf {
+        write_file(
+            &ctx.repo_root.join("manifests/skills-registry.yaml"),
+            "schema_version: \"1.0\"\nskills:\n  - name: lark-calendar\n    profile: optional\n    source: { type: external_cli_skill, manager: lark-cli }\n",
+        );
+        let shared = ctx.home.join(".agents/skills/lark-calendar");
+        write_file(
+            &shared.join("SKILL.md"),
+            "---\nname: lark-calendar\ndescription: official external body.\n---\n",
+        );
+        shared
+    }
+
+    #[test]
+    fn external_registry_skill_is_governed_from_shared_store() {
+        let (ctx, base) = ctx_with("external-registry", canned_list());
+        let shared = seed_external_skill(&ctx);
+
+        let inv = build_inventory(&ctx, &["codex"]);
+        let cap = find(&inv, "lark-calendar");
+        assert_eq!(cap.managed_status, ManagedStatus::Governed);
+        assert_eq!(cap.registry_status, RegistryStatus::Registered);
+        assert!(cap.canonical_present);
+        assert_eq!(cap.source.as_deref(), Some(shared.to_str().unwrap()));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn external_registry_skill_missing_body_fails_closed() {
+        let (ctx, base) = ctx_with("external-missing", canned_list());
+        let shared = seed_external_skill(&ctx);
+        std::fs::remove_dir_all(shared).unwrap();
+
+        let inv = build_inventory(&ctx, &["codex"]);
+        let cap = find(&inv, "lark-calendar");
+        assert!(!cap.canonical_present);
+        assert_eq!(
+            cap.host_visibility[0].status,
+            HostVisibilityStatus::Degraded
+        );
+
+        let proposal = propose_action(&ctx, ConsoleAction::Adopt, "lark-calendar", true);
+        assert!(!proposal.applied);
+        assert!(proposal.planned_writes.is_empty());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_registry_skill_escape_is_rejected() {
+        let (ctx, base) = ctx_with("external-escape", canned_list());
+        let shared = seed_external_skill(&ctx);
+        std::fs::remove_dir_all(&shared).unwrap();
+        let outside = base.join("outside/lark-calendar");
+        write_file(
+            &outside.join("SKILL.md"),
+            "---\nname: lark-calendar\ndescription: outside body.\n---\n",
+        );
+        make_symlink(&outside, &shared).unwrap();
+
+        let inv = build_inventory(&ctx, &["codex"]);
+        let cap = find(&inv, "lark-calendar");
+        assert!(!cap.canonical_present);
+        assert_eq!(
+            cap.host_visibility[0].status,
+            HostVisibilityStatus::Degraded
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_registry_skill_sync_never_mutates_body_or_duplicates_codex() {
+        let (ctx, base) = ctx_with("external-sync", canned_list());
+        let shared = seed_external_skill(&ctx);
+
+        let result = propose_action(&ctx, ConsoleAction::Adopt, "lark-calendar", false);
+        assert!(result.blocked_reasons.is_empty());
+        assert!(result.planned_writes.iter().any(|write| {
+            write.path.contains(".codebuddy/skills/lark-calendar")
+                && write.from.as_deref() == Some(shared.to_str().unwrap())
+        }));
+        assert!(result
+            .planned_writes
+            .iter()
+            .all(|write| !write.path.contains(".codex/skills/lark-calendar")));
+        assert!(result
+            .planned_writes
+            .iter()
+            .all(|write| write.path != shared.to_string_lossy()));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     /// Manifest is the single routing authority, end-to-end: a `routing:` block
     /// in skills-registry.yaml / mcp-registry.yaml is parsed; an entry with no
     /// block is absent (never synthesized); a malformed block fails closed to
@@ -5062,7 +5305,7 @@ mod tests {
         assert!(
             res.blocked_reasons
                 .iter()
-                .any(|b| b.contains("outside the approved")),
+                .any(|b| b.contains("outside the store approved")),
             "{:?}",
             res.blocked_reasons
         );

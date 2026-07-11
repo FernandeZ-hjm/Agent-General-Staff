@@ -8,24 +8,32 @@ Agent Governance Suite 技能治理总协议。定义本地 Agent 技能的 sour
 
 ## Source of Truth
 
-本地仓内套件资产是技能治理的 **唯一 source of truth**：
+本地仓内账本是**治理决策与路由元数据**的唯一 source of truth：
 
 - `governance/skill-adoption-log.yaml` — 已接纳技能的 append-only 审计日志
 - `governance/skill-ignore-list.yaml` — 已拒绝/忽略技能的审计日志
 - `manifests/suite.yaml` — 套件 manifest，声明 required/optional/personal 技能
+- `manifests/skills-registry.yaml` — member-level routing、owner 与外部本体引用
 
-以下来源仅作为 **候选来源**，不得直接作为 source of truth：
+技能**内容本体**的 canonical owner 与治理元数据分层：suite-owned 本体以仓内文件为
+内容权威；registry 声明 `source.type: external_cli_skill` 的本体以外部 manager 在
+`~/.agents/skills/<name>` 维护的内容为权威。AGS 对后者只治理元数据、thin index 和验证，
+不把外部内容复制进仓库。
+
+以下来源在完成治理前仅作为**候选来源**，不得直接成为治理 source of truth：
 
 - GitHub 仓库（包括官方 skill 仓库、社区 skill 仓库）
 - 插件市场 / CLI 工具输出（`npx skills add`、`lark-cli update` 等）
 - 本地拖拽目录 / 手动拷贝的技能目录
 - 外部 Agent 运行时自动下载的技能缓存
 
-所有候选来源的技能必须经过完整治理生命周期后才能进入 adoption log 和 suite manifest。
+所有候选来源的技能必须经过完整治理生命周期后才能进入 adoption log；suite-owned 技能
+进入 suite manifest，externally governed 技能只进入 skills registry。
 
 ## 治理生命周期
 
-技能从候选来源进入套件 manifest 必须经过以下阶段，不得跳过：
+技能从候选来源进入 suite manifest 或 externally governed registry 必须经过以下阶段，
+不得跳过：
 
 ### 1. Discover（发现）
 
@@ -122,9 +130,10 @@ Dry-run 不得产生任何文件系统副作用。只有 dry-run 通过且人工
 
 ## 技能边界
 
-以下技能类型不在套件治理范围内，只能被引用，不能被 adopt / update / 打包：
+以下技能类型的**内容本体生命周期**不归套件所有，不能被 AGS 安装、更新或打包；AGS 可在
+registry 中治理其 routing / auth / mutation metadata，并分发或验证 thin index：
 
-- **外部官方 CLI 技能**：`notebooklm`、`lark-*` 系列（飞书开放平台技能）等由外部 CLI 或服务管理的技能
+- **外部官方 CLI 技能**：`notebooklm`、`lark-*` 系列（飞书开放平台技能）等由外部 CLI 或服务管理本体
 - **输出层业务技能**：项目自管输出层技能和业务契约为业务运行时契约，不得改写为开发套件任务卡或技能治理对象
 - **项目自管输出层技能**：项目内 `output/`、`dist/` 等自管输出目录下的技能，治理权归项目自身
 
@@ -140,8 +149,8 @@ capability 的统一纳管控制台。控制台模型与写入边界由
 
 ### Canonical 本体 + per-host thin index（核心心智模型）
 
-AGS 电脑上每个能力**只保留一套 canonical 本体**：技能本体（含 `references/`、
-`scripts/` 等依赖文件）、MCP 定义、hook 本体由 AGS 统一管理一份。各宿主
+AGS 电脑上每个能力**只保留一套 canonical 本体**：套件技能由 AGS 持有，外部官方
+CLI 技能由其 manager 持有；AGS 不复制或接管外部本体。各宿主
 （Claude Code、Codex、Cursor）**只拥有薄索引（thin index）**——一个指回 canonical
 本体的可发现入口，宿主重启后即可识别。
 
@@ -151,8 +160,10 @@ AGS 自身的 Stop hook / context-memory helper scripts（
 `ags setup --yes --register-claude` 安装到 `$HOME/.agents/scripts/`。它们不是第三方
 技能，不通过 `ags skill adopt/update` 纳管。
 
-- **canonical 本体**：AGS 唯一来源（仓内 `global-skills/` / `skill-packs/` 或等价
-  canonical 目录），由 `canonical_present` 建模。
+- **canonical 本体**：suite-owned 本体位于仓内 `global-skills/` / `skill-packs/`；
+  externally governed 本体由 registry 声明 owner，并在运行期解析到共享
+  `~/.agents/skills/<name>`。机器绝对路径只进入本地 inventory / snapshot，不入 manifest。
+  两类本体都由 `canonical_present` 建模。
 - **thin index**：宿主入口 `<host>/skills/<name>`，实现为 **symlink → canonical 目录**
   （本机实测 Claude Code 用相对 symlink、Codex 用绝对 symlink，均指向
   `~/.agents/skills/`）。symlink 让 `references/` 等依赖文件随本体一起可达，**绝不
@@ -170,7 +181,7 @@ AGS 自身的 Stop hook / context-memory helper scripts（
 | `kind` | `skill` / `mcp` / `suite-interface` / `cli-backed` |
 | `name` | 能力名 |
 | `source` | canonical 来源路径或注册表引用 |
-| `canonical_present` | AGS 是否持有 canonical 本体（与 host visibility 分开建模） |
+| `canonical_present` | 声明 owner 的 canonical 本体当前是否存在（与 host visibility 分开建模） |
 | `managed_status` | `suite-managed` / `governed` / `suite-interface` / `discovered` / `ignored` / `unmanaged` |
 | `registry_status` | `registered` / `not-registered`（是否在 AGS 注册表内） |
 | `host_visibility` | 每个宿主一条 thin-index 可见性：`visible` / `not-visible` / `degraded` / `unsupported` / `deferred` |
@@ -182,7 +193,8 @@ AGS 自身的 Stop hook / context-memory helper scripts（
 可见性（claude-code + codex），不得只探测单一宿主。
 
 inventory 来源：suite manifest 技能、本机 skill 目录（`global-skills/` /
-`skill-packs/`）、`manifests/mcp-registry.yaml` 的 `mcps:`（被治理 MCP）与
+`skill-packs/`）、`manifests/skills-registry.yaml` 声明的 externally governed 本体、
+`manifests/mcp-registry.yaml` 的 `mcps:`（被治理 MCP）与
 `suite_interfaces:`（AGS 自身，host initialization adapter，**不是**被治理第三方
 MCP），以及 CLI-backed 家族（如 `lark-cli`）。
 
@@ -250,11 +262,11 @@ discover → scan → propose → dry-run → confirm/apply → host restart →
   宿主处于半改状态。
 - **路径必须收敛**：capability 名落盘前先校验为安全单段路径（拒绝 `/`、`\`、`..`、
   绝对路径、多段路径）；guard 再断言写入目标位于各宿主 skills 根之内。
-- **canonical 源必须收敛**：symlink 目标必须 canonicalize 后落在已批准的 canonical
-  store（`global-skills/` / `skill-packs/`）之内，并且 canonical `SKILL.md` 的
-  front-matter `name` 必须与 capability name 一致；坏的/陈旧的 manifest source（绝对
-  路径、`..` 逃逸、store 外目录、名字不符）一律 blocked，不得把任意本地目录暴露为宿主
-  可加载技能本体。
+- **canonical 源必须收敛**：symlink 目标必须 canonicalize 后落在 owner 对应的 approved
+  store。suite-owned 只允许 `global-skills/` / `skill-packs/`；registry 声明
+  `source.type: external_cli_skill` 的本体只允许 `~/.agents/skills/<name>`。canonical
+  `SKILL.md` 的 front-matter `name` 必须与 capability name 一致；坏的/陈旧的 source、
+  `..` 逃逸、owner store 外目录、名字不符一律 blocked。
 - **verify 必须反映不可见**：`host_visibility` 区分 `expected`（按 required 技能 +
   注册表 `installed_clients` 判定）。存在 expected 但不可见的能力时，verify
   `status=incomplete`、`all_visible=false`；`ags skill verify --strict` 在
