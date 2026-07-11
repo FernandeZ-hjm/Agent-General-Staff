@@ -111,8 +111,6 @@ pub fn default_public_allowlist() -> Allowlist {
                         .to_string(),
                     "Runtime Adapters > Execution-Policy Resolver > Resolved policy JSON schema"
                         .to_string(),
-                    "Runtime Adapters > Execution-Policy Resolver > Stop vs confirmation gate"
-                        .to_string(),
                     "Runtime Adapters > Runner Auto Mode > Correct auto-mode flow".to_string(),
                     "Runtime Adapters > Runner Auto Mode > Defaults preserved".to_string(),
                     "Runtime Adapters > Runner Auto Mode > Example: resolved policy → runner flags"

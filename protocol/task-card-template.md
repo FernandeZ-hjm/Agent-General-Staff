@@ -31,7 +31,7 @@ Runtime adapter: codex-local / claude-code / cursor / generic
 
 Execution surface: local-workspace / cli / ide / web / remote-control / background-agent
 
-Permission mode: read-only / plan-only / edit-with-confirmation / execute-and-verify
+Permission mode: plan-only / execute-and-verify
 
 Parallelism: none / subagent / worktree / multi-session / agent-team
 
@@ -41,7 +41,7 @@ Workflow authority: none / within-card / plan-only / allowed
 
 任务级别：Light / Medium / Heavy
 
-Heavy 的 confirmation / review gate 规则按 protocol/agent-task-protocol.md 执行；任务级别不改写 Permission mode（未声明时 compiler 默认 plan-only，显式声明保留）。“继续”、上下文压缩恢复或 task-notification 接续不算执行 mutation 的批准。
+Heavy 的 review gate 规则按 protocol/agent-task-protocol.md 执行；任务级别不改写 Permission mode（未声明时 compiler 默认 plan-only，显式 execute-and-verify 直接执行并验证）。“继续”、上下文压缩恢复或 task-notification 接续不会改写任务卡权限。
 
 Review gate:
 - 按 protocol/agent-task-protocol.md 的 Review Gate 规则执行当前任务级别。
@@ -153,10 +153,11 @@ Verification gate:
 - 如果输入材料以 `Executor:`、`Runtime adapter:`、`Permission mode:` 或 `Task level:` 开头，那只是 runtime 字段草稿，不是任务卡。生成器必须把它作为原始任务意图重新填入本 canonical 任务卡骨架；不得原样交付给 Claude Code。
 - 如果输入材料以 `目标：`、`背景：`、`硬性要求：`、`建议验证命令：`、`停止条件：` 或 `交付格式：` 开头，且包含 `[skill: ...]` 或明显是要粘贴给 Claude Code/Cursor/Codex 的执行简报，那也只是原始任务意图，不是任务卡。生成器必须把它编译进本 canonical 任务卡骨架；不得保留源 section 顺序后原样交付。
 - `[skill: xxx]` 是任务卡元数据，只能出现在规范任务卡末尾；不得附在自由文本 prompt 或 `text` fence 后面。
-- `autonomous-low-risk` 尚未进入 Rust canonical gate：Rust task-card-validator 暂不校验此模式。在 validator 实现 Light-only、protected-path 禁止、Heavy 禁止等硬门禁之前，任务卡不得使用 `autonomous-low-risk` 作为 Permission mode 值；使用该值的任务卡会被 validator 拒绝（`AUTONOMOUS_LOW_RISK_NOT_IN_CANONICAL_GATE`）。runtime-adapters.md 中的定义保留为协议目标，不代表当前 canonical gate 已实现。
+- `Permission mode` 只允许 `plan-only` 和 `execute-and-verify`；生成器不得输出第三种过渡、确认或自治模式。
 - 任务卡字段使用 `任务级别：`。`Task level:` 只能出现在用户原始材料或外部笔记中，不能作为最终任务卡字段。
 - 如果用户明确要求单个 literal copy block 或文件 artifact，且任务卡正文包含内嵌代码块时，外层必须使用 `~~~~markdown` / `~~~~`，不得使用三反引号 ` ```markdown `；本模板包含 `.claude/review_targets.json` 的 ` ```json ` 示例，使用三反引号外层会被内部代码块提前截断。
 - 实际任务卡进入 runner 前必须通过 Rust task-card-validator 只读校验（`cargo run -p ags-cli -- task validate <task-card>` 或 `bash scripts/validate.sh <task-card>`；旧 `task-card-validator` 命令仅作为隐藏兼容别名保留）；对话输出可通过 `bash scripts/validate.sh -` 从 stdin 校验；校验失败时停止，不进入执行或收据流程。
+- 首个非空行已经是 `## 任务卡` 的输入是已有任务卡：合法卡跳过生成，直接进入 policy / runner；非法卡停止，不得回落为原始意图重新生成。
 - 远程控制、SSH、挂载目录、跨仓库任务中，`cwd` 不一定等于实际修改仓库。任务卡必须显式要求 Executor 为本次任务重写 `.claude/review_targets.json`，让显式 review 的审查范围对准实际目标仓库。
 - Executor 启动后按固定顺序读取：
   1. 稳定协议文件：`AGENTS.md`、`CLAUDE.md`、`protocol/agent-task-protocol.md`、`protocol/task-routing.md`、`protocol/runtime-adapters.md`、`protocol/cursor-skill-index.md`。
@@ -170,7 +171,7 @@ Verification gate:
 - `Execution effort` 使用中性执行强度语义（`low` / `normal` / `high` / `exhaustive`），默认 `normal`；它只表示思考强度，绝不映射为权限、并行或 review 豁免。宿主私有深度/工作流触发词（如 `ultracode`）不得写进任务卡前台生成路径，只能由 claude-code adapter / runner 按 resolved policy 在执行层翻译；`ultracode` 仅作为旧值解析兼容保留，prompt-maker 不再生成。
 - `Workflow authority` 声明是否允许 subagent / workflow（`none` / `within-card` / `plan-only` / `allowed`），默认 `none`；它只声明授权，不直接点火。
 - `子任务编排` 是可选槽位，`mode` 取 `none` / `optional` / `required`，默认 `none`（省略即 `none`）。`mode != none` 时 validator 要求 `Workflow authority` 非 none 且 `Parallelism` 为 subagent/worktree/multi-session/agent-team；该槽位只声明可拆分结构、子任务边界与回收要求，真正 subagent / workflow 点火仍由 claude-code adapter / runner 按 resolved policy 翻译，不由任务卡正文触发。子任务只能装可并行工作（只读审计 / 实现 / 文档同步 / 测试补充）；最终验证、交付报告、commit、push、release gate 必须由主 executor 独做，子任务结果合并为单一 diff 后由主 executor 统一验证与交付（见 `protocol/runtime-adapters.md` §Subtask Scope Rules）。
-- `scripts/run-task-card.sh` 是薄包装层，把校验 / gate / policy / adapter / 收据规划全部委托给 Rust runner（`ags run`）。它实际只支持 `--check-only`（gate 预览后停止）、`--dry-run`（输出完整 launch plan 不执行）、`--current-task-approval`（向 resolver 传递当前任务执行批准，仅解锁 Heavy `edit-with-confirmation`）、`--approve-writes`（向 resolver 传递更强 Heavy 写入批准）、`--format text|json`（透传给 `ags run`）。包装层本身不实现执行层自动选择，不会提高任务卡声明的权限。
+- `scripts/run-task-card.sh` 是薄包装层，把校验 / gate / policy / adapter / 收据规划全部委托给 Rust runner（`ags run`）。它实际只支持 `--check-only`（gate 预览后停止）、`--dry-run`（输出完整 launch plan 不执行）、`--current-task-approval`（向 resolver 传递 audit/hint 信号，不解锁执行权限，级别不因此降级或提权）、`--approve-writes`（audit/hint 信号；仍可作为 M9 generic-adapter 能力上限 override）、`--format text|json`（透传给 `ags run`）。包装层本身不实现执行层自动选择，不会提高任务卡声明的权限。
 - 自动执行层选择 / Learning Runner / 临时 Task IR / compiled brief 注入 / `learning-gaps/` 沉淀均为协议目标，planned（尚未实现）：当前 `scripts/run-task-card.sh` 与 `ags run` 不编译 Task IR，不注入 compiled brief，不沉淀 learning-gaps。任务卡不得假设这些行为已生效。
 - 涉及本地 Agent 技能同步、proposal、adoption log 或 ignore list 时，必须引用项目内对应治理文档；如无项目治理文档，使用前台技能治理控制台 `ags skill`（`inventory` / `dedupe` / `update` / `sync` / `verify`）。套件级 `scripts/govern-new-skills.sh` 为 Phase 2 规划项，尚未实现，不得作为可运行步骤引用。最终输出仍使用本文件的固定任务卡骨架。
 
@@ -206,18 +207,35 @@ Verification gate:
 
 ## Heavy 任务补充
 
-Heavy 任务可在任务卡中追加：
+Heavy 任务只能追加与当前 `Permission mode` 匹配的分支，不得把两个分支同时写进任务卡。
+
+`Permission mode: plan-only`：
 
 ```markdown
 实施流程：
-1. 阅读与诊断 → 输出 root cause / 设计 / 计划 → 等待确认
-2. 确认后执行
-3. 验证与交付
+1. 阅读与诊断
+2. 输出 root cause / 设计 / 实施计划 / 验证计划
+3. 停止，不修改文件、不执行写操作
 
 Resume / 压缩恢复保护：
 - 遇到“继续”、上下文压缩恢复或 task-notification 接续时，重新读取任务卡、运行 `git status --short`，并重新确认 `review_targets`。
-- 当前上下文没有明确人工批准 mutation 时，停在 plan / confirmation gate。
-- 不得把“继续”理解为 Heavy 写入批准。
+- 保持 `plan-only`；“继续”或压缩摘要不得将其升级为可写权限。
+
+基线保护：
+- 不修改、删除、覆盖（列出受保护数据/目录）
+```
+
+`Permission mode: execute-and-verify`：
+
+```markdown
+实施流程：
+1. 阅读与必要诊断
+2. 按任务卡直接实施
+3. 验证与交付；不追加新的 plan 轮次
+
+Resume / 压缩恢复保护：
+- 遇到“继续”、上下文压缩恢复或 task-notification 接续时，重新读取任务卡、运行 `git status --short`，并重新确认 `review_targets`。
+- 保持 `execute-and-verify`，继续执行并验证；Heavy 只追加独立 review gate。
 
 基线保护：
 - 不修改、删除、覆盖（列出受保护数据/目录）

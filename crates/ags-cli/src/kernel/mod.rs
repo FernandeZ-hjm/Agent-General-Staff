@@ -63,7 +63,7 @@ pub(in crate::kernel) fn read_and_validate_task_card(
 /// Approval is decoupled from the task LEVEL and never read from task-card text.
 /// Both signals are audit/hint only — the resolver no longer downgrades a card
 /// by task level, so a Heavy card is executable from its declared permission
-/// mode (gated by the confirmation gate). `approve_writes` (CLI flag / runner
+/// mode. `approve_writes` (CLI flag / runner
 /// env) may additionally act as the M9 generic-adapter capability override.
 /// `current_task_approval` is the host-detected current-task instruction signal
 /// (an explicit "实现 / 修复 / 做完" on the live request via

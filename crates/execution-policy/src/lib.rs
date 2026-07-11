@@ -17,7 +17,7 @@
 //!                          ├─ build_initial_policy()
 //!                          ├─ apply_ultracode_rules()        (M1-M3)
 //!                          ├─ apply_generic_adapter_rule()   (M9)
-//!                          ├─ apply_confirmation_gate_rule() (M4, after M9)
+//!                          ├─ preserve declared permission state (M4)
 //!                          ├─ apply_parallelism_authority_rule() (M7)
 //!                          ├─ generate_launch_args()          (M5/M6 enforced)
 //!                          ├─ apply_stop_on_stripped_parallelism()
@@ -44,9 +44,8 @@
 //!
 //! let policy = resolve_policy(input);
 //! // Task level is a risk/review tier: a Heavy execute-and-verify card runs
-//! // directly — no level downgrade and no level-driven confirmation gate.
+//! // directly — no level-driven planning round or permission downgrade.
 //! assert_eq!(policy.effective_permission_mode.to_string(), "execute-and-verify");
-//! assert!(!policy.requires_confirmation_gate);
 //! assert!(!policy.was_downgraded);
 //! ```
 
@@ -64,7 +63,7 @@ pub use policy::{
 };
 
 use rules::{
-    apply_confirmation_gate_rule, apply_generic_adapter_rule, apply_launch_args_writability_gate,
+    apply_generic_adapter_rule, apply_launch_args_writability_gate,
     apply_parallelism_authority_rule, apply_stop_before_launch_arg_gate,
     apply_stop_on_stripped_headless, apply_stop_on_stripped_parallelism, apply_ultracode_rules,
     build_initial_policy, generate_launch_args, verify_downgrade_invariants,
@@ -76,7 +75,7 @@ use rules::{
 /// 1. Build initial policy from input
 /// 2. M1-M3: Ultracode thinking-intensity rules
 /// 3. M9: Generic adapter permission cap
-/// 4. M4: Confirmation gate from the effective permission mode (after M9)
+/// 4. M4: Preserve the declared two-state permission independent of task level
 /// 5. M7: Parallelism authority check
 /// 6. Generate runtime-specific launch args (M5/M6 enforced inline)
 /// 7. M5 enforcement: stop if writability-violating parallelism was stripped
@@ -93,11 +92,6 @@ pub fn resolve_policy(input: TaskPolicyInput) -> ResolvedExecutionPolicy {
     // M9: generic adapter permission cap (may downgrade the permission mode)
     apply_generic_adapter_rule(&input, &mut policy);
 
-    // M4: confirmation gate from the EFFECTIVE permission mode. Runs after M9
-    // so a capped edit-with-confirmation (now plan-only) sets no gate. Task
-    // level never sets this gate — it is tied to edit-with-confirmation.
-    apply_confirmation_gate_rule(&mut policy);
-
     // M7: parallelism requires workflow authority
     apply_parallelism_authority_rule(&input, &mut policy);
 
@@ -113,7 +107,7 @@ pub fn resolve_policy(input: TaskPolicyInput) -> ResolvedExecutionPolicy {
     // Stop finalization: no launch args are consumable once launch is blocked.
     apply_stop_before_launch_arg_gate(&mut policy);
 
-    // M5-M6: read-only/plan-only structural invariant (verified in tests)
+    // M5-M6: plan-only structural invariant (verified in tests)
     apply_launch_args_writability_gate(&policy);
 
     // M10: downgrade invariants
@@ -158,13 +152,13 @@ mod tests {
         }
     }
 
-    /// Helper: build a Heavy edit-with-confirmation input with approval.
-    fn heavy_edit_with_approval() -> TaskPolicyInput {
+    /// Helper: build a Heavy execute-and-verify input with approval.
+    fn heavy_execute_with_cli_approval() -> TaskPolicyInput {
         TaskPolicyInput {
             executor: "Claude Code".into(),
             runtime_adapter: "claude-code".into(),
             execution_surface: "cli".into(),
-            permission_mode: "edit-with-confirmation".into(),
+            permission_mode: "execute-and-verify".into(),
             parallelism: "none".into(),
             task_level: "Heavy".into(),
             execution_effort: Some("normal".into()),
@@ -232,7 +226,6 @@ mod tests {
         assert_eq!(policy.effective_parallelism, Parallelism::None);
         assert!(!policy.was_downgraded);
         assert!(policy.downgrade_reasons.is_empty());
-        assert!(!policy.requires_confirmation_gate);
         assert!(!policy.stop_before_launch);
         assert!(policy.stop_reasons.is_empty());
         assert_eq!(policy.executor, "Claude Code");
@@ -245,12 +238,11 @@ mod tests {
     // ── T2: Heavy execute-and-verify without approval → executes directly ──
     //
     // Task LEVEL is decoupled from execution authority: a Heavy card keeps its
-    // declared permission mode. No downgrade, no cap, no stop, and — because the
-    // confirmation gate is tied to edit-with-confirmation, not the task level —
-    // no confirmation gate is set. An execute-and-verify card runs directly.
+    // declared permission mode. No downgrade, cap, or stop is added by level;
+    // execute-and-verify runs directly.
 
     #[test]
-    fn heavy_execute_without_approval_is_executable_no_confirmation() {
+    fn heavy_execute_without_approval_is_direct() {
         let input = heavy_execute_no_approval();
         let policy = resolve_policy(input);
 
@@ -262,31 +254,26 @@ mod tests {
         assert!(!policy.was_downgraded);
         assert!(policy.downgrade_reasons.is_empty());
 
-        // execute-and-verify → no confirmation gate (task level does not set it).
-        assert!(!policy.requires_confirmation_gate);
-
         // Executable: no stop, launch args are not cleared by a stop gate.
         assert!(!policy.stop_before_launch);
         assert!(policy.stop_reasons.is_empty());
     }
 
-    // ── T3: Heavy edit-with-confirmation WITH approval → no downgrade ─
+    // ── T3: Heavy execute-and-verify WITH approval → no downgrade ─
 
     #[test]
-    fn heavy_edit_with_approval_no_downgrade() {
-        let input = heavy_edit_with_approval();
+    fn heavy_execute_with_cli_approval_no_downgrade() {
+        let input = heavy_execute_with_cli_approval();
         let policy = resolve_policy(input);
 
         // No downgrade — task level never rewrites the declared permission mode
         // (the approval signal is audit/hint only, not what preserves the mode).
         assert_eq!(
             policy.effective_permission_mode,
-            PermissionMode::EditWithConfirmation
+            PermissionMode::ExecuteAndVerify
         );
         assert!(!policy.was_downgraded);
         assert!(policy.downgrade_reasons.is_empty());
-        // Confirmation gate comes from the edit-with-confirmation permission mode.
-        assert!(policy.requires_confirmation_gate);
         assert_eq!(policy.approval_source, ApprovalSource::CliFlag);
     }
 
@@ -402,7 +389,7 @@ mod tests {
             executor: "Claude Code".into(),
             runtime_adapter: "claude-code".into(),
             execution_surface: "cli".into(),
-            permission_mode: "edit-with-confirmation".into(),
+            permission_mode: "execute-and-verify".into(),
             parallelism: "worktree".into(),
             task_level: "Medium".into(),
             execution_effort: Some("normal".into()),
@@ -463,9 +450,7 @@ mod tests {
 
         assert_eq!(policy.effective_permission_mode, PermissionMode::PlanOnly);
         assert!(!policy.was_downgraded);
-        // plan-only forbids writes → no confirmation gate (it is tied to
-        // edit-with-confirmation, not the Heavy task level).
-        assert!(!policy.requires_confirmation_gate);
+        // Task level does not rewrite the non-mutating state.
     }
 
     // ── T14: Default semantics — absent effort/authority ─────────────
@@ -528,20 +513,21 @@ mod tests {
         assert!(!policy.was_downgraded);
     }
 
-    // ── T17: Read-only → no launch args at all ──────────────────────
+    // ── T17: Plan-only → only the safe planning launch args ─────────
 
     #[test]
-    fn read_only_generates_no_launch_args() {
+    fn plan_only_generates_only_planning_launch_args() {
         let input = TaskPolicyInput {
-            permission_mode: "read-only".into(),
+            permission_mode: "plan-only".into(),
             ..light_execute_input()
         };
         let policy = resolve_policy(input);
 
-        assert_eq!(policy.effective_permission_mode, PermissionMode::ReadOnly);
-        assert!(!policy
-            .allowed_launch_args
-            .contains(&"--permission-mode".to_string()));
+        assert_eq!(policy.effective_permission_mode, PermissionMode::PlanOnly);
+        assert_eq!(
+            policy.allowed_launch_args,
+            vec!["--permission-mode".to_string(), "plan".to_string()]
+        );
     }
 
     // ── T18: Plan-only → --permission-mode plan (not write-enabling) ─
@@ -623,20 +609,18 @@ mod tests {
         let policy = resolve_policy(input);
 
         assert_eq!(policy.effective_permission_mode, PermissionMode::PlanOnly);
-        // plan-only forbids writes → no confirmation gate (the gate is tied to
-        // edit-with-confirmation, not the task level).
-        assert!(!policy.requires_confirmation_gate);
+        // Task level does not rewrite the non-mutating state.
         assert!(!policy.was_downgraded);
     }
 
     // ═════════════════════════════════════════════════════════════════════
-    // F1: read-only/plan-only + active parallelism → no --parallel/--worktree
+    // F1: plan-only + active parallelism → no --parallel/--worktree
     // ═════════════════════════════════════════════════════════════════════
 
     #[test]
-    fn read_only_plus_worktree_does_not_output_parallel_worktree() {
+    fn plan_only_plus_worktree_does_not_output_parallel_worktree() {
         let input = TaskPolicyInput {
-            permission_mode: "read-only".into(),
+            permission_mode: "plan-only".into(),
             parallelism: "worktree".into(),
             // M7 requires worktree authority NOT "none", so give plan-only
             workflow_authority: Some("plan-only".into()),
@@ -644,22 +628,22 @@ mod tests {
         };
         let policy = resolve_policy(input);
 
-        assert_eq!(policy.effective_permission_mode, PermissionMode::ReadOnly);
+        assert_eq!(policy.effective_permission_mode, PermissionMode::PlanOnly);
         // M5 enforcement: effective_parallelism downgraded to None
-        // because read-only forbids filesystem-side-effect parallelism
+        // because plan-only forbids filesystem-side-effect parallelism
         assert_eq!(policy.effective_parallelism, Parallelism::None);
         // M5/M6: must NOT contain --parallel or --worktree
         assert!(
             !policy
                 .allowed_launch_args
                 .contains(&"--parallel".to_string()),
-            "read-only must not produce --parallel"
+            "plan-only must not produce --parallel"
         );
         assert!(
             !policy
                 .allowed_launch_args
                 .contains(&"--worktree".to_string()),
-            "read-only must not produce --worktree"
+            "plan-only must not produce --worktree"
         );
         // Must have stop reason
         assert!(policy.stop_before_launch);
@@ -700,9 +684,9 @@ mod tests {
     }
 
     #[test]
-    fn read_only_plus_subagent_no_launch_args() {
+    fn plan_only_plus_subagent_no_launch_args() {
         let input = TaskPolicyInput {
-            permission_mode: "read-only".into(),
+            permission_mode: "plan-only".into(),
             parallelism: "subagent".into(),
             ..light_execute_input()
         };
@@ -766,9 +750,9 @@ mod tests {
 
     #[test]
     fn stop_reason_is_clearly_documented() {
-        // Read-only + worktree → stop with writable-parallelism-blocked
+        // Plan-only + worktree → stop with writable-parallelism-blocked
         let input = TaskPolicyInput {
-            permission_mode: "read-only".into(),
+            permission_mode: "plan-only".into(),
             parallelism: "worktree".into(),
             workflow_authority: Some("plan-only".into()), // M7: worktree needs NOT none
             ..light_execute_input()
@@ -779,7 +763,7 @@ mod tests {
         let reason = policy.stop_reasons.first().unwrap();
         // Stop reason should surface the key facts
         let reason_str = reason.to_string();
-        assert!(reason_str.contains("read-only"));
+        assert!(reason_str.contains("plan-only"));
         assert!(reason_str.contains("worktree"));
         // The Display should be human-readable and non-empty
         assert!(!reason_str.is_empty());
@@ -823,12 +807,12 @@ mod tests {
     // ── Decoupling: structured current-task instruction approval ─────────────
 
     #[test]
-    fn heavy_edit_with_current_task_instruction_no_downgrade() {
-        // Heavy + edit-with-confirmation is executable directly (no plan-only
+    fn heavy_execute_with_current_task_instruction_no_downgrade() {
+        // Heavy + execute-and-verify is executable directly (no plan-only
         // round trip, no stop). The current-task-instruction signal is audit/hint
         // only — the declared permission is what makes the card executable.
         let input = TaskPolicyInput {
-            permission_mode: "edit-with-confirmation".into(),
+            permission_mode: "execute-and-verify".into(),
             task_level: "Heavy".into(),
             approval_source: ApprovalSource::CurrentTaskInstruction,
             ..light_execute_input()
@@ -836,11 +820,10 @@ mod tests {
         let policy = resolve_policy(input);
         assert_eq!(
             policy.effective_permission_mode,
-            PermissionMode::EditWithConfirmation
+            PermissionMode::ExecuteAndVerify
         );
         assert!(!policy.was_downgraded);
         assert!(!policy.stop_before_launch);
-        assert!(policy.requires_confirmation_gate);
         assert_eq!(
             policy.approval_source,
             ApprovalSource::CurrentTaskInstruction
@@ -851,8 +834,7 @@ mod tests {
     fn heavy_execute_with_current_task_instruction_not_capped() {
         // Task level no longer caps execute-and-verify: a Heavy card keeps its
         // declared execute-and-verify regardless of the approval signal. No
-        // downgrade, no cap, no stop, and no confirmation gate (the gate is tied
-        // to edit-with-confirmation, not the task level).
+        // downgrade, cap, or stop is added by task level.
         let input = TaskPolicyInput {
             permission_mode: "execute-and-verify".into(),
             task_level: "Heavy".into(),
@@ -867,14 +849,12 @@ mod tests {
         assert!(!policy.was_downgraded);
         assert!(policy.downgrade_reasons.is_empty());
         assert!(!policy.stop_before_launch);
-        assert!(!policy.requires_confirmation_gate);
     }
 
     #[test]
     fn heavy_execute_holds_execute_and_verify_regardless_of_approval() {
         // execute-and-verify holds for a Heavy card with OR without an approval
-        // signal — task level never caps or downgrades the declared permission,
-        // and execute-and-verify carries no confirmation gate.
+        // signal — task level never caps or downgrades the declared permission.
         let input = TaskPolicyInput {
             permission_mode: "execute-and-verify".into(),
             task_level: "Heavy".into(),
@@ -888,13 +868,12 @@ mod tests {
         );
         assert!(!policy.was_downgraded);
         assert!(!policy.stop_before_launch);
-        assert!(!policy.requires_confirmation_gate);
     }
 
     #[test]
     fn current_task_instruction_serializes_canonical() {
         let input = TaskPolicyInput {
-            permission_mode: "edit-with-confirmation".into(),
+            permission_mode: "execute-and-verify".into(),
             task_level: "Heavy".into(),
             approval_source: ApprovalSource::CurrentTaskInstruction,
             ..light_execute_input()
@@ -968,7 +947,7 @@ mod tests {
 
     #[test]
     fn json_approval_source_is_canonical() {
-        let input = heavy_edit_with_approval(); // ApprovalSource::CliFlag
+        let input = heavy_execute_with_cli_approval(); // ApprovalSource::CliFlag
         let policy = resolve_policy(input);
         let json = serde_json::to_string(&policy).unwrap();
 
@@ -999,20 +978,20 @@ mod tests {
     }
 
     #[test]
-    fn background_agent_read_only_no_headless() {
+    fn background_agent_plan_only_no_headless() {
         let input = TaskPolicyInput {
             execution_surface: "background-agent".into(),
-            permission_mode: "read-only".into(),
+            permission_mode: "plan-only".into(),
             ..light_execute_input()
         };
         let policy = resolve_policy(input);
 
-        // read-only forbids writes → headless stripped
+        // plan-only forbids writes → headless stripped
         assert!(
             !policy
                 .allowed_launch_args
                 .contains(&"--headless".to_string()),
-            "read-only must not produce --headless"
+            "plan-only must not produce --headless"
         );
     }
 
@@ -1081,16 +1060,15 @@ mod tests {
     }
 
     // ═════════════════════════════════════════════════════════════════════
-    // F8: Heavy never stops by task level; confirmation is tied to the
-    //     permission mode (edit-with-confirmation), not the level
+    // F8: Heavy never stops or rewrites permission by task level
     // ═════════════════════════════════════════════════════════════════════
 
     #[test]
-    fn heavy_edit_without_approval_is_executable_no_stop() {
-        // Heavy edit-with-confirmation without approval → executable with a
-        // confirmation gate. Task level does NOT downgrade or stop.
+    fn heavy_execute_without_approval_has_no_level_stop() {
+        // Heavy execute-and-verify without approval executes directly. Task
+        // level does not downgrade or stop it.
         let input = TaskPolicyInput {
-            permission_mode: "edit-with-confirmation".into(),
+            permission_mode: "execute-and-verify".into(),
             task_level: "Heavy".into(),
             ..light_execute_input()
         };
@@ -1098,10 +1076,9 @@ mod tests {
 
         assert_eq!(
             policy.effective_permission_mode,
-            PermissionMode::EditWithConfirmation
+            PermissionMode::ExecuteAndVerify
         );
         assert!(!policy.was_downgraded);
-        assert!(policy.requires_confirmation_gate);
         assert!(
             !policy.stop_before_launch,
             "Heavy write card must not stop by task level"
@@ -1126,9 +1103,7 @@ mod tests {
 
     #[test]
     fn heavy_plan_only_without_approval_no_stop() {
-        // Heavy plan-only is a plan/review card — NOT a write-request stop and
-        // NOT confirmation-gated (plan-only forbids writes; the gate is tied to
-        // edit-with-confirmation, not the Heavy level).
+        // Heavy plan-only is a plan/review card, not a write-request stop.
         let input = TaskPolicyInput {
             permission_mode: "plan-only".into(),
             task_level: "Heavy".into(),
@@ -1136,7 +1111,6 @@ mod tests {
         };
         let policy = resolve_policy(input);
 
-        assert!(!policy.requires_confirmation_gate);
         assert!(
             !policy.stop_before_launch,
             "Heavy plan-only card should NOT stop (it's a plan/review card, not a write request)"
@@ -1146,9 +1120,9 @@ mod tests {
     }
 
     #[test]
-    fn heavy_edit_with_approval_no_stop() {
-        // Heavy edit-with-confirmation WITH --approve-writes → no stop
-        let input = heavy_edit_with_approval(); // ApprovalSource::CliFlag
+    fn heavy_execute_with_cli_approval_no_stop() {
+        // Heavy execute-and-verify WITH --approve-writes → no stop
+        let input = heavy_execute_with_cli_approval(); // ApprovalSource::CliFlag
         let policy = resolve_policy(input);
 
         assert!(
@@ -1157,7 +1131,6 @@ mod tests {
         );
         assert!(policy.stop_reasons.is_empty());
         assert!(!policy.was_downgraded);
-        assert!(policy.requires_confirmation_gate);
     }
 
     #[test]
@@ -1179,10 +1152,10 @@ mod tests {
     // ═════════════════════════════════════════════════════════════════════
 
     #[test]
-    fn read_only_with_worktree_sets_effective_parallelism_to_none() {
+    fn plan_only_with_worktree_strips_write_launch_args() {
         // M5 stripping must update effective_parallelism to None
         let input = TaskPolicyInput {
-            permission_mode: "read-only".into(),
+            permission_mode: "plan-only".into(),
             parallelism: "worktree".into(),
             workflow_authority: Some("plan-only".into()), // M7: worktree needs NOT none
             ..light_execute_input()
@@ -1192,7 +1165,7 @@ mod tests {
         assert_eq!(
             policy.effective_parallelism,
             Parallelism::None,
-            "read-only must set effective_parallelism to None when stripping worktree"
+            "plan-only must set effective_parallelism to None when stripping worktree"
         );
         assert!(policy.stop_before_launch);
         assert!(!policy
@@ -1248,9 +1221,9 @@ mod tests {
     }
 
     #[test]
-    fn read_only_with_agent_team_sets_effective_parallelism_to_none() {
+    fn plan_only_with_agent_team_sets_effective_parallelism_to_none() {
         let input = TaskPolicyInput {
-            permission_mode: "read-only".into(),
+            permission_mode: "plan-only".into(),
             parallelism: "agent-team".into(),
             ..light_execute_input()
         };
@@ -1297,7 +1270,7 @@ mod tests {
         // For every M5 downgrade, the after field must match
         // effective_parallelism.to_string()
         let input = TaskPolicyInput {
-            permission_mode: "read-only".into(),
+            permission_mode: "plan-only".into(),
             parallelism: "worktree".into(),
             workflow_authority: Some("plan-only".into()),
             ..light_execute_input()
@@ -1318,16 +1291,16 @@ mod tests {
     }
 
     // ═════════════════════════════════════════════════════════════════════
-    // F10: background-agent + read-only/plan-only — audit gap
+    // F10: background-agent + plan-only — audit gap
     // ═════════════════════════════════════════════════════════════════════
 
     #[test]
-    fn background_agent_read_only_sets_stop_before_launch() {
-        // read-only + background-agent must NOT silently strip --headless;
+    fn background_agent_plan_only_records_surface_audit() {
+        // plan-only + background-agent must NOT silently strip --headless;
         // must set stop_before_launch with structured stop_reasons + downgrade.
         let input = TaskPolicyInput {
             execution_surface: "background-agent".into(),
-            permission_mode: "read-only".into(),
+            permission_mode: "plan-only".into(),
             ..light_execute_input()
         };
         let policy = resolve_policy(input);
@@ -1337,7 +1310,7 @@ mod tests {
             .contains(&"--headless".to_string()));
         assert!(
             policy.stop_before_launch,
-            "read-only + background-agent must set stop_before_launch=true"
+            "plan-only + background-agent must set stop_before_launch=true"
         );
         assert!(!policy.stop_reasons.is_empty());
         let reason = policy.stop_reasons.first().unwrap();
@@ -1416,7 +1389,7 @@ mod tests {
         // Verify the stop_reasons serialize with canonical kind value.
         let input = TaskPolicyInput {
             execution_surface: "background-agent".into(),
-            permission_mode: "read-only".into(),
+            permission_mode: "plan-only".into(),
             ..light_execute_input()
         };
         let policy = resolve_policy(input);
@@ -1458,7 +1431,7 @@ mod tests {
     fn combined_worktree_background_agent_preserves_all_stop_reasons() {
         let input = TaskPolicyInput {
             execution_surface: "background-agent".into(),
-            permission_mode: "read-only".into(),
+            permission_mode: "plan-only".into(),
             parallelism: "worktree".into(),
             workflow_authority: Some("plan-only".into()),
             ..light_execute_input()
@@ -1524,7 +1497,7 @@ mod tests {
     fn stop_before_launch_implies_empty_allowed_launch_args() {
         let cases = [
             TaskPolicyInput {
-                permission_mode: "read-only".into(),
+                permission_mode: "plan-only".into(),
                 parallelism: "worktree".into(),
                 workflow_authority: Some("allowed".into()),
                 task_level: "Medium".into(),
@@ -1569,8 +1542,8 @@ mod tests {
         let policy = resolve_policy(light_execute_input());
         let json = serde_json::to_string(&policy).unwrap();
         assert!(
-            json.contains("\"schema_version\":\"2.0-m3\""),
-            "JSON must include schema_version '2.0-m3': {}",
+            json.contains("\"schema_version\":\"2.0-m4\""),
+            "JSON must include schema_version '2.0-m4': {}",
             json
         );
     }
@@ -1584,14 +1557,12 @@ mod tests {
         let input = light_execute_input();
         let output = gate_check(&input);
         assert_eq!(output.decision, GateDecision::Allow);
-        assert_eq!(output.schema_version, "2.0-m3");
+        assert_eq!(output.schema_version, "2.0-m4");
     }
 
     #[test]
     fn gate_check_heavy_plan_only_returns_allow() {
-        // plan-only is a read-only plan card: the confirmation gate is tied to
-        // edit-with-confirmation, not the level, so a Heavy plan-only card has
-        // none, and there is no stop → Allow.
+        // Heavy plan-only remains non-mutating and is safe to launch for planning.
         let input = TaskPolicyInput {
             permission_mode: "plan-only".into(),
             task_level: "Heavy".into(),
@@ -1599,18 +1570,16 @@ mod tests {
         };
         let output = gate_check(&input);
         assert_eq!(output.decision, GateDecision::Allow);
-        assert!(!output.resolved_policy.requires_confirmation_gate);
     }
 
     #[test]
     fn gate_check_heavy_execute_returns_allow() {
         // The headline new semantics: Heavy + execute-and-verify is a direct
-        // execution card — Allow, mode preserved, no confirmation gate, no stop,
-        // no downgrade. Task level is purely a risk/review tier here.
+        // execution card — Allow, mode preserved, no stop, no downgrade. Task
+        // level is purely a risk/review tier here.
         let input = heavy_execute_no_approval();
         let output = gate_check(&input);
         assert_eq!(output.decision, GateDecision::Allow);
-        assert!(!output.resolved_policy.requires_confirmation_gate);
         assert!(!output.resolved_policy.stop_before_launch);
         assert!(!output.resolved_policy.was_downgraded);
         assert_eq!(
@@ -1620,39 +1589,35 @@ mod tests {
     }
 
     #[test]
-    fn gate_check_heavy_edit_with_confirmation_returns_confirm() {
-        // Confirmation comes from the permission mode, not the level: a Heavy
-        // edit-with-confirmation card is Confirm-gated.
+    fn gate_check_heavy_execute_and_verify_returns_allow() {
+        // Heavy execute-and-verify runs directly.
         let input = TaskPolicyInput {
-            permission_mode: "edit-with-confirmation".into(),
+            permission_mode: "execute-and-verify".into(),
             task_level: "Heavy".into(),
             ..light_execute_input()
         };
         let output = gate_check(&input);
-        assert_eq!(output.decision, GateDecision::Confirm);
-        assert!(output.resolved_policy.requires_confirmation_gate);
+        assert_eq!(output.decision, GateDecision::Allow);
     }
 
     #[test]
-    fn gate_check_medium_edit_with_confirmation_returns_confirm() {
-        // Confirmation is tied to the permission mode regardless of level: even a
-        // Medium edit-with-confirmation card is Confirm-gated.
+    fn gate_check_medium_execute_and_verify_returns_allow() {
+        // Medium execute-and-verify runs directly.
         let input = TaskPolicyInput {
-            permission_mode: "edit-with-confirmation".into(),
+            permission_mode: "execute-and-verify".into(),
             task_level: "Medium".into(),
             ..light_execute_input()
         };
         let output = gate_check(&input);
-        assert_eq!(output.decision, GateDecision::Confirm);
-        assert!(output.resolved_policy.requires_confirmation_gate);
+        assert_eq!(output.decision, GateDecision::Allow);
     }
 
     #[test]
     fn gate_check_writability_stop_returns_stop() {
-        // Genuine resolver STOP: read-only + worktree (writability gate). Task
+        // Genuine resolver STOP: plan-only + worktree (writability gate). Task
         // level never stops, so Heavy alone is no longer a stop vehicle.
         let input = TaskPolicyInput {
-            permission_mode: "read-only".into(),
+            permission_mode: "plan-only".into(),
             parallelism: "worktree".into(),
             workflow_authority: Some("allowed".into()),
             task_level: "Medium".into(),
@@ -1683,7 +1648,7 @@ mod tests {
     fn gate_check_json_has_all_required_fields() {
         let output = gate_check(&light_execute_input());
         let json = serde_json::to_string(&output).unwrap();
-        assert!(json.contains("\"schema_version\":\"2.0-m3\""));
+        assert!(json.contains("\"schema_version\":\"2.0-m4\""));
         assert!(json.contains("\"decision\""));
         assert!(json.contains("\"resolved_policy\""));
     }

@@ -94,6 +94,11 @@ Without this instruction, `ags task compile` blocks executable output with:
 
 **Three-gate threshold**: 方案 OK → 任务卡指令 → 任务分级路由.
 
+An existing canonical card is already past this threshold. When the first
+non-empty line is `## 任务卡`, `ags_solution_check` validates before natural
+language classification. A valid card skips generation and continues to
+policy/runner; an invalid card-shaped payload stops with validation errors.
+
 ### 5. Execution Contract → Value Route → Routing
 
 Before classifying, AGS surfaces a **Value Route** (效价比路由) in
@@ -102,6 +107,10 @@ risk (`read-only-advisory` / `direct-edit` / `plan-first` / `claude-code-route` 
 `stop-for-scope`), with rejected lighter/heavier alternatives. It is advisory and
 shapes path form only; it does NOT change the task level, permission mode, Review
 gate, or Verification gate (see `protocol/agent-task-protocol.md` §3.9).
+
+When a Value Route is compiled into a task card, non-mutating advisory/planning
+routes map to `plan-only`; implementation routes map to
+`execute-and-verify`. No route creates a third permission mode.
 
 Based on the **confirmed solution** (not the raw user request),
 classify the task as Light, Medium, or Heavy per `protocol/task-routing.md`.
@@ -146,8 +155,16 @@ AGS is the governance authority; it is not in the governed MCP list.
 | Level | Blast radius | Permission default | Review gate |
 |-------|-------------|-------------------|-------------|
 | Light | Single file, narrow path | `execute-and-verify` | Light diff review |
-| Medium | Cross-file, module boundary | `edit-with-confirmation` | Codex review |
+| Medium | Cross-file, module boundary | `execute-and-verify` | Codex review |
 | Heavy | Data, migration, architecture, baseline | `plan-only` | Human adversarial review |
+
+**The Permission default applies only when `Permission mode:` is omitted.** Task
+level is a risk/review tier — it never downgrades an explicitly declared
+permission mode. The only values are `plan-only` and `execute-and-verify`. A
+Heavy card that declares `execute-and-verify` runs and verifies directly; task
+level adds no extra planning round. The `plan-only` Heavy default is the
+conservative fill for an unspecified field, and Heavy still requires its
+independent review gate.
 
 **Escalate when in doubt.** Escalation triggers include data loss,
 irreversible writes, baseline mutation, cross-file protocol changes,

@@ -72,7 +72,7 @@ defaults:
   # downgrades an explicitly declared permission mode.
   permission_mode_by_level:
     light: execute-and-verify
-    medium: edit-with-confirmation
+    medium: execute-and-verify
     heavy: plan-only
   parallelism: none
 
@@ -109,8 +109,8 @@ user_preferences:
 - `permission_mode_by_level` is not an execution cap. It fills an omitted field
   during task-card generation only. A Heavy card that explicitly declares
   `execute-and-verify` remains executable and still requires the Heavy Review
-  gate; only a Heavy card with omitted or explicit `plan-only` waits for approval
-  before mutation.
+  gate. A Heavy card with omitted or explicit `plan-only` remains non-mutating;
+  later implementation requires an `execute-and-verify` task card.
 - Suite bootstrap installs only a template; it must not overwrite a project's
   real profile.
 - Profile changes are normal project changes and should be reviewed with the

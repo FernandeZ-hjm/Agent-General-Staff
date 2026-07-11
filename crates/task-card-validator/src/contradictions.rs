@@ -426,7 +426,7 @@ pub(crate) fn action_context(fields: &HashMap<String, String>) -> String {
 
 /// Like action_context but also includes fields that may carry instructions
 /// disguised as read-lists or background context.  Used for contradiction
-/// checks (e.g. read-only/plan-only vs modification keywords) where field
+/// checks (e.g. plan-only vs modification keywords) where field
 /// abuse is a real bypass vector, but excluded from protected-path scanning
 /// to avoid false positives when legitimate reads reference protected files.
 pub(crate) fn extended_action_context(fields: &HashMap<String, String>) -> String {
@@ -503,10 +503,10 @@ pub(crate) fn check_contradictions(fields: &HashMap<String, String>, errors: &mu
         }
     }
 
-    // read-only/plan-only permission but action sections require modification
+    // plan-only permission but action sections require modification
     // Use extended_action_context to catch modification keywords in 读取/背景
     // fields that could be abused as instruction vectors.
-    if permission == "read-only" || permission == "plan-only" {
+    if permission == "plan-only" {
         let action = extended_action_context(fields);
         if has_modification_intent(&action) {
             errors.push(format!(

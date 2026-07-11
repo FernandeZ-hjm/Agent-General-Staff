@@ -17,8 +17,6 @@ use super::resolve_policy;
 fn derive_decision(policy: &ResolvedExecutionPolicy) -> GateDecision {
     if policy.stop_before_launch {
         GateDecision::Stop
-    } else if policy.requires_confirmation_gate {
-        GateDecision::Confirm
     } else {
         GateDecision::Allow
     }
@@ -27,12 +25,12 @@ fn derive_decision(policy: &ResolvedExecutionPolicy) -> GateDecision {
 /// Run the full gate check on a validated task card input.
 ///
 /// Resolves the execution policy and produces a `GateCheckOutput` with the
-/// runner-level decision (`allow`, `confirm`, or `stop`).
+/// runner-level decision (`allow` or `stop`).
 pub fn gate_check(input: &TaskPolicyInput) -> GateCheckOutput {
     let resolved = resolve_policy(input.clone());
     let decision = derive_decision(&resolved);
     GateCheckOutput {
-        schema_version: "2.0-m3".to_string(),
+        schema_version: "2.0-m4".to_string(),
         decision,
         resolved_policy: resolved,
     }
@@ -46,7 +44,7 @@ pub fn gate_check(input: &TaskPolicyInput) -> GateCheckOutput {
 /// `decision=stop` with error details, not just a raw exit code.
 pub fn gate_check_failed(error_kind: &str, errors: Vec<String>) -> GateErrorOutput {
     GateErrorOutput {
-        schema_version: "2.0-m3".to_string(),
+        schema_version: "2.0-m4".to_string(),
         decision: GateDecision::Stop,
         error_kind: error_kind.to_string(),
         errors,
@@ -130,29 +128,16 @@ pub fn explain_policy(input: &TaskPolicyInput) -> PolicyExplainOutput {
         },
     });
 
-    // ── M4: Confirmation gate from the permission mode (level ≠ permission) ──
-    // The confirmation gate is tied to the edit-with-confirmation permission
-    // mode, NOT the task level. Any-level card resolved to edit-with-confirmation
-    // gains the gate; task level never sets it and never downgrades the
-    // permission mode. The Heavy review boundary is enforced by the validator's
-    // independent Review-gate requirement, not by a resolver confirmation gate.
-    let confirmation = policy.requires_confirmation_gate;
+    // ── M4: task level does not rewrite permission ────────────────────
     explanations.push(PolicyExplanation {
         rule_id: "M4".to_string(),
-        rule_name: "Confirmation Gate (Permission Mode)".to_string(),
-        decision: if confirmation { "applied" } else { "not_applicable" }.to_string(),
+        rule_name: "Two-State Permission Independence".to_string(),
+        decision: "passed".to_string(),
         field: Some("permission_mode".to_string()),
-        detail: if confirmation {
-            format!(
-                "Effective permission mode '{}' sets the confirmation gate (requires_confirmation_gate=true): the runner pauses for confirmation before each mutation. Task level does not set this gate.",
-                policy.effective_permission_mode
-            )
-        } else {
-            format!(
-                "Effective permission mode '{}' requires no confirmation gate. The gate is tied to edit-with-confirmation, not the task level.",
-                policy.effective_permission_mode
-            )
-        },
+        detail: format!(
+            "Effective permission mode is '{}'. Task level does not rewrite permission: plan-only remains non-mutating and execute-and-verify runs directly. Heavy review is enforced independently by task-card validation.",
+            policy.effective_permission_mode
+        ),
     });
 
     // ── M5: Writability gate — parallelism stripping ──────────────────
@@ -350,12 +335,6 @@ pub fn explain_policy(input: &TaskPolicyInput) -> PolicyExplainOutput {
             policy.downgrade_reasons.len()
         ));
     }
-    if policy.requires_confirmation_gate {
-        assertions.push(
-            "CONFIRMATION GATE: runner must present confirmation prompt before any mutation."
-                .to_string(),
-        );
-    }
     if policy.is_exhaustive_mode {
         assertions.push(
             "EXHAUSTIVE MODE: deep reasoning enabled (Execution effort: exhaustive). No permission or parallelism escalation."
@@ -367,7 +346,7 @@ pub fn explain_policy(input: &TaskPolicyInput) -> PolicyExplainOutput {
     }
 
     PolicyExplainOutput {
-        schema_version: "2.0-m3".to_string(),
+        schema_version: "2.0-m4".to_string(),
         task_summary: summary,
         explanations,
         safety_assertions: assertions,
@@ -416,30 +395,24 @@ mod tests {
     fn gate_check_light_allow() {
         let output = gate_check(&light_input());
         assert_eq!(output.decision, GateDecision::Allow);
-        assert_eq!(output.schema_version, "2.0-m3");
+        assert_eq!(output.schema_version, "2.0-m4");
         assert!(!output.resolved_policy.stop_before_launch);
     }
 
     #[test]
     fn gate_check_heavy_plan_only_allow() {
-        // plan-only is a read-only plan card: the confirmation gate is tied to
-        // edit-with-confirmation, not the level, so a Heavy plan-only card has
-        // none, and there is no stop → Allow.
+        // Heavy plan-only remains non-mutating and is safe to launch for planning.
         let output = gate_check(&heavy_plan_only());
         assert_eq!(output.decision, GateDecision::Allow);
-        assert!(!output.resolved_policy.requires_confirmation_gate);
     }
 
     #[test]
     fn gate_check_heavy_execute_no_approval_allow() {
-        // Heavy + execute-and-verify is a direct execution card (task level ≠
-        // execution authority): Allow, not Confirm — no confirmation gate, no
-        // stop, no downgrade. The Heavy review boundary is the validator's Review
-        // gate, not a resolver confirmation gate.
+        // Heavy + execute-and-verify is a direct execution card: no stop or
+        // downgrade is added by level. Heavy review remains validator-owned.
         let output = gate_check(&heavy_execute_no_approval());
         assert_eq!(output.decision, GateDecision::Allow);
         assert!(!output.resolved_policy.stop_before_launch);
-        assert!(!output.resolved_policy.requires_confirmation_gate);
         assert!(!output.resolved_policy.was_downgraded);
         assert_eq!(
             output.resolved_policy.effective_permission_mode.to_string(),
@@ -448,17 +421,15 @@ mod tests {
     }
 
     #[test]
-    fn gate_check_heavy_edit_with_confirmation_confirm() {
-        // Confirmation comes from the edit-with-confirmation permission mode,
-        // independent of the task level.
+    fn gate_check_heavy_execute_and_verify_allows_direct_execution() {
+        // Direct execution is independent of the task level.
         let input = TaskPolicyInput {
-            permission_mode: "edit-with-confirmation".into(),
+            permission_mode: "execute-and-verify".into(),
             task_level: "Heavy".into(),
             ..light_input()
         };
         let output = gate_check(&input);
-        assert_eq!(output.decision, GateDecision::Confirm);
-        assert!(output.resolved_policy.requires_confirmation_gate);
+        assert_eq!(output.decision, GateDecision::Allow);
     }
 
     #[test]
@@ -467,15 +438,15 @@ mod tests {
         let json = serde_json::to_string(&output).unwrap();
         assert!(json.contains("\"decision\":\"allow\""));
         assert!(json.contains("\"resolved_policy\""));
-        assert!(json.contains("\"schema_version\":\"2.0-m3\""));
+        assert!(json.contains("\"schema_version\":\"2.0-m4\""));
     }
 
     #[test]
     fn gate_check_stop_json_has_decision_stop() {
-        // A genuine STOP case is the writability gate (read-only + worktree),
+        // A genuine STOP case is the writability gate (plan-only + worktree),
         // not Heavy alone.
         let input = TaskPolicyInput {
-            permission_mode: "read-only".into(),
+            permission_mode: "plan-only".into(),
             parallelism: "worktree".into(),
             workflow_authority: Some("plan-only".into()),
             ..light_input()
@@ -496,7 +467,7 @@ mod tests {
         assert_eq!(output.decision, GateDecision::Stop);
         assert_eq!(output.error_kind, "validation_failed");
         assert_eq!(output.errors.len(), 1);
-        assert_eq!(output.schema_version, "2.0-m3");
+        assert_eq!(output.schema_version, "2.0-m4");
 
         let json = serde_json::to_string(&output).unwrap();
         assert!(json.contains("\"decision\":\"stop\""));
@@ -541,9 +512,9 @@ mod tests {
     #[test]
     fn explain_has_schema_version() {
         let output = explain_policy(&light_input());
-        assert_eq!(output.schema_version, "2.0-m3");
+        assert_eq!(output.schema_version, "2.0-m4");
         let json = serde_json::to_string(&output).unwrap();
-        assert!(json.contains("\"schema_version\":\"2.0-m3\""));
+        assert!(json.contains("\"schema_version\":\"2.0-m4\""));
     }
 
     #[test]
@@ -555,13 +526,13 @@ mod tests {
     #[test]
     fn explain_light_no_downgrades() {
         let output = explain_policy(&light_input());
-        // M4 should be not_applicable for Light
+        // M4 verifies permission independence for every task level.
         let m4 = output
             .explanations
             .iter()
             .find(|e| e.rule_id == "M4")
             .unwrap();
-        assert_eq!(m4.decision, "not_applicable");
+        assert_eq!(m4.decision, "passed");
         // No stop assertions
         let has_stop = output
             .safety_assertions
@@ -571,11 +542,9 @@ mod tests {
     }
 
     #[test]
-    fn explain_edit_with_confirmation_shows_m4_applied() {
-        // M4 "applied" comes from the edit-with-confirmation permission mode, not
-        // the task level.
+    fn explain_execute_and_verify_shows_m4_passed() {
         let input = TaskPolicyInput {
-            permission_mode: "edit-with-confirmation".into(),
+            permission_mode: "execute-and-verify".into(),
             task_level: "Heavy".into(),
             ..light_input()
         };
@@ -585,21 +554,19 @@ mod tests {
             .iter()
             .find(|e| e.rule_id == "M4")
             .unwrap();
-        assert_eq!(m4.decision, "applied");
+        assert_eq!(m4.decision, "passed");
     }
 
     #[test]
-    fn explain_heavy_execute_shows_m4_not_applicable() {
-        // Heavy + execute-and-verify: M4 is "not_applicable" (no confirmation
-        // gate from the task level), and task level does NOT block launch — no
-        // "LAUNCH BLOCKED" safety assertion comes from the level.
+    fn explain_heavy_execute_shows_m4_passed() {
+        // Heavy preserves execute-and-verify and does not block launch.
         let output = explain_policy(&heavy_execute_no_approval());
         let m4 = output
             .explanations
             .iter()
             .find(|e| e.rule_id == "M4")
             .unwrap();
-        assert_eq!(m4.decision, "not_applicable");
+        assert_eq!(m4.decision, "passed");
         let has_stop = output
             .safety_assertions
             .iter()

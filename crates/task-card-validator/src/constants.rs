@@ -13,12 +13,7 @@ pub(crate) const VALID_EXECUTION_SURFACES: &[&str] = &[
     "remote-control",
     "background-agent",
 ];
-pub(crate) const VALID_PERMISSION_MODES: &[&str] = &[
-    "read-only",
-    "plan-only",
-    "edit-with-confirmation",
-    "execute-and-verify",
-];
+pub(crate) const VALID_PERMISSION_MODES: &[&str] = &["plan-only", "execute-and-verify"];
 pub(crate) const VALID_PARALLELISM: &[&str] = &[
     "none",
     "limited",

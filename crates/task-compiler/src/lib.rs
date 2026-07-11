@@ -688,15 +688,16 @@ pub fn compile(
         });
     }
 
-    // Permission mode: — default edit-with-confirmation
+    // Permission mode: — default direct execution. Heavy tasks with an
+    // unspecified mode are conservatively rewritten to plan-only below.
     if !has_field(&fields, "Permission mode:") {
         fields.insert(
             "Permission mode:".to_string(),
-            "edit-with-confirmation".to_string(),
+            "execute-and-verify".to_string(),
         );
         slot_sources.push(SlotEntry {
             field: "Permission mode:".to_string(),
-            value: "edit-with-confirmation".to_string(),
+            value: "execute-and-verify".to_string(),
             source: SlotSource::Default,
         });
     }
@@ -889,7 +890,7 @@ pub fn compile(
             .iter()
             .any(|s| s.field == "Permission mode:" && s.source == SlotSource::Default);
         if perm_source_is_default {
-            // Downgrade from edit-with-confirmation to plan-only
+            // Replace the direct-execution default with Heavy's plan-only default.
             fields.insert("Permission mode:".to_string(), "plan-only".to_string());
             // Update slot_sources: replace the Default entry
             if let Some(entry) = slot_sources
@@ -1799,7 +1800,7 @@ mod tests {
     }
 
     #[test]
-    fn test_medium_task_keeps_edit_with_confirmation() {
+    fn test_medium_task_defaults_to_direct_execution() {
         let intent = "任务级别：Medium\n任务：normal change\n目标：verify default";
         let project_root = Path::new(".");
         let (_card, report) = compile(intent, project_root, false, true);
@@ -1809,8 +1810,8 @@ mod tests {
             .find(|s| s.field == "Permission mode:")
             .expect("permission mode slot must exist");
         assert_eq!(
-            perm_slot.value, "edit-with-confirmation",
-            "Medium task default permission must stay edit-with-confirmation, got '{}'",
+            perm_slot.value, "execute-and-verify",
+            "Medium task must default to direct execution, got '{}'",
             perm_slot.value
         );
     }

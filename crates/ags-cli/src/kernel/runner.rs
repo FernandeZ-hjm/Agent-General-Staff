@@ -25,14 +25,6 @@ fn cmd_run(
     if should_exit_1 {
         std::process::exit(1);
     }
-    // `--check-only` is a pure gate query: its exit code is the contract. A
-    // confirmation-gated card must exit distinct from `allow` (2, not 0) so that
-    // exit-code-based callers cannot treat a Heavy confirmation card as runnable
-    // without honoring the confirmation gate. The launch-plan / dry-run paths
-    // still exit 0 (they produced a plan; the confirm requirement rides in it).
-    if check_only && plan.gate_decision == "confirm" {
-        std::process::exit(2);
-    }
 }
 
 // ── Verify dispatch ────────────────────────────────────────────────────────

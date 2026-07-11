@@ -287,6 +287,37 @@ else
     failures=$((failures + 1))
 fi
 
+# Existing canonical cards are execution contracts, not raw prompt requests.
+echo -n "[....] existing canonical card skips generation and routes to execution "
+if cargo run -q -p ags-cli -- gate prompt-request - --no-preflight --format json \
+    < "$REPO_ROOT/tests/fixtures/valid-full.md" > /tmp/verify-gate-existing-card.log 2>&1 \
+    && grep -q '"entry_kind": "existing_task_card"' /tmp/verify-gate-existing-card.log \
+    && grep -q '"decision": "execute_task_card"' /tmp/verify-gate-existing-card.log \
+    && grep -q '"task_card_generation_required": false' /tmp/verify-gate-existing-card.log; then
+    echo "OK"
+else
+    echo "FAIL (valid existing card was routed back through generation)"
+    cat /tmp/verify-gate-existing-card.log
+    failures=$((failures + 1))
+fi
+
+echo -n "[....] invalid card-shaped input fails closed before prompt classification "
+if printf '## 任务卡\n\nExecutor: Codex\nPermission mode: unsupported-permission-mode\n' \
+    | cargo run -q -p ags-cli -- gate prompt-request - --no-preflight --format json \
+        > /tmp/verify-gate-invalid-card.log 2>&1; then
+    echo "FAIL (invalid card-shaped input was allowed)"
+    cat /tmp/verify-gate-invalid-card.log
+    failures=$((failures + 1))
+elif grep -q '"entry_kind": "invalid_task_card"' /tmp/verify-gate-invalid-card.log \
+    && grep -q '"block_reason": "validation_failed"' /tmp/verify-gate-invalid-card.log \
+    && grep -q '"task_card_generation_required": false' /tmp/verify-gate-invalid-card.log; then
+    echo "OK"
+else
+    echo "FAIL (invalid card did not fail closed with validation_failed)"
+    cat /tmp/verify-gate-invalid-card.log
+    failures=$((failures + 1))
+fi
+
 # Value Route (效价比路由) is exposed on the entry gate (advisory — it never
 # changes the task level, permission mode, Review gate, or Verification gate).
 echo -n "[....] gate prompt-request exposes value_route (recommended_path) "
@@ -441,11 +472,27 @@ check_lane_decision "empty(fail-safe)" "" "FULL"
 # ── Resolver Hardening Smoke Tests (F1-F7) ──────────────────────────────────
 echo "--- Resolver Hardening Smoke Tests (F1-F7) ---"
 
+echo -n "[....] retired task-card permission/scheduler semantics are absent "
+retired_permission_pattern='edit-with-''confirmation|autonomous-low-''risk|requires_''confirmation_gate|GateDecision::''Confirm|PermissionMode::''ReadOnly|Permission mode: read-''only|resolver adds a ''confirmation gate'
+deprecated_permission_hits="$(rg -n \
+    --glob '!target/**' \
+    --glob '!graphify-out/**' \
+    --glob '!scripts/verify.sh' \
+    "$retired_permission_pattern" \
+    "$REPO_ROOT" || true)"
+if [ -z "$deprecated_permission_hits" ]; then
+    echo "OK"
+else
+    echo "FAIL (retired permission or scheduler semantics found)"
+    echo "$deprecated_permission_hits"
+    failures=$((failures + 1))
+fi
+
 # F5: JSON uses canonical protocol values, not Rust variant names
 echo -n "[....] JSON permission_mode uses canonical values "
 if cargo run -q -p ags-cli -- policy resolve "$REPO_ROOT/tests/fixtures/valid-full.md" --format json > /tmp/verify-json-canonical.log 2>&1; then
     json=$(cat /tmp/verify-json-canonical.log)
-    if echo "$json" | grep -q '"ReadOnly"\|"PlanOnly"\|"ExecuteAndVerify"\|"EditWithConfirmation"'; then
+    if echo "$json" | grep -q '"PlanOnly"\|"ExecuteAndVerify"'; then
         echo "FAIL (Rust variant names found in JSON)"
         echo "$json" | head -20
         failures=$((failures + 1))
@@ -454,29 +501,6 @@ if cargo run -q -p ags-cli -- policy resolve "$REPO_ROOT/tests/fixtures/valid-fu
     fi
 else
     echo "FAIL (resolve-policy failed)"
-    failures=$((failures + 1))
-fi
-
-# F1: read-only + worktree must NOT output --parallel / --worktree
-echo -n "[....] read-only+worktree must not output --parallel "
-write_smoke_card /tmp/test-readonly-worktree.md cli read-only worktree plan-only Light \
-    "Test read-only + worktree gate." \
-    "Verify --parallel is not output." \
-    "None." \
-    "any failure" \
-    "test passes" \
-    "Delivery report."
-if cargo run -q -p ags-cli -- policy resolve /tmp/test-readonly-worktree.md --format json > /tmp/verify-ro-wt.log 2>&1; then
-    if grep -q -- '--parallel\|--worktree' /tmp/verify-ro-wt.log; then
-        echo "FAIL (--parallel or --worktree found in read-only output)"
-        grep -- '--parallel\|--worktree' /tmp/verify-ro-wt.log
-        failures=$((failures + 1))
-    else
-        echo "OK"
-    fi
-else
-    echo "FAIL (resolve-policy failed)"
-    cat /tmp/verify-ro-wt.log
     failures=$((failures + 1))
 fi
 
@@ -503,18 +527,18 @@ else
     failures=$((failures + 1))
 fi
 
-# F4: --approve-writes flag preserves Heavy write mode
-echo -n "[....] Heavy + --approve-writes preserves write mode "
-write_smoke_card /tmp/test-heavy-approve.md cli edit-with-confirmation none none Heavy \
+# F4: --approve-writes is audit-only for a Heavy direct-execution card
+echo -n "[....] Heavy direct execution + --approve-writes preserves mode "
+write_smoke_card /tmp/test-heavy-approve.md cli execute-and-verify none none Heavy \
     "Test Heavy with approval." \
-    "Verify Heavy + --approve-writes keeps edit-with-confirmation." \
+    "Verify Heavy + --approve-writes keeps execute-and-verify." \
     "None." \
     "any failure" \
-    "write mode preserved" \
+    "direct mode preserved" \
     "Delivery report."
 if cargo run -q -p ags-cli -- policy resolve /tmp/test-heavy-approve.md --format json --approve-writes > /tmp/verify-heavy-approve.log 2>&1; then
     json=$(cat /tmp/verify-heavy-approve.log)
-    if echo "$json" | grep -q '"edit-with-confirmation"'; then
+    if echo "$json" | grep -q '"execute-and-verify"'; then
         if echo "$json" | grep -q '"cli-flag"'; then
             echo "OK"
         else
@@ -522,7 +546,7 @@ if cargo run -q -p ags-cli -- policy resolve /tmp/test-heavy-approve.md --format
             failures=$((failures + 1))
         fi
     else
-        echo "FAIL (expected edit-with-confirmation, got downgraded)"
+        echo "FAIL (expected execute-and-verify, got downgraded)"
         echo "$json" | head -5
         failures=$((failures + 1))
     fi
@@ -559,60 +583,56 @@ fi
 echo ""
 echo "--- Resolver Hardening Smoke Tests (F8-F9: stop and parallelism audit) ---"
 
-# F8: Heavy edit-with-confirmation without --approve-writes → executable, no stop
-# Task level is decoupled from execution authority: the card keeps its declared
-# permission; the confirmation gate comes from edit-with-confirmation (the
-# permission mode), not the Heavy level. No downgrade, no stop.
-echo -n "[....] Heavy edit-with-confirmation without approve → executable (no stop) "
-write_smoke_card /tmp/test-heavy-stop.md cli edit-with-confirmation none none Heavy \
-    "Test edit-with-confirmation gate." \
-    "Verify edit-with-confirmation is preserved and gains a confirmation gate from the permission mode." \
+# F8: Medium defaults to direct execution; no intermediate permission mode exists.
+echo -n "[....] Medium execute-and-verify → direct execution (no stop) "
+write_smoke_card /tmp/test-medium-execute.md cli execute-and-verify none none Medium \
+    "Test Medium direct execution." \
+    "Verify execute-and-verify is preserved without an intermediate gate." \
     "None." \
     "any failure" \
-    "edit-with-confirmation preserved" \
+    "execute-and-verify preserved" \
     "Delivery report."
-if cargo run -q -p ags-cli -- policy resolve /tmp/test-heavy-stop.md --format json > /tmp/verify-heavy-stop.log 2>&1; then
-    json=$(cat /tmp/verify-heavy-stop.log)
-    if echo "$json" | grep -q '"effective_permission_mode": "edit-with-confirmation"' \
+if cargo run -q -p ags-cli -- policy resolve /tmp/test-medium-execute.md --format json > /tmp/verify-medium-execute.log 2>&1; then
+    json=$(cat /tmp/verify-medium-execute.log)
+    if echo "$json" | grep -q '"effective_permission_mode": "execute-and-verify"' \
         && echo "$json" | grep -q '"stop_before_launch": false' \
-        && echo "$json" | grep -q '"requires_confirmation_gate": true' \
         && echo "$json" | grep -q '"was_downgraded": false'; then
         echo "OK"
     else
-        echo "FAIL (edit-with-confirmation must stay executable with a confirmation gate; no level downgrade/stop)"
+        echo "FAIL (Medium execute-and-verify must run directly without downgrade/stop)"
         echo "$json" | head -20
         failures=$((failures + 1))
     fi
 else
     echo "FAIL (resolve-policy failed)"
-    cat /tmp/verify-heavy-stop.log
+    cat /tmp/verify-medium-execute.log
     failures=$((failures + 1))
 fi
 
-# F8b: --current-task-approval is recorded as an audit signal; mode unchanged
-echo -n "[....] Heavy edit + current-task approval: mode preserved, signal recorded "
-if cargo run -q -p ags-cli -- policy resolve /tmp/test-heavy-stop.md --format json --current-task-approval > /tmp/verify-heavy-current.log 2>&1; then
-    json=$(cat /tmp/verify-heavy-current.log)
-    if echo "$json" | grep -q '"effective_permission_mode": "edit-with-confirmation"' \
+# F8b: --current-task-approval is recorded as an audit signal; direct mode unchanged
+echo -n "[....] Medium direct + current-task approval: mode preserved, signal recorded "
+if cargo run -q -p ags-cli -- policy resolve /tmp/test-medium-execute.md --format json --current-task-approval > /tmp/verify-medium-current.log 2>&1; then
+    json=$(cat /tmp/verify-medium-current.log)
+    if echo "$json" | grep -q '"effective_permission_mode": "execute-and-verify"' \
         && echo "$json" | grep -q '"stop_before_launch": false' \
         && echo "$json" | grep -q '"approval_source": "current-task-instruction"'; then
         echo "OK"
     else
-        echo "FAIL (current-task approval must preserve Heavy edit-with-confirmation)"
+        echo "FAIL (current-task approval must preserve Medium direct execution)"
         echo "$json" | head -20
         failures=$((failures + 1))
     fi
 else
     echo "FAIL (policy resolve --current-task-approval failed)"
-    cat /tmp/verify-heavy-current.log
+    cat /tmp/verify-medium-current.log
     failures=$((failures + 1))
 fi
 
 # F8c: ags run forwards --current-task-approval into the resolver
 echo -n "[....] ags run forwards current-task approval "
-if cargo run -q -p ags-cli -- run /tmp/test-heavy-stop.md --dry-run --current-task-approval --format json > /tmp/verify-run-current.log 2>&1; then
+if cargo run -q -p ags-cli -- run /tmp/test-medium-execute.md --dry-run --current-task-approval --format json > /tmp/verify-run-current.log 2>&1; then
     json=$(cat /tmp/verify-run-current.log)
-    if echo "$json" | grep -q '"effective_permission_mode": "edit-with-confirmation"' \
+    if echo "$json" | grep -q '"effective_permission_mode": "execute-and-verify"' \
         && echo "$json" | grep -q '"approval_source": "current-task-instruction"'; then
         echo "OK"
     else
@@ -626,26 +646,19 @@ else
     failures=$((failures + 1))
 fi
 
-# F8: Heavy plan-only without --approve-writes → no stop, no gate.
-# Heavy plan is a read-only plan/review card: it never stops, and it carries no
-# confirmation gate (the gate is tied to edit-with-confirmation, not the level).
-echo -n "[....] Heavy plan-only without approve → no stop, no gate "
+# F8: Heavy plan-only without --approve-writes → planning is allowed, writes remain forbidden.
+echo -n "[....] Heavy plan-only without approve → planning allowed "
 write_smoke_card /tmp/test-heavy-plan.md cli plan-only none none Heavy \
     "Test Heavy plan-only gate." \
-    "Verify Heavy plan-only triggers neither stop_before_launch nor a confirmation prompt." \
+    "Verify Heavy plan-only can produce a plan without launching writes." \
     "不执行写操作。" \
     "方案完成后返回用户审阅，等待明确批准" \
-    "no stop, no confirmation gate" \
+    "no stop" \
     "返回审计方案供 Codex review，等待明确批准。"
 if cargo run -q -p ags-cli -- policy resolve /tmp/test-heavy-plan.md --format json > /tmp/verify-heavy-plan.log 2>&1; then
     json=$(cat /tmp/verify-heavy-plan.log)
     if echo "$json" | grep -q '"stop_before_launch": false'; then
-        if echo "$json" | grep -q '"requires_confirmation_gate": false'; then
-            echo "OK"
-        else
-            echo "FAIL (Heavy plan-only must NOT set requires_confirmation_gate — it is read-only)"
-            failures=$((failures + 1))
-        fi
+        echo "OK"
     else
         echo "FAIL (Heavy plan-only must NOT stop — it is a plan/review card)"
         echo "$json" | grep -o '"stop_before_launch":[^,]*'
@@ -686,44 +699,20 @@ else
     failures=$((failures + 1))
 fi
 
-# F9: read-only + worktree → effective_parallelism is "none" in JSON
-echo -n "[....] read-only+worktree → effective_parallelism=none "
-write_smoke_card /tmp/test-ro-wt-none.md cli read-only worktree plan-only Light \
-    "Test read-only effective_parallelism." \
-    "Verify effective_parallelism=none when read-only strips worktree." \
-    "None." \
-    "any failure" \
-    "effective_parallelism=none" \
-    "Delivery report."
-if cargo run -q -p ags-cli -- policy resolve /tmp/test-ro-wt-none.md --format json > /tmp/verify-ro-wt-none.log 2>&1; then
-    json=$(cat /tmp/verify-ro-wt-none.log)
-    if echo "$json" | grep -q '"effective_parallelism": "none"'; then
-        echo "OK"
-    else
-        echo "FAIL (effective_parallelism must be 'none' when read-only strips worktree)"
-        echo "$json" | grep -o '"effective_parallelism":"[^"]*"'
-        failures=$((failures + 1))
-    fi
-else
-    echo "FAIL (resolve-policy failed)"
-    cat /tmp/verify-ro-wt-none.log
-    failures=$((failures + 1))
-fi
-
 # ── Resolver Hardening Smoke Tests (F10: background-agent audit) ────────────
 echo "--- Resolver Hardening Smoke Tests (F10: background-agent audit) ---"
 
-# F10: background-agent + read-only → stop_before_launch + stop_reasons + downgrade
-echo -n "[....] background-agent+read-only → stop and audit "
-write_smoke_card /tmp/test-bg-ro-audit.md background-agent read-only none none Light \
+# F10: background-agent + plan-only → stop_before_launch + stop_reasons + downgrade
+echo -n "[....] background-agent+plan-only → stop and audit "
+write_smoke_card /tmp/test-bg-plan-audit.md background-agent plan-only none none Light \
     "Test background-agent audit trail." \
-    "Verify background-agent+read-only sets stop_before_launch." \
+    "Verify background-agent+plan-only sets stop_before_launch." \
     "不执行写操作。" \
     "any failure" \
     "stop_before_launch=true" \
     "Delivery report."
-if cargo run -q -p ags-cli -- policy resolve /tmp/test-bg-ro-audit.md --format json > /tmp/verify-bg-ro-audit.log 2>&1; then
-    json=$(cat /tmp/verify-bg-ro-audit.log)
+if cargo run -q -p ags-cli -- policy resolve /tmp/test-bg-plan-audit.md --format json > /tmp/verify-bg-plan-audit.log 2>&1; then
+    json=$(cat /tmp/verify-bg-plan-audit.log)
     if echo "$json" | grep -q '"stop_before_launch": true'; then
         if echo "$json" | grep -q '"background-surface-blocked-by-permission"'; then
             if echo "$json" | grep -q '"field": "execution_surface"'; then
@@ -743,13 +732,13 @@ if cargo run -q -p ags-cli -- policy resolve /tmp/test-bg-ro-audit.md --format j
             failures=$((failures + 1))
         fi
     else
-        echo "FAIL (stop_before_launch must be true for read-only + background-agent)"
+        echo "FAIL (stop_before_launch must be true for plan-only + background-agent)"
         echo "$json" | grep -o '"stop_before_launch":[^,]*'
         failures=$((failures + 1))
     fi
 else
     echo "FAIL (resolve-policy failed)"
-    cat /tmp/verify-bg-ro-audit.log
+    cat /tmp/verify-bg-plan-audit.log
     failures=$((failures + 1))
 fi
 
@@ -817,7 +806,7 @@ fi
 
 # F10/P3: combined worktree + background-agent must preserve BOTH stop reasons
 echo -n "[....] worktree+background-agent → two stop reasons "
-write_smoke_card /tmp/test-combined-stop-reasons.md background-agent read-only worktree plan-only Light \
+write_smoke_card /tmp/test-combined-stop-reasons.md background-agent plan-only worktree plan-only Light \
     "Test combined stop reasons." \
     "Verify combined blocked worktree and background-agent preserve both stop reasons." \
     "不执行写操作。" \
@@ -914,33 +903,8 @@ else
     failures=$((failures + 1))
 fi
 
-# edit-with-confirmation → executable but confirmation-gated (from the permission
-# mode, not the level). The gate exit code MUST distinguish confirm (2) from
-# allow (0) so exit-code-based callers cannot auto-run an edit-with-confirmation
-# card without the handshake.
-echo -n "[....] gate check edit-with-confirmation → decision=confirm (exit 2) "
-write_smoke_card /tmp/test-gate-confirm.md cli edit-with-confirmation none none Heavy \
-    "Test edit-with-confirmation gate exit code." \
-    "Verify edit-with-confirmation resolves to confirm with exit 2." \
-    "None." \
-    "any failure" \
-    "edit-with-confirmation preserved" \
-    "Delivery report."
-set +e
-cargo run -q -p ags-cli -- gate check /tmp/test-gate-confirm.md --format json > /tmp/verify-m3-gate-confirm.log 2>&1
-rc=$?
-set -e
-if [ "$rc" -eq 2 ] && grep -q '"decision": "confirm"' /tmp/verify-m3-gate-confirm.log; then
-    echo "OK"
-else
-    echo "FAIL (expected exit 2 + decision=confirm, got $rc)"
-    cat /tmp/verify-m3-gate-confirm.log
-    failures=$((failures + 1))
-fi
-
 # Heavy + execute-and-verify is a direct execution card: decision=allow (exit 0),
-# no confirmation gate (the gate is tied to edit-with-confirmation, not the
-# level), no stop, no downgrade. This is the headline decoupling regression.
+# no stop and no downgrade. This is the headline two-mode regression.
 echo -n "[....] gate check Heavy execute-and-verify → decision=allow (exit 0) "
 write_smoke_card /tmp/test-gate-heavy-exec.md cli execute-and-verify none none Heavy \
     "Test Heavy execute-and-verify direct execution." \
@@ -956,12 +920,11 @@ set -e
 if [ "$rc" -eq 0 ] \
     && grep -q '"decision": "allow"' /tmp/verify-m3-gate-heavy-exec.log \
     && grep -q '"effective_permission_mode": "execute-and-verify"' /tmp/verify-m3-gate-heavy-exec.log \
-    && grep -q '"requires_confirmation_gate": false' /tmp/verify-m3-gate-heavy-exec.log \
     && grep -q '"stop_before_launch": false' /tmp/verify-m3-gate-heavy-exec.log \
     && grep -q '"was_downgraded": false' /tmp/verify-m3-gate-heavy-exec.log; then
     echo "OK"
 else
-    echo "FAIL (Heavy execute-and-verify must be allow/exit0, no gate, no stop, no downgrade; got rc=$rc)"
+    echo "FAIL (Heavy execute-and-verify must be allow/exit0, no stop, no downgrade; got rc=$rc)"
     cat /tmp/verify-m3-gate-heavy-exec.log
     failures=$((failures + 1))
 fi

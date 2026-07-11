@@ -167,7 +167,9 @@ On "continue", context compression, or task-notification resume:
 3. Read `task-memory.md` beside the capsule if present.
 4. Read a named task archive if the task card names one.
 5. Run `git status --short`.
-6. For Heavy tasks, stop at the confirmation gate unless current-context
-   mutation approval is explicit.
+6. Honor the card's permission mode before mutation: `plan-only` remains
+   non-mutating and waits for a newly issued executable task card;
+   `execute-and-verify` resumes execution and verification. Task level alone
+   does not rewrite this authority.
 
 Memory can provide continuity, but it is not approval for write operations.

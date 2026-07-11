@@ -34,6 +34,10 @@ to classification or execution before the earlier phases are complete:
 7. **Gate / execution / receipt** — validate, resolve policy, execute, verify,
    and deliver.
 
+Existing-card entry is validate-first: when the first non-empty line is
+`## 任务卡`, skip raw-request solution/classification and card generation. A
+valid card proceeds to policy/runner; an invalid card-shaped payload stops.
+
 **Hard rule**: the user's initial natural-language request is NOT an executable
 task card and must NOT be used directly for Light / Medium / Heavy
 classification. Always complete ambient preflight and solution formation first.
@@ -115,6 +119,11 @@ Path forms: `read-only-advisory`, `direct-edit`, `plan-first`,
 the risk, and record why a lighter form would under-cover and a heavier form
 would over-spend.
 
+When a route becomes a task card, both `read-only-advisory` and `plan-first` map
+to `Permission mode: plan-only`; direct or delegated implementation maps to
+`Permission mode: execute-and-verify`. Route names do not create additional
+permission modes.
+
 AGS exposes the recommendation in `ags_solution_check` (MCP) and `ags gate
 prompt-request` (CLI) as a `value_route` block. The planner owns the final path
 and records it as evidence; Light / Medium / Heavy routing then proceeds
@@ -187,6 +196,7 @@ Examples:
 
 Default execution mode:
 
+- Use `Permission mode: execute-and-verify`.
 - Read relevant files.
 - Make the change.
 - Run the smallest meaningful verification.
@@ -212,7 +222,8 @@ Use the medium template when any of the following are true:
 
 - Multiple files are likely affected.
 - The task changes behavior across a module boundary.
-- The task needs a brief implementation plan before editing.
+- The task benefits from a brief, non-blocking design note during direct
+  execution.
 - The task touches configuration, tests, CLI behavior, API clients, or shared
   helpers.
 - The change has rollback or compatibility concerns, but does not touch live
@@ -228,6 +239,8 @@ Examples:
 
 Default execution mode:
 
+- Use `Permission mode: execute-and-verify`; a short root-cause or design note
+  does not change the direct-execution state.
 - Read code and explain current behavior.
 - Give a concise root cause or design note.
 - Implement after the plan is clear.
@@ -269,8 +282,8 @@ Use the heavy template when any of the following are true:
 - The task requires dry-run first, then staged implementation.
 - The user explicitly says not to delete, overwrite, reinstall, re-clean, or
   mutate a baseline.
-- Cursor or any delegated Claude Code CLI run must first return root cause,
-  design, and implementation plan before editing.
+- The confirmed execution contract explicitly requests a planning-only pass
+  before any later implementation card.
 
 Examples:
 
@@ -287,12 +300,10 @@ permission mode — it only sets the default when `Permission mode:` is omitted)
 - Read existing code, docs, directories, and relevant data shape.
 - **Heavy plan** (`plan-only`, declared or the default when `Permission mode:` is
   unspecified for this high-risk class): return root cause, design, implementation
-  plan, and verification plan first, then wait for explicit human approval before
-  any code change.
-- **Heavy execute** (`edit-with-confirmation` / `execute-and-verify`): run and
-  verify per the task card. `edit-with-confirmation` pauses for confirmation
-  before each mutation; `execute-and-verify` runs directly. The level adds no
-  extra mutation confirmation.
+  plan, and verification plan, then stop without making any code change. A later
+  implementation requires an `execute-and-verify` task card.
+- **Heavy execute** (`execute-and-verify`): run and verify directly per the task
+  card. The level adds no planning round.
 - First implementation pass must be dry-run or read-only audit when data safety
   matters.
 - An independent Review gate (human / Codex / adversarial) is required for an
@@ -401,12 +412,10 @@ Heavy prompts must additionally include:
 - Staged execution flow.
 - Dry-run or audit-first requirement.
 - Traceability and rollback requirements.
-- Independent Review gate (human / Codex / adversarial); for
-  `edit-with-confirmation` cards, a confirmation prompt before each mutation.
+- Independent Review gate (human / Codex / adversarial).
 - Resume / compression recovery rules: on "继续", context compression, or
   task-notification resume, reread the task card, run `git status --short`,
   reconfirm `review_targets`, and honor the card's permission mode before
-  mutation (`edit-with-confirmation` pauses at its confirmation prompt;
-  `plan-only` awaits explicit approval; `execute-and-verify` resumes execution
-  and verification). A resume token is not new approval; the confirmed task card
-  is the authority source.
+  mutation (`plan-only` remains non-mutating; `execute-and-verify` resumes
+  execution and verification). A resume token cannot rewrite the confirmed task
+  card's authority.

@@ -32,7 +32,7 @@ pub struct TaskPolicyInput {
     ///   | "remote-control" | "background-agent"
     pub execution_surface: String,
 
-    /// Permission mode: "read-only" | "plan-only" | "edit-with-confirmation" | "execute-and-verify"
+    /// Permission mode: "plan-only" | "execute-and-verify"
     pub permission_mode: String,
 
     /// Parallelism: "none" | "subagent" | "worktree" | "multi-session" | "agent-team"

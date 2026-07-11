@@ -75,9 +75,9 @@ pub(crate) fn check_execution_authority_gate(
     // task to be executed.
     if authority == "within-card" {
         // within-card requires explicit permission mode that allows execution
-        if permission == "read-only" || permission == "plan-only" {
+        if permission == "plan-only" {
             errors.push(format!(
-                "[{}] Workflow authority 为 within-card，但 Permission mode 为 {}（需要 edit-with-confirmation 或 execute-and-verify）",
+                "[{}] Workflow authority 为 within-card，但 Permission mode 为 {}（需要 execute-and-verify）",
                 error_code::WORKFLOW_AUTHORITY_VIOLATION,
                 permission
             ));

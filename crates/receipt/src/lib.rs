@@ -5,7 +5,7 @@
 //!
 //! A receipt captures the full audit trail of a task run:
 //! - `task_card_hash` — SHA-256 of the task card content
-//! - `gate_result` — gate check decision (allow / confirm / stop) and optional reason
+//! - `gate_result` — gate check decision (allow / stop) and optional reason
 //! - `verification_results` — list of verification commands with exit codes and output hashes
 //! - `delivery_report_hash` — SHA-256 of the delivery report (optional)
 //!
@@ -109,7 +109,7 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
 /// Generate a receipt from explicit input parameters.
 ///
 /// - `task_card_path`: path to the task card file (used to compute hash)
-/// - `gate_decision`: gate check decision (allow / confirm / stop)
+/// - `gate_decision`: gate check decision (allow / stop)
 /// - `gate_reason`: optional reason for gate decision
 /// - `verification_results`: list of verification command results
 /// - `delivery_report_path`: optional path to delivery report (used to compute hash)
@@ -1043,7 +1043,7 @@ mod tests {
             task_card_hash: "abc123".to_string(),
             task_card_path: None,
             gate_result: GateResult {
-                decision: "confirm".to_string(),
+                decision: "allow".to_string(),
                 reason: None,
             },
             verification_results: vec![VerificationResult {
@@ -1191,7 +1191,7 @@ mod tests {
             "skill-apply",
             None,
             GateResult {
-                decision: "confirm".to_string(),
+                decision: "allow".to_string(),
                 reason: None,
             },
             vec![],

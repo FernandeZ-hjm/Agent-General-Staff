@@ -138,7 +138,7 @@ Future transports (SSE, WebSocket) may be added in later versions.
 | `ags_task_validate` | Validate a task card against the canonical format gate |
 | `ags_policy_resolve` | Resolve execution policy for a validated task card |
 | `ags_verify_local` | Run local-scope verification (fmt, test, build, fixtures, YAML, preflight). Fixed-scope — not downgradable by caller input |
-| `ags_solution_check` | Check whether solution formation phase allows an executable task card. Also runs the deterministic prompt-request classifier over `summary` and returns `detected_task_card_request` + `detected_triggers` (advisory — detection does NOT authorize a card), plus advisory-intent fields `detected_advisory_intent` / `mutation_allowed` / `advisory_block_reason`, and an advisory `value_route` block (效价比路由) |
+| `ags_solution_check` | Validate-first entry for a raw request, solution summary, or existing canonical task card. A `summary` whose first non-empty line is `## 任务卡` is validated before classification: valid cards skip generation and continue to policy/runner; invalid cards stop. Raw input retains deterministic request/advisory classification plus the advisory `value_route` block (效价比路由) |
 
 > **Initialization gate rule**: `ags_preflight` is the mandatory first call.
 > All other tools (including `ags_solution_check`, `ags_task_validate`, etc.) must only
@@ -149,6 +149,12 @@ Future transports (SSE, WebSocket) may be added in later versions.
 
 `ags_solution_check` runs the deterministic `prompt-request-classifier` over the
 `summary` argument and returns two advisory fields:
+
+Before that classifier runs, a canonical `## 任务卡` header triggers
+existing-card validation. Valid cards return `phase=existing_task_card`,
+`task_card_generation_required=false`, and `next_tool=ags_policy_resolve`;
+invalid card-shaped input returns `phase=invalid_task_card` and
+`block_reason=validation_failed`. Neither path falls through to card generation.
 
 - `detected_task_card_request` (bool) — the summary matches a prompt/task-card
   request ("给我提示词", "生成任务卡", "交给 Claude Code", "给 CC 执行",
@@ -196,6 +202,11 @@ This is **advisory only**: Value Route shapes the path form and never changes th
 Light / Medium / Heavy level, permission mode, Review gate, or Verification gate.
 The same `value_route` block is exposed on the CLI side by `ags gate
 prompt-request`. See `protocol/agent-task-protocol.md` §3.9.
+
+If the host turns that route into a task card, non-mutating advisory/planning
+routes use `Permission mode: plan-only`; implementation routes use
+`Permission mode: execute-and-verify`. These are the only task-card permission
+modes.
 
 ### Quiet-by-default visible status
 

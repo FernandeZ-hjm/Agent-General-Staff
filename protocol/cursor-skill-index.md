@@ -79,7 +79,8 @@ Use this when Cursor needs to hand work to Claude Code CLI, another agent, or a 
 - 不读取或打印密钥
 - 保持现有架构约定
 - 按 light / medium / heavy 分级执行
-- heavy 任务先给 root cause / 设计 / 计划，等确认再修改
+- 按任务卡 Permission mode 执行：`plan-only` 只诊断和出计划，
+  `execute-and-verify` 直接执行并验证；Heavy 不另行强制计划
 - 完成后运行相关验证
 
 [skill: verification-before-completion]

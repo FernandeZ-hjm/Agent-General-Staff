@@ -9,8 +9,10 @@
 //! Hosts MUST complete preflight (MCP or CLI fallback) before invoking
 //! phase or mutation-adjacent AGS tools. `ags_agent_instructions` is a
 //! read-only bootstrap helper and may be called before preflight so host UIs
-//! can discover that preflight is required. `ags_solution_check` is a phase
-//! gate, NOT a preflight substitute.
+//! can discover that preflight is required. For raw requests,
+//! `ags_solution_check` is a phase gate; for a complete canonical task-card
+//! payload, it is a validate-first handoff to policy/runner consumption. It is
+//! NOT a preflight substitute.
 //!
 use std::path::PathBuf;
 
@@ -120,7 +122,7 @@ pub fn list_tools() -> ToolListResult {
             ),
             tool_def(
                 TOOL_POLICY_RESOLVE,
-                "Resolve execution policy for a validated task card. Returns effective permission mode, effective parallelism, allowed launch args, downgrade reasons, stop reasons, and confirmation gate requirements. Read-only — never launches a runner. Structured approval signals (never read from the task-card text) are accepted so MCP hosts resolve identical policy to the CLI gate: `approve_writes` and `current_task_approval`. These are audit/hint signals only — the resolver does NOT downgrade a card by task level, so a card is executable from its declared permission mode. The confirmation gate is tied to the edit-with-confirmation permission mode, not the task level. `approve_writes` may still act as the M9 generic-adapter capability override.",
+                "Resolve execution policy for a validated task card. Returns the effective two-mode permission (`plan-only` or `execute-and-verify`), effective parallelism, allowed launch args, downgrade reasons, and stop reasons. Read-only — never launches a runner. Structured approval signals (never read from task-card text) are audit hints only; task level does not rewrite the declared mode. `approve_writes` may still act as the M9 generic-adapter capability override.",
                 serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -155,13 +157,13 @@ pub fn list_tools() -> ToolListResult {
             ),
             tool_def(
                 TOOL_SOLUTION_CHECK,
-                "Check whether the current phase allows an executable task card. Returns: whether solution formation is still required and whether a task-card instruction is needed (task_card_requested=false blocks executable output with block_reason=task_card_not_requested). It also runs a deterministic prompt-request classifier over `summary` and returns `detected_task_card_request` + `detected_triggers` so the host recognizes \"give me a prompt / generate a task card / hand off to Claude Code\" intent instead of treating it as prose — advisory only: detection alone does NOT authorize a card (the three-gate threshold still requires an explicit task-card instruction). It surfaces two advisory, deterministic routing blocks: `value_route` (效价比路由 — the minimal execution-path form that covers the risk) and `capability_route` (能力路由 — which managed capability to suggest the host wake up for the demand, and whether it is reachable). Both are advisory-only and never change the task level, permission mode, Review gate, or Verification gate; capability_route never auto-invokes anything and never blocks. Optional `active_host` (or `agent`) and `target` shape the capability route for a specific host/repo; when omitted on the MCP server, the values from a successful `ags_preflight` are reused. This is a phase gate, NOT a preflight substitute — preflight must complete first. Read-only.",
+                "Validate-first entry for a raw request, solution summary, or complete canonical task card. A summary beginning with `## 任务卡` is validated before keyword classification: a valid card returns phase=existing_task_card, task_card_generation_required=false, next_tool=ags_policy_resolve and proceeds to runner consumption; an invalid card-shaped payload returns phase=invalid_task_card, block_reason=validation_failed, and never falls through to task-card generation. Raw requests keep the solution/task-card instruction gate: task_card_requested=false blocks executable output with block_reason=task_card_not_requested, while deterministic prompt classification and advisory value/capability routes remain unchanged. This is NOT a preflight substitute. Read-only.",
                 serde_json::json!({
                     "type": "object",
                     "properties": {
                         "summary": {
                             "type": "string",
-                            "description": "User request or current solution summary"
+                            "description": "User request, current solution summary, or complete canonical task-card markdown"
                         },
                         "task_card_requested": {
                             "type": "boolean",
@@ -607,7 +609,6 @@ fn tool_policy_resolve(args: &serde_json::Value) -> Result<String, String> {
         stop_reasons: Vec<serde_json::Value>,
         was_downgraded: bool,
         downgrade_reasons: Vec<serde_json::Value>,
-        requires_confirmation_gate: bool,
         execution_effort: String,
         is_exhaustive_mode: bool,
         approval_source: String,
@@ -643,14 +644,12 @@ fn tool_policy_resolve(args: &serde_json::Value) -> Result<String, String> {
         stop_reasons,
         was_downgraded: policy.was_downgraded,
         downgrade_reasons,
-        requires_confirmation_gate: policy.requires_confirmation_gate,
         execution_effort: policy.execution_effort,
         is_exhaustive_mode: policy.is_exhaustive_mode,
         approval_source: policy.approval_source.to_string(),
         visible_status: Some(
             ags_verify::derive_visible_status(&ags_verify::StatusSignals {
                 blocked_by_policy: policy.stop_before_launch,
-                needs_user_decision: policy.requires_confirmation_gate,
                 ..Default::default()
             })
             .as_str()
@@ -674,12 +673,71 @@ fn tool_verify_local(args: &serde_json::Value) -> Result<String, String> {
     serde_json::to_string_pretty(&report).map_err(|e| format!("JSON serialize error: {}", e))
 }
 
+/// If `summary` claims the canonical task-card header, validate it before any
+/// natural-language request classification. Returning `None` preserves the
+/// existing raw-request solution path byte-for-byte. A card-shaped invalid
+/// payload fails closed instead of being reinterpreted as a request to generate
+/// another task card.
+fn existing_task_card_solution(
+    summary: &str,
+    task_card_requested: bool,
+) -> Option<Result<String, String>> {
+    if !task_card_validator::output_is_canonical_header(summary) {
+        return None;
+    }
+
+    let validation_errors = task_card_validator::validate(summary);
+    let task_card_valid = validation_errors.is_empty();
+    let (phase, block_reason, next_tool, next_step, visible_status) = if task_card_valid {
+        (
+            "existing_task_card",
+            None,
+            Some("ags_policy_resolve"),
+            "Existing canonical task card validated. Skip generation and call `ags_policy_resolve` with this card, then execute it through the governed runner.",
+            "OK",
+        )
+    } else {
+        (
+            "invalid_task_card",
+            Some("validation_failed"),
+            None,
+            "Fix the task-card validation errors and resubmit this card; do not treat it as a new-card request.",
+            "BLOCKED_BY_POLICY",
+        )
+    };
+
+    let output = serde_json::json!({
+        "entry_kind": phase,
+        "executable_allowed": task_card_valid,
+        "block_reason": block_reason,
+        "phase": phase,
+        "task_card_requested": task_card_requested,
+        "task_card_valid": task_card_valid,
+        "task_card_generation_required": false,
+        "next_tool": next_tool,
+        "validation_errors": validation_errors,
+        "detected_task_card_request": false,
+        "detected_triggers": [],
+        "next_step": next_step,
+        "trivial_possible": false,
+        "value_route": null,
+        "capability_route": null,
+        "visible_status": visible_status,
+    });
+
+    Some(serde_json::to_string_pretty(&output).map_err(|e| format!("JSON serialize error: {}", e)))
+}
+
 fn tool_solution_check(args: &serde_json::Value) -> Result<String, String> {
     let summary = get_string(args, "summary")?;
     let task_card_requested = args
         .get("task_card_requested")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+
+    if let Some(result) = existing_task_card_solution(&summary, task_card_requested) {
+        return result;
+    }
 
     // Resolve the active host + target for the advisory Capability Route.
     // Explicit `active_host` wins, then `agent`; the MCP server fills these from
@@ -875,6 +933,27 @@ mod tests {
 
     static DISABLE_HOST_PROBES: Once = Once::new();
 
+    fn valid_heavy_card(permission_mode: &str) -> String {
+        let card = include_str!("../../../tests/fixtures/valid-full.md")
+            .replace("任务级别：Light", "任务级别：Heavy")
+            .replace(
+                "Permission mode: execute-and-verify",
+                &format!("Permission mode: {permission_mode}"),
+            )
+            .replace(
+                "- Light review",
+                "- 按 protocol/agent-task-protocol.md 的 Review Gate 规则执行当前任务级别。",
+            );
+        if permission_mode == "plan-only" {
+            card.replace(
+                "交付：\n按协议输出测试通过结果",
+                "交付：\n返回用户/Codex 审阅，等待明确批准，不得直接修改。",
+            )
+        } else {
+            card
+        }
+    }
+
     fn disable_host_probes_for_tests() {
         DISABLE_HOST_PROBES.call_once(|| {
             std::env::set_var("AGS_DISABLE_HOST_PROBES", "1");
@@ -941,6 +1020,54 @@ mod tests {
     }
 
     #[test]
+    fn solution_check_valid_existing_cards_skip_generation_route() {
+        for mode in ["plan-only", "execute-and-verify"] {
+            let v = run_solution_check(&valid_heavy_card(mode), false);
+            assert_eq!(v["phase"], "existing_task_card", "mode={mode}: {v}");
+            assert_eq!(v["task_card_valid"], true, "mode={mode}: {v}");
+            assert_eq!(v["executable_allowed"], true, "mode={mode}: {v}");
+            assert_eq!(v["task_card_generation_required"], false, "{v}");
+            assert_eq!(v["next_tool"], "ags_policy_resolve", "{v}");
+            assert!(v["block_reason"].is_null(), "mode={mode}: {v}");
+            assert_eq!(
+                v["detected_task_card_request"], false,
+                "existing card must bypass prompt classification: {v}"
+            );
+            assert!(
+                v.get("value_route").is_none() || v["value_route"].is_null(),
+                "existing card must not receive a plan-first value route: {v}"
+            );
+            let next = v["next_step"].as_str().expect("next_step string");
+            assert!(next.contains("ags_policy_resolve"), "mode={mode}: {next}");
+            assert!(!next.contains("task compile"), "mode={mode}: {next}");
+        }
+    }
+
+    #[test]
+    fn solution_check_invalid_card_shaped_input_fails_closed() {
+        let input = "## 任务卡\n\nExecutor: Codex\nPermission mode: execute-and-verify\n";
+        for requested in [false, true] {
+            let v = run_solution_check(input, requested);
+            assert_eq!(v["phase"], "invalid_task_card", "{v}");
+            assert_eq!(v["task_card_valid"], false, "{v}");
+            assert_eq!(v["executable_allowed"], false, "{v}");
+            assert_eq!(v["task_card_generation_required"], false, "{v}");
+            assert!(v["next_tool"].is_null(), "{v}");
+            assert_eq!(v["block_reason"], "validation_failed", "{v}");
+            assert!(
+                !v["validation_errors"].as_array().unwrap().is_empty(),
+                "{v}"
+            );
+            assert_eq!(v["detected_task_card_request"], false, "{v}");
+            assert!(
+                v.get("value_route").is_none() || v["value_route"].is_null(),
+                "invalid card must not fall through to plan-first: {v}"
+            );
+            assert!(!v["next_step"].as_str().unwrap().contains("task compile"));
+        }
+    }
+
+    #[test]
     fn solution_check_exposes_value_route() {
         // Prompt/handoff intent without an instruction → plan-first, with both
         // rejected alternatives and an authority note that disclaims gate change.
@@ -985,56 +1112,20 @@ mod tests {
     }
 
     #[test]
-    fn policy_resolve_heavy_edit_not_downgraded_over_mcp() {
-        // Task level is decoupled from execution authority: a Heavy +
-        // edit-with-confirmation card resolves to edit-with-confirmation over MCP
-        // regardless of the approval signal — no level-driven downgrade. The MCP
-        // ags_policy_resolve carries the same signals as the CLI gate, so both
-        // resolve identical policy.
-        let card = include_str!("../../../tests/fixtures/valid-full.md")
-            .replace("任务级别：Light", "任务级别：Heavy")
-            .replace(
-                "Permission mode: execute-and-verify",
-                "Permission mode: edit-with-confirmation",
+    fn policy_resolve_exposes_only_the_two_canonical_modes() {
+        for mode in ["plan-only", "execute-and-verify"] {
+            let card = valid_heavy_card(mode);
+            let out = call_tool(
+                TOOL_POLICY_RESOLVE,
+                &serde_json::json!({ "task_card": card }),
             )
-            // An executable Heavy card must declare an independent Review gate
-            // (HEAVY_EXECUTABLE_MISSING_REVIEW_GATE); delegate to the protocol.
-            .replace(
-                "- Light review",
-                "- 按 protocol/agent-task-protocol.md 的 Review Gate 规则执行当前任务级别。",
+            .expect("policy resolve ok");
+            let value: serde_json::Value = serde_json::from_str(&out).expect("valid json");
+            assert_eq!(
+                value["effective_permission_mode"], mode,
+                "Heavy task level must preserve canonical mode {mode}: {value}"
             );
-
-        // Without approval → still edit-with-confirmation (task level does not downgrade).
-        let no = call_tool(
-            TOOL_POLICY_RESOLVE,
-            &serde_json::json!({ "task_card": card }),
-        )
-        .expect("policy resolve ok");
-        let vno: serde_json::Value = serde_json::from_str(&no).expect("valid json");
-        assert_eq!(
-            vno["effective_permission_mode"], "edit-with-confirmation",
-            "Heavy must NOT be downgraded by task level: {vno}"
-        );
-        assert_eq!(
-            vno["requires_confirmation_gate"], true,
-            "edit-with-confirmation must require a confirmation gate: {vno}"
-        );
-        assert_eq!(
-            vno["was_downgraded"], false,
-            "Heavy edit card must not record a downgrade: {vno}"
-        );
-
-        // With current_task_approval → identical resolution (signal is audit/hint only).
-        let yes = call_tool(
-            TOOL_POLICY_RESOLVE,
-            &serde_json::json!({ "task_card": card, "current_task_approval": true }),
-        )
-        .expect("policy resolve ok");
-        let vyes: serde_json::Value = serde_json::from_str(&yes).expect("valid json");
-        assert_eq!(
-            vyes["effective_permission_mode"], "edit-with-confirmation",
-            "approval signal must not change the resolved mode: {vyes}"
-        );
+        }
     }
 
     #[test]

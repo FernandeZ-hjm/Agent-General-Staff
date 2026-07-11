@@ -552,10 +552,6 @@ pub fn render_text(plan: &LaunchPlan) -> String {
                 lines.push(format!("    - {}", reason));
             }
         }
-        lines.push(format!(
-            "  Confirmation gate: {}",
-            policy.requires_confirmation_gate
-        ));
         if policy.was_downgraded {
             lines.push("  Downgrades:".to_string());
             for reason in &policy.downgrade_reasons {
@@ -634,7 +630,6 @@ pub fn render_text(plan: &LaunchPlan) -> String {
     lines.push("─ Summary ─".to_string());
     let verdict = match plan.gate_decision.as_str() {
         "allow" => "PROCEED — gate passed, ready for execution",
-        "confirm" => "CONFIRM — requires confirmation gate before mutation",
         "stop" => "STOP — blocked, cannot execute",
         _ => "UNKNOWN",
     };
@@ -710,7 +705,6 @@ mod tests {
             stop_reasons: vec![],
             was_downgraded: false,
             downgrade_reasons: vec![],
-            requires_confirmation_gate: false,
             execution_effort: "normal".into(),
             is_exhaustive_mode: false,
             approval_source: ApprovalSource::None,
@@ -736,7 +730,6 @@ mod tests {
             stop_reasons: vec![],
             was_downgraded: false,
             downgrade_reasons: vec![],
-            requires_confirmation_gate: false,
             execution_effort: "normal".into(),
             is_exhaustive_mode: false,
             approval_source: ApprovalSource::None,
@@ -753,7 +746,7 @@ mod tests {
         let policy = ResolvedExecutionPolicy {
             executor: "Cursor".into(),
             runtime_adapter: "cursor".into(),
-            effective_permission_mode: PermissionMode::EditWithConfirmation,
+            effective_permission_mode: PermissionMode::ExecuteAndVerify,
             effective_parallelism: Parallelism::None,
             effective_execution_surface: "ide".into(),
             allowed_launch_args: vec![],
@@ -761,7 +754,6 @@ mod tests {
             stop_reasons: vec![],
             was_downgraded: false,
             downgrade_reasons: vec![],
-            requires_confirmation_gate: false,
             execution_effort: "normal".into(),
             is_exhaustive_mode: false,
             approval_source: ApprovalSource::None,
@@ -785,7 +777,6 @@ mod tests {
             stop_reasons: vec![],
             was_downgraded: false,
             downgrade_reasons: vec![],
-            requires_confirmation_gate: false,
             execution_effort: "normal".into(),
             is_exhaustive_mode: false,
             approval_source: ApprovalSource::None,
@@ -839,7 +830,7 @@ mod tests {
         let policy = ResolvedExecutionPolicy {
             executor: "Claude Code".into(),
             runtime_adapter: "claude-code".into(),
-            effective_permission_mode: PermissionMode::ReadOnly,
+            effective_permission_mode: PermissionMode::PlanOnly,
             effective_parallelism: Parallelism::None,
             effective_execution_surface: "cli".into(),
             allowed_launch_args: vec![], // empty — M5/M6 enforced
@@ -847,7 +838,6 @@ mod tests {
             stop_reasons: vec![],
             was_downgraded: true, // parallelism was downgraded
             downgrade_reasons: vec![],
-            requires_confirmation_gate: false,
             execution_effort: "normal".into(),
             is_exhaustive_mode: false,
             approval_source: ApprovalSource::None,
@@ -881,7 +871,6 @@ mod tests {
             stop_reasons: vec![],
             was_downgraded: false,
             downgrade_reasons: vec![],
-            requires_confirmation_gate: false,
             execution_effort: "normal".into(),
             is_exhaustive_mode: false,
             approval_source: ApprovalSource::None,

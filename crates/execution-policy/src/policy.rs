@@ -11,9 +11,7 @@ use std::fmt;
 /// Effective permission mode resolved by the execution-policy engine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PermissionMode {
-    ReadOnly,
     PlanOnly,
-    EditWithConfirmation,
     ExecuteAndVerify,
 }
 
@@ -22,26 +20,22 @@ impl PermissionMode {
     #[allow(clippy::should_implement_trait)] // inherent infallible parser returning Self, not std::str::FromStr
     pub fn from_str(s: &str) -> Self {
         match s {
-            "read-only" => Self::ReadOnly,
             "plan-only" => Self::PlanOnly,
-            "edit-with-confirmation" => Self::EditWithConfirmation,
             "execute-and-verify" => Self::ExecuteAndVerify,
-            _ => Self::ReadOnly, // safest fallback for unknown values
+            _ => Self::PlanOnly, // fail closed if an unvalidated value reaches the resolver
         }
     }
 
     /// Whether writes are forbidden under this mode.
     pub fn forbids_writes(&self) -> bool {
-        matches!(self, Self::ReadOnly | Self::PlanOnly)
+        matches!(self, Self::PlanOnly)
     }
 }
 
 impl fmt::Display for PermissionMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
-            Self::ReadOnly => "read-only",
             Self::PlanOnly => "plan-only",
-            Self::EditWithConfirmation => "edit-with-confirmation",
             Self::ExecuteAndVerify => "execute-and-verify",
         };
         write!(f, "{}", s)
@@ -188,9 +182,7 @@ impl Serialize for ApprovalSource {
 /// Why the executor should stop before launch.
 ///
 /// `stop_before_launch=true` means **do not launch at all** — the task card
-/// must be rewritten or the environment corrected.  This is distinct from
-/// `requires_confirmation_gate`, which means launch but present a confirmation
-/// prompt before mutation.
+/// must be rewritten or the environment corrected.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StopReason {
     /// Active parallelism requested but effective permission mode forbids
@@ -204,7 +196,7 @@ pub enum StopReason {
     RuntimePermissionGap { adapter: String, requested: String },
     /// Background-agent execution surface requested but effective permission
     /// mode forbids writes — background/headless execution could have side
-    /// effects incompatible with read-only or plan-only.
+    /// effects incompatible with plan-only.
     BackgroundSurfaceBlockedByPermission { effective_permission: String },
 }
 
@@ -333,7 +325,7 @@ impl DowngradeReason {
     }
 
     /// Write-mode parallelism stripped because effective permission forbids writes.
-    pub fn parallelism_stripped_for_readonly_mode(requested: &str, permission: &str) -> Self {
+    pub fn parallelism_stripped_for_non_mutating_mode(requested: &str, permission: &str) -> Self {
         Self {
             rule_id: "M5".to_string(),
             field: "parallelism".to_string(),
@@ -348,7 +340,7 @@ impl DowngradeReason {
 
     /// Background-agent execution surface stripped because effective permission
     /// forbids writes — headless background execution could have side effects.
-    pub fn background_surface_stripped_for_readonly_mode(permission: &str) -> Self {
+    pub fn background_surface_stripped_for_non_mutating_mode(permission: &str) -> Self {
         Self {
             rule_id: "M5".to_string(),
             field: "execution_surface".to_string(),
@@ -406,17 +398,15 @@ pub struct ResolvedExecutionPolicy {
     pub effective_parallelism: Parallelism,
 
     /// Effective execution surface after rule resolution (may be downgraded).
-    /// When background-agent is blocked by read-only/plan-only, this falls
+    /// When background-agent is blocked by plan-only, this falls
     /// back to "cli" — the task can still run interactively.
     pub effective_execution_surface: String,
 
     /// CLI arguments that are safe to pass to the executor.
-    /// For read-only/plan-only, this will never include write-enabling flags.
+    /// For plan-only, this will never include write-enabling flags.
     pub allowed_launch_args: Vec<String>,
 
     /// If true, the runner must NOT launch — stop with `stop_reasons`.
-    /// This is distinct from `requires_confirmation_gate`: stop means the
-    /// task card must be rewritten or approval obtained before any execution.
     pub stop_before_launch: bool,
 
     /// Why the launch was stopped (only meaningful if `stop_before_launch`).
@@ -428,12 +418,6 @@ pub struct ResolvedExecutionPolicy {
 
     /// One entry per downgrade, for audit trail (M8).
     pub downgrade_reasons: Vec<DowngradeReason>,
-
-    /// Whether the executor must present a confirmation prompt before each
-    /// mutation. Tied to the `edit-with-confirmation` permission mode, NOT the
-    /// task level. A card carries no confirmation gate unless its effective
-    /// permission mode is edit-with-confirmation.
-    pub requires_confirmation_gate: bool,
 
     /// The declared execution effort from the task card.
     pub execution_effort: String,
@@ -449,7 +433,7 @@ pub struct ResolvedExecutionPolicy {
 impl Serialize for ResolvedExecutionPolicy {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut map = serializer.serialize_map(None)?;
-        map.serialize_entry("schema_version", "2.0-m3")?;
+        map.serialize_entry("schema_version", "2.0-m4")?;
         map.serialize_entry("executor", &self.executor)?;
         map.serialize_entry("runtime_adapter", &self.runtime_adapter)?;
         map.serialize_entry("effective_permission_mode", &self.effective_permission_mode)?;
@@ -463,10 +447,6 @@ impl Serialize for ResolvedExecutionPolicy {
         map.serialize_entry("stop_reasons", &self.stop_reasons)?;
         map.serialize_entry("was_downgraded", &self.was_downgraded)?;
         map.serialize_entry("downgrade_reasons", &self.downgrade_reasons)?;
-        map.serialize_entry(
-            "requires_confirmation_gate",
-            &self.requires_confirmation_gate,
-        )?;
         map.serialize_entry("execution_effort", &self.execution_effort)?;
         map.serialize_entry("is_exhaustive_mode", &self.is_exhaustive_mode)?;
         map.serialize_entry("approval_source", &self.approval_source)?;
@@ -482,12 +462,8 @@ impl Serialize for ResolvedExecutionPolicy {
 /// runner: runners must check this decision, not interpret raw policy fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GateDecision {
-    /// Safe to launch without additional confirmation.
+    /// Safe to launch under the resolved permission mode.
     Allow,
-    /// Safe to launch but requires a confirmation gate before mutation.
-    /// Plan-only / read-only tasks may proceed with safe planning;
-    /// write-capable tasks require explicit approval.
-    Confirm,
     /// Do not launch — task card must be rewritten or approval obtained.
     Stop,
 }
@@ -496,7 +472,6 @@ impl fmt::Display for GateDecision {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
             Self::Allow => "allow",
-            Self::Confirm => "confirm",
             Self::Stop => "stop",
         };
         write!(f, "{}", s)

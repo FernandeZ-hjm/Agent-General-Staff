@@ -27,6 +27,17 @@ Do NOT skip preflight based on model memory.
 5. **Execution Contract → Value Route → Routing** — `ags_solution_check` surfaces a Value Route (效价比路由): the minimal execution-path form that still covers the risk (advisory; does NOT change level/permission/gates). Then classify as Light/Medium/Heavy from the confirmed solution.
 6. **Gate / Execution / Receipt** — validate → resolve → execute → verify → deliver.
 
+Existing-card entry: if the first non-empty line is `## 任务卡`, do not run the
+raw-request lifecycle again. `ags_solution_check` validates first; a valid card
+continues to `ags_policy_resolve` and the runner, while an invalid card stops.
+
+Task cards have exactly two permission modes: `plan-only` and
+`execute-and-verify`. Light/Medium default to direct execution. Heavy defaults
+to `plan-only`, but explicit Heavy `execute-and-verify` runs and verifies
+directly; Heavy adds an independent review gate, not a plan-first or extra
+permission pause. Protected destructive/external/release actions keep their
+own stop conditions.
+
 ### Critical rules:
 
 - Initialization Gate FIRST: call `ags_preflight` (MCP) or CLI fallback. No exceptions.

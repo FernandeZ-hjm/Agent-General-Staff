@@ -49,52 +49,20 @@ pub(crate) fn apply_ultracode_rules(input: &TaskPolicyInput, policy: &mut Resolv
     }
 }
 
-// ── M4: Confirmation gate from the permission mode (NOT the task level) ───
+// ── M4: task level does not rewrite permission ─────────────────────────
 //
-// The confirmation gate is a property of the PERMISSION MODE, not the task
-// LEVEL. `edit-with-confirmation` is the only built-in confirmation trigger:
-// it asks the runner to pause for confirmation before each mutation. Task
-// level (Light / Medium / Heavy) is a risk/review tier and NEVER sets this
-// gate — a Heavy card executes under its declared permission mode like any
-// other card. The Heavy review boundary is enforced by the task-card
-// validator's independent Review-gate requirement, not by a resolver
-// confirmation gate. Consequences:
-//   - any-level + edit-with-confirmation → confirmation-gated (GateDecision
-//     Confirm) because of the permission mode, regardless of task level.
-//   - any-level + execute-and-verify → executes directly (GateDecision Allow);
-//     execute-and-verify is NOT capped to edit and gets no extra mutation gate.
-//   - plan-only / read-only → no confirmation gate (writes are forbidden).
-// This rule runs AFTER the generic-adapter cap (M9): if a declared
-// edit-with-confirmation was capped to plan-only, the effective mode forbids
-// writes and no confirmation gate is set.
-//
-// The hard STOP boundaries (protected paths, the read-only/plan-only
-// writability gate M5/M6, the generic-adapter cap M9, and release / external /
-// destructive stop conditions) are enforced by their own rules, independent of
-// the task level. Approval sources (current-task instruction / CLI flag /
-// runner env) are audit/hint signals (M9 may still consult `approve_writes`
-// as an adapter-capability override).
+// Permission has exactly two states: plan-only and execute-and-verify. The
+// task level is a risk/review tier and never rewrites the selected state.
+// Heavy review remains an independent validator boundary.
 
-/// Apply the confirmation-gate rule (M4).
-///
-/// Sets `requires_confirmation_gate` iff the EFFECTIVE permission mode is
-/// `edit-with-confirmation`. Task level never sets this gate, never downgrades
-/// the permission mode, and never stops. This is the only field M4 touches.
-/// Must run after M9 so a capped permission mode is reflected.
-pub(crate) fn apply_confirmation_gate_rule(policy: &mut ResolvedExecutionPolicy) {
-    if policy.effective_permission_mode == PermissionMode::EditWithConfirmation {
-        policy.requires_confirmation_gate = true;
-    }
-}
-
-// ── M5–M6: read-only / plan-only → no write-type launch args ────────────
+// ── M5–M6: plan-only → no write-type launch args ───────────────────────
 //
 // When the effective permission mode forbids writes, the allowed launch args
 // must not include anything that enables write operations.  This is enforced
 // inside `generate_launch_args()` — this function provides a post-check for
 // the structural invariant.
 
-/// Ensure read-only and plan-only policies never carry write-type args (M5, M6).
+/// Ensure plan-only policies never carry write-type args (M5, M6).
 ///
 /// This is a post-condition check.  `generate_launch_args()` is the primary
 /// enforcement point; this function provides a debug-assertion safety net.
@@ -104,12 +72,11 @@ pub(crate) fn apply_launch_args_writability_gate(policy: &ResolvedExecutionPolic
         // Write-enabling flags that must NEVER appear when forbids_writes():
         //   --parallel (enables multi-agent execution)
         //   --worktree (creates a git worktree — filesystem write)
-        //   --headless  (background execution may have side effects in read-only)
+        //   --headless  (background execution may have side effects)
         //   --permission-mode acceptEdits
         //   --permission-mode bypassPermissions
         //
         // Safe args for plan-only: --permission-mode plan
-        // Safe args for read-only:  (none)
         for arg in &policy.allowed_launch_args {
             if arg == "--parallel" || arg == "--worktree" || arg == "--headless" {
                 panic!(
@@ -190,9 +157,7 @@ pub(crate) fn apply_generic_adapter_rule(
         return;
     }
 
-    if policy.effective_permission_mode == PermissionMode::ExecuteAndVerify
-        || policy.effective_permission_mode == PermissionMode::EditWithConfirmation
-    {
+    if policy.effective_permission_mode == PermissionMode::ExecuteAndVerify {
         record_downgrade(
             policy,
             DowngradeReason::generic_adapter_capped_at_plan_only(
@@ -251,7 +216,7 @@ pub(crate) fn apply_stop_on_stripped_parallelism(
         // Record a downgrade for the stripped parallelism
         record_downgrade(
             policy,
-            DowngradeReason::parallelism_stripped_for_readonly_mode(
+            DowngradeReason::parallelism_stripped_for_non_mutating_mode(
                 &requested_parallelism.to_string(),
                 &policy.effective_permission_mode.to_string(),
             ),
@@ -294,13 +259,13 @@ pub(crate) fn apply_stop_on_stripped_headless(
     // Record a downgrade for the stripped background-agent surface
     record_downgrade(
         policy,
-        DowngradeReason::background_surface_stripped_for_readonly_mode(
+        DowngradeReason::background_surface_stripped_for_non_mutating_mode(
             &policy.effective_permission_mode.to_string(),
         ),
     );
     // Downgrade the effective surface to cli — safe interactive fallback
     policy.effective_execution_surface = "cli".to_string();
-    // Set stop — runner must not launch headless with read-only/plan-only
+    // Set stop — runner must not launch headless in plan-only mode
     record_stop(
         policy,
         StopReason::BackgroundSurfaceBlockedByPermission {
@@ -327,9 +292,8 @@ pub(crate) fn apply_stop_before_launch_arg_gate(policy: &mut ResolvedExecutionPo
 /// Generate runtime-specific launch args based on the resolved policy.
 ///
 /// Rules enforced:
-/// - PlanOnly + claude-code: `--permission-mode plan` (safe read-only plan flag)
-/// - ReadOnly: no args
-/// - Write modes (edit-with-confirmation, execute-and-verify): no special args needed
+/// - PlanOnly + claude-code: `--permission-mode plan`
+/// - ExecuteAndVerify: no special permission arg needed
 /// - Active parallelism: runtime-specific parallelism flags (stripped if
 ///   effective permission forbids writes — M5/M6)
 /// - Ultracode does NOT inject any launch arg (M3).
@@ -349,17 +313,13 @@ pub(crate) fn generate_launch_args(input: &TaskPolicyInput, policy: &mut Resolve
                 args.push("--permission-mode".to_string());
                 args.push("plan".to_string());
             }
-            PermissionMode::ReadOnly => {
-                // No CLI flag for read-only in claude-code; the mode
-                // is enforced by the task card content.
-            }
-            PermissionMode::EditWithConfirmation | PermissionMode::ExecuteAndVerify => {
+            PermissionMode::ExecuteAndVerify => {
                 // Default claude-code behavior — no special flag needed.
             }
         }
 
         // Parallelism flags — ONLY when writes are NOT forbidden (M5/M6).
-        // read-only and plan-only must never produce --parallel or --worktree
+        // Plan-only must never produce --parallel or --worktree
         // because those flags enable filesystem side effects.
         if !forbids_writes {
             match policy.effective_parallelism {
@@ -374,8 +334,7 @@ pub(crate) fn generate_launch_args(input: &TaskPolicyInput, policy: &mut Resolve
             }
 
             // Background-agent surface — only when writes are not forbidden.
-            // Background execution in read-only mode could still have side
-            // effects (process spawning, resource consumption).
+            // Background execution is only available to the executable state.
             if input.execution_surface == "background-agent" {
                 args.push("--headless".to_string());
             }
@@ -404,7 +363,6 @@ pub(crate) fn build_initial_policy(input: &TaskPolicyInput) -> ResolvedExecution
         stop_reasons: Vec::new(),
         was_downgraded: false,
         downgrade_reasons: Vec::new(),
-        requires_confirmation_gate: false,
         execution_effort: input.effort().to_string(),
         is_exhaustive_mode: false,
         approval_source: input.approval_source.clone(),

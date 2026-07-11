@@ -320,7 +320,7 @@ pub(crate) enum Commands {
         /// Task card file (use "-" for stdin)
         path: String,
 
-        /// Stop after gate check; exit 0 if allow, 2 if confirm, 1 if stop.
+        /// Stop after gate check; exit 0 if allow, 1 if stop.
         #[arg(long, default_value_t = false)]
         check_only: bool,
 

@@ -197,7 +197,7 @@ flowchart LR
     subgraph Policy["Resolved Policy"]
         RP[ResolvedExecutionPolicy]
         RULES --> RP
-        RP --> RP_FIELDS["effective_permission_mode<br/>effective_parallelism<br/>effective_execution_surface<br/>allowed_launch_args<br/>stop_before_launch<br/>requires_confirmation_gate"]
+        RP --> RP_FIELDS["effective_permission_mode<br/>effective_parallelism<br/>effective_execution_surface<br/>allowed_launch_args<br/>stop_before_launch"]
     end
 
     subgraph Execute["Execution"]
@@ -205,10 +205,7 @@ flowchart LR
         RP --> RUN
         RUN -->|true| STOP[STOP: refuse launch]
         RUN -->|false| LAUNCH[Launch executor<br/>with allowed_launch_args]
-        LAUNCH --> CONF{confirmation_gate?}
-        CONF -->|true| WAIT[Present plan<br/>Wait for approval]
-        WAIT --> EXEC[Execute]
-        CONF -->|false| EXEC
+        LAUNCH --> EXEC[Execute and verify]
     end
 
     subgraph Receipt
@@ -232,14 +229,15 @@ flowchart LR
    Failure is fatal — no soft recovery, no downgrade, just stop and fix.
 
 2. **Policy resolver (SOFT gate)**: A valid task card may still need adjustment.
-   The resolver applies M1–M10 rules to downgrade permission, strip forbidden
-   parallelism, block background execution for read-only cards, and add
-   confirmation gates. It never rejects a valid card — it adjusts launch strategy
-   and records every downgrade with audit-trail entries.
+   The resolver applies M1–M10 rules, preserves the binary permission model
+   (`plan-only` / `execute-and-verify`), strips forbidden parallelism, and
+   records every downgrade with audit-trail entries. `plan-only` never launches
+   a writer; `execute-and-verify` executes directly. Heavy adds an independent
+   review gate, not an extra planning or confirmation round.
 
 **Core invariant**: Runners MUST consume `allowed_launch_args` from the resolved
 policy, NOT synthesize args from raw task-card fields. This ensures the M5/M6
-writability gate (read-only/plan-only cards never produce write-type launch args)
+writability gate (`plan-only` cards never produce write-type launch args)
 cannot be bypassed.
 
 ## 5. Memory Capsule & Task Archive Mechanism

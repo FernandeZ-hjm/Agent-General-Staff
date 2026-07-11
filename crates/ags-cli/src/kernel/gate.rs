@@ -73,18 +73,50 @@ fn cmd_gate_check(path: &str, format: &str, approve_writes: bool, current_task_a
     }
 
     // Exit code IS the gate contract for callers that gate on process status:
-    //   allow   → 0  (proceed autonomously)
-    //   confirm → 2  (executable, but the confirmation gate must be honored
-    //                 first — distinct from allow so an exit-code-based caller
-    //                 cannot auto-run a Heavy confirmation card without the
-    //                 confirmation handshake)
-    //   stop    → 1  (blocked / validation failure)
+    //   allow → 0 (proceed under the resolved two-mode execution policy)
+    //   stop  → 1 (blocked / validation failure)
     match output.decision {
         execution_policy::GateDecision::Stop => std::process::exit(1),
-        execution_policy::GateDecision::Confirm => std::process::exit(2),
         execution_policy::GateDecision::Allow => {}
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ExistingTaskCardState {
+    RawRequest,
+    Valid,
+    Invalid(Vec<String>),
+}
+
+/// Discriminate a canonical task-card payload before running the natural-language
+/// request classifier. The canonical header is intentionally the boundary: raw
+/// requests that merely mention task cards keep their existing classifier path,
+/// while a payload claiming to be a card must validate or fail closed.
+fn task_card_entry_state(input: &str) -> ExistingTaskCardState {
+    if !task_card_validator::output_is_canonical_header(input) {
+        return ExistingTaskCardState::RawRequest;
+    }
+
+    match task_card_validator::parse_validated(input) {
+        Ok(_) => ExistingTaskCardState::Valid,
+        Err(errors) => ExistingTaskCardState::Invalid(errors),
+    }
+}
+
+fn existing_task_card_decision(
+    state: &ExistingTaskCardState,
+    preflight_should_stop: bool,
+) -> Option<(&'static str, Option<&'static str>)> {
+    match state {
+        ExistingTaskCardState::RawRequest => None,
+        ExistingTaskCardState::Invalid(_) => Some(("stop", Some("validation_failed"))),
+        ExistingTaskCardState::Valid if preflight_should_stop => {
+            Some(("stop", Some("preflight_failed")))
+        }
+        ExistingTaskCardState::Valid => Some(("execute_task_card", None)),
+    }
+}
+
 /// Compute the prompt-request gate `decision` + `block_reason`. Deliberately a
 /// PURE function of the preflight + classification signals only — it takes NO
 /// `capability_route` (and no `value_route`), so an advisory / degraded /
@@ -127,6 +159,108 @@ fn cmd_gate_prompt_request(
         request_arg.to_string()
     };
 
+    let route_target = capability_route_root(target);
+    let (preflight_ran, preflight_should_stop, preflight_status) = if no_preflight {
+        (false, false, "skipped".to_string())
+    } else {
+        match project_discovery::AgentType::from_str(for_agent) {
+            Ok(agent) => {
+                let pf = project_discovery::run_session_preflight(&route_target, &agent);
+                (true, pf.should_stop, format!("{:?}", pf.overall_status))
+            }
+            Err(_) => (false, false, "skipped".to_string()),
+        }
+    };
+
+    // A complete task card is already past solution formation and compilation.
+    // Validate it before the keyword classifier sees its body. Invalid payloads
+    // that claim the canonical header fail closed and never fall back to the
+    // new-card generation route.
+    let task_card_state = task_card_entry_state(&request);
+    if let Some((decision, block_reason)) =
+        existing_task_card_decision(&task_card_state, preflight_should_stop)
+    {
+        let (entry_kind, task_card_valid, validation_errors, next_step) =
+            match &task_card_state {
+                ExistingTaskCardState::Valid if preflight_should_stop => (
+                    "existing_task_card",
+                    true,
+                    Vec::new(),
+                    "AGS preflight reports should_stop — resolve project/protocol health before executing the validated task card.",
+                ),
+                ExistingTaskCardState::Valid => (
+                    "existing_task_card",
+                    true,
+                    Vec::new(),
+                    "Existing canonical task card validated. Skip generation and continue with `ags policy resolve <task-card>` followed by `ags run <task-card>`.",
+                ),
+                ExistingTaskCardState::Invalid(errors) => (
+                    "invalid_task_card",
+                    false,
+                    errors.clone(),
+                    "Fix the task-card validation errors and resubmit this card; do not treat it as a new-card request.",
+                ),
+                ExistingTaskCardState::RawRequest => unreachable!(),
+            };
+
+        match format {
+            "json" => {
+                let out = serde_json::json!({
+                    "gate": "prompt_request",
+                    "entry_kind": entry_kind,
+                    "decision": decision,
+                    "block_reason": block_reason,
+                    "task_card_valid": task_card_valid,
+                    "task_card_generation_required": false,
+                    "next_command": if task_card_valid {
+                        Some("ags policy resolve")
+                    } else {
+                        None
+                    },
+                    "validation_errors": validation_errors,
+                    "is_task_card_request": false,
+                    "preflight": {
+                        "ran": preflight_ran,
+                        "should_stop": preflight_should_stop,
+                        "status": preflight_status,
+                    },
+                    "next_step": next_step,
+                });
+                match serde_json::to_string_pretty(&out) {
+                    Ok(s) => println!("{}", s),
+                    Err(e) => {
+                        eprintln!("JSON serialization error: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            _ => {
+                println!("Gate: prompt-request");
+                println!("Entry kind: {}", entry_kind);
+                println!("Decision: {}", decision);
+                println!("Task-card valid: {}", task_card_valid);
+                if preflight_ran {
+                    println!(
+                        "Preflight: status={} should_stop={}",
+                        preflight_status, preflight_should_stop
+                    );
+                }
+                if let Some(reason) = block_reason {
+                    println!("Block reason: {}", reason);
+                }
+                for error in &validation_errors {
+                    println!("  - {}", error);
+                }
+                println!("Next: {}", next_step);
+            }
+        }
+
+        if decision == "stop" {
+            std::process::exit(1);
+        }
+        return;
+    }
+
     let classification = prompt_request_classifier::classify(&request);
 
     // Value Route (效价比路由): minimal execution-path form for this request.
@@ -140,23 +274,7 @@ fn cmd_gate_prompt_request(
     // `target` (or any subdirectory of it). Parallel to Value Route. Advisory and
     // additive — it never changes `decision`, `block_reason`, the task level,
     // permission mode, Review gate, or Verification gate, and never auto-invokes.
-    let route_target = capability_route_root(target);
     let capability_route = capability_route::route_request(&request, &route_target, for_agent);
-
-    // Fail-closed precondition: project must be AGS-healthy (preflight should not
-    // stop) before we declare an executable routing requirement. The preflight
-    // agent is the same `--for` host used by the Capability Route.
-    let (preflight_ran, preflight_should_stop, preflight_status) = if no_preflight {
-        (false, false, "skipped".to_string())
-    } else {
-        match project_discovery::AgentType::from_str(for_agent) {
-            Ok(agent) => {
-                let pf = project_discovery::run_session_preflight(&route_target, &agent);
-                (true, pf.should_stop, format!("{:?}", pf.overall_status))
-            }
-            Err(_) => (false, false, "skipped".to_string()),
-        }
-    };
 
     let (decision, block_reason): (&str, Option<&str>) = prompt_request_decision(
         preflight_should_stop,
@@ -635,7 +753,73 @@ pub(crate) fn run(action: GateAction) {
 
 #[cfg(test)]
 mod capability_request_tests {
-    use super::{capability_route_root, prompt_request_decision};
+    use super::{
+        capability_route_root, existing_task_card_decision, prompt_request_decision,
+        task_card_entry_state, ExistingTaskCardState,
+    };
+
+    fn valid_heavy_card(permission_mode: &str) -> String {
+        let card = include_str!("../../../../tests/fixtures/valid-full.md")
+            .replace("任务级别：Light", "任务级别：Heavy")
+            .replace(
+                "Permission mode: execute-and-verify",
+                &format!("Permission mode: {permission_mode}"),
+            )
+            .replace(
+                "- Light review",
+                "- 按 protocol/agent-task-protocol.md 的 Review Gate 规则执行当前任务级别。",
+            );
+        if permission_mode == "plan-only" {
+            card.replace(
+                "交付：\n按协议输出测试通过结果",
+                "交付：\n返回用户/Codex 审阅，等待明确批准，不得直接修改。",
+            )
+        } else {
+            card
+        }
+    }
+
+    #[test]
+    fn entry_gate_recognizes_valid_existing_cards_before_prompt_classification() {
+        for mode in ["plan-only", "execute-and-verify"] {
+            let card = valid_heavy_card(mode);
+            assert_eq!(
+                task_card_entry_state(&card),
+                ExistingTaskCardState::Valid,
+                "valid existing {mode} card must bypass the generation classifier"
+            );
+            assert_eq!(
+                existing_task_card_decision(&ExistingTaskCardState::Valid, false),
+                Some(("execute_task_card", None)),
+                "valid existing {mode} card must route to execution"
+            );
+        }
+    }
+
+    #[test]
+    fn entry_gate_fails_closed_for_invalid_card_shaped_input() {
+        let input = "## 任务卡\n\nExecutor: Codex\nPermission mode: execute-and-verify\n";
+        let ExistingTaskCardState::Invalid(errors) = task_card_entry_state(input) else {
+            panic!("card-shaped invalid input must be rejected as a card");
+        };
+        assert!(!errors.is_empty());
+        assert_eq!(
+            existing_task_card_decision(&ExistingTaskCardState::Invalid(errors), false),
+            Some(("stop", Some("validation_failed")))
+        );
+    }
+
+    #[test]
+    fn entry_gate_leaves_raw_new_card_requests_on_classifier_path() {
+        assert_eq!(
+            task_card_entry_state("按这个方案生成一张任务卡"),
+            ExistingTaskCardState::RawRequest
+        );
+        assert_eq!(
+            existing_task_card_decision(&ExistingTaskCardState::RawRequest, false),
+            None
+        );
+    }
 
     /// The gate decision is computed only from preflight + classification — never
     /// from `capability_route`. `prompt_request_decision` takes no route argument,

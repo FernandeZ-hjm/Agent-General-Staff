@@ -1089,7 +1089,7 @@ pub fn derive_value_route(
             }),
             rejected_heavier: Some(RejectedPath {
                 path: ValuePath::PlanFirst,
-                reason: "A trivial, local change does not need a plan/confirmation gate.".to_string(),
+                reason: "A trivial, local change does not need a plan-first round.".to_string(),
             }),
             requires_user_confirmation: false,
             needs_planner_judgment: false,

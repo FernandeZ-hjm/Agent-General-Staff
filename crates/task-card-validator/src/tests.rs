@@ -775,6 +775,36 @@ fn reject_invalid_permission_mode() {
 // ── Phase 3: field-combination checks ──────────────────────
 
 #[test]
+fn reject_unsupported_permission_modes() {
+    for unsupported_mode in ["unsupported-permission-mode"] {
+        let input = card_body(&format!(
+            "路径：\n- .\n\
+             Executor: Claude Code\n\
+             Runtime adapter: claude-code\n\
+             Execution surface: cli\n\
+             Permission mode: {unsupported_mode}\n\
+             Parallelism: none\n\
+             任务级别：Medium\n\
+             读取：\n- .\n\
+             任务：查看校验器当前状态\n\
+             目标：确认校验器状态并返回观察结果\n\
+             非目标：不修改任何文件\n\
+             关键路径：\n- .\n\
+             验证：\n人工检查输出\n\
+             停止条件：\n发现需要编辑时停止并报告\n\
+             交付：\n返回观察结果\n"
+        ));
+        let errors = validate(&input);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains(error_code::INVALID_FIELD_VALUE)),
+            "unsupported Permission mode `{unsupported_mode}` must be rejected: {errors:?}"
+        );
+    }
+}
+
+#[test]
 fn reject_executor_adapter_mismatch() {
     // Executor: Claude Code requires Runtime adapter: claude-code
     let input = card_body(
@@ -836,9 +866,9 @@ fn reject_other_with_claude_code_adapter() {
 #[test]
 fn accept_heavy_with_execute_and_verify() {
     // Decoupling: Heavy + execute-and-verify is allowed. Task LEVEL is a
-    // risk/review tier, not the execution authority — the resolver adds a
-    // confirmation gate rather than rejecting the combination. With an
-    // independent Review gate declared, validation must raise neither
+    // risk/review tier, not the execution authority, and does not add a
+    // plan-first round. With an independent Review gate declared, validation
+    // must raise neither
     // FIELD_COMBINATION_MISMATCH nor HEAVY_EXECUTABLE_MISSING_REVIEW_GATE.
     let input = card_body(
         "路径：\n- .\n\
@@ -914,7 +944,7 @@ fn reject_heavy_executable_self_review_only() {
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
-             Permission mode: edit-with-confirmation\n\
+             Permission mode: execute-and-verify\n\
              Parallelism: none\n\
              任务级别：Heavy\n\
              Review gate:\n- executor self review\n\
@@ -1036,7 +1066,7 @@ fn light_task_with_protected_path_modification_fails() {
 #[test]
 fn medium_task_with_protected_path_modification_not_blocked() {
     // Medium + execute-and-verify on protected path: allowed (only Light blocked)
-    // But the protected path check only fires when Light OR plan-only/read-only.
+    // But the protected path check only fires when Light OR plan-only.
     // Medium + execute-and-verify = OK.
     let input = card_body(
         "路径：\n- /Volumes/Projects/example-private-suite\n\
@@ -1246,13 +1276,13 @@ fn reject_non_goal_no_modify_but_goal_fixes() {
 }
 
 #[test]
-fn reject_read_only_with_modification_task() {
+fn reject_plan_only_with_modification_task() {
     let input = card_body(
         "路径：\n- .\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
-             Permission mode: read-only\n\
+             Permission mode: plan-only\n\
              Parallelism: none\n\
              任务级别：Medium\n\
              读取：\n- .\n\
@@ -1269,19 +1299,19 @@ fn reject_read_only_with_modification_task() {
     assert!(
         e.iter()
             .any(|m| m.contains(error_code::CONTRADICTORY_REQUIREMENT)),
-        "read-only + modification should fail: {:?}",
+        "plan-only + modification should fail: {:?}",
         e
     );
 }
 
 #[test]
-fn read_only_with_no_modify_non_goal_passes() {
+fn plan_only_with_no_modify_non_goal_passes() {
     let input = card_body(
         "路径：\n- .\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
-             Permission mode: read-only\n\
+             Permission mode: plan-only\n\
              Parallelism: none\n\
              任务级别：Medium\n\
              读取：\n- .\n\
@@ -1296,7 +1326,7 @@ fn read_only_with_no_modify_non_goal_passes() {
     let e = validate(&input);
     assert!(
         e.is_empty(),
-        "read-only task with no-modify non-goal should pass: {:?}",
+        "plan-only task with no-modify non-goal should pass: {:?}",
         e
     );
 }
@@ -1543,13 +1573,13 @@ fn allowed_authority_with_light_level_fails() {
 }
 
 #[test]
-fn allowed_authority_with_read_only_fails() {
+fn allowed_authority_with_plan_only_fails() {
     let input = card_body(
         "路径：\n- .\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
-             Permission mode: read-only\n\
+             Permission mode: plan-only\n\
              Parallelism: none\n\
              Execution effort: normal\n\
              Workflow authority: allowed\n\
@@ -1568,7 +1598,7 @@ fn allowed_authority_with_read_only_fails() {
     assert!(
         e.iter()
             .any(|m| m.contains(error_code::WORKFLOW_AUTHORITY_VIOLATION)),
-        "allowed authority + read-only should fail: {:?}",
+        "allowed authority + plan-only should fail: {:?}",
         e
     );
 }
@@ -1580,7 +1610,7 @@ fn allowed_authority_with_protected_boundary_fails() {
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
-             Permission mode: edit-with-confirmation\n\
+             Permission mode: execute-and-verify\n\
              Parallelism: limited\n\
              Execution effort: normal\n\
              Workflow authority: allowed\n\
@@ -1612,7 +1642,7 @@ fn plan_only_authority_with_direct_modification_fails() {
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
-             Permission mode: edit-with-confirmation\n\
+             Permission mode: execute-and-verify\n\
              Parallelism: none\n\
              Execution effort: normal\n\
              Workflow authority: plan-only\n\
@@ -1769,14 +1799,14 @@ fn private_rust_path_not_confused_with_private() {
 }
 
 #[test]
-fn read_only_ultracode_observe_task_passes() {
-    // ultra code + read-only observe task: thinking intensity ≠ authority
+fn plan_only_ultracode_observe_task_passes() {
+    // ultra code + plan-only observe task: thinking intensity ≠ authority
     let input = card_body(
         "路径：\n- /Volumes/Projects/example-private-suite-rust\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
-             Permission mode: read-only\n\
+             Permission mode: plan-only\n\
              Parallelism: none\n\
              Execution effort: ultracode\n\
              Workflow authority: none\n\
@@ -1793,7 +1823,7 @@ fn read_only_ultracode_observe_task_passes() {
     let e = validate(&input);
     assert!(
         e.is_empty(),
-        "ultracode + read-only observe task should pass: {:?}",
+        "ultracode + plan-only observe task should pass: {:?}",
         e
     );
 }
@@ -2001,7 +2031,7 @@ fn within_card_with_protected_stable_modification_fails() {
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
-             Permission mode: edit-with-confirmation\n\
+             Permission mode: execute-and-verify\n\
              Parallelism: limited\n\
              Execution effort: normal\n\
              Workflow authority: within-card\n\
@@ -2034,7 +2064,7 @@ fn allowed_with_protected_bootstrap_modification_fails() {
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
-             Permission mode: edit-with-confirmation\n\
+             Permission mode: execute-and-verify\n\
              Parallelism: limited\n\
              Execution effort: normal\n\
              Workflow authority: allowed\n\
@@ -2066,7 +2096,7 @@ fn bootstrap_dry_run_read_only_reference_with_no_modify_passes() {
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
-             Permission mode: edit-with-confirmation\n\
+             Permission mode: execute-and-verify\n\
              Parallelism: none\n\
              Execution effort: normal\n\
              Workflow authority: none\n\
@@ -2095,7 +2125,7 @@ fn workflow_sync_check_crate_reference_does_not_require_workflow_authority() {
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
-             Permission mode: edit-with-confirmation\n\
+             Permission mode: execute-and-verify\n\
              Parallelism: none\n\
              Execution effort: normal\n\
              Workflow authority: none\n\
@@ -2118,13 +2148,13 @@ fn workflow_sync_check_crate_reference_does_not_require_workflow_authority() {
 }
 
 #[test]
-fn read_only_review_card_with_crate_paths_and_patch_stop_language_passes() {
+fn plan_only_review_card_with_crate_paths_and_patch_stop_language_passes() {
     let input = card_body(
             "路径：\n- /Volumes/Projects/example-private-suite\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
-             Permission mode: read-only\n\
+             Permission mode: plan-only\n\
              Parallelism: none\n\
              Execution effort: normal\n\
              Workflow authority: none\n\
@@ -2141,19 +2171,19 @@ fn read_only_review_card_with_crate_paths_and_patch_stop_language_passes() {
     let e = validate(&input);
     assert!(
             e.is_empty(),
-            "read-only review card with crate/path identifiers and stop/non-goal patch wording should pass: {:?}",
+            "plan-only review card with crate/path identifiers and stop/non-goal patch wording should pass: {:?}",
             e
         );
 }
 
 #[test]
-fn read_only_direct_patch_request_still_fails() {
+fn plan_only_direct_patch_request_still_fails() {
     let input = card_body(
         "路径：\n- .\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
-             Permission mode: read-only\n\
+             Permission mode: plan-only\n\
              Parallelism: none\n\
              Execution effort: normal\n\
              Workflow authority: none\n\
@@ -2172,19 +2202,19 @@ fn read_only_direct_patch_request_still_fails() {
     assert!(
         e.iter()
             .any(|m| m.contains(error_code::CONTRADICTORY_REQUIREMENT)),
-        "direct patch/update/implement intent must still fail under read-only: {:?}",
+        "direct patch/update/implement intent must still fail under plan-only: {:?}",
         e
     );
 }
 
 #[test]
-fn read_only_modify_task_card_template_still_fails() {
+fn plan_only_modify_task_card_template_still_fails() {
     let input = card_body(
         "路径：\n- .\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
-             Permission mode: read-only\n\
+             Permission mode: plan-only\n\
              Parallelism: none\n\
              Execution effort: normal\n\
              Workflow authority: none\n\
@@ -2203,7 +2233,7 @@ fn read_only_modify_task_card_template_still_fails() {
     assert!(
         e.iter()
             .any(|m| m.contains(error_code::CONTRADICTORY_REQUIREMENT)),
-        "read-only + modifying task-card template must still fail: {:?}",
+        "plan-only + modifying task-card template must still fail: {:?}",
         e
     );
 }
@@ -2462,7 +2492,7 @@ fn protected_boundary_keyword_hook_detected() {
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
-             Permission mode: edit-with-confirmation\n\
+             Permission mode: execute-and-verify\n\
              Parallelism: limited\n\
              Execution effort: normal\n\
              Workflow authority: within-card\n\
@@ -2500,7 +2530,7 @@ fn protected_boundary_keyword_memory_detected() {
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
-             Permission mode: edit-with-confirmation\n\
+             Permission mode: execute-and-verify\n\
              Parallelism: limited\n\
              Execution effort: normal\n\
              Workflow authority: allowed\n\
@@ -2571,7 +2601,7 @@ fn allowed_with_stable_path_and_uppercase_update_fails() {
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
-             Permission mode: edit-with-confirmation\n\
+             Permission mode: execute-and-verify\n\
              Parallelism: limited\n\
              Execution effort: normal\n\
              Workflow authority: allowed\n\
@@ -2736,7 +2766,7 @@ fn uppercase_update_with_stable_path_and_allowed_fails_direct() {
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
-             Permission mode: edit-with-confirmation\n\
+             Permission mode: execute-and-verify\n\
              Parallelism: limited\n\
              Execution effort: normal\n\
              Workflow authority: allowed\n\
@@ -3109,7 +3139,7 @@ fn full_card_verification_gate_satisfies_verification_quality() {
 Executor: Claude Code\n\n\
 Runtime adapter: claude-code\n\n\
 Execution surface: cli\n\n\
-Permission mode: edit-with-confirmation\n\n\
+Permission mode: execute-and-verify\n\n\
 Parallelism: none\n\n\
 Execution effort: normal\n\n\
 Workflow authority: none\n\n\
@@ -3142,7 +3172,7 @@ fn agent_workflow_doc_paths_do_not_request_workflow_authority() {
              Executor: Codex\n\
              Runtime adapter: codex-local\n\
              Execution surface: local-workspace\n\
-             Permission mode: read-only\n\
+             Permission mode: plan-only\n\
              Parallelism: none\n\
              Execution effort: normal\n\
              Workflow authority: none\n\
@@ -3239,7 +3269,7 @@ fn ultracode_authority_abuse_english_detected() {
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
-             Permission mode: edit-with-confirmation\n\
+             Permission mode: execute-and-verify\n\
              Parallelism: none\n\
              Execution effort: ultracode\n\
              Workflow authority: none\n\
@@ -3470,14 +3500,14 @@ fn heavy_plan_only_full_card_without_handoff_fails() {
 }
 
 #[test]
-fn read_only_with_new_keyword_deploy_detected() {
-    // M3: read-only + new keyword "deploy" triggers contradiction
+fn plan_only_with_new_keyword_deploy_detected() {
+    // M3: plan-only + new keyword "deploy" triggers contradiction
     let input = card_body(
         "路径：\n- .\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
-             Permission mode: read-only\n\
+             Permission mode: plan-only\n\
              Parallelism: none\n\
              Execution effort: normal\n\
              Workflow authority: none\n\
@@ -3496,7 +3526,7 @@ fn read_only_with_new_keyword_deploy_detected() {
     assert!(
         e.iter()
             .any(|m| m.contains(error_code::CONTRADICTORY_REQUIREMENT)),
-        "read-only + deploy/install/sync should be caught: {:?}",
+        "plan-only + deploy/install/sync should be caught: {:?}",
         e
     );
 }
@@ -3554,7 +3584,6 @@ fn all_error_codes_are_present_in_failures() {
         error_code::HEAVY_PLAN_ONLY_MISSING_REVIEW_HANDOFF,
         error_code::PLAN_ONLY_EXECUTION_VERB_DETECTED,
         error_code::FIELD_ABUSE_DETECTED,
-        error_code::AUTONOMOUS_LOW_RISK_NOT_IN_CANONICAL_GATE,
     ];
 
     // Run a few failure cases and collect all error codes seen
@@ -3595,7 +3624,7 @@ fn all_error_codes_are_present_in_failures() {
                 "CONTRADICTORY_REQUIREMENT",
                 card_body(
                     "路径：\n- .\nExecutor: Claude Code\nRuntime adapter: claude-code\n\
-                     Execution surface: cli\nPermission mode: read-only\n\
+                     Execution surface: cli\nPermission mode: plan-only\n\
                      Parallelism: none\n任务级别：Medium\n读取：\n- .\n\
                      任务：修改核心逻辑\n目标：验证功能\n非目标：不修改文件\n\
                      关键路径：\n- .\n验证：\ncargo test\n停止条件：\ntest 失败停止\n交付：\n返回结果\n",
@@ -3673,17 +3702,6 @@ fn all_error_codes_are_present_in_failures() {
                      停止条件：\ntask done\n交付：\nreturn plan\n",
                 ),
             ),
-            (
-                "AUTONOMOUS_LOW_RISK_NOT_IN_CANONICAL_GATE",
-                card_body(
-                    "路径：\n- .\nExecutor: Claude Code\nRuntime adapter: claude-code\n\
-                     Execution surface: cli\nPermission mode: autonomous-low-risk\n\
-                     Parallelism: none\nExecution effort: normal\nWorkflow authority: none\n\
-                     任务级别：Light\n读取：\n- .\n\
-                     任务：test\n目标：test\n非目标：test\n\
-                     关键路径：\n- .\n验证：\ntest\n停止条件：\ntest\n交付：\ntest\n",
-                ),
-            ),
         ];
 
     for (_label, input) in &cases {
@@ -3707,7 +3725,6 @@ fn all_error_codes_are_present_in_failures() {
         error_code::ULTRACODE_AUTHORITY_ABUSE,
         error_code::PLAN_ONLY_DELIVERY_VIOLATION,
         error_code::HEAVY_PLAN_ONLY_MISSING_REVIEW_HANDOFF,
-        error_code::AUTONOMOUS_LOW_RISK_NOT_IN_CANONICAL_GATE,
     ] {
         assert!(
             seen.contains(code),
@@ -3797,14 +3814,7 @@ fn intent_card(
 #[test]
 fn execution_effort_neutral_values_accepted() {
     for effort in ["low", "normal", "high", "exhaustive"] {
-        let card = intent_card(
-            "edit-with-confirmation",
-            "none",
-            "Medium",
-            effort,
-            "none",
-            "",
-        );
+        let card = intent_card("execute-and-verify", "none", "Medium", effort, "none", "");
         let errors = validate(&card);
         assert!(
             errors.is_empty(),
@@ -3816,7 +3826,7 @@ fn execution_effort_neutral_values_accepted() {
 #[test]
 fn execution_effort_ultracode_legacy_alias_still_accepted() {
     let card = intent_card(
-        "edit-with-confirmation",
+        "execute-and-verify",
         "none",
         "Medium",
         "ultracode",
@@ -3832,14 +3842,7 @@ fn execution_effort_ultracode_legacy_alias_still_accepted() {
 
 #[test]
 fn execution_effort_invalid_value_rejected() {
-    let card = intent_card(
-        "edit-with-confirmation",
-        "none",
-        "Medium",
-        "turbo",
-        "none",
-        "",
-    );
+    let card = intent_card("execute-and-verify", "none", "Medium", "turbo", "none", "");
     let errors = validate(&card);
     assert!(
         errors
@@ -3852,7 +3855,7 @@ fn execution_effort_invalid_value_rejected() {
 #[test]
 fn subtask_orchestration_required_with_subagent_and_within_card_passes() {
     let card = intent_card(
-        "edit-with-confirmation",
+        "execute-and-verify",
         "subagent",
         "Heavy",
         "normal",
@@ -3869,7 +3872,7 @@ fn subtask_orchestration_required_with_subagent_and_within_card_passes() {
 #[test]
 fn subtask_orchestration_required_without_authority_rejected() {
     let card = intent_card(
-        "edit-with-confirmation",
+        "execute-and-verify",
         "none",
         "Medium",
         "normal",
@@ -3888,7 +3891,7 @@ fn subtask_orchestration_required_without_authority_rejected() {
 #[test]
 fn subtask_orchestration_required_without_delegation_parallelism_rejected() {
     let card = intent_card(
-        "edit-with-confirmation",
+        "execute-and-verify",
         "none",
         "Medium",
         "normal",
@@ -3908,7 +3911,7 @@ fn subtask_orchestration_required_without_delegation_parallelism_rejected() {
 #[test]
 fn subtask_orchestration_none_with_no_authority_passes() {
     let card = intent_card(
-        "edit-with-confirmation",
+        "execute-and-verify",
         "none",
         "Medium",
         "normal",
@@ -3924,14 +3927,7 @@ fn subtask_orchestration_none_with_no_authority_passes() {
 
 #[test]
 fn subtask_orchestration_absent_passes() {
-    let card = intent_card(
-        "edit-with-confirmation",
-        "none",
-        "Medium",
-        "normal",
-        "none",
-        "",
-    );
+    let card = intent_card("execute-and-verify", "none", "Medium", "normal", "none", "");
     let errors = validate(&card);
     assert!(
         errors.is_empty(),
@@ -3942,7 +3938,7 @@ fn subtask_orchestration_absent_passes() {
 #[test]
 fn subtask_orchestration_invalid_mode_rejected() {
     let card = intent_card(
-        "edit-with-confirmation",
+        "execute-and-verify",
         "subagent",
         "Heavy",
         "normal",
@@ -3966,7 +3962,7 @@ fn exhaustive_effort_authority_abuse_detected() {
         "Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
-             Permission mode: edit-with-confirmation\n\
+             Permission mode: execute-and-verify\n\
              Parallelism: none\n\
              Execution effort: exhaustive\n\
              Workflow authority: none\n\

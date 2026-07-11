@@ -14,11 +14,19 @@ skill-governance workflows.
 ### Unified routing model
 
 - Entry architecture switched to **unified routing** (`gate prompt-request`).
-  Every user request is classified by `prompt-request-classifier` for intent,
+  Raw user requests are classified by `prompt-request-classifier` for intent,
   routed through `capability-route` for capability wakeup advice, and evaluated
-  by `value-route` for execution-path form — all before deciding whether to
-  enter the task-card pipeline. Requests that do not require a task card are
-  allowed through as ordinary responses.
+  by `value-route` for execution-path form before deciding whether to enter the
+  task-card pipeline. Requests that do not require a task card are allowed
+  through as ordinary responses.
+- Existing canonical task cards are the validate-first exception: input whose
+  first non-empty line is `## 任务卡` is validated before request
+  classification. A valid card proceeds directly to policy/runner consumption;
+  invalid card-shaped input fails closed and never falls through to generation.
+- Task-card permission is binary: `plan-only` or `execute-and-verify`. Light and
+  Medium default to direct execution; Heavy defaults to `plan-only`, while an
+  explicit Heavy `execute-and-verify` card runs directly with its independent
+  review gate.
 - CLI top-level surface consolidated to the **five-stage pipeline**: setup →
   agents → skill → init → update. `doctor` and `capability` remain available
   but are no longer primary user-facing pipeline stages.

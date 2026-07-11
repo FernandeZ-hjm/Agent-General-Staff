@@ -967,7 +967,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
                 "Claude Code executes bounded task cards formed from confirmed execution contracts. It reads the task card, protocol files, and project docs; implements within scope; runs verification; and outputs a delivery report. Claude Code must NOT perform ambient preflight, solution formation, or task-level classification from raw user requests — those phases belong to Codex/Cursor. Claude Code must not frame tasks, change protocol boundaries, or install hooks without explicit task-card authorization.\n\nCRITICAL — Task-Card Request Gate: Claude Code only consumes already-formed task cards. It must NOT generate task cards from raw user requests or from solution-phase outputs. The \"方案 OK\" signal is not a routing trigger — only an explicit user task-card instruction (\"生成任务卡\", \"交给 Claude Code 执行\", etc.) authorizes routing and task card generation. Claude Code must NOT self-classify tasks as Light/Medium/Heavy from raw requests."
                     .to_string(),
                 AgentPermissions {
-                    default_permission_mode: "edit-with-confirmation".to_string(),
+                    default_permission_mode: "execute-and-verify".to_string(),
                     default_parallelism: "none".to_string(),
                     may_edit_files: true,
                     may_delegate: true,
@@ -986,9 +986,9 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
                         .to_string(),
                     "If the task risk escalates beyond what the task card declares, stop and report."
                         .to_string(),
-                    "For Heavy tasks: start in plan-only mode, return root cause + design + implementation plan + verification plan, and wait for explicit human approval before any mutation."
+                    "For Heavy tasks: task level is a risk/review tier, not the execution authority — it never downgrades the permission mode and never by itself adds a mutation gate or forces a plan-first round trip. Two Heavy classes: Heavy plan (Permission mode plan-only, declared or the compiler default when Permission mode is unspecified) returns root cause + design + implementation plan + verification plan and waits for explicit human approval before mutation; Heavy execute (Permission mode execute-and-verify) runs and verifies directly per the task card. Always honor the card's independent Review gate and stop conditions."
                         .to_string(),
-                    "On resume/continue: reread the task card, run `git status --short`, reconfirm review_targets, and stop at the confirmation gate unless mutation approval is explicit."
+                    "On resume/continue: reread the task card, run `git status --short`, reconfirm review_targets, and honor the card's permission mode (plan-only awaits explicit approval; execute-and-verify resumes execution and verification)."
                         .to_string(),
                     "Do not generate task cards or call `ags task compile --task-card-requested` from raw user requests or solution-phase outputs. Only Codex/Cursor may generate task cards after receiving an explicit user task-card instruction (\"生成任务卡\", \"按这个方案出任务卡\", etc.). \"方案 OK\" alone is not a task-card generation trigger."
                         .to_string(),
@@ -1030,7 +1030,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
                 "Cursor owns the full pre-execution lifecycle inside its IDE workflow: ambient preflight (project detection, context reading), solution formation (understanding, diagnosis, approach design), user confirmation, execution contract formalization, and task routing (Light/Medium/Heavy classification). Classification happens only after the solution is confirmed — never from raw user requests. Cursor may directly implement changes or delegate to Claude Code CLI. When delegating, Cursor generates task cards from the confirmed execution contract using the canonical task-card template.\n\nCRITICAL — Task-Card Request Gate: \"方案 OK\" only ends the solution phase. Cursor must NOT generate executable task cards until the user explicitly issues a task-card instruction (\"生成任务卡\", \"按这个方案出任务卡\", \"交给 Claude Code 执行\", etc.). Without explicit user instruction, `ags task compile` will block executable output with `executable_allowed=false` and `block_reason=task_card_not_requested`. The lifecycle is: preflight → solution → user says 方案 OK → user issues task-card instruction → execution contract → routing → task card → gate/execution/receipt."
                     .to_string(),
                 AgentPermissions {
-                    default_permission_mode: "edit-with-confirmation".to_string(),
+                    default_permission_mode: "execute-and-verify".to_string(),
                     default_parallelism: "none".to_string(),
                     may_edit_files: true,
                     may_delegate: true,
@@ -1095,7 +1095,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
                     "{host_label} is an AGS-compatible governed host (Tencent Agent hosts — WorkBuddy and CodeBuddy-Code — resolve to this governed-host profile; other unknown hosts use it too). It must complete AGS initialization preflight before any AGS scenario work, then follow the governed lifecycle surfaced by the preflight report. Governed hosts may read project context and help form solutions, but they must not assume Codex, Claude Code, or Cursor-specific privileges from their agent name alone.\n\nCRITICAL — Task-Card Request Gate: do not generate executable task cards from raw user requests or solution-phase output. \"方案 OK\" only ends solution formation; a separate explicit task-card instruction is required before routing or execution."
                 ),
                 AgentPermissions {
-                    default_permission_mode: "edit-with-confirmation".to_string(),
+                    default_permission_mode: "execute-and-verify".to_string(),
                     default_parallelism: "none".to_string(),
                     may_edit_files: true,
                     may_delegate: true,
@@ -2453,6 +2453,10 @@ Some other text here.
         let instructions = generate_agent_instructions(&repo_root(), &AgentType::Codex);
         assert_eq!(instructions.agent_type, "codex");
         assert_eq!(instructions.agent_display_name, "Codex");
+        assert_eq!(
+            instructions.permissions.default_permission_mode,
+            "execute-and-verify"
+        );
         assert!(instructions.is_ags_suite);
         assert!(!instructions.required_reads.is_empty());
         assert!(instructions.instructions_text.contains("## Required Reads"));
@@ -2470,6 +2474,10 @@ Some other text here.
         let instructions = generate_agent_instructions(&root, &AgentType::ClaudeCode);
         assert_eq!(instructions.agent_type, "claude-code");
         assert_eq!(instructions.agent_display_name, "Claude Code");
+        assert_eq!(
+            instructions.permissions.default_permission_mode,
+            "execute-and-verify"
+        );
         assert!(!instructions.required_reads.is_empty());
         assert!(instructions
             .instructions_text
@@ -2481,6 +2489,10 @@ Some other text here.
         let instructions = generate_agent_instructions(&repo_root(), &AgentType::Cursor);
         assert_eq!(instructions.agent_type, "cursor");
         assert_eq!(instructions.agent_display_name, "Cursor");
+        assert_eq!(
+            instructions.permissions.default_permission_mode,
+            "execute-and-verify"
+        );
         assert!(!instructions.required_reads.is_empty());
         assert!(instructions
             .instructions_text
@@ -2495,7 +2507,7 @@ Some other text here.
         assert_eq!(instructions.agent_display_name, "Tencent Agent (WorkBuddy)");
         assert_eq!(
             instructions.permissions.default_permission_mode,
-            "edit-with-confirmation"
+            "execute-and-verify"
         );
         assert!(instructions
             .instructions_text
@@ -2517,7 +2529,7 @@ Some other text here.
         // profile (no elevated privileges from the name).
         assert_eq!(
             instructions.permissions.default_permission_mode,
-            "edit-with-confirmation"
+            "execute-and-verify"
         );
     }
 
@@ -2860,7 +2872,7 @@ Some other text here.
         assert_eq!(preflight.agent_display_name, "Claude Code");
         assert!(preflight.is_ags_suite);
         assert!(preflight.validator_available);
-        assert_eq!(preflight.default_permission_mode, "edit-with-confirmation");
+        assert_eq!(preflight.default_permission_mode, "execute-and-verify");
         assert_ne!(preflight.overall_status, PreflightStatus::Stop);
     }
 

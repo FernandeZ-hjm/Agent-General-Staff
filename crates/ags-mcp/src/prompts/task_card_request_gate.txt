@@ -10,6 +10,10 @@ It does NOT authorize a task card.
  (done)     (THIS GATE)     (next)
 ```
 
+This gate applies to raw requests and solution summaries. If the first non-empty
+line is already `## 任务卡`, validate it as an existing execution contract:
+valid cards skip generation and continue to policy/runner; invalid cards stop.
+
 ### You MUST NOT proceed to routing or task card generation before the user:
 
 Explicitly issues a task-card instruction such as:
@@ -32,9 +36,13 @@ Explicitly issues a task-card instruction such as:
 
 1. User issues task-card instruction.
 2. Classify the task as Light/Medium/Heavy from the confirmed solution.
-3. Generate the task card using `protocol/task-card-template.md`.
-4. Validate with `ags_task_validate`.
-5. Resolve execution policy with `ags_policy_resolve`.
-6. Dispatch to the appropriate executor.
+3. Select exactly one permission mode: `plan-only` or `execute-and-verify`.
+   Light/Medium default to `execute-and-verify`; Heavy defaults to `plan-only`,
+   while explicitly authorized Heavy execution uses `execute-and-verify` and
+   does not add another plan-first pause.
+4. Generate the task card using `protocol/task-card-template.md`.
+5. Validate with `ags_task_validate`.
+6. Resolve execution policy with `ags_policy_resolve`.
+7. Dispatch to the appropriate executor.
 
 Wait for the task-card instruction. Do not generate the task card yet.

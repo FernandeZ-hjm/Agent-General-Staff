@@ -289,13 +289,7 @@ pub(crate) fn check_field_values(fields: &HashMap<String, String>, errors: &mut 
 
     // Permission mode
     if let Some(v) = fields.get("Permission mode:") {
-        if v == "autonomous-low-risk" {
-            errors.push(format!(
-                "[{}] autonomous-low-risk 尚未进入 Rust canonical gate（需先实现 Light-only、protected-path 禁止、Heavy 禁止等硬门禁）。当前 canonical gate 允许: {}",
-                error_code::AUTONOMOUS_LOW_RISK_NOT_IN_CANONICAL_GATE,
-                VALID_PERMISSION_MODES.join(", ")
-            ));
-        } else if !VALID_PERMISSION_MODES.contains(&v.as_str()) {
+        if !VALID_PERMISSION_MODES.contains(&v.as_str()) {
             errors.push(format!(
                 "[{}] Permission mode 值 `{}` 非法，允许: {}",
                 error_code::INVALID_FIELD_VALUE,
@@ -395,11 +389,9 @@ pub(crate) fn check_field_combinations(fields: &HashMap<String, String>, errors:
 
     // NOTE: Heavy + execute-and-verify is NOT forbidden. Task LEVEL is a
     // risk/review tier, not the execution authority — the permission MODE is.
-    // A Heavy card may declare execute-and-verify and executes directly; the
-    // resolver adds no confirmation gate by level (the gate is tied to the
-    // edit-with-confirmation permission mode). The Heavy + plan-only delivery
-    // gate and the Heavy executable Review-gate requirement below keep the
-    // review boundary machine-enforced.
+    // A Heavy card may declare execute-and-verify and executes directly. The
+    // Heavy + plan-only delivery gate and the Heavy executable Review-gate
+    // requirement below keep the review boundary machine-enforced.
 
     // Workflow authority: allowed only for Medium or Heavy
     if authority == "allowed" && level != "Medium" && level != "Heavy" {
@@ -411,7 +403,7 @@ pub(crate) fn check_field_combinations(fields: &HashMap<String, String>, errors:
     }
 
     // Workflow authority cannot exceed Permission mode
-    if authority == "allowed" && (permission == "read-only" || permission == "plan-only") {
+    if authority == "allowed" && permission == "plan-only" {
         errors.push(format!(
             "[{}] Workflow authority 为 allowed，但 Permission mode 为 {}（allowed 不可突破 Permission mode）",
             error_code::WORKFLOW_AUTHORITY_VIOLATION,
@@ -504,18 +496,14 @@ pub(crate) fn check_field_combinations(fields: &HashMap<String, String>, errors:
     }
 
     // ── Heavy + executable permission → independent Review gate required ──
-    // Task level is decoupled from execution authority, so a Heavy card may be
-    // edit-with-confirmation / execute-and-verify. Because the resolver no longer
-    // adds a confirmation gate by level, the INDEPENDENT Review gate is now the
-    // sole machine-enforced guard for an executable Heavy card, so it fails
-    // closed: it must name a distinct reviewer — human / Codex / adversarial /
-    // 第三方 — or delegate to the protocol Review Gate rules. A missing gate, a
-    // generic level-name gate, OR an executor self-review / 自查 gate (even one
-    // that uses a review verb like 审查 / 复核) is rejected — self-review is not
-    // an independent handoff.
-    if level == "Heavy"
-        && (permission == "edit-with-confirmation" || permission == "execute-and-verify")
-    {
+    // Task level is decoupled from execution authority, so a Heavy card may use
+    // execute-and-verify. The INDEPENDENT Review gate is the machine-enforced
+    // guard for an executable Heavy card, so it fails closed: it must name a
+    // distinct reviewer — human / Codex / adversarial / 第三方 — or delegate to
+    // the protocol Review Gate rules. A missing gate, a generic level-name gate,
+    // OR an executor self-review / 自查 gate (even one that uses a review verb
+    // like 审查 / 复核) is rejected — self-review is not an independent handoff.
+    if level == "Heavy" && permission == "execute-and-verify" {
         let review = field_val(fields, "Review gate:");
         let review_lower = review.to_lowercase();
         // A review VERB says some review happens, but not who performs it. On its
@@ -568,7 +556,7 @@ pub(crate) fn check_field_combinations(fields: &HashMap<String, String>, errors:
             || (review_verb && !self_or_executor_review);
         if review.trim().is_empty() || !independent_review {
             errors.push(format!(
-                "[{}] 任务级别 Heavy + 可执行 Permission mode（edit-with-confirmation / execute-and-verify）：Review gate 必须声明独立审查方（人工 / Codex / adversarial / 第三方，或按 protocol Review Gate 规则），不得缺失、仅写泛化级别名，或仅由执行者自我审查 / 自查放行",
+                "[{}] 任务级别 Heavy + Permission mode execute-and-verify：Review gate 必须声明独立审查方（人工 / Codex / adversarial / 第三方，或按 protocol Review Gate 规则），不得缺失、仅写泛化级别名，或仅由执行者自我审查 / 自查放行",
                 error_code::HEAVY_EXECUTABLE_MISSING_REVIEW_GATE
             ));
         }
@@ -611,8 +599,8 @@ pub(crate) fn check_protected_paths(fields: &HashMap<String, String>, errors: &m
         return;
     }
 
-    // Plan-only or read-only + modification intent on protected paths → fail
-    if permission == "plan-only" || permission == "read-only" {
+    // Plan-only + modification intent on protected paths → fail
+    if permission == "plan-only" {
         errors.push(format!(
             "[{}] Permission mode `{}` 不允许修改保护路径（检测到修改意图 + 保护路径）",
             error_code::PROTECTED_PATH_VIOLATION,

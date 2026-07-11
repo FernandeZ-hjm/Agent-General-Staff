@@ -42,10 +42,6 @@ pub(in crate::kernel) fn format_policy_text(
         }
     }
 
-    lines.push(format!(
-        "Requires confirmation gate: {}",
-        policy.requires_confirmation_gate
-    ));
     lines.push(format!("Approval source:   {}", policy.approval_source));
     lines.push(String::new());
 

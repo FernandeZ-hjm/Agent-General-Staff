@@ -38,6 +38,11 @@ Agent 收到开发相关请求时，自动执行：
 
 **硬规则：用户的原始自然语言请求 ≠ 可执行任务卡。** 不得把初始聊天消息直接当作 Light / Medium / Heavy 分级的依据。只有经过 preflight → solution → confirmation 形成的 execution contract 才能进入 Routing Phase。
 
+**已有任务卡例外：首个非空行是 `## 任务卡` 的输入已经是 execution
+contract。** 入口先运行 canonical validation；合法卡直接进入 policy resolve →
+runner，非法卡以 `validation_failed` 停止。不得把已有卡正文送回自然语言分类器，
+也不得重新要求生成任务卡。
+
 ### 3.5. Task-Card Instruction Gate（任务卡指令门槛）
 
 **这是 execution contract 与 routing 之间的硬门禁。**
@@ -136,9 +141,9 @@ gate 仍是权威；planner 拥有最终路径决定权。
 
 | 形态 | 含义 | 典型场景 |
 |---|---|---|
-| `read-only-advisory` | 只诊断 / 回答，不写入 | 咨询意图、未授权 mutation |
+| `read-only-advisory` | 只诊断 / 回答，不写入；如需任务卡则映射到 `plan-only` | 咨询意图、未授权 mutation |
 | `direct-edit` | 本地有界改动，直接改后验证 | 小范围、低风险、Light |
-| `plan-first` | 先 root cause / design / plan，确认后再改 | Medium / Heavy 规划 |
+| `plan-first` | 先 root cause / design / plan，不写入；任务卡映射到 `plan-only` | 用户明确要求规划、审计或 dry-run |
 | `claude-code-route` | 框定有界任务卡，handoff 给 Claude Code CLI | 委派执行 |
 | `stop-for-scope` | scope / authority / risk 不清 → 停下报告 | 范围或授权不明 |
 
@@ -345,16 +350,16 @@ Executor 收到任务卡后，必须先读取以下文件再开始工作：
 ### Heavy
 
 - 涉及数据、向量库、历史产物、迁移、不可逆操作、架构调整
-- Heavy plan（Permission mode: plan-only）：Executor 只读产出 root cause / design / implementation plan / verification plan，待人工批准后再进入修改阶段
-- Heavy execute（Permission mode: execute-and-verify）：按任务卡直接执行并验证，不再追加 mutation 前的确认环节；完成后仍标为"部分完成 / 待人工 adversarial review"
+- Heavy plan（Permission mode: plan-only）：Executor 只读产出 root cause / design / implementation plan / verification plan 后停止；后续修改必须使用 `execute-and-verify` 任务卡
+- Heavy execute（Permission mode: execute-and-verify）：按任务卡直接执行并验证；完成后仍标为"部分完成 / 待人工 adversarial review"
 
-**任务级别与 Permission mode 解耦。** 任务级别（Light/Medium/Heavy）是**风险/审查**等级；Permission mode（plan-only / edit-with-confirmation / execute-and-verify）是**当前执行权限**，也是唯一的执行授权。任务级别不改写 Permission mode：
+**任务级别与 Permission mode 解耦。** 任务级别（Light/Medium/Heavy）是**风险/审查**等级；Permission mode 只有 `plan-only` / `execute-and-verify` 两个值，是**当前执行权限**，也是唯一的执行授权。任务级别不改写 Permission mode：
 
-- **Heavy ≠ plan-only**：Heavy 卡保留其声明的 Permission mode，只额外获得 review gate；resolver 不因级别是 Heavy 就降级可执行卡。只要 Permission mode 不是 read-only / plan-only，卡就进入可执行链路，`execute-and-verify` 也不被 cap 到 `edit-with-confirmation`。confirmation 由 Permission mode 决定：`edit-with-confirmation` 在每次改动前暂停确认，`execute-and-verify` 直接执行并验证，级别本身不追加 mutation 确认。
+- **Heavy ≠ plan-only**：Heavy 卡保留其声明的 Permission mode，只额外获得独立 review gate；resolver 不因级别是 Heavy 就降级可执行卡。`execute-and-verify` 直接执行并验证，级别本身不追加计划轮次。
 - **未声明 Permission mode 的默认**：当 Heavy 卡未显式声明 Permission mode 时，compiler 填入保守默认 `plan-only`（这是对未声明字段的默认值，不是级别降级；**显式声明**的 Permission mode 一律保留）。
 - **approval 信号只是审计/提示**：`current-task-approval`（`实现 / 修复 / 做完` 等，由 `prompt-request-classifier` 确定性识别，**不**取自任务卡文本）与 `--approve-writes` 经 `ApprovalSource` **可审计地**传递，但**不再**是 Heavy 执行解锁条件；`--approve-writes` 仍可作为 generic adapter（M9）能力上限的 override。任务卡自由文本永远不是 approval 来源。
-- **plan-only 收敛流程仅按需使用**：只有当卡本身是 plan-only（显式声明或未声明时的默认）时，Executor 才先出 root cause / design / implementation plan / verification plan 并等待人工确认；该收敛流程用于高危发布、迁移、破坏性动作，不是所有 Heavy 卡的强制前置。
-- **安全边界不变**：stable/public 发布、外部写入（Lark/邮件/审批）、删除 runtime、credential/auth、删除/迁移/不可逆操作仍各自单独确认或停止；read-only / plan-only 仍不得产生 write-type launch args；可执行 Heavy 卡仍必须走独立 review gate（confirmation 仅由 `edit-with-confirmation` permission mode 触发，不由级别触发）。
+- **plan-only 收敛流程仅按需使用**：只有当卡本身是 `plan-only`（显式声明或 Heavy 未声明时的默认）时，Executor 才只诊断并产出 root cause / design / implementation plan / verification plan，不写入。要进入修改阶段，必须重新生成或编译为 `execute-and-verify` 任务卡；该流程不是所有 Heavy 卡的强制前置。
+- **安全边界不变**：stable/public 发布、外部写入（Lark/邮件/审批）、删除 runtime、credential/auth、删除/迁移/不可逆操作仍各自单独确认或停止；`plan-only` 仍不得产生 write-type launch args；可执行 Heavy 卡仍必须走独立 review gate。
 
 任务卡骨架仍只有唯一 canonical card，不因解耦引入第二模板。任务卡中声明的级别优先于 Executor 自行判断。如 Executor 发现实际风险高于任务卡标注的级别，必须停止并报告，不得自行降级执行。
 
@@ -363,7 +368,7 @@ Executor 收到任务卡后，必须先读取以下文件再开始工作：
 遇到"继续"、上下文压缩恢复、task-notification 接续或后台任务恢复时：
 
 - 如果任务级别是 Heavy，Executor 必须重新读取任务卡、运行 `git status --short`，并重新确认 `review_targets`。
-- Executor 必须按当前可确认任务卡的 `Permission mode` 行动：`plan-only` 等待明确批准；`edit-with-confirmation` 停在该 permission mode 的确认提示；`execute-and-verify` 可恢复执行并验证。
+- Executor 必须按当前任务卡的 `Permission mode` 行动：`plan-only` 保持只读且不得因恢复消息升级权限；`execute-and-verify` 可恢复执行并验证。
 - 不得把"继续"、恢复通知、上一轮计划或压缩摘要理解为新的 Heavy 写入批准；它们只能触发重新读取任务卡与复核目标。
 - 如果无法确认当前任务卡、目标仓库、`Permission mode` 或 review 状态，停止并报告，不得继续执行。
 

@@ -91,7 +91,7 @@ pub(crate) enum PolicyAction {
         current_task_approval: bool,
     },
 
-    /// Validate, resolve, and exit with decision: 0 = allow, 2 = confirm (honor confirmation gate), 1 = stop/validation fail.
+    /// Validate, resolve, and exit with decision: 0 = allow, 1 = stop/validation fail.
     Check {
         /// Task card file (use "-" for stdin)
         path: String,
@@ -113,7 +113,7 @@ pub(crate) enum PolicyAction {
 pub(crate) enum GateAction {
     /// Run the gate check and output a runner-level decision.
     ///
-    /// Outputs decision: allow|confirm|stop with embedded resolved policy.
+    /// Outputs decision: allow|stop with embedded resolved policy.
     /// On validation failure, outputs structured decision=stop JSON with
     /// error details — never just a raw exit code.
     Check {
@@ -134,18 +134,19 @@ pub(crate) enum GateAction {
         current_task_approval: bool,
     },
 
-    /// Entry intent gate: classify a user request for prompt / task-card intent.
+    /// Entry gate for a raw request or an existing canonical task card.
     ///
-    /// Deterministic (prompt-request-classifier). Decision `require_task_card`
-    /// when intent is detected — the host MUST route through preflight →
-    /// `task compile --task-card-requested` → `gate output`, and the foreground
-    /// answer MUST be a canonical `## 任务卡`. Otherwise `allow`. Runs AGS session
-    /// preflight as a fail-closed precondition unless `--no-preflight`; if
-    /// preflight reports should_stop, decision = `stop`. Also surfaces an advisory
-    /// `capability_route` (能力路由) block alongside `value_route` — a wakeup
-    /// suggestion that never changes the decision, block reason, or any AGS gate.
+    /// A payload beginning with the canonical `## 任务卡` header is validated
+    /// first: valid cards return `execute_task_card` with
+    /// `task_card_generation_required=false` and route directly to policy/runner
+    /// consumption; invalid card-shaped payloads stop and never fall through to
+    /// generation. Other input keeps the deterministic prompt-request-classifier
+    /// behavior:
+    /// task-card intent returns `require_task_card`, ordinary prose returns
+    /// `allow`. Session preflight remains a fail-closed precondition unless
+    /// `--no-preflight`.
     PromptRequest {
-        /// User request text (use "-" for stdin).
+        /// User request text or complete task-card payload (use "-" for stdin).
         request: String,
         /// Target repository path for the preflight precondition and the
         /// Capability Route manifest root (resolved from this path or a subdir).
@@ -232,8 +233,8 @@ pub(crate) enum ReceiptAction {
         /// Task card file (use "-" for stdin)
         #[arg(long = "task-card")]
         task_card: String,
-        /// Gate decision: allow, confirm, or stop
-        #[arg(long, default_value = "allow", value_parser = ["allow", "confirm", "stop"])]
+        /// Gate decision: allow or stop
+        #[arg(long, default_value = "allow", value_parser = ["allow", "stop"])]
         gate_result: String,
         /// Optional gate reason
         #[arg(long)]

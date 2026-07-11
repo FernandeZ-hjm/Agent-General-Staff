@@ -28,6 +28,19 @@ takes a confirmed execution contract as input, not raw chat messages. The
 `ags task compile` command requires `--task-card-requested` before it will output
 an executable task card.
 
+An input whose first non-empty line is the canonical `## 任务卡` header is an
+existing execution contract, not a raw request. Validate it before request
+classification: a valid card continues to policy resolution and the runner; an
+invalid card stops with validation errors and must never fall through to task-card
+generation.
+
+Task cards have exactly two permission modes: `plan-only` and
+`execute-and-verify`. Light and Medium default to direct execution. Heavy
+defaults to `plan-only`, but an explicitly authorized Heavy
+`execute-and-verify` card executes and verifies directly; Heavy adds only its
+independent review gate. Destructive, external-write, credential, migration,
+and release boundaries remain independent stop conditions.
+
 ## Protocol Authority
 
 This repository is the **public distributable edition** of the Agent Governance

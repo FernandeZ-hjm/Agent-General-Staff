@@ -31,13 +31,13 @@ Runtime adapter: codex-local / claude-code / cursor / generic
 
 Execution surface: local-workspace / cli / ide / web / remote-control / background-agent
 
-Permission mode: read-only / plan-only / edit-with-confirmation / execute-and-verify
+Permission mode: plan-only / execute-and-verify
 
 Parallelism: none / subagent / worktree / multi-session / agent-team
 
 任务级别：Light / Medium / Heavy
 
-Heavy 写入批准规则按 protocol/agent-task-protocol.md 执行；“继续”、上下文压缩恢复或 task-notification 接续不算 Heavy 写入批准。
+Heavy 的 review gate 规则按 protocol/agent-task-protocol.md 执行；任务级别不改写 Permission mode（未声明时 compiler 默认 plan-only，显式 execute-and-verify 直接执行并验证）。“继续”、上下文压缩恢复或 task-notification 接续不会改写任务卡权限。
 
 Review gate:
 - 按 protocol/agent-task-protocol.md 的 Review Gate 规则执行当前任务级别。
@@ -142,10 +142,11 @@ Verification gate:
 - 如果输入材料以 `Executor:`、`Runtime adapter:`、`Permission mode:` 或 `Task level:` 开头，那只是 runtime 字段草稿，不是任务卡。生成器必须把它作为原始任务意图重新填入本 canonical 任务卡骨架；不得原样交付给 Claude Code。
 - 如果输入材料以 `目标：`、`背景：`、`硬性要求：`、`建议验证命令：`、`停止条件：` 或 `交付格式：` 开头，且包含 `[skill: ...]` 或明显是要粘贴给 Claude Code/Cursor/Codex 的执行简报，那也只是原始任务意图，不是任务卡。生成器必须把它编译进本 canonical 任务卡骨架；不得保留源 section 顺序后原样交付。
 - `[skill: xxx]` 是任务卡元数据，只能出现在规范任务卡末尾；不得附在自由文本 prompt 或 `text` fence 后面。
-- `autonomous-low-risk` 尚未进入 Rust canonical gate：Rust task-card-validator 暂不校验此模式。在 validator 实现 Light-only、protected-path 禁止、Heavy 禁止等硬门禁之前，任务卡不得使用 `autonomous-low-risk` 作为 Permission mode 值；使用该值的任务卡会被 validator 拒绝（`AUTONOMOUS_LOW_RISK_NOT_IN_CANONICAL_GATE`）。runtime-adapters.md 中的定义保留为协议目标，不代表当前 canonical gate 已实现。
+- `Permission mode` 只允许 `plan-only` 和 `execute-and-verify`；生成器不得输出第三种过渡、确认或自治模式。
 - 任务卡字段使用 `任务级别：`。`Task level:` 只能出现在用户原始材料或外部笔记中，不能作为最终任务卡字段。
 - 如果用户明确要求单个 literal copy block 或文件 artifact，且任务卡正文包含内嵌代码块时，外层必须使用 `~~~~markdown` / `~~~~`，不得使用三反引号 ` ```markdown `；本模板包含 `.claude/review_targets.json` 的 ` ```json ` 示例，使用三反引号外层会被内部代码块提前截断。
 - 实际任务卡进入 runner 前必须通过 Rust task-card-validator 只读校验（`cargo run -p ags-cli -- task validate <task-card>` 或 `bash scripts/validate.sh <task-card>`；旧 `task-card-validator` 命令仅作为隐藏兼容别名保留）；对话输出可通过 `bash scripts/validate.sh -` 从 stdin 校验；校验失败时停止，不进入执行或收据流程。
+- 首个非空行已经是 `## 任务卡` 的输入是已有任务卡：合法卡跳过生成，直接进入 policy / runner；非法卡停止，不得回落为原始意图重新生成。
 - 远程控制、SSH、挂载目录、跨仓库任务中，`cwd` 不一定等于实际修改仓库。任务卡必须显式要求 Executor 为本次任务重写 `.claude/review_targets.json`，让显式 review 的审查范围对准实际目标仓库。
 - Executor 启动后按固定顺序读取：
   1. 稳定协议文件：`AGENTS.md`、`CLAUDE.md`、`protocol/agent-task-protocol.md`、`protocol/task-routing.md`、`protocol/runtime-adapters.md`、`protocol/cursor-skill-index.md`。
@@ -192,18 +193,35 @@ Verification gate:
 
 ## Heavy 任务补充
 
-Heavy 任务可在任务卡中追加：
+Heavy 任务只能追加与当前 `Permission mode` 匹配的分支，不得把两个分支同时写进任务卡。
+
+`Permission mode: plan-only`：
 
 ```markdown
 实施流程：
-1. 阅读与诊断 → 输出 root cause / 设计 / 计划 → 等待确认
-2. 确认后执行
-3. 验证与交付
+1. 阅读与诊断
+2. 输出 root cause / 设计 / 实施计划 / 验证计划
+3. 停止，不修改文件、不执行写操作
 
 Resume / 压缩恢复保护：
 - 遇到“继续”、上下文压缩恢复或 task-notification 接续时，重新读取任务卡、运行 `git status --short`，并重新确认 `review_targets`。
-- 当前上下文没有明确人工批准 mutation 时，停在 plan / confirmation gate。
-- 不得把“继续”理解为 Heavy 写入批准。
+- 保持 `plan-only`；“继续”或压缩摘要不得将其升级为可写权限。
+
+基线保护：
+- 不修改、删除、覆盖（列出受保护数据/目录）
+```
+
+`Permission mode: execute-and-verify`：
+
+```markdown
+实施流程：
+1. 阅读与必要诊断
+2. 按任务卡直接实施
+3. 验证与交付；不追加新的 plan 轮次
+
+Resume / 压缩恢复保护：
+- 遇到“继续”、上下文压缩恢复或 task-notification 接续时，重新读取任务卡、运行 `git status --short`，并重新确认 `review_targets`。
+- 保持 `execute-and-verify`，继续执行并验证；Heavy 只追加独立 review gate。
 
 基线保护：
 - 不修改、删除、覆盖（列出受保护数据/目录）

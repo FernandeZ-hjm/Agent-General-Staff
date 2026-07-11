@@ -77,16 +77,30 @@ Claude Code executes bounded task cards that already exist. Claude Code must not
 derive task level, permission mode, or task-card authorization from raw user
 requests or from `方案 OK` alone.
 
+If the current input already begins with the canonical `## 任务卡` header, treat
+it as an existing execution contract: validate first, then resolve policy and
+run. Do not send a valid existing card back through solution formation or card
+generation; invalid card-shaped input fails closed.
+
+Task-card permission is deliberately binary: `plan-only` or
+`execute-and-verify`. Light and Medium default to `execute-and-verify`; Heavy
+defaults to `plan-only`, while an explicitly authorized Heavy
+`execute-and-verify` card runs and verifies directly. Heavy still requires its
+independent review gate, and protected destructive/external/release operations
+still obey their own stop conditions.
+
 ## Safety Gates
 
 - Do not install hooks, dependencies, runner adapters, or production wiring
   without explicit task-card authorization.
 - Do not modify protocol files, task-card skeletons, public release boundaries,
   or execution-policy rules unless the current task explicitly targets them.
-- Heavy tasks start plan-only and wait for explicit human approval before file
-  mutation.
-- Resume / `继续` is not mutation approval. Reread the task card, run
-  `git status --short`, and stop if approval is unclear.
+- Honor the task card's declared permission mode: `plan-only` remains
+  non-mutating; `execute-and-verify` executes and verifies directly, including
+  for Heavy tasks. Heavy adds an independent review gate, not another plan round.
+- Resume / `继续` does not rewrite permission. Reread the task card, run
+  `git status --short`, and continue only under its declared mode and stop
+  conditions.
 - Do not run destructive git commands, touch secrets, overwrite user files, or
   replace user-owned entry files unless explicitly authorized.
 - Before claiming completion, run the narrowest relevant verification and report

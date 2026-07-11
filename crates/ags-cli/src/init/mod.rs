@@ -94,7 +94,7 @@ fn project_init_plan(target: &Path, slug: Option<String>) -> ProjectInitPlan {
     let mut warnings = Vec::new();
 
     let ags_block = format!(
-        "\n## Agent Governance Suite\n\nThis project is governed by AGS {AGS_VERSION}.\n\n- Run `ags doctor --target .` to diagnose local governance health.\n- AGS MCP hosts must call `ags_preflight` before other AGS tools.\n- CLI fallback: `ags session preflight --for <agent-id> --target .`.\n- Known agents get tailored instructions; unknown non-empty agent ids use the generic governed-host profile.\n- Protocol entry points: `AGENT_SUITE_PROTOCOL.md`, `CLAUDE.md`, `protocol/agent-task-protocol.md`, `protocol/task-routing.md`, and `protocol/cursor-skill-index.md`.\n- Task cards must be validated with the task-card-validator via `bash scripts/validate.sh <task-card>`.\n"
+        "\n## Agent Governance Suite\n\nThis project is governed by AGS {AGS_VERSION}.\n\n- Run `ags doctor --target .` to diagnose local governance health.\n- AGS MCP hosts must call `ags_preflight` before other AGS tools.\n- CLI fallback: `ags session preflight --for <agent-id> --target .`.\n- Known agents get tailored instructions; unknown non-empty agent ids use the generic governed-host profile.\n- Protocol entry points: `AGENT_SUITE_PROTOCOL.md`, `CLAUDE.md`, `protocol/agent-task-protocol.md`, `protocol/task-routing.md`, and `protocol/cursor-skill-index.md`.\n- Task cards must be validated with the task-card-validator via `bash scripts/validate.sh <task-card>`.\n- If the input's first non-empty line is `## 任务卡`, treat it as an existing task card and validate it before raw-request classification.\n- A valid existing card goes directly to policy resolution and runner consumption; invalid card-shaped input fails closed and never falls through to task-card generation.\n- Task-card permission has exactly two modes: `plan-only` and `execute-and-verify`.\n- Light and Medium default to `execute-and-verify`. Heavy defaults to `plan-only`; an explicit Heavy `execute-and-verify` card executes and verifies directly, with an independent review gate.\n"
     );
 
     files.push(InstallFile {
@@ -114,14 +114,14 @@ fn project_init_plan(target: &Path, slug: Option<String>) -> ProjectInitPlan {
         path: canonical.join("CLAUDE.md"),
         description: "Claude Code AGS execution protocol entrypoint".to_string(),
         content: format!(
-            "# CLAUDE.md\n\nThis project is governed by Agent Governance Suite {AGS_VERSION}.\n\nBefore task execution, run AGS preflight through MCP (`ags_preflight`) or CLI fallback:\n\n```bash\nags session preflight --for claude-code --target .\n```\n\nDo not classify tasks from raw requests. Follow solution formation, user confirmation, task-card request gate, execution contract, routing, gate, verification, and receipt rules from `protocol/agent-task-protocol.md`. Select skills and capability wakeups using `protocol/cursor-skill-index.md` and `protocol/task-routing.md`.\n"
+            "# CLAUDE.md\n\nThis project is governed by Agent Governance Suite {AGS_VERSION}.\n\nBefore task execution, run AGS preflight through MCP (`ags_preflight`) or CLI fallback:\n\n```bash\nags session preflight --for claude-code --target .\n```\n\nDo not classify tasks from raw requests. Follow solution formation, user confirmation, task-card request gate, execution contract, routing, gate, verification, and receipt rules from `protocol/agent-task-protocol.md`. Select skills and capability wakeups using `protocol/cursor-skill-index.md` and `protocol/task-routing.md`.\n\nIf the input's first non-empty line is `## 任务卡`, treat it as an existing task card and validate it first. A valid existing card goes directly to policy resolution and runner consumption; invalid card-shaped input fails closed and never falls through to task-card generation.\n\nTask-card permission has exactly two modes: `plan-only` and `execute-and-verify`. Light and Medium default to `execute-and-verify`. Heavy defaults to `plan-only`; an explicit Heavy `execute-and-verify` card executes and verifies directly, with an independent review gate.\n"
         ),
         mode: None,
     });
     append_files.push(InstallFile {
         path: canonical.join("CLAUDE.md"),
         description: "append AGS execution protocol block to existing CLAUDE.md".to_string(),
-        content: format!("\n## Agent Governance Suite\n\nThis project is governed by AGS {AGS_VERSION}. Run `ags_preflight` through MCP or `ags session preflight --for claude-code --target .` before execution. Follow `protocol/agent-task-protocol.md`, `protocol/task-routing.md`, and `protocol/cursor-skill-index.md`.\n"),
+        content: format!("\n## Agent Governance Suite\n\nThis project is governed by AGS {AGS_VERSION}. Run `ags_preflight` through MCP or `ags session preflight --for claude-code --target .` before execution. Follow `protocol/agent-task-protocol.md`, `protocol/task-routing.md`, and `protocol/cursor-skill-index.md`. If the input's first non-empty line is `## 任务卡`, validate it before raw-request classification: a valid existing card goes directly to policy resolution and runner consumption; invalid card-shaped input fails closed and never falls through to task-card generation. Task-card permission has exactly two modes: `plan-only` and `execute-and-verify`. Light and Medium default to `execute-and-verify`. Heavy defaults to `plan-only`; an explicit Heavy `execute-and-verify` card executes and verifies directly, with an independent review gate.\n"),
         mode: None,
     });
 
@@ -174,7 +174,7 @@ defaults:
   # executable and still goes through the Heavy Review gate.
   permission_mode_by_level:
     light: execute-and-verify
-    medium: edit-with-confirmation
+    medium: execute-and-verify
     heavy: plan-only
   parallelism: none
 
@@ -821,6 +821,36 @@ mod project_init_relocated_tests {
         assert!(!should_register_project(false, 0));
         assert!(!should_register_project(true, 1));
         assert!(!should_register_project(false, 1));
+    }
+
+    #[test]
+    fn project_init_entry_files_encode_existing_card_and_binary_permission_rules() {
+        let target = unique_temp_project("ags-project-init-entry-contract");
+        std::fs::create_dir_all(&target).unwrap();
+        let plan = project_init_plan(&target, None);
+
+        let entry_files: Vec<&InstallFile> = plan
+            .files
+            .iter()
+            .chain(plan.append_files.iter())
+            .filter(|file| file.path.ends_with("AGENTS.md") || file.path.ends_with("CLAUDE.md"))
+            .collect();
+        assert_eq!(entry_files.len(), 4, "create and append entry surfaces");
+
+        for file in entry_files {
+            assert!(file.content.contains("first non-empty line is `## 任务卡`"));
+            assert!(file.content.contains("valid existing card"));
+            assert!(file.content.contains("fails closed"));
+            assert!(file
+                .content
+                .contains("policy resolution and runner consumption"));
+            assert!(file.content.contains("exactly two modes"));
+            assert!(file.content.contains("`plan-only`"));
+            assert!(file.content.contains("`execute-and-verify`"));
+            assert!(file.content.contains("executes and verifies directly"));
+        }
+
+        let _ = std::fs::remove_dir_all(target);
     }
 
     #[test]

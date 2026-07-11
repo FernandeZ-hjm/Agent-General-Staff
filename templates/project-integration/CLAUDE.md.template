@@ -15,8 +15,10 @@ Claude Code role:
 - Read `AGENTS.md`, this file, and the canonical protocol files before execution.
 - Do not form Light / Medium / Heavy classifications from raw user requests.
 - Do not generate executable task cards from raw requests or from `方案 OK` alone.
-- For Heavy tasks, start plan-only and wait for explicit human approval before mutation.
-- On resume or `继续`, reread the task card, run `git status --short`, and stop if mutation approval is unclear.
+- If the first non-empty line is `## 任务卡`, validate it first: a valid existing card goes directly to policy resolution and runner consumption; invalid card-shaped input fails closed and never falls through to task-card generation.
+- Task-card permission has exactly two modes: `plan-only` and `execute-and-verify`.
+- Heavy defaults to `plan-only`; an explicit Heavy `execute-and-verify` card executes and verifies directly, with an independent review gate.
+- On resume or `继续`, reread the task card, run `git status --short`, and preserve its declared permission mode.
 - Do not install hooks, dependencies, runner adapters, or production wiring unless the task card explicitly authorizes it.
 - Do not run destructive git commands or touch secrets unless explicitly authorized.
 - Complete the narrowest relevant verification and report evidence before claiming completion.

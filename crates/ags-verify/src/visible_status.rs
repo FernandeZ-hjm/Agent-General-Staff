@@ -17,7 +17,7 @@ use serde::Serialize;
 pub enum VisibleStatus {
     /// No action needed — proceed.
     Ok,
-    /// Waiting for a human decision (e.g. confirmation gate, task-card instruction).
+    /// Waiting for a human decision (e.g. task-card instruction or hard-stop approval).
     NeedsUserDecision,
     /// A policy gate stopped execution.
     BlockedByPolicy,
@@ -54,7 +54,7 @@ pub struct StatusSignals {
     pub risk_escalated: bool,
     /// Advisory intent detected and mutation is not allowed.
     pub advisory_no_mutation: bool,
-    /// A human decision is required (e.g. confirmation gate, task-card instruction).
+    /// A human decision is required (e.g. task-card instruction or hard-stop approval).
     pub needs_user_decision: bool,
     /// Work completed and a receipt exists.
     pub done_with_receipt: bool,
