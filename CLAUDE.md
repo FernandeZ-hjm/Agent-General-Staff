@@ -20,17 +20,17 @@ request arrives, governance engages automatically:
 ```text
 ambient preflight
   -> solution formation
-  -> user confirmation ("方案 OK")
-  -> explicit task-card instruction ("生成任务卡")
-  -> execution contract
+  -> user decision
+  -> same-session direct execution OR task-card handoff
   -> task routing
-  -> gate / execution / receipt
+  -> gate / verification / receipt
 ```
 
 Do not classify raw user requests as Light / Medium / Heavy. Classification
-happens only after preflight, solution formation, user confirmation, and a
-separate task-card instruction. `方案 OK` is not authorization to generate or
-execute a task card.
+happens only after preflight, solution formation, and user confirmation.
+`方案 OK` confirms the design but does not authorize mutation. Explicit
+same-session modification authorization enters `direct-edit`; explicit handoff
+authorization enters task-card compilation.
 
 ## Required Reads
 
@@ -75,7 +75,9 @@ review.
 
 Claude Code executes bounded task cards that already exist. Claude Code must not
 derive task level, permission mode, or task-card authorization from raw user
-requests or from `方案 OK` alone.
+requests or from `方案 OK` alone. Codex/Cursor may execute host-native
+`direct-edit` after explicit same-session authorization without manufacturing a
+task card.
 
 If the current input already begins with the canonical `## 任务卡` header, treat
 it as an existing execution contract: validate first, then resolve policy and

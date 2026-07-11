@@ -902,7 +902,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
     let (role_description, permissions, stop_conditions, required_reads) =
         match agent_type {
             AgentType::Codex => (
-                "Codex owns the full pre-execution lifecycle: ambient preflight (project detection, context reading), solution formation (understanding, diagnosis, approach design), user confirmation, execution contract formalization, and task routing (Light/Medium/Heavy classification). Classification happens only after the solution is confirmed — never from raw user requests. Codex may directly implement changes for light/medium tasks and may delegate bounded execution to Claude Code CLI, but must provide a self-contained task card (from the confirmed execution contract) and review the result before treating the task as complete.\n\nCRITICAL — Task-Card Request Gate: \"方案 OK\" only ends the solution phase. Codex must NOT call `ags task compile --task-card-requested` or generate executable task cards until the user explicitly issues a task-card instruction (\"生成任务卡\", \"按这个方案出任务卡\", \"交给 Claude Code 执行\", etc.). Without explicit user instruction, the compiler gate will block executable output. The lifecycle is: preflight → solution → user says 方案 OK → user issues task-card instruction → execution contract → routing → task card → gate/execution/receipt."
+                "Codex owns ambient preflight, solution formation, user confirmation, execution decision, task routing, and review. Classification happens only after the solution is confirmed — never from raw user requests. An explicit same-session modification instruction authorizes host-native direct execution without a task card; an explicit task-card/handoff instruction authorizes generation of a self-contained handoff contract for another executor. `方案 OK` alone authorizes neither path. The lifecycle is: preflight → solution → user decision → direct edit OR task-card handoff → gate/verification/receipt."
                     .to_string(),
                 AgentPermissions {
                     default_permission_mode: "execute-and-verify".to_string(),
@@ -912,17 +912,17 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
                     may_install: false,
                 },
                 vec![
-                    "Do not install hooks, runner adapters, or production wiring without explicit task-card authorization."
+                    "Do not install hooks, runner adapters, or production wiring without explicit protected-operation authorization."
                         .to_string(),
-                    "Stop before broad refactors unless the task card explicitly authorizes them."
+                    "Stop before broad refactors unless the confirmed solution and current execution authorization explicitly cover them."
                         .to_string(),
-                    "If actual risk is higher than the task card declares, stop and report — do not silently downgrade."
+                    "If actual risk is higher than the confirmed solution or handoff card declares, stop and report — do not silently downgrade."
                         .to_string(),
-                    "Do not modify S (stable) directly without explicit task-card authorization."
+                    "Do not modify S (stable) directly without explicit stable-boundary authorization."
                         .to_string(),
                     "Do not change public-full sanitized payload boundary, canonical task-card skeleton, or execution-policy M1-M10 rules without explicit approval."
                         .to_string(),
-                    "Do not generate executable task cards or call `ags task compile --task-card-requested` until the user explicitly issues a task-card instruction. \"方案 OK\" only ends the solution phase — a separate user task-card instruction is required before routing and task card generation."
+                    "Do not generate task cards or call `ags task compile --task-card-requested` until the user explicitly issues a task-card/handoff instruction. This compiler gate does not restrict authorized same-session direct execution."
                         .to_string(),
                 ],
                 vec![
@@ -964,7 +964,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
                 ],
             ),
             AgentType::ClaudeCode => (
-                "Claude Code executes bounded task cards formed from confirmed execution contracts. It reads the task card, protocol files, and project docs; implements within scope; runs verification; and outputs a delivery report. Claude Code must NOT perform ambient preflight, solution formation, or task-level classification from raw user requests — those phases belong to Codex/Cursor. Claude Code must not frame tasks, change protocol boundaries, or install hooks without explicit task-card authorization.\n\nCRITICAL — Task-Card Request Gate: Claude Code only consumes already-formed task cards. It must NOT generate task cards from raw user requests or from solution-phase outputs. The \"方案 OK\" signal is not a routing trigger — only an explicit user task-card instruction (\"生成任务卡\", \"交给 Claude Code 执行\", etc.) authorizes routing and task card generation. Claude Code must NOT self-classify tasks as Light/Medium/Heavy from raw requests."
+                "Claude Code executes bounded handoff task cards. It reads the task card, protocol files, and project docs; implements within scope; runs verification; and outputs a delivery report. Claude Code must NOT perform solution formation or task-level classification from raw user requests — those phases belong to Codex/Cursor. Claude Code only consumes already-formed cards and must not infer same-session direct-edit authority from `方案 OK` or raw prose."
                     .to_string(),
                 AgentPermissions {
                     default_permission_mode: "execute-and-verify".to_string(),
@@ -1027,7 +1027,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
                 ],
             ),
             AgentType::Cursor => (
-                "Cursor owns the full pre-execution lifecycle inside its IDE workflow: ambient preflight (project detection, context reading), solution formation (understanding, diagnosis, approach design), user confirmation, execution contract formalization, and task routing (Light/Medium/Heavy classification). Classification happens only after the solution is confirmed — never from raw user requests. Cursor may directly implement changes or delegate to Claude Code CLI. When delegating, Cursor generates task cards from the confirmed execution contract using the canonical task-card template.\n\nCRITICAL — Task-Card Request Gate: \"方案 OK\" only ends the solution phase. Cursor must NOT generate executable task cards until the user explicitly issues a task-card instruction (\"生成任务卡\", \"按这个方案出任务卡\", \"交给 Claude Code 执行\", etc.). Without explicit user instruction, `ags task compile` will block executable output with `executable_allowed=false` and `block_reason=task_card_not_requested`. The lifecycle is: preflight → solution → user says 方案 OK → user issues task-card instruction → execution contract → routing → task card → gate/execution/receipt."
+                "Cursor owns ambient preflight, solution formation, user confirmation, execution decision, task routing, and review inside its IDE workflow. Classification happens only after the solution is confirmed — never from raw user requests. Explicit same-session modification authorization enters direct execution; explicit delegation enters canonical task-card handoff. `方案 OK` alone authorizes neither path."
                     .to_string(),
                 AgentPermissions {
                     default_permission_mode: "execute-and-verify".to_string(),
@@ -1037,9 +1037,9 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
                     may_install: false,
                 },
                 vec![
-                    "Stop before broad refactors unless the task card explicitly authorizes them."
+                    "Stop before broad refactors unless the confirmed solution and current execution authorization explicitly cover them."
                         .to_string(),
-                    "Do not install hooks without explicit task-card authorization."
+                    "Do not install hooks without explicit protected-operation authorization."
                         .to_string(),
                     "Keep task-card facts project-local; do not bake global suite internals into project-specific prompts."
                         .to_string(),
@@ -1092,7 +1092,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
                     .unwrap_or_else(|| format!("Generic Agent ({agent})"));
                 (
                 format!(
-                    "{host_label} is an AGS-compatible governed host (Tencent Agent hosts — WorkBuddy and CodeBuddy-Code — resolve to this governed-host profile; other unknown hosts use it too). It must complete AGS initialization preflight before any AGS scenario work, then follow the governed lifecycle surfaced by the preflight report. Governed hosts may read project context and help form solutions, but they must not assume Codex, Claude Code, or Cursor-specific privileges from their agent name alone.\n\nCRITICAL — Task-Card Request Gate: do not generate executable task cards from raw user requests or solution-phase output. \"方案 OK\" only ends solution formation; a separate explicit task-card instruction is required before routing or execution."
+                    "{host_label} is an AGS-compatible governed host (Tencent Agent hosts — WorkBuddy and CodeBuddy-Code — resolve to this governed-host profile; other unknown hosts use it too). It must complete AGS initialization preflight before any AGS scenario work, then follow the governed lifecycle surfaced by the preflight report. Governed hosts may form solutions, but must not infer privileges from the Agent product name. Explicit same-session modification authorization and explicit task-card handoff are separate paths; `方案 OK` alone authorizes neither."
                 ),
                 AgentPermissions {
                     default_permission_mode: "execute-and-verify".to_string(),
@@ -1105,7 +1105,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
                     "Call `ags_preflight` first for AGS scenarios; do not call other AGS tools before preflight succeeds.".to_string(),
                     "Use the explicit `target` project path supplied by the host; do not assume the desktop workspace folder is the governed project.".to_string(),
                     "Do not perform Light/Medium/Heavy task classification from raw user requests.".to_string(),
-                    "Do not install hooks, runner adapters, dependencies, or production wiring without explicit task-card authorization.".to_string(),
+                    "Do not install hooks, runner adapters, dependencies, or production wiring without explicit protected-operation authorization.".to_string(),
                     "Do not generate task cards or call `ags task compile --task-card-requested` until the user explicitly issues a task-card instruction.".to_string(),
                     "If the host cannot identify the target project, stop and ask for the repository path instead of running `ags init` in the current desktop workspace.".to_string(),
                 ],
@@ -2466,6 +2466,10 @@ Some other text here.
         assert!(instructions
             .instructions_text
             .contains("## Verification Commands"));
+        assert!(instructions
+            .instructions_text
+            .contains("same-session modification instruction"));
+        assert!(instructions.instructions_text.contains("task-card/handoff"));
     }
 
     #[test]
@@ -2481,7 +2485,10 @@ Some other text here.
         assert!(!instructions.required_reads.is_empty());
         assert!(instructions
             .instructions_text
-            .contains("Claude Code executes bounded task cards"));
+            .contains("Claude Code executes bounded handoff task cards"));
+        assert!(instructions
+            .instructions_text
+            .contains("must not infer same-session direct-edit authority"));
     }
 
     #[test]
@@ -2496,7 +2503,10 @@ Some other text here.
         assert!(!instructions.required_reads.is_empty());
         assert!(instructions
             .instructions_text
-            .contains("Cursor owns the full pre-execution lifecycle"));
+            .contains("same-session modification authorization"));
+        assert!(instructions
+            .instructions_text
+            .contains("canonical task-card handoff"));
     }
 
     #[test]

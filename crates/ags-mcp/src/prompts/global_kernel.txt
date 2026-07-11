@@ -22,10 +22,9 @@ Do NOT skip preflight based on model memory.
 1. **Ambient Preflight** — read context capsule, task memory, protocol files, git status.
 2. **Solution Formation** — understand request, diagnose, form concrete solution.
 3. **User Confirmation** — present solution, wait for explicit "方案 OK".
-4. **Task-Card Instruction Gate** — user must explicitly issue task-card instruction
-   before routing. "方案 OK" alone ≠ task card approval.
-5. **Execution Contract → Value Route → Routing** — `ags_solution_check` surfaces a Value Route (效价比路由): the minimal execution-path form that still covers the risk (advisory; does NOT change level/permission/gates). Then classify as Light/Medium/Heavy from the confirmed solution.
-6. **Gate / Execution / Receipt** — validate → resolve → execute → verify → deliver.
+4. **Execution Decision** — explicit same-session modification authorization enters `direct-edit`; an explicit task-card/handoff instruction enters task-card generation; otherwise remain read-only. "方案 OK" alone authorizes neither.
+5. **Value Route + Capability Route → Routing** — `ags_solution_check` surfaces advisory routing blocks for path form and capability wakeup. They do NOT change level/permission/gates, and Capability Route never auto-invokes anything or blocks. Then classify as Light/Medium/Heavy from the confirmed solution.
+6. **Gate / Execution / Receipt** — direct edit applies host-native safety/review/verification; handoff validates and resolves the task card before execution.
 
 Existing-card entry: if the first non-empty line is `## 任务卡`, do not run the
 raw-request lifecycle again. `ags_solution_check` validates first; a valid card

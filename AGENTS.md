@@ -13,20 +13,21 @@ not a CLI toolbox you invoke separately. Public AGS exposes Claude Code `/ags`,
 Codex `$ags-setup` / `$ags-init` / `$ags-skill` / `$ags-doctor`, and the
 `ags mcp serve --transport stdio` kernel bridge. When a development request
 arrives, AGS governance engages automatically: ambient preflight → solution
-formation → user confirmation ("方案 OK") → user task-card instruction
-("生成任务卡") → execution contract → task routing → gate / execution / receipt.
+formation → user decision → same-session direct execution OR task-card handoff →
+gate / verification / receipt.
 
 When AGS MCP is available, every AGS-related task must explicitly call the MCP
 `ags_preflight` tool first. CLI preflight is a fallback path only when MCP is not
 available.
 
 Do not jump to Light / Medium / Heavy classification from raw user requests.
-Always complete preflight and solution formation first. "方案 OK" only ends the
-solution phase — a separate user task-card instruction is required before routing
-and task card generation. The task card template (`protocol/task-card-template.md`)
-takes a confirmed execution contract as input, not raw chat messages. The
-`ags task compile` command requires `--task-card-requested` before it will output
-an executable task card.
+Always complete preflight and solution formation first. "方案 OK" confirms the
+design but does not authorize mutation. An explicit same-session modification
+instruction enters `direct-edit`; an explicit task-card/handoff instruction enters
+task-card generation. The task card template (`protocol/task-card-template.md`)
+takes a confirmed handoff contract as input, not raw chat messages. `ags task
+compile` requires `--task-card-requested` because it generates a handoff artifact;
+task cards are not a prerequisite for authorized host-native direct edits.
 
 An input whose first non-empty line is the canonical `## 任务卡` header is an
 existing execution contract, not a raw request. Validate it before request

@@ -78,28 +78,28 @@ Run `git status --short` to record current state.
 Present the solution and wait for explicit user approval ("方案 OK").
 Do NOT proceed to routing without confirmation.
 
-### 4. Task-Card Instruction Gate (HARD GATE)
+### 4. Execution Decision
 
-**"方案 OK" alone only ends step 3. It does NOT authorize a task card.**
+**"方案 OK" confirms the solution but authorizes neither mutation path.**
 
-The user must explicitly issue a task-card instruction:
-- "生成任务卡"
-- "按这个方案出任务卡"
-- "交给 Claude Code 执行"
-- "帮我写个任务卡拉去执行"
+- Explicit same-session modification authorization (for example "开改" or
+  "按这个改") enters host-native `direct-edit` without a task card.
+- Explicit task-card/handoff instructions (for example "生成任务卡" or "交给
+  Claude Code 执行") enter task-card generation.
+- Without either instruction, remain read-only.
 
-Without this instruction, `ags task compile` blocks executable output with:
+Without a task-card/handoff instruction, `ags task compile` blocks card output with:
 - `executable_allowed: false`
 - `block_reason: task_card_not_requested`
 
-**Three-gate threshold**: 方案 OK → 任务卡指令 → 任务分级路由.
+This compiler gate does not apply to authorized same-session `direct-edit`.
 
 An existing canonical card is already past this threshold. When the first
 non-empty line is `## 任务卡`, `ags_solution_check` validates before natural
 language classification. A valid card skips generation and continues to
 policy/runner; an invalid card-shaped payload stops with validation errors.
 
-### 5. Execution Contract → Value Route → Routing
+### 5. Value Route + Capability Route → Routing
 
 Before classifying, AGS surfaces a **Value Route** (效价比路由) in
 `ags_solution_check` — the minimal execution-path form that still covers the
@@ -108,17 +108,18 @@ risk (`read-only-advisory` / `direct-edit` / `plan-first` / `claude-code-route` 
 shapes path form only; it does NOT change the task level, permission mode, Review
 gate, or Verification gate (see `protocol/agent-task-protocol.md` §3.9).
 
-When a Value Route is compiled into a task card, non-mutating advisory/planning
-routes map to `plan-only`; implementation routes map to
-`execute-and-verify`. No route creates a third permission mode.
+When a handoff Value Route is compiled into a task card, non-mutating
+advisory/planning routes map to `plan-only`; implementation routes map to
+`execute-and-verify`. Direct-edit does not compile a card. No route creates a
+third task-card permission mode.
 
 Based on the **confirmed solution** (not the raw user request),
 classify the task as Light, Medium, or Heavy per `protocol/task-routing.md`.
 
 ### 6. Gate / Execution / Receipt
 
-- Validate task card through `ags task validate`
-- Resolve execution policy through `ags policy resolve`
+- Direct edit: apply independent safety/review/verification boundaries.
+- Handoff: validate through `ags task validate` and resolve through `ags policy resolve`.
 - Execute per resolved policy
 - Verify with narrowest relevant verification
 - Output a delivery report per `protocol/agent-task-protocol.md`
@@ -130,7 +131,7 @@ classify the task as Light, Medium, or Heavy per `protocol/task-routing.md`.
 1. Initialization Gate: call `ags_preflight` (MCP) or `ags session preflight --for <agent>` (CLI fallback) FIRST.
 2. Do NOT jump to Light/Medium/Heavy classification from raw user requests.
 3. Always complete preflight + solution formation + user confirmation first.
-4. "方案 OK" ≠ task card approval.
+4. "方案 OK" authorizes neither mutation nor task-card generation.
 5. Raw user chat ≠ executable task card.
 6. AGS is the governance authority (lifecycle, gates, task level, permission mode, review gate, verification gate, release boundary).
 7. AGS MCP is the host initialization adapter and mandatory governance interface — NOT a governed third-party MCP.

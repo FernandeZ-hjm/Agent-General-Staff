@@ -18,10 +18,10 @@ pub fn list_resources() -> ResourceListResult {
                 description: Some(
                     "AGS global governance kernel summary — lifecycle, rules, and host boundaries. \
                      Applicable to any project; does NOT assume the target is an AGS repo. \
-                     Includes: ambient preflight → solution formation → user confirmation → \
-                     task-card request gate → execution contract → routing → gate/execution/receipt. \
+                     Includes: ambient preflight → solution formation → user decision → \
+                     direct execution or task-card handoff → routing → gate/verification/receipt. \
                      Critical: do NOT jump from raw user requests to Light/Medium/Heavy; \
-                     \"方案 OK\" does not equal task card approval."
+                     \"方案 OK\" authorizes neither mutation nor task-card generation."
                         .to_string(),
                 ),
                 mimeType: Some("text/markdown".to_string()),

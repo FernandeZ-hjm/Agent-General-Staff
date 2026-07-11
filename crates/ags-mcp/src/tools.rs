@@ -157,7 +157,7 @@ pub fn list_tools() -> ToolListResult {
             ),
             tool_def(
                 TOOL_SOLUTION_CHECK,
-                "Validate-first entry for a raw request, solution summary, or complete canonical task card. A summary beginning with `## 任务卡` is validated before keyword classification: a valid card returns phase=existing_task_card, task_card_generation_required=false, next_tool=ags_policy_resolve and proceeds to runner consumption; an invalid card-shaped payload returns phase=invalid_task_card, block_reason=validation_failed, and never falls through to task-card generation. Raw requests keep the solution/task-card instruction gate: task_card_requested=false blocks executable output with block_reason=task_card_not_requested, while deterministic prompt classification and advisory value/capability routes remain unchanged. This is NOT a preflight substitute. Read-only.",
+                "Validate-first entry for a raw request, solution summary, or complete canonical task card. Existing cards validate before classification. Raw requests distinguish explicit same-session direct execution from task-card handoff: direct authorization returns phase=direct_execution_authorized without compiling a card; task-card generation still requires task_card_requested=true. Without either authority, execution remains blocked. Deterministic prompt classification and advisory value/capability routes remain independent. This is NOT a preflight substitute. Read-only.",
                 serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -766,10 +766,14 @@ fn tool_solution_check(args: &serde_json::Value) -> Result<String, String> {
         task_card_requested: bool,
         /// Deterministic classifier signal: the `summary` text matches a
         /// prompt/task-card request. Advisory only — it does NOT authorize a
-        /// task card. The three-gate threshold still requires an explicit
-        /// user task-card instruction (`task_card_requested`).
+        /// task card. Task-card generation still requires an explicit user
+        /// handoff instruction (`task_card_requested`).
         detected_task_card_request: bool,
         detected_triggers: Vec<String>,
+        /// Explicit live authorization for same-session host-native mutation.
+        /// This never authorizes task-card generation or bypasses independent
+        /// protected/release/external-write stop conditions.
+        direct_execution_authorized: bool,
         /// `true` when advisory/consultation intent is detected in the summary.
         #[serde(skip_serializing_if = "Option::is_none")]
         detected_advisory_intent: Option<bool>,
@@ -781,7 +785,6 @@ fn tool_solution_check(args: &serde_json::Value) -> Result<String, String> {
         #[serde(skip_serializing_if = "Option::is_none")]
         advisory_block_reason: Option<String>,
         next_step: String,
-        trivial_possible: bool,
         /// Value Route (效价比路由): the minimal execution-path form that still
         /// covers the task's risk, with rejected lighter/heavier alternatives.
         /// Advisory and deterministic — it shapes the path form only and never
@@ -805,19 +808,14 @@ fn tool_solution_check(args: &serde_json::Value) -> Result<String, String> {
 
     // Deterministic entry intent classification of the summary text. This is
     // advisory: it surfaces when the request *looks like* a task-card/prompt
-    // request so the host follows the three-gate threshold instead of treating
-    // it as ordinary prose. It does NOT change `executable_allowed` — only an
-    // explicit user task-card instruction (`task_card_requested`) authorizes a
-    // card.
+    // request instead of treating an artifact mention as execution authority.
+    // It never authorizes either task-card generation or direct mutation.
     let classification = prompt_request_classifier::classify(&summary);
     let detected_task_card_request = classification.is_task_card_request;
     let detected_triggers = classification.matched_triggers.clone();
-
-    // Determine if task sounds trivial (simple typo, trivial fix, etc.)
-    let trivial_keywords = ["typo", "typo fix", "missing comma", "fix spelling"];
-    let summary_lower = summary.to_lowercase();
-    let trivial_possible =
-        trivial_keywords.iter().any(|kw| summary_lower.contains(kw)) && summary.len() < 200;
+    let direct_execution_authorized =
+        prompt_request_classifier::detect_current_task_approval(&summary)
+            && !detected_task_card_request;
 
     // Value Route: minimal execution-path form for this solution. Deterministic
     // and advisory — derived from the same classification signals as the entry
@@ -825,7 +823,7 @@ fn tool_solution_check(args: &serde_json::Value) -> Result<String, String> {
     let value_route = prompt_request_classifier::derive_value_route(
         &classification,
         task_card_requested,
-        trivial_possible,
+        direct_execution_authorized,
     );
 
     // Capability Route (能力路由): advisory wakeup suggestion for the demand,
@@ -839,29 +837,35 @@ fn tool_solution_check(args: &serde_json::Value) -> Result<String, String> {
         &active_host,
     );
 
-    let (executable_allowed, block_reason, phase) = if !task_card_requested {
+    let (executable_allowed, block_reason, phase) = if task_card_requested {
+        (true, None, "task_card_requested")
+    } else if direct_execution_authorized {
+        (true, None, "direct_execution_authorized")
+    } else if detected_task_card_request {
         (
             false,
             Some("task_card_not_requested".to_string()),
             "solution_formation",
         )
     } else {
-        (true, None, "task_card_requested")
+        (
+            false,
+            Some("execution_not_authorized".to_string()),
+            "solution_formation",
+        )
     };
 
-    let next_step = if !task_card_requested {
-        let base = "Solution phase is active. If solution is confirmed, user must explicitly issue a task-card instruction (\"生成任务卡\", \"按这个方案出任务卡\", \"交给 Claude Code 执行\", etc.) before an executable task card can be produced. \"方案 OK\" alone is NOT sufficient — the three-gate threshold is: 方案 OK → 任务卡指令 → 任务分级路由.".to_string();
-        if detected_task_card_request {
-            format!(
-                "NOTE: the summary text matches a prompt/task-card request (triggers: {}). This deterministic detection does NOT authorize a card — the user must still issue an explicit task-card instruction. {}",
-                detected_triggers.join(", "),
-                base
-            )
-        } else {
-            base
-        }
-    } else {
+    let next_step = if task_card_requested {
         "Task card instruction received. Proceed to task routing (Light/Medium/Heavy) and task card compilation via `ags task compile --task-card-requested`. The final foreground answer must be a canonical `## 任务卡` — self-check with `ags gate output`.".to_string()
+    } else if direct_execution_authorized {
+        "Direct execution authorization received for the current same-session solution. Proceed with host-native editing and verification. Do not compile a task card. Independent protected-path, release, external-write, credential, migration, destructive-operation, review, and verification boundaries still apply.".to_string()
+    } else if detected_task_card_request {
+        format!(
+            "The summary requests a task card or handoff (triggers: {}). Task-card generation requires an explicit task-card instruction. Direct local execution remains a separate path and is not authorized by a handoff request.",
+            detected_triggers.join(", ")
+        )
+    } else {
+        "Solution formation remains active. `方案 OK` confirms the design but does not authorize mutation. The user may explicitly authorize same-session direct execution (for example `开改` or `按这个改`) or explicitly request a task-card handoff.".to_string()
     };
 
     let (advisory_intent, advisory_mutation, advisory_reason) =
@@ -886,11 +890,11 @@ fn tool_solution_check(args: &serde_json::Value) -> Result<String, String> {
         task_card_requested,
         detected_task_card_request,
         detected_triggers,
+        direct_execution_authorized,
         detected_advisory_intent: advisory_intent,
         mutation_allowed: advisory_mutation,
         advisory_block_reason: advisory_reason,
         next_step,
-        trivial_possible,
         value_route,
         capability_route: Some(cap_route),
         visible_status: Some(
@@ -1000,16 +1004,9 @@ mod tests {
             .unwrap()
             .iter()
             .any(|t| t == "给我提示词"));
-        // Detection alone must NOT authorize a card — three-gate threshold holds.
+        // Detection alone must NOT authorize a card or direct mutation.
         assert_eq!(v["executable_allowed"], false);
         assert_eq!(v["block_reason"], "task_card_not_requested");
-    }
-
-    #[test]
-    fn solution_check_prose_not_detected() {
-        let v = run_solution_check("解释这段代码是做什么的", false);
-        assert_eq!(v["detected_task_card_request"], false);
-        assert!(v["detected_triggers"].as_array().unwrap().is_empty());
     }
 
     #[test]
@@ -1017,6 +1014,28 @@ mod tests {
         let v = run_solution_check("按这个方案出任务卡", true);
         assert_eq!(v["executable_allowed"], true);
         assert_eq!(v["detected_task_card_request"], true);
+    }
+
+    #[test]
+    fn solution_check_allows_authorized_direct_edit_without_task_card() {
+        let v = run_solution_check("方案确认，可以开改", false);
+        assert_eq!(v["direct_execution_authorized"], true);
+        assert_eq!(v["executable_allowed"], true);
+        assert_eq!(v["phase"], "direct_execution_authorized");
+        assert_eq!(v["value_route"]["recommended_path"], "direct-edit");
+        assert!(v["block_reason"].is_null());
+        assert!(v["next_step"]
+            .as_str()
+            .unwrap()
+            .contains("Do not compile a task card"));
+    }
+
+    #[test]
+    fn solution_check_task_card_discussion_is_not_a_handoff() {
+        let v = run_solution_check("任务卡不该限制 Codex", false);
+        assert_eq!(v["detected_task_card_request"], false);
+        assert!(v["detected_triggers"].as_array().unwrap().is_empty());
+        assert_eq!(v["direct_execution_authorized"], false);
     }
 
     #[test]
@@ -1139,8 +1158,10 @@ mod tests {
     }
 
     #[test]
-    fn solution_check_visible_status_needs_user_when_not_requested() {
+    fn solution_check_unresolved_request_needs_user_decision() {
         let v = run_solution_check("解释这段代码是做什么的", false);
+        assert_eq!(v["direct_execution_authorized"], false);
+        assert_eq!(v["block_reason"], "execution_not_authorized");
         assert_eq!(v["visible_status"], "NEEDS_USER_DECISION");
     }
 
@@ -1191,13 +1212,12 @@ mod tests {
     }
 
     /// Capability Route is advisory-only: it does NOT change the executable gate
-    /// decision. The same summary with/without capability data resolves the gate
-    /// identically (driven solely by task_card_requested).
+    /// decision. Capability advice cannot manufacture direct mutation authority.
     #[test]
     fn solution_check_capability_route_does_not_change_gate() {
         let v = run_solution_check("测试挂了，帮我看下", false);
         assert_eq!(v["executable_allowed"], false);
-        assert_eq!(v["block_reason"], "task_card_not_requested");
+        assert_eq!(v["block_reason"], "execution_not_authorized");
         // capability_route present but the gate is unaffected by it.
         assert!(!v["capability_route"].is_null());
     }

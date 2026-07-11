@@ -21,18 +21,13 @@ to classification or execution before the earlier phases are complete:
    concrete solution or implementation approach.
 3. **User confirmation** — present the solution and wait for explicit user
    approval. Do not proceed to routing without confirmation.
-4. **Execution contract** — the confirmed solution is formalized as an execution
-   contract (the basis for the task card).
-5. **Task-card instruction gate** — the user must explicitly issue a task-card
-   instruction (\"生成任务卡\", \"按这个方案出任务卡\", \"交给 Claude Code 执行\",
-   etc.). \"方案 OK\" alone only ends step 4; it does NOT trigger routing.
-   Without this instruction, `ags task compile` will block executable output
-   with `executable_allowed=false`. Only after receiving the instruction may
-   Codex/Cursor call `ags task compile --task-card-requested`.
-6. **Routing** — classify the execution contract as Light / Medium / Heavy using
-   the criteria in this file.
-7. **Gate / execution / receipt** — validate, resolve policy, execute, verify,
-   and deliver.
+4. **Execution decision** — the user either explicitly authorizes same-session
+   `direct-edit`, explicitly requests a task-card handoff, or leaves the session
+   read-only. \"方案 OK\" alone authorizes neither mutation path.
+5. **Routing** — classify the confirmed solution as Light / Medium / Heavy using
+   the criteria in this file, then choose direct execution or handoff.
+6. **Gate / execution / receipt** — apply the chosen path's independent safety,
+   review, verification, and receipt requirements.
 
 Existing-card entry is validate-first: when the first non-empty line is
 `## 任务卡`, skip raw-request solution/classification and card generation. A
@@ -41,9 +36,9 @@ valid card proceeds to policy/runner; an invalid card-shaped payload stops.
 **Hard rule**: the user's initial natural-language request is NOT an executable
 task card and must NOT be used directly for Light / Medium / Heavy
 classification. Always complete ambient preflight and solution formation first.
-\"方案 OK\" alone is not a routing trigger — a separate user task-card instruction
-is required before routing and task card generation. The three-gate threshold is:
-方案 OK → 任务卡指令 → 任务分级路由.
+\"方案 OK\" alone is not mutation authority. Explicit same-session modification
+authorization selects `direct-edit`; an explicit task-card/handoff instruction
+selects task-card generation.
 
 ## Operating Model
 
@@ -77,19 +72,18 @@ Before any classification or routing decision:
 5. Understand the user's request: clarify ambiguities, diagnose when the request
    describes a problem, and form a concrete solution.
 6. Present the solution to the user and wait for explicit confirmation.
-7. Once confirmed, the solution becomes the execution contract — the input to
-   task card generation and routing.
-8. Wait for the user to issue an explicit task-card instruction (\"生成任务卡\",
-   \"按这个方案出任务卡\", \"交给 Claude Code 执行\", etc.). Do NOT proceed to
-   routing without this instruction.
+7. Once confirmed, use the solution as the stable input to routing.
+8. Require an explicit execution decision: same-session modification authorization
+   enters `direct-edit`; a task-card/handoff instruction enters task-card generation;
+   otherwise remain read-only.
 
-Only after steps 7 AND 8 should you proceed to the Routing Phase below.
+Only after steps 7 AND 8 should you proceed to an execution path below.
 
 ## Routing Phase (Solution-Confirmed)
 
-After the user has confirmed a solution, classify the execution contract using
-the criteria below. The classification determines the task card skeleton, default
-permission mode, review gate, and delegation rules.
+After the user has confirmed a solution, classify it using the criteria below.
+The classification determines risk, review, verification, and — for handoffs only —
+task-card fields and delegation rules.
 
 1. Identify the task type from the confirmed execution contract (not the raw
    user request).

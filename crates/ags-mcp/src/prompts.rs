@@ -42,8 +42,8 @@ pub fn list_prompts() -> PromptListResult {
                     "Guide the user through AGS solution formation: understand the \
                      request, gather relevant project context, present the solution, \
                      and wait for user confirmation. Reminds that \"方案 OK\" \
-                     does NOT authorize a task card — the three-gate threshold \
-                     (方案 OK → 任务卡指令 → 任务分级路由) is mandatory."
+                     authorizes neither mutation nor a task card; the next explicit \
+                     instruction selects direct edit or task-card handoff."
                         .to_string(),
                 ),
                 arguments: Some(vec![PromptArgument {
@@ -57,10 +57,9 @@ pub fn list_prompts() -> PromptListResult {
             PromptDef {
                 name: "ags_task_card_request_gate".to_string(),
                 description: Some(
-                    "Enforce the task-card instruction gate. After solution confirmation, \
-                     remind the user that an explicit task-card instruction is required \
-                     before routing and task card generation. Without this instruction, \
-                     executable task card output is blocked with \
+                    "Enforce the task-card handoff gate. After solution confirmation, \
+                     distinguish same-session direct execution authorization from an \
+                     explicit task-card/handoff instruction. Without the latter, card output is blocked with \
                      `executable_allowed=false, block_reason=task_card_not_requested`."
                         .to_string(),
                 ),
@@ -130,8 +129,9 @@ fn prompt_solution_phase(arguments: &serde_json::Value) -> PromptGetResult {
          4. **Form a concrete solution** — not a task card. Include: approach, impact scope, \
          risks, alternatives considered.\n\
          5. **Present the solution to the user** and wait for explicit confirmation (\"方案 OK\").\n\
-         6. **Do NOT proceed to routing or task card generation.** \"方案 OK\" only ends \
-         solution formation — it does NOT authorize a task card.\n\n\
+         6. **Do NOT mutate or generate a task card from confirmation alone.** After \
+         \"方案 OK\", wait for an explicit instruction selecting same-session direct edit \
+         or task-card handoff.\n\n\
          ### Solution text must include\n\n\
          - Problem understanding and diagnosis\n\
          - Proposed approach with rationale\n\
@@ -141,11 +141,11 @@ fn prompt_solution_phase(arguments: &serde_json::Value) -> PromptGetResult {
          ### Key rules\n\n\
          - Do NOT classify as Light/Medium/Heavy yet.\n\
          - Do NOT generate a task card yet.\n\
-         - \"方案 OK\" ≠ task card approval → three-gate threshold.\n\n\
+         - \"方案 OK\" authorizes neither mutation nor a task card.\n\n\
          ### Next phase\n\n\
-         After user confirmation, wait for explicit task-card instruction before routing. \
-         Use `ags_solution_check` tool or `ags_task_card_request_gate` prompt to enforce \
-         the next gate.",
+         After user confirmation, use `ags_solution_check` or \
+         `ags_task_card_request_gate` to distinguish direct execution authorization from \
+         task-card handoff.",
         user_request
     );
 
@@ -168,8 +168,8 @@ fn prompt_solution_phase(arguments: &serde_json::Value) -> PromptGetResult {
 fn prompt_task_card_request_gate() -> PromptGetResult {
     PromptGetResult {
         description: Some(
-            "Enforce the task-card instruction gate — the hard gate between \
-             solution confirmation and task card generation."
+            "Enforce the task-card handoff gate and distinguish it from authorized \
+             same-session direct execution."
                 .to_string(),
         ),
         messages: vec![PromptMessage {

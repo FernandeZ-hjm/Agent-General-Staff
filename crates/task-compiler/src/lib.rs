@@ -29,8 +29,9 @@
 //!   `executable_allowed` will be `false` and the compiled card text will
 //!   be suppressed. This gate closes the enforcement gap where a
 //!   sufficiently structured raw request could bypass the lifecycle:
-//!   preflight → solution → user confirmation → **task-card instruction**
-//!   → execution contract → routing → task card → gate/execution/receipt.
+//!   preflight → solution → user confirmation → **task-card/handoff instruction**
+//!   → routing → task card → gate/execution/receipt. Authorized same-session
+//!   direct execution does not call this compiler.
 //!
 //! # Intent format (execution contract)
 //!
@@ -957,7 +958,7 @@ pub fn compile(
         )
     };
 
-    // ── Phase 7: task-card request gate ─────────────────────────────
+    // ── Phase 7: task-card handoff generation gate ──────────────────
     // Determine whether executable output is allowed.
     // Three conditions must all be met:
     //   1. User explicitly requested a task card (task_card_requested)

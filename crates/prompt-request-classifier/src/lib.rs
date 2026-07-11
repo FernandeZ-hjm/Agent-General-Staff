@@ -19,10 +19,9 @@
 //! - **Spacing-insensitive** — every pattern is checked against the lowercased
 //!   input *and* a despaced variant, so "交给 Claude Code" and "交给ClaudeCode"
 //!   match the same trigger.
-//! - **Recall-biased (fail-closed)** — when in doubt the classifier prefers to
-//!   flag a request (so the gate engages) over missing it. A false positive
-//!   merely reminds the host to emit a canonical task card; a false negative is
-//!   the bypass this whole component exists to prevent.
+//! - **Action-bound** — task-card and prompt requests require an explicit
+//!   generation or handoff verb. Bare artifact names are discussion topics, not
+//!   execution instructions.
 
 use serde::Serialize;
 
@@ -152,11 +151,8 @@ pub fn redact_sample(text: &str, max: usize) -> String {
 /// phrases trigger, to avoid matching incidental prose.
 const TRIGGERS: &[(&str, PromptRequestKind, &str)] = &[
     // ── TaskCardRequest ──
-    ("任务卡", PromptRequestKind::TaskCardRequest, "zh"),
     ("生成任务卡", PromptRequestKind::TaskCardRequest, "zh"),
     ("出任务卡", PromptRequestKind::TaskCardRequest, "zh"),
-    ("task card", PromptRequestKind::TaskCardRequest, "en"),
-    ("taskcard", PromptRequestKind::TaskCardRequest, "en"),
     (
         "generate a task card",
         PromptRequestKind::TaskCardRequest,
@@ -175,7 +171,6 @@ const TRIGGERS: &[(&str, PromptRequestKind, &str)] = &[
     ("让 claude 做", PromptRequestKind::Handoff, "zh"),
     ("让 claude code 做", PromptRequestKind::Handoff, "zh"),
     ("让 claude 执行", PromptRequestKind::Handoff, "zh"),
-    ("handoff", PromptRequestKind::Handoff, "en"),
     ("hand off", PromptRequestKind::Handoff, "en"),
     ("hand to claude", PromptRequestKind::Handoff, "en"),
     ("hand it to claude", PromptRequestKind::Handoff, "en"),
@@ -228,6 +223,7 @@ const TRIGGERS: &[(&str, PromptRequestKind, &str)] = &[
 /// "执行策略/执行器/执行门禁"), and "go ahead" is excluded because it reads as
 /// part of a question ("should we go ahead with this refactor?").
 const EXECUTION_OVERRIDES: &[(&str, &str)] = &[
+    ("开改", "zh"),
     ("按这个改", "zh"),
     ("开始实现", "zh"),
     ("落地这个方案", "zh"),
@@ -257,6 +253,9 @@ const EXECUTION_OVERRIDES: &[(&str, &str)] = &[
 /// only from the live request. Bare "执行" is intentionally excluded (it reads as
 /// a topic word, not an authorization).
 pub fn detect_current_task_approval(request: &str) -> bool {
+    if is_question(request) {
+        return false;
+    }
     let lower = request.to_lowercase();
     let lower_collapsed = collapse_ws(&lower);
     let compact = despace(&lower);
@@ -279,6 +278,11 @@ fn despace(s: &str) -> String {
 /// "交给 claude code" before matching.
 fn collapse_ws(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn is_question(s: &str) -> bool {
+    let trimmed = s.trim_end();
+    trimmed.ends_with('?') || trimmed.ends_with('？')
 }
 
 /// Substring match with a word boundary at ASCII-alphanumeric pattern edges.
@@ -378,13 +382,8 @@ pub fn classify(request: &str) -> Classification {
     // even if it contains an imperative-looking phrase: "should we start
     // implementing this?" is still a question, not an authorization. We only scan
     // execution overrides for non-question requests.
-    let is_question = {
-        let trimmed = request.trim_end();
-        trimmed.ends_with('?') || trimmed.ends_with('？')
-    };
-
     let mut advisory_override_triggers: Vec<String> = Vec::new();
-    if detected_advisory_intent && !is_question {
+    if detected_advisory_intent && !is_question(request) {
         for (pattern, _lang) in EXECUTION_OVERRIDES {
             let pat_compact = despace(pattern);
             let hit = contains_bounded(&lower_collapsed, pattern)
@@ -1019,8 +1018,9 @@ pub const VALUE_ROUTE_AUTHORITY_NOTE: &str = "Value Route shapes the execution-p
 
 /// Derive the Value Route recommendation from deterministic classification
 /// signals plus solution-phase context. `task_card_requested` is whether the user
-/// has issued an explicit task-card instruction; `trivial_possible` marks a
-/// small/local (typo-class) change. Deterministic: same inputs → same route.
+/// has issued an explicit task-card instruction; `direct_execution_authorized`
+/// is whether the current live instruction explicitly authorizes same-session
+/// mutation. Deterministic: same inputs → same route.
 ///
 /// `stop-for-scope` is part of the taxonomy but is never auto-recommended here —
 /// it is a planner/host-selected escape hatch when scope, authority, or risk is
@@ -1028,7 +1028,7 @@ pub const VALUE_ROUTE_AUTHORITY_NOTE: &str = "Value Route shapes the execution-p
 pub fn derive_value_route(
     classification: &Classification,
     task_card_requested: bool,
-    trivial_possible: bool,
+    direct_execution_authorized: bool,
 ) -> ValueRoute {
     let note = VALUE_ROUTE_AUTHORITY_NOTE.to_string();
 
@@ -1071,7 +1071,7 @@ pub fn derive_value_route(
                 }),
                 rejected_heavier: Some(RejectedPath {
                     path: ValuePath::ClaudeCodeRoute,
-                    reason: "Handoff before the task-card instruction is premature — the three-gate threshold (方案 OK → 任务卡指令 → 路由) is not yet met.".to_string(),
+                    reason: "The host has not supplied the explicit task-card/handoff authorization required to generate the artifact.".to_string(),
                 }),
                 requires_user_confirmation: true,
                 needs_planner_judgment: false,
@@ -1079,17 +1079,17 @@ pub fn derive_value_route(
                 authority_note: note,
             }
         }
-    } else if trivial_possible {
+    } else if direct_execution_authorized {
         ValueRoute {
             recommended_path: ValuePath::DirectEdit,
-            rationale: "Small, local, low-risk change; edit in-session and verify with the narrowest relevant check.".to_string(),
+            rationale: "The current live instruction explicitly authorizes same-session mutation; edit in-session and verify without compiling a handoff task card.".to_string(),
             rejected_lighter: Some(RejectedPath {
                 path: ValuePath::ReadOnlyAdvisory,
-                reason: "A concrete fix was requested, not just advice.".to_string(),
+                reason: "The user explicitly authorized mutation, so stopping at advice would under-deliver.".to_string(),
             }),
             rejected_heavier: Some(RejectedPath {
-                path: ValuePath::PlanFirst,
-                reason: "A trivial, local change does not need a plan-first round.".to_string(),
+                path: ValuePath::ClaudeCodeRoute,
+                reason: "No cross-agent or detached handoff was requested, so a task card would add ceremony without additional control.".to_string(),
             }),
             requires_user_confirmation: false,
             needs_planner_judgment: false,
@@ -1128,7 +1128,6 @@ mod tests {
         let positives = [
             "给我提示词",
             "生成提示词",
-            "任务卡",
             "帮我生成任务卡",
             "交给 Claude Code",
             "交给 Claude Code 执行",
@@ -1136,7 +1135,6 @@ mod tests {
             "给 cc 执行这个",
             "写个 prompt",
             "写一个 prompt 给我",
-            "handoff",
             "hand off to claude",
             "让 Claude 做",
             "让 Claude Code 做这件事",
@@ -1186,6 +1184,10 @@ mod tests {
             "fix the failing test",
             "这个 prompt engineering 技术怎么样", // bare 'prompt' as topic, not a request
             "我在写一个 promptbook 库",
+            "我觉得任务卡体系不该限制 Codex",
+            "删除任务卡前置门禁",
+            "task cards should be handoff contracts",
+            "taskcard validation is a separate concern",
         ];
         for n in negatives {
             let c = classify(n);
@@ -1387,17 +1389,11 @@ mod tests {
         assert!(!c.detected_advisory_intent);
         assert!(c.mutation_allowed);
 
-        let c2 = classify("任务卡");
-        assert_eq!(c2.kind, PromptRequestKind::TaskCardRequest);
-        assert!(c2.is_task_card_request);
+        let c2 = classify("解释这段代码");
+        assert_eq!(c2.kind, PromptRequestKind::NotARequest);
+        assert!(!c2.is_task_card_request);
         assert!(!c2.detected_advisory_intent);
         assert!(c2.mutation_allowed);
-
-        let c3 = classify("解释这段代码");
-        assert_eq!(c3.kind, PromptRequestKind::NotARequest);
-        assert!(!c3.is_task_card_request);
-        assert!(!c3.detected_advisory_intent);
-        assert!(c3.mutation_allowed);
     }
 
     #[test]
@@ -1492,9 +1488,10 @@ mod tests {
     }
 
     #[test]
-    fn value_route_trivial_is_direct_edit() {
-        let c = classify("fix the typo in the readme");
-        let vr = derive_value_route(&c, false, true);
+    fn value_route_explicit_execution_authorization_is_direct_edit() {
+        let request = "可以，开改";
+        let c = classify(request);
+        let vr = derive_value_route(&c, false, detect_current_task_approval(request));
         assert_eq!(vr.recommended_path, ValuePath::DirectEdit);
         assert_eq!(
             vr.rejected_lighter.as_ref().map(|r| r.path),
@@ -1502,7 +1499,7 @@ mod tests {
         );
         assert_eq!(
             vr.rejected_heavier.as_ref().map(|r| r.path),
-            Some(ValuePath::PlanFirst)
+            Some(ValuePath::ClaudeCodeRoute)
         );
         assert!(!vr.requires_user_confirmation);
     }
@@ -1886,6 +1883,7 @@ mod tests {
     fn detect_current_task_approval_fires_on_execution_instructions() {
         for yes in [
             "按这个方案开始实现",
+            "可以，开改",
             "一口气做完核验",
             "把它修复",
             "implement this now",
@@ -1901,6 +1899,7 @@ mod tests {
             "你看看这个执行策略对不对",
             "解释一下执行器的设计",
             "should we go ahead with this refactor?",
+            "should we start implementing this?",
             "帮我查飞书日历",
         ] {
             assert!(

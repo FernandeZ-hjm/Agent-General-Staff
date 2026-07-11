@@ -24,21 +24,22 @@ state:
 ## Lifecycle Boundary: Preflight / Solution Are Not Runner Execution
 
 The fields defined in this file (Permission mode, Parallelism, Execution
-surface, launch args) apply ONLY after a task card has been formed from a
-confirmed execution contract. They do NOT govern the earlier lifecycle phases:
+surface, launch args) govern task-card handoff execution. They do not govern
+the earlier lifecycle phases or authorized host-native `direct-edit`:
 
 - **Ambient preflight** (project detection, context reading, git status) is a
   read-only discovery phase. It runs before any task card exists and is not
   constrained by Permission mode or Parallelism.
 - **Solution phase** (understanding, diagnosis, solution formation, user
   confirmation) is a framing phase performed by Codex / Cursor. It produces the
-  execution contract that will become the task card input. It is not runner
-  execution.
+  stable solution used by either direct execution or task-card handoff.
+- **Direct edit** is host-native same-session execution after explicit mutation
+  authorization. It does not compile a task card, but still obeys independent
+  protected-path, release, review, and verification boundaries.
 
-Only after the execution contract is formed, the user has explicitly issued a
-task-card instruction, and the task card is compiled do the runtime adapter
-fields take effect. The runner, resolver, and gate operate on the task card —
-they do not govern how Codex / Cursor reach the solution.
+Only after the user explicitly requests a task-card handoff and the card is
+compiled do runtime-adapter fields take effect. The runner, resolver, and gate
+operate on that card; they do not govern solution formation or direct edit.
 
 **Value Route is not a runtime adapter field.** The Value Route recommendation
 (`read-only-advisory` / `direct-edit` / `plan-first` / `claude-code-route` /
@@ -61,13 +62,12 @@ execution-policy resolver acting on a task card's `Runtime adapter` field: M9 ca
 actual task-card writes gated at `plan-only` by M9, regardless of the discovery
 baseline shown in agent instructions.
 
-**Task-card request gate**: Between "solution OK" and routing/task card generation
-there is a hard gate. `ags task compile` requires `--task-card-requested` before
-it will output an executable task card. Without this flag, `executable_allowed`
-is `false` and `block_reason` is `task_card_not_requested`. Codex/Cursor must
-only pass this flag after the user has explicitly issued a task-card instruction
-(\"生成任务卡\", \"按这个方案出任务卡\", \"交给 Claude Code 执行\", etc.).
-\"方案 OK\" alone is not sufficient.
+**Task-card handoff gate**: `ags task compile` requires
+`--task-card-requested` before it will output a handoff task card. Without this
+flag, card generation reports `executable_allowed=false` and
+`block_reason=task_card_not_requested`. Codex/Cursor pass this flag only after an
+explicit task-card/handoff instruction. This compiler gate does not apply to
+authorized same-session `direct-edit`; \"方案 OK\" alone authorizes neither path.
 
 ## Generic Fields
 

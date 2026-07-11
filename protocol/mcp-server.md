@@ -158,14 +158,16 @@ invalid card-shaped input returns `phase=invalid_task_card` and
 
 - `detected_task_card_request` (bool) — the summary matches a prompt/task-card
   request ("给我提示词", "生成任务卡", "交给 Claude Code", "给 CC 执行",
-  "写个 prompt", "handoff", "让 Claude 做", …).
+  "写个 prompt", "让 Claude 做", …). Bare artifact names are not requests.
 - `detected_triggers` (string array) — the matched trigger phrases.
+- `direct_execution_authorized` (bool) — the live instruction explicitly
+  authorizes same-session host-native mutation and does not request a handoff.
 
-This is **advisory only**: detection does NOT change `executable_allowed`. The
-three-gate threshold (方案 OK → 任务卡指令 → 任务分级路由) still requires an
-explicit user task-card instruction. The classifier exists so the host
-recognizes prompt/task-card intent instead of treating it as prose — closing the
-pre-entry bypass.
+Task-card detection is advisory and never authorizes mutation. Explicit direct
+authorization may return `phase=direct_execution_authorized` and
+`executable_allowed=true` without a task card; an explicit handoff still requires
+`task_card_requested=true` before card generation. The two paths do not authorize
+each other.
 
 The frontstage **output-shape gate** and the `governance_miss` event live on the
 CLI side (`ags gate output`), NOT in MCP — AGS MCP stays read-only and never
@@ -184,8 +186,9 @@ three optional fields (present only when advisory intent is detected):
   "implement this", …). Bare "执行" is intentionally not an authorization.
 - `advisory_block_reason` (string) — `advisory_intent_no_mutation` when blocked.
 
-Advisory intent no-mutation, the task-card request gate, and the execution
-permission gate are **three separate concerns** — none substitutes for another.
+Advisory intent no-mutation, direct execution authorization, the task-card
+handoff gate, and task-card execution permission are separate concerns — none
+substitutes for another.
 See `protocol/agent-task-protocol.md` §3.7.
 
 ### Value Route (效价比路由)
@@ -235,7 +238,7 @@ See `protocol/agent-task-protocol.md` §3.8.
 |--------|-------------|
 | `ags_global_kernel` | Load AGS governance kernel at session start — including mandatory initialization gate |
 | `ags_solution_phase` | Guide through solution formation and context-backed proposal |
-| `ags_task_card_request_gate` | Enforce the task-card instruction gate |
+| `ags_task_card_request_gate` | Distinguish direct execution from task-card handoff and enforce handoff generation |
 | `ags_delivery_report` | Produce a valid AGS delivery report |
 
 ## AGS vs Governed MCPs

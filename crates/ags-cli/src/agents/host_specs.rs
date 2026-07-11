@@ -52,7 +52,7 @@ pub(in crate::agents) fn agents_scan_rows(
 pub(in crate::agents) fn agents_governance_chain() -> Vec<&'static str> {
     vec![
         "ags_preflight (host initialization gate)",
-        "ags_solution_check (solution/task-card request gate)",
+        "ags_solution_check (solution/direct-edit/task-card-handoff decision)",
         "ags_task_validate (task-card format gate)",
         "ags_policy_resolve (execution policy)",
         "review gate + verification gate (delivery)",

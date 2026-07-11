@@ -127,7 +127,7 @@ Verification gate:
 
 ## 使用说明
 
-- **Cursor / Codex**：先完成 ambient preflight → solution phase → user confirmation，形成 execution contract。然后等待用户明确发出任务卡指令（"生成任务卡"、"按这个方案出任务卡"、"交给 Claude Code 执行"等）。只有收到任务卡指令后，才调用 `ags task compile --task-card-requested` 或手动将 execution contract 填入此模板。对话前台输出本项目任务卡时，必须以 `## 任务卡` 作为统一抬头，并保持本文件固定槽位顺序；固定规则通过协议路径引用。不得把原始用户自然语言请求直接当作任务卡输入。不得在用户仅说"方案 OK"而未发出任务卡指令时生成可执行任务卡。
+- **Cursor / Codex**：先完成 ambient preflight → solution phase → user decision。明确同会话修改授权走 `direct-edit`，不使用本模板；明确任务卡/跨 Agent 交接指令后，才调用 `ags task compile --task-card-requested` 或把已确认方案填入本模板。对话前台输出任务卡时必须以 `## 任务卡` 作为统一抬头，并保持固定槽位顺序。不得把原始用户自然语言请求直接当作任务卡输入，也不得为了本地 direct edit 伪造任务卡请求。
 - **Executor**：读取任务卡 + 引用的协议文件，执行并交付。
 - 固定规则（安全、分级、runtime adapter、Review gate、验证、交付格式）在协议文件中，任务卡不再重复。
 - 为了保持执行稳定性和缓存友好性，任务卡必须使用固定骨架：标题、字段顺序、基础措辞保持不变；只在固定槽位填写动态任务内容。
@@ -140,7 +140,7 @@ Verification gate:
 - “完整”“压缩”“compact”“full”“可粘贴”“可复制给 Claude Code”“直接发给 CC 执行”只是对话展示偏好，不是任务卡形态。compact 任务卡格式已删除：任务卡只有唯一经典固定骨架，这些词不得改变任务卡骨架、标题或槽位顺序，也不得据此生成 compact 骨架或“默认 compact 可执行卡”。
 - 对话交付任务卡时，默认使用普通 Markdown 输出整张任务卡，不要用一个外层 fenced code block 包住整卡；这样对话框可以自然换行。只有用户明确要求单个 literal copy block、文件 artifact，或任务卡内含嵌套 fenced 代码块且必须作为一个代码块复制时，才允许外层使用 `~~~~markdown` / `~~~~`。
 - 对话最终输出只要包含 `Executor: Claude Code`，就必须输出一个可执行任务卡块，且任务卡内容第一条非空行必须是 `## 任务卡`；若生成结果不是这个形态，必须丢弃并重写，不得把自由 runbook、`text` fence 或 prose-first prompt 交给用户粘贴。
-- 入口意图与前台输出形态有确定性门禁（见 `protocol/agent-task-protocol.md` §3.6）：用 `ags gate prompt-request <request>` 判断用户请求是否任务卡/提示词请求（命中即 `require_task_card`）；交付前用 `ags gate output <candidate>` 自检前台输出是否 canonical（首行非 `## 任务卡` → `bad_output_shape`；validator 不过 → `validation_failed`；阻断时发出 `governance_miss`）。这些是确定性信号源，不改变任务卡唯一骨架，也不替代显式任务卡指令门槛。
+- 入口意图与前台输出形态有确定性门禁（见 `protocol/agent-task-protocol.md` §3.6）：用 `ags gate prompt-request <request>` 判断用户是否明确请求任务卡/提示词/交接（只认带动作的表达，裸“任务卡”不是请求）；交付前用 `ags gate output <candidate>` 自检 canonical 形态。该门禁只约束 handoff 产物，不限制已授权的 `direct-edit`。
 - 本项目任务卡可读性格式必须稳定：`任务：` 只写一句话；如任务需要拆分条目，把条目放入 `目标：`。`目标：`、`非目标：`、`目标文件夹路径：`、`相关路径：`、`本次任务相关文件：`、`验证：`、`交付：` 只要包含多项，就必须把字段名单独成行，后续每项单独换行；不得写成 `目标：1. ... 2. ...`、`验证：- ... - ...` 这种 inline list。推荐格式：
   ```markdown
   目标：
@@ -166,7 +166,7 @@ Verification gate:
   4. 动态命令输出：如 `git status --short`、验证命令、脚本检查结果，只记录在执行过程或交付报告的验证/状态部分，不放进“读取并遵守”清单。
 - 跨仓库、外部 agent、或 Executor 无法访问本项目文件时，使用同一 canonical 骨架的自包含形态（内联所需固定规则），不另立 fallback 任务卡格式。
 - 任务级别按 `protocol/task-routing.md` 定义。
-- **Task-card request gate**：`ags task compile` 在没有 `--task-card-requested` 参数时拒绝输出可执行任务卡，报告 `executable_allowed=false`、`block_reason=task_card_not_requested`。只有用户明确发出任务卡指令后，generator 才能带 `--task-card-requested` 调用 compiler。参见 `protocol/agent-task-protocol.md` 生命周期阶段 3.5。
+- **Task-card handoff gate**：`ags task compile` 在没有 `--task-card-requested` 参数时拒绝输出任务卡，报告 `executable_allowed=false`、`block_reason=task_card_not_requested`。只有用户明确发出任务卡/交接指令后，generator 才能带该参数调用 compiler；此规则不限制已授权的同会话 `direct-edit`。参见 `protocol/agent-task-protocol.md` 生命周期阶段 3.5。
 - Executor、Runtime adapter、Execution surface、Permission mode、Parallelism、Verification gate 按 `protocol/runtime-adapters.md` 定义；Review gate 的唯一规则表在 `protocol/agent-task-protocol.md`。
 - `Execution effort` 使用中性执行强度语义（`low` / `normal` / `high` / `exhaustive`），默认 `normal`；它只表示思考强度，绝不映射为权限、并行或 review 豁免。宿主私有深度/工作流触发词（如 `ultracode`）不得写进任务卡前台生成路径，只能由 claude-code adapter / runner 按 resolved policy 在执行层翻译；`ultracode` 仅作为旧值解析兼容保留，prompt-maker 不再生成。
 - `Workflow authority` 声明是否允许 subagent / workflow（`none` / `within-card` / `plan-only` / `allowed`），默认 `none`；它只声明授权，不直接点火。

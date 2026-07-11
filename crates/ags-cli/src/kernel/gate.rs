@@ -262,12 +262,19 @@ fn cmd_gate_prompt_request(
     }
 
     let classification = prompt_request_classifier::classify(&request);
+    let direct_execution_authorized =
+        prompt_request_classifier::detect_current_task_approval(&request)
+            && !classification.is_task_card_request;
 
     // Value Route (效价比路由): minimal execution-path form for this request.
-    // Advisory and deterministic. At the entry gate there is no task-card
-    // instruction yet and no triviality assessment, so both context flags are
-    // false. It shapes path form only — never task level, permission, or gates.
-    let value_route = prompt_request_classifier::derive_value_route(&classification, false, false);
+    // Advisory and deterministic. The entry gate distinguishes current direct
+    // execution authorization from task-card/handoff intent without changing
+    // task level, permission, or independent gates.
+    let value_route = prompt_request_classifier::derive_value_route(
+        &classification,
+        false,
+        direct_execution_authorized,
+    );
 
     // Capability Route (能力路由): advisory wakeup suggestion for the request's
     // demand, for the active host, read from the manifest root resolved from
@@ -293,7 +300,10 @@ fn cmd_gate_prompt_request(
         "advisory_no_mutation" => {
             "Advisory/consultation intent detected. Host may perform preflight, read-only retrieval, diagnosis, solution formation, and risk explanation, but must NOT perform write-type tool calls, dependency installs, or implementation. Explicit execution authorization required to clear this block."
         }
-        _ => "No task-card/prompt request detected. An ordinary prose answer is allowed.",
+        _ if direct_execution_authorized => {
+            "Explicit same-session direct execution authorization detected. Proceed with host-native editing and verification without compiling a task card; independent stop conditions still apply."
+        }
+        _ => "No task-card/prompt request or direct execution authorization detected. An ordinary prose answer is allowed.",
     };
 
     match format {
@@ -305,6 +315,7 @@ fn cmd_gate_prompt_request(
                 "is_task_card_request": classification.is_task_card_request,
                 "detected_advisory_intent": classification.detected_advisory_intent,
                 "mutation_allowed": classification.mutation_allowed,
+                "direct_execution_authorized": direct_execution_authorized,
                 "classification": serde_json::to_value(&classification)
                     .unwrap_or(serde_json::Value::Null),
                 "preflight": {
@@ -336,6 +347,10 @@ fn cmd_gate_prompt_request(
             println!("Decision: {}", decision);
             println!("Detected kind: {}", classification.kind.as_str());
             println!("Task-card request: {}", classification.is_task_card_request);
+            println!(
+                "Direct execution authorized: {}",
+                direct_execution_authorized
+            );
             if classification.detected_advisory_intent {
                 println!(
                     "Advisory intent: detected (mutation_allowed={})",

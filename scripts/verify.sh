@@ -275,9 +275,9 @@ else
     failures=$((failures + 1))
 fi
 
-# Negative: ordinary prose must NOT be classified as a task-card request.
-echo -n "[....] gate prompt-request lets prose through (allow) "
-if cargo run -q -p ags-cli -- gate prompt-request "解释这段代码是做什么的" --no-preflight --format json > /tmp/verify-gate-pr-neg.log 2>&1 \
+# Negative: discussing task-card architecture must NOT be classified as a request.
+echo -n "[....] task-card discussion stays prose (allow) "
+if cargo run -q -p ags-cli -- gate prompt-request "任务卡不该限制 Codex" --no-preflight --format json > /tmp/verify-gate-pr-neg.log 2>&1 \
     && grep -q '"decision": "allow"' /tmp/verify-gate-pr-neg.log \
     && grep -q '"is_task_card_request": false' /tmp/verify-gate-pr-neg.log; then
     echo "OK"
@@ -318,16 +318,16 @@ else
     failures=$((failures + 1))
 fi
 
-# Value Route (效价比路由) is exposed on the entry gate (advisory — it never
-# changes the task level, permission mode, Review gate, or Verification gate).
-echo -n "[....] gate prompt-request exposes value_route (recommended_path) "
-if cargo run -q -p ags-cli -- gate prompt-request "给我提示词" --no-preflight --format json > /tmp/verify-gate-vr.log 2>&1 \
+# Direct execution authorization selects direct-edit without manufacturing a card.
+echo -n "[....] explicit same-session authorization selects direct-edit "
+if cargo run -q -p ags-cli -- gate prompt-request "可以，开改" --no-preflight --format json > /tmp/verify-gate-vr.log 2>&1 \
     && grep -q '"value_route"' /tmp/verify-gate-vr.log \
-    && grep -q '"recommended_path"' /tmp/verify-gate-vr.log \
+    && grep -q '"direct_execution_authorized": true' /tmp/verify-gate-vr.log \
+    && grep -q '"recommended_path": "direct-edit"' /tmp/verify-gate-vr.log \
     && grep -q '"authority_note"' /tmp/verify-gate-vr.log; then
     echo "OK"
 else
-    echo "FAIL (value_route block missing from gate prompt-request)"
+    echo "FAIL (direct execution authorization did not select direct-edit)"
     cat /tmp/verify-gate-vr.log
     failures=$((failures + 1))
 fi
