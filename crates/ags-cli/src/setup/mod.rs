@@ -9,7 +9,7 @@ pub(crate) mod rollback;
 mod templates;
 mod verify;
 
-pub(crate) use verify::cmd_private_verify;
+pub(crate) use verify::{cmd_private_verify, private_install_health_report};
 
 use crate::context::{
     guard_writable_target, home_dir, private_install_target, source_root_or_exit, unix_timestamp,

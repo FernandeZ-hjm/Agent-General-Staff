@@ -135,10 +135,12 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         action: SyncAction,
     },
-    /// 诊断并修复 AGS 全局链路. Diagnose the AGS global pipeline (runtime /
-    /// agents / skills / hooks / MCP / project init / memory capsule / update
-    /// drift / receipts). Read-only by default; --fix runs only safe whitelisted
-    /// repairs.
+    /// 诊断 AGS 内核/runtime 与目标项目纳管链路. Diagnose the installed AGS
+    /// kernel/runtime plus the target's AGS onboarding projection (agents /
+    /// skills / hooks / MCP / project init / memory capsule / update drift /
+    /// receipts). Doctor never runs project source formatting, tests, or builds;
+    /// those belong to `ags verify`. Read-only by default; --fix runs only safe
+    /// whitelisted repairs.
     Doctor {
         /// Output format: text (default) or json
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]

@@ -248,7 +248,7 @@ tracked manifest，**绝不**含真实凭据。证据缺失 / 损坏 / 未知 mo
 
 **自动别名已退役。** 旧自动别名不再作为 Capability Route primary，也不再作为任务卡
 `[skill: ...]` 元数据被接受；其 demand 路由到 canonical 后继（debug →
-`diagnosing-bugs`、verify → `verification-before-completion`、brainstorm → `grill-with-docs`）。
+`diagnosing-bugs`、verify → `superpowers` 的 `verification-before-completion` entrypoint、brainstorm → `grill-with-docs`）。
 任务卡 validator 只接受 `manifests/skills-registry.yaml` 中 `route_state: routable` 且
 `invoke_hint` 形如 `[skill: ...]` 的当前技能标记；未知、历史或非 active 标记统一按
 `UNKNOWN_OR_INACTIVE_SKILL_TAG` 拒绝。历史采纳/移除事实仍由 `governance/skill-adoption-log.yaml`
@@ -493,9 +493,9 @@ Markdown 代码块；外层使用四反引号 `markdown` fence，外层代码块
 
 ## 技能标记
 
-任务卡末尾可包含 `[skill: xxx]` 标记。Executor 收到标记后，按 `protocol/cursor-skill-index.md` 打开对应 SKILL.md 并按其指引执行。
+任务卡末尾可包含 `[skill: xxx]` 标记。标签表示宿主可直接加载的 capability body；Executor 收到标记后，按 `protocol/cursor-skill-index.md` 打开对应 SKILL.md 并按其指引执行。internal entrypoint 是 body 内的方法选择器，不是独立 skill tag。
 
-常用标记：`[skill: test-driven-development]`、`[skill: diagnosing-bugs]`、`[skill: review]`、`[skill: verification-before-completion]`。
+常用标记：`[skill: superpowers]`、`[skill: diagnosing-bugs]`、`[skill: review]`。需要 `verification-before-completion`、`test-driven-development`、`writing-plans` 等 Superpowers playbook 时，任务卡只声明一次 `[skill: superpowers]`，并在正文中明确 required entrypoint；不得把 playbook 名作为独立 `[skill: ...]` 元数据。
 
 ## 任务卡模板
 

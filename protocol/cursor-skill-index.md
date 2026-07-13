@@ -10,12 +10,17 @@ When a task references a skill, open only the relevant SKILL.md. When a task doe
 
 - Use `grill-with-docs` for open-ended feature, design, architecture, or recommendation work before implementing.
 - Use `diagnosing-bugs` for errors, failing tests, broken behavior, performance issues, or unexpected runtime output.
-- Use `verification-before-completion` before claiming work is complete, fixed, passing, or ready to hand off.
+- Use the `superpowers` parent with the `verification-before-completion`
+  entrypoint before claiming work is complete, fixed, passing, or ready to hand off.
 - Use manual skills only when they directly reduce risk for the current task.
 - Do not stack unrelated skills. Prefer one or two strong procedural guardrails over a long list.
 - If a skill file is missing or unreadable, report that briefly and continue with the nearest safe workflow.
 - For delegated Claude Code CLI work, follow `protocol/agent-task-protocol.md` and use `protocol/task-card-template.md`.
 - Include the required `[skill: xxx]` tags in the task card and require a delivery report.
+- Task-card tags name host-visible capability bodies. For Superpowers workflows,
+  use `[skill: superpowers]` once and name required internal playbooks such as
+  `verification-before-completion` or `test-driven-development` in the task body;
+  child playbook names are not standalone task-card tags.
 
 ## Retired aliases (superseded)
 
@@ -26,23 +31,22 @@ demands route to the canonical successors instead:
 
 - brainstorm → primary `grill-with-docs` (superpowers `brainstorming` playbook is a secondary method hint)
 - debug → primary `diagnosing-bugs` (`systematic-debugging` is a secondary method hint)
-- verify → primary `verification-before-completion`
+- verify → primary `superpowers`, entrypoint `verification-before-completion`
 
-Superpowers playbooks keep their upstream names as standalone skills in the
-local skill index. Do not author new task cards that wake the `auto-*` aliases.
+Superpowers playbooks keep their upstream names as registry-only route targets
+under the single host-visible `superpowers` body. Do not author new task cards
+that wake the `auto-*` aliases.
 
 ## Manual skills
 
-- test-driven-development: $HOME/.agents/skills/test-driven-development/SKILL.md
 - diagnosing-bugs: $HOME/.agents/skills/diagnosing-bugs/SKILL.md
 - grill-with-docs: $HOME/.agents/skills/grill-with-docs/SKILL.md
 - improve-codebase-architecture: $HOME/.agents/skills/improve-codebase-architecture/SKILL.md
 - prototype: $HOME/.agents/skills/prototype/SKILL.md
 - codebase-design: $HOME/.agents/skills/codebase-design/SKILL.md
 - review: $HOME/.agents/skills/review/SKILL.md
-- verification-before-completion: $HOME/.agents/skills/verification-before-completion/SKILL.md
-- finishing-a-development-branch: $HOME/.agents/skills/finishing-a-development-branch/SKILL.md
-- using-git-worktrees: $HOME/.agents/skills/using-git-worktrees/SKILL.md
+- superpowers: $HOME/.agents/skills/superpowers/SKILL.md — the only host-visible
+  Superpowers body; internal playbooks are selected through registry route targets.
 - webapp-testing: $HOME/.agents/skills/webapp-testing/SKILL.md
 - database-migration: $HOME/.agents/skills/database-migration/SKILL.md
 - supply-chain-risk-auditor: $HOME/.agents/skills/supply-chain-risk-auditor/SKILL.md
@@ -82,6 +86,7 @@ Use this when Cursor needs to hand work to Claude Code CLI, another agent, or a 
 - 按任务卡 Permission mode 执行：`plan-only` 只诊断和出计划，
   `execute-and-verify` 直接执行并验证；Heavy 不另行强制计划
 - 完成后运行相关验证
+- 加载 `superpowers` 父技能并执行 `verification-before-completion` playbook
 
-[skill: verification-before-completion]
+[skill: superpowers]
 ```

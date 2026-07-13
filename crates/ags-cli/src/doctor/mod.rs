@@ -3,12 +3,25 @@ use crate::context::{default_private_runtime_home, guard_writable_target};
 use crate::managed_projects;
 use std::path::Path;
 
+fn compose_doctor_report(
+    kernel: suite_doctor::HealthReport,
+    project: suite_doctor::HealthReport,
+) -> suite_doctor::HealthReport {
+    let mut report = suite_doctor::HealthReport::new("ags-doctor");
+    report.findings.extend(kernel.findings);
+    report.findings.extend(project.findings);
+    report
+}
+
 /// Shared dispatch: `doctor` / `suite-doctor`
 pub(crate) fn cmd_doctor(format: &str, repair: bool, dry_run: bool, target: &Path) {
     if !repair {
         // Read-only diagnosis. Doctor is the global-pipeline diagnostic authority;
         // it also surfaces the managed-projects registry (global scan).
-        let report = suite_doctor::run(target);
+        let runtime_home = default_private_runtime_home();
+        let kernel = crate::setup::private_install_health_report(&runtime_home);
+        let project = suite_doctor::run(target);
+        let report = compose_doctor_report(kernel, project);
         match format {
             "json" => println!("{}", suite_doctor::render_json(&report)),
             _ => {
@@ -49,4 +62,32 @@ pub(crate) fn cmd_doctor(format: &str, repair: bool, dry_run: bool, target: &Pat
 
 pub(crate) fn run(format: &str, repair: bool, dry_run: bool, target: &Path) {
     cmd_doctor(format, repair, dry_run, target)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compose_doctor_report;
+    use suite_doctor::{Finding, HealthReport};
+
+    #[test]
+    fn doctor_combines_kernel_and_project_findings() {
+        let mut kernel = HealthReport::new("kernel");
+        kernel.add(Finding::fail("kernel-runtime", "missing", "runtime asset"));
+        let mut project = HealthReport::new("project");
+        project.add(Finding::warn("project-overlay", "drift", "refresh project"));
+
+        let report = compose_doctor_report(kernel, project);
+
+        assert_eq!(report.title, "ags-doctor");
+        assert_eq!(report.findings.len(), 2);
+        assert!(report
+            .findings
+            .iter()
+            .any(|f| f.check_name == "kernel-runtime"));
+        assert!(report
+            .findings
+            .iter()
+            .any(|f| f.check_name == "project-overlay"));
+        assert_eq!(report.exit_code(), 1);
+    }
 }

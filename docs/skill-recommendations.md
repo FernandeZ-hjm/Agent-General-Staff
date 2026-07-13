@@ -54,12 +54,10 @@ recommendation-only, Low risk unless noted, installed under
 > Superpowers `grilling` playbook are **distinct** skills — keep their separate
 > upstream names; do not alias one to another.
 
-## Quality & Verification
-
-### Test-Driven Development (test-driven-development)
-- **Tier**: quality · **Source**: `obra/superpowers` — `skills/test-driven-development` · **License**: MIT
-- **Purpose**: red-green-refactor, mocking patterns, interface design from tests
-- **Risk**: Low (local development) · **Install**: `$HOME/.agents/skills/test-driven-development/`
+The `test-driven-development` and `verification-before-completion` workflows are
+internal playbooks of the installed `superpowers` parent. Do not install or tag
+them as separate skills; select the required playbook in task prose and use
+`[skill: superpowers]` in task-card metadata.
 
 ## Debugging
 

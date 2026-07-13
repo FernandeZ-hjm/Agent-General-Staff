@@ -574,6 +574,7 @@ version = "0.2.7"
 dependencies = [
  "ags-platform",
  "capability-route",
+ "project-discovery",
  "serde",
  "serde_json",
  "serde_yaml",

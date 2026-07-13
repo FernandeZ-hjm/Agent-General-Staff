@@ -213,6 +213,8 @@ partial/not-integrated/failures/conflicts，2 = 参数错误。
 
 ## 技能标记
 
-任务卡末尾可包含 `[skill: xxx]` 标记。常用：`[skill: test-driven-development]`、
-`[skill: diagnosing-bugs]`、`[skill: review]`、`[skill: verification-before-completion]`、
-`[skill: codebase-design]`。
+任务卡末尾可包含 `[skill: xxx]` 标记。常用：`[skill: superpowers]`、
+`[skill: diagnosing-bugs]`、`[skill: review]`、`[skill: codebase-design]`。
+Superpowers 内部 playbook（如 `verification-before-completion`、
+`test-driven-development`）应在任务正文中声明，只使用父标签
+`[skill: superpowers]`，不得把 playbook 名写成独立标签。

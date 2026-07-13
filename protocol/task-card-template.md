@@ -93,6 +93,7 @@ Review gate:
 实施要求：
 - requirement_1
 - requirement_2
+- 必须加载 `superpowers` 父技能，并在完成前执行其 `verification-before-completion` playbook；若本卡正文另行要求 TDD、计划执行或分支收尾，也通过同一父技能选择对应 internal entrypoint，不得把 playbook 名写成独立 `[skill: ...]` 元数据。
 - 如果 Claude Code 启动目录不是实际修改的仓库根目录，或任务会跨仓库修改，开始执行前必须在启动目录写入 `.claude/review_targets.json`：
   ```json
   {
@@ -120,7 +121,7 @@ Verification gate:
 交付：
 按 protocol/agent-task-protocol.md 输出 delivery report。
 
-[skill: verification-before-completion]
+[skill: superpowers]
 ~~~~
 
 ---

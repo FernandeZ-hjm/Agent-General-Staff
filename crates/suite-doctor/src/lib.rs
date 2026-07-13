@@ -1,9 +1,10 @@
-//! Suite doctor — shared diagnostics core.
+//! Suite doctor — shared AGS kernel/onboarding diagnostics core.
 //!
 //! Provides a shared vocabulary of diagnostic types (`HealthReport`,
 //! `Finding`, `Severity`, `CheckStatus`) and report rendering (text / JSON)
-//! reusable by `ags suite-doctor`, `ags bootstrap-dry-run`, and any future
-//! diagnostic CLI.
+//! reusable by `ags doctor`, `ags bootstrap-dry-run`, and any future diagnostic
+//! CLI. Source formatting, tests, and builds are intentionally owned by
+//! `ags verify`, not doctor.
 //!
 //! # Library usage
 //!
@@ -13,9 +14,9 @@
 //! };
 //!
 //! let mut report = HealthReport::new("Suite Doctor v2.7.0");
-//! report.add(Finding::pass("cargo-fmt", "cargo fmt --check passed"));
-//! report.add(Finding::fail("cargo-test", "2 tests failed",
-//!     "Run `cargo test` for details."));
+//! report.add(Finding::pass("kernel-runtime", "runtime assets present"));
+//! report.add(Finding::fail("project-protocol", "validator missing",
+//!     "Run `ags init --target <project>` to refresh the projection."));
 //!
 //! if !report.passed() {
 //!     eprintln!("{}", render_text(&report));
@@ -33,9 +34,10 @@ pub use types::{CheckStatus, Finding, HealthReport, Severity};
 
 use std::path::Path;
 
-/// Run all default suite-doctor checks and return a populated report.
+/// Run target-aware onboarding checks and return a populated report.
 ///
-/// Uses the given `repo_root` as the base for all checks.
+/// Suite-only policy checks run only when the target is the AGS suite. Managed
+/// projects never inherit Rust/Cargo or suite workspace structure requirements.
 pub fn run(repo_root: &Path) -> HealthReport {
     let mut report = HealthReport::new("suite-doctor");
     run_checks(&mut report, repo_root);
@@ -116,19 +118,6 @@ pub fn repair_plan(target: &Path) -> RepairPlan {
         }
     }
 
-    // Check 3: cargo fmt (only when Cargo.toml + src/ exist)
-    if target.join("Cargo.toml").exists() && target.join("src").exists() {
-        items.push(RepairItem {
-            check_name: "cargo-fmt".into(),
-            repairable: true,
-            description: "run cargo fmt on target crate".into(),
-            action: format!(
-                "cargo fmt --manifest-path {}",
-                target.join("Cargo.toml").display()
-            ),
-        });
-    }
-
     RepairPlan {
         target: target.display().to_string(),
         items,
@@ -140,9 +129,9 @@ pub fn repair_plan(target: &Path) -> RepairPlan {
 /// Only safe, well-defined repairs are performed:
 /// 1. Create scripts/ directory if missing
 /// 2. chmod +x on scripts/*.sh files
-/// 3. cargo fmt (if Cargo.toml + src/ present)
 ///
-/// Never: create protocol files, install hooks, modify .claude/ config.
+/// Never: format/build/test project source, create protocol files, install
+/// hooks, or modify .claude/ config.
 pub fn repair(target: &Path) -> RepairResult {
     let plan = repair_plan(target);
     let mut repaired: Vec<String> = Vec::new();
@@ -203,34 +192,6 @@ pub fn repair(target: &Path) -> RepairResult {
                         "{}: chmod not supported on this platform",
                         item.check_name
                     ));
-                }
-            }
-            "cargo-fmt" => {
-                // Only run if Cargo.toml + src/ exist (already validated in plan)
-                if target.join("Cargo.toml").exists() && target.join("src").exists() {
-                    let output = std::process::Command::new("cargo")
-                        .arg("fmt")
-                        .arg("--manifest-path")
-                        .arg(target.join("Cargo.toml"))
-                        .output();
-                    match output {
-                        Ok(o) if o.status.success() => {
-                            repaired.push(format!("{}: cargo fmt OK", item.check_name));
-                        }
-                        Ok(o) => {
-                            let stderr = String::from_utf8_lossy(&o.stderr);
-                            failed.push(format!(
-                                "{}: cargo fmt failed: {}",
-                                item.check_name,
-                                stderr.trim()
-                            ));
-                        }
-                        Err(e) => {
-                            failed.push(format!("{}: {}", item.check_name, e));
-                        }
-                    }
-                } else {
-                    skipped.push(format!("{}: no Cargo.toml + src/ found", item.check_name));
                 }
             }
             other => {
@@ -323,4 +284,31 @@ pub fn render_repair_text(result: &RepairResult) -> String {
 
 pub fn render_repair_json(result: &RepairResult) -> String {
     serde_json::to_string_pretty(result).unwrap_or_else(|e| format!(r#"{{"error":"{}"}}"#, e))
+}
+
+#[cfg(test)]
+mod doctor_scope_tests {
+    use super::repair_plan;
+
+    #[test]
+    fn repair_plan_never_formats_target_source() {
+        let tmp =
+            std::env::temp_dir().join(format!("ags-doctor-repair-scope-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("src")).unwrap();
+        std::fs::write(
+            tmp.join("Cargo.toml"),
+            "[package]\nname='fixture'\nversion='0.1.0'\n",
+        )
+        .unwrap();
+
+        let plan = repair_plan(&tmp);
+
+        assert!(
+            plan.items.iter().all(|item| item.check_name != "cargo-fmt"),
+            "doctor repair must not run project source formatters: {:?}",
+            plan.items
+        );
+        let _ = std::fs::remove_dir_all(tmp);
+    }
 }

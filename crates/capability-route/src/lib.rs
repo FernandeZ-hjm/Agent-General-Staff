@@ -2244,13 +2244,15 @@ mod tests {
         let inventory = build_inventory(&ctx, &["claude-code"]);
         let find = |n: &str| inventory.capabilities.iter().find(|c| c.name == n);
 
-        let vbc = find("verification-before-completion").expect("vbc skill body present");
-        assert!(!vbc.is_route_target());
-        assert!(vbc
-            .routing
-            .as_ref()
-            .and_then(|r| r.parent.as_ref())
-            .is_none());
+        let vbc = find("verification-before-completion").expect("vbc route target present");
+        assert!(vbc.is_route_target());
+        assert_eq!(
+            vbc.routing
+                .as_ref()
+                .and_then(|r| r.parent.as_ref())
+                .map(|parent| parent.name.as_str()),
+            Some("superpowers")
+        );
 
         // An MCP-tool route target derefs to its parent MCP, never a top-level server.
         let tool = find("context7:get-library-docs").expect("mcp tool route target present");
@@ -2264,6 +2266,40 @@ mod tests {
             Some("context7")
         );
         assert!(tool.expected_hosts.is_empty());
+    }
+
+    #[test]
+    fn superpowers_parent_is_the_task_card_tag() {
+        let root = locate_manifest_root(&suite_root());
+        let ctx = ConsoleContext::system(root);
+        let inventory = build_inventory(&ctx, &["claude-code"]);
+        let parent = inventory
+            .capabilities
+            .iter()
+            .find(|cap| cap.name == "superpowers" && !cap.is_route_target())
+            .expect("host-visible superpowers parent present");
+        let routing = parent
+            .routing
+            .as_ref()
+            .expect("superpowers parent routing metadata");
+
+        assert_eq!(routing.route_state, RouteState::Routable);
+        assert_eq!(routing.invoke_hint, "[skill: superpowers]");
+        assert!(routing.intent_tags.is_empty());
+
+        let tdd = inventory
+            .capabilities
+            .iter()
+            .find(|cap| cap.name == "test-driven-development")
+            .expect("TDD playbook route target present");
+        assert!(tdd.is_route_target());
+        assert_eq!(
+            tdd.routing
+                .as_ref()
+                .and_then(|meta| meta.entrypoint.as_ref())
+                .map(|entrypoint| entrypoint.name.as_str()),
+            Some("test-driven-development")
+        );
     }
 
     /// legacy alias retirement is COMPLETE (0.2.7): every demand the retired aliases used

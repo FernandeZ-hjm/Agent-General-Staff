@@ -173,7 +173,6 @@ mod tests {
             "to-issues",
             "triage",
             "handoff",
-            "test-driven-development",
             "diagnosing-bugs",
         ] {
             assert!(ids.contains(&want), "missing recommendation id: {want}");
@@ -185,6 +184,7 @@ mod tests {
             concat!("diag", "nose"),
             "code-review",
             concat!("t", "d", "d"),
+            "test-driven-development",
             "obsidian-vault",
             "teach",
         ] {

@@ -102,28 +102,6 @@ skills:
       relationship: suite_local
       update_policy: local_canonical_no_upstream
 
-  - name: test-driven-development
-    profile: required
-    local_path: global-skills/test-driven-development
-    description: Test-driven development with red-green-refactor
-    routing:
-      route_state: routable
-      intent_tags: [tdd, test-first]
-      scope_tags: ["*"]
-      mutation_surface: read-only
-      requires_auth: false
-      cost_class: free
-      invoke_hint: "[skill: test-driven-development]"
-      route_priority: 45
-      capability_group: [engineering-process, verification]
-      upstream_group: "obra/superpowers:test-driven-development"
-    source:
-      type: upstream_git
-      upstream: superpowers
-      path: skills/test-driven-development
-      relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
-
   - name: diagnosing-bugs
     profile: required
     local_path: global-skills/diagnosing-bugs
@@ -320,16 +298,17 @@ skills:
 
   - name: superpowers
     profile: required
-    local_path: global-skills/superpowers
-    description: Bundled playbook dependency for automatic engineering skills
+    description: Single host-visible router for bundled Superpowers engineering playbooks
     routing:
-      route_state: not-routable
+      route_state: routable
+      invoke_hint: "[skill: superpowers]"
       capability_group: [engineering-process]
       upstream_group: "obra/superpowers"
     source:
-      type: local
-      relationship: bundled_dependency
-      update_policy: local_canonical_no_upstream
+      type: host-system
+      upstream: superpowers
+      relationship: registry_adopted_host_body
+      update_policy: crawl_then_diff_proposal
 
   # ags-capability retired from the front-stage command-skill set (2.7): the
   # `ags capability ...` CLI and Cross-Agent sync engine remain, but the
@@ -347,9 +326,25 @@ skills:
       update_policy: none_retired
 
 route_targets:
-  # superpowers internal playbooks are metadata-only entrypoints of the real
-  # `superpowers` body. They are not standalone suite skills and do not create
-  # host-visible install expectations.
+  # Superpowers playbooks are internal entrypoints of one real host-visible body.
+  # Task cards tag only `[skill: superpowers]` and name a playbook in task prose.
+  # Playbooks inherit availability from `superpowers`, never create host-visible
+  # install expectations, and never produce thin-index writes of their own.
+  - name: test-driven-development
+    description: Superpowers test-driven-development playbook
+    routing:
+      route_state: routable
+      parent: { kind: skill, name: superpowers }
+      entrypoint: { kind: playbook, name: test-driven-development }
+      intent_tags: [tdd, test-first]
+      scope_tags: ["*"]
+      mutation_surface: local-write
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: superpowers]"
+      route_priority: 45
+      capability_group: [engineering-process, verification]
+      upstream_group: "obra/superpowers:test-driven-development"
   - name: verification-before-completion
     description: Superpowers verification-before-completion playbook (verify route target)
     routing:
@@ -361,7 +356,7 @@ route_targets:
       mutation_surface: read-only
       requires_auth: false
       cost_class: free
-      invoke_hint: "[skill: verification-before-completion]"
+      invoke_hint: "[skill: superpowers]"
       route_priority: 50
       is_compatibility_alias: false
       capability_group: [engineering-process, verification]
@@ -381,7 +376,7 @@ route_targets:
       mutation_surface: read-only
       requires_auth: false
       cost_class: free
-      invoke_hint: "[skill: superpowers] (playbooks/systematic-debugging)"
+      invoke_hint: "[skill: superpowers]"
       route_priority: 70
       is_compatibility_alias: false
       capability_group: [engineering-process]
@@ -401,7 +396,7 @@ route_targets:
       mutation_surface: read-only
       requires_auth: false
       cost_class: free
-      invoke_hint: "[skill: superpowers] (playbooks/brainstorming)"
+      invoke_hint: "[skill: superpowers]"
       route_priority: 70
       is_compatibility_alias: false
       capability_group: [engineering-process]

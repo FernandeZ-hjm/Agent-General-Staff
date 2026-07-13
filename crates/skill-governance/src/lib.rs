@@ -1546,7 +1546,7 @@ mod tests {
         // Public edition ships governance runtime only. Third-party skill bodies
         // are recommendation-only optional entries, never bundled or auto-installed.
         assert_eq!(result.summary.available, 0);
-        assert_eq!(result.summary.optional, 6);
+        assert_eq!(result.summary.optional, 4);
         assert_eq!(result.summary.personal, 0);
         assert_eq!(result.summary.disabled, 0);
     }

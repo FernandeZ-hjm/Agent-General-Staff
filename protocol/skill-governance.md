@@ -198,6 +198,21 @@ inventory 来源：suite manifest 技能、本机 skill 目录（`global-skills/
 `suite_interfaces:`（AGS 自身，host initialization adapter，**不是**被治理第三方
 MCP），以及 CLI-backed 家族（如 `lark-cli`）。
 
+### Parent capability 与内部 entrypoint
+
+能力本体（真实 host-visible body：`skill` / `mcp` / `cli-backed`）与其内部入口
+（playbook / tool / command / subcommand）必须分层建模。内部入口在 manifest 的
+`route_targets:` 段通过 `routing.parent` + `routing.entrypoint` 声明，继承 parent 的
+运行时可用性；它不产生独立宿主安装预期，也不产生自己的 thin-index 写入。
+
+任务卡 `[skill: xxx]` 只标记真实 host-visible parent capability，且必须使用该 parent
+自己的 same-name `invoke_hint`；内部 route target 名称不是合法任务卡标签。需要指定
+内部入口时，应在任务正文中写明 entrypoint。例如 Superpowers 任务卡统一写
+`[skill: superpowers]`，并在正文要求执行 `verification-before-completion` 或
+`test-driven-development` playbook。parent 可以为了任务卡可调用而保持
+`route_state: routable` 且不声明 `intent_tags`；此时它不参与 demand 候选竞争，用户
+意图仍由带 `intent_tags` 的内部 route target 匹配。
+
 ### Host visibility 与 runtime health 分层
 
 以下是**不同**证据，不得混为一谈（参见 `tests/fixtures/skill-console-lark.md`）：

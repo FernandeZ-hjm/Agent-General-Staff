@@ -169,24 +169,6 @@ skills:
     manual_steps:
       - "Review the upstream skill and copy SKILL.md into ~/.agents/skills/handoff"
 
-  # ── Quality & verification ──────────────────────────────────────────────
-  - id: test-driven-development
-    name: Test-Driven Development
-    tier: quality
-    purpose: Red-green-refactor cycle with mocking and interface design from tests.
-    recommendation_only: true
-    source_kind: external
-    upstream: "https://github.com/obra/superpowers"
-    source: "https://github.com/obra/superpowers/tree/main/skills/test-driven-development"
-    license: "MIT"
-    attribution: "Copyright (c) 2025 Jesse Vincent; retain upstream MIT notice when copying or adapting Superpowers material."
-    risk: low
-    risk_description: Local development only.
-    install_location: $HOME/.agents/skills/test-driven-development/
-    manual_steps:
-      - "Review https://github.com/obra/superpowers and its MIT license"
-      - "Copy skills/test-driven-development/SKILL.md (and reference .md files) into ~/.agents/skills/test-driven-development"
-
   # ── Debugging ───────────────────────────────────────────────────────────
   - id: diagnosing-bugs
     name: Diagnosing Bugs

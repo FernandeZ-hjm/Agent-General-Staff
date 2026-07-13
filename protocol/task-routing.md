@@ -204,11 +204,13 @@ Delegation default:
 Common skill tags:
 
 ```text
-[skill: verification-before-completion]
+[skill: superpowers]
 ```
 
-Add `[skill: test-driven-development]` only when the user explicitly wants
-test-first work or the bug is best captured by a new regression test.
+Require the `verification-before-completion` internal entrypoint in the task
+body. When the user explicitly wants test-first work or the bug is best captured
+by a regression test, also require the `test-driven-development` entrypoint;
+do not add either playbook name as a standalone skill tag.
 
 ## Medium Task
 
@@ -252,10 +254,12 @@ Common skill tags:
 
 ```text
 [skill: diagnosing-bugs]
-[skill: verification-before-completion]
+[skill: superpowers]
 ```
 
-Add `[skill: test-driven-development]` for test-first work.
+Require the `verification-before-completion` entrypoint in the task body. For
+test-first work, also require the `test-driven-development` entrypoint through
+the same `superpowers` parent.
 Add `[skill: review]` when the task is mostly code review.
 Do not add a commit-message skill tag; describe commit-message requirements in
 the task body unless a current commit skill exists.
@@ -320,10 +324,12 @@ Common skill tags:
 ```text
 [skill: diagnosing-bugs]
 [skill: codebase-design]
-[skill: verification-before-completion]
+[skill: superpowers]
 ```
 
-Add `[skill: test-driven-development]` when tests should drive the implementation.
+Require the `verification-before-completion` entrypoint in the task body. When
+tests should drive the implementation, also require the
+`test-driven-development` entrypoint through the same parent.
 Add `[skill: database-migration]` if schema/data migration is involved.
 Add `[skill: supply-chain-risk-auditor]` only for dependency or package risk
 assessment.
@@ -372,11 +378,15 @@ For this project:
 - Manual task-card tags are a positive allowlist: use only current
   `route_state: routable` skills whose registry `invoke_hint` is shaped as
   `[skill: ...]`.
-- Use `[skill: verification-before-completion]` when deep verification should be forced.
+- A task-card tag names a host-visible capability body; an internal entrypoint
+  names a method within that body and is declared in task prose, not metadata.
+- Use `[skill: superpowers]` when a Superpowers workflow is required, and state
+  the exact entrypoint such as `verification-before-completion` in the task body.
 - Use `[skill: diagnosing-bugs]` for complex root cause work.
 - Use `[skill: codebase-design]` for architecture context, dependency mapping, or risk
   assessment.
-- Use `[skill: test-driven-development]` for test-driven implementation.
+- For test-driven implementation, keep `[skill: superpowers]` once and require
+  the `test-driven-development` entrypoint in the task body.
 - Use `[skill: review]` for actionable code review output.
 
 ## Task Handoff Protocol

@@ -252,7 +252,12 @@ fn allow_three_tilde_non_text_fence() {
 
 #[test]
 fn reject_unknown_or_inactive_skill_tags() {
-    for inactive in ["diagnose", "tdd"] {
+    for inactive in [
+        "diagnose",
+        "tdd",
+        "verification-before-completion",
+        "test-driven-development",
+    ] {
         let mut input = valid_card_fields();
         input.push_str(&format!("[skill: {inactive}]\n"));
         let e = validate(&input);
@@ -269,11 +274,10 @@ fn reject_unknown_or_inactive_skill_tags() {
 #[test]
 fn allow_current_skill_tags() {
     let mut input = valid_card_fields();
-    input.push_str("[skill: test-driven-development]\n");
+    input.push_str("[skill: superpowers]\n");
     input.push_str("[skill: diagnosing-bugs]\n");
     input.push_str("[skill: codebase-design]\n");
     input.push_str("[skill: review]\n");
-    input.push_str("[skill: verification-before-completion]\n");
     let e = validate(&input);
     assert!(e.is_empty(), "current skill tags should pass: {e:?}");
 }

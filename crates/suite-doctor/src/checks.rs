@@ -236,58 +236,58 @@ pub fn git_status_check(repo_root: &Path) -> Finding {
     }
 }
 
-/// Run `cargo fmt --check` and report formatting issues.
-pub fn cargo_fmt_check(repo_root: &Path) -> Finding {
-    match Command::new("cargo")
-        .args(["fmt", "--check"])
-        .current_dir(repo_root)
-        .output()
-    {
-        Ok(output) => {
-            if output.status.success() {
-                Finding::pass("cargo-fmt", "cargo fmt --check passed")
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                Finding::fail(
-                    "cargo-fmt",
-                    "cargo fmt --check failed",
-                    format!("Run `cargo fmt` to fix. {}", stderr.trim()),
-                )
-            }
-        }
-        Err(e) => Finding::fail(
-            "cargo-fmt",
-            "cargo not available",
-            format!("Failed to run cargo: {e}"),
+fn project_integration_check(identity: &project_discovery::ProjectIdentity) -> Finding {
+    use project_discovery::IntegrationStatus;
+
+    match identity.integration_status {
+        IntegrationStatus::Suite => Finding::pass(
+            "project-integration",
+            "target is the AGS suite authority workspace",
+        ),
+        IntegrationStatus::Integrated => Finding::pass(
+            "project-integration",
+            "target is registered with a complete AGS integration identity",
+        ),
+        IntegrationStatus::Partial => Finding::fail(
+            "project-integration",
+            "target has a partial AGS integration",
+            format!("Gaps: {}", identity.gaps.join("; ")),
+        ),
+        IntegrationStatus::NotIntegrated => Finding::fail(
+            "project-integration",
+            "target is not managed by AGS",
+            "Run `ags init --target <project>` before using it as a governed project.",
         ),
     }
 }
 
-/// Check that key workspace files exist on disk.
-pub fn workspace_structure_check(repo_root: &Path) -> Vec<Finding> {
-    let required = [
-        ("Cargo.toml", "workspace root manifest"),
-        ("crates", "crates directory"),
-        ("scripts/verify.sh", "verification script"),
-    ];
-
-    let mut findings = Vec::new();
-    for (rel_path, label) in &required {
-        let full = repo_root.join(rel_path);
-        if full.exists() {
-            findings.push(Finding::pass(
-                format!("structure-{}", rel_path.replace('/', "-")),
-                format!("{label} present"),
-            ));
-        } else {
-            findings.push(Finding::warn(
-                format!("structure-{}", rel_path.replace('/', "-")),
-                format!("{label} missing"),
-                format!("Expected at: {}", full.display()),
-            ));
-        }
+fn project_protocol_check(repo_root: &Path) -> Finding {
+    let status = project_discovery::check_protocol_status(repo_root);
+    if !status.failures.is_empty() {
+        Finding::fail(
+            "project-protocol",
+            "AGS protocol or validator projection is incomplete",
+            status.failures.join("; "),
+        )
+    } else if !status.warnings.is_empty() {
+        Finding::warn(
+            "project-protocol",
+            format!(
+                "AGS protocol projection is usable with {} warning(s)",
+                status.warnings.len()
+            ),
+            status.warnings.join("; "),
+        )
+    } else {
+        Finding::pass(
+            "project-protocol",
+            format!(
+                "AGS protocol projection complete ({}/{} files, validator available)",
+                status.present_count,
+                status.files.len()
+            ),
+        )
     }
-    findings
 }
 
 // ── Context memory checks ──────────────────────────────────────────────
@@ -1049,26 +1049,28 @@ pub fn capability_route_coverage_check(repo_root: &Path) -> Vec<Finding> {
 }
 
 pub fn run_checks(report: &mut HealthReport, repo_root: &Path) {
+    let identity = project_discovery::detect_project(repo_root);
     report.add(git_status_check(repo_root));
-    report.add(cargo_fmt_check(repo_root));
-    for finding in workspace_structure_check(repo_root) {
-        report.add(finding);
+    report.add(project_integration_check(&identity));
+    report.add(project_protocol_check(repo_root));
+
+    // Source-policy checks apply only to the AGS suite itself. Managed target
+    // projects never inherit Cargo or suite workspace layout requirements;
+    // source formatting/build checks belong to `ags verify`.
+    if identity.is_ags_suite {
+        for finding in capability_route_drift_check(repo_root) {
+            report.add(finding);
+        }
+        for finding in capability_route_coverage_check(repo_root) {
+            report.add(finding);
+        }
+        report.add(runtime_profile_declared(repo_root));
+        report.add(mcp_registry_codegraph_adopted(repo_root));
+        report.add(runtime_profile_template_exists(repo_root));
+        report.add(codex_planner_hook_template_exists(repo_root));
+        report.add(claude_code_stop_hook_template_exists(repo_root));
     }
-    // ── Capability Route drift (read-only) ─────────────────────────────
-    for finding in capability_route_drift_check(repo_root) {
-        report.add(finding);
-    }
-    // ── Capability Route coverage (manifest-hygiene gate, read-only) ────
-    for finding in capability_route_coverage_check(repo_root) {
-        report.add(finding);
-    }
-    // ── Runtime profile + MCP registry checks ──────────────────────────
-    report.add(runtime_profile_declared(repo_root));
-    report.add(mcp_registry_codegraph_adopted(repo_root));
-    // ── Portable template checks ───────────────────────────────────────
-    report.add(runtime_profile_template_exists(repo_root));
-    report.add(codex_planner_hook_template_exists(repo_root));
-    report.add(claude_code_stop_hook_template_exists(repo_root));
+
     // ── Context memory checks (advisory, read-only) ────────────────────
     report.add(memory_capture_scripts_present());
     report.add(claude_code_memory_capture_wired(repo_root));
@@ -1368,43 +1370,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    // ── workspace_structure_check (pure Rust, no shell-out) ───────────
-
-    #[test]
-    fn workspace_structure_finds_cargo_toml() {
-        // Use the workspace root (where Cargo.toml lives).
-        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap();
-        let findings = workspace_structure_check(repo_root);
-
-        // At minimum we should have 3 findings
-        assert_eq!(findings.len(), 3);
-        // Cargo.toml should be present → pass
-        let cargo_finding = findings
-            .iter()
-            .find(|f| f.check_name == "structure-Cargo.toml")
-            .unwrap();
-        assert_eq!(cargo_finding.severity, Severity::Info);
-    }
-
-    #[test]
-    fn workspace_structure_reports_missing_path() {
-        let tmp = std::env::temp_dir().join("ags-suite-doctor-nonexistent-test");
-        // Ensure it doesn't exist
-        let _ = std::fs::remove_dir_all(&tmp);
-        let findings = workspace_structure_check(&tmp);
-
-        // All 3 should be missing → warn
-        assert_eq!(findings.len(), 3);
-        for f in &findings {
-            assert_eq!(f.severity, Severity::Warn);
-            assert!(f.message.contains("missing"));
-        }
-    }
-
     // ── Context memory checks ─────────────────────────────────────────
 
     fn mem_tmp(tag: &str) -> PathBuf {
@@ -1652,5 +1617,53 @@ mod tests {
         assert_eq!(f.status, CheckStatus::Warn);
         assert!(f.message.contains("missing"));
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn managed_project_doctor_skips_source_quality_checks() {
+        let tmp = std::env::temp_dir().join(format!(
+            "ags-doctor-managed-project-scope-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("config")).unwrap();
+        std::fs::write(
+            tmp.join("config/agent-project-profile.yaml"),
+            "schema_version: 1\nproject:\n  slug: managed-project-scope\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.join("AGENTS.md"),
+            "# AGENTS.md\n\nThis project uses AGENT_SUITE_PROTOCOL.md.\n",
+        )
+        .unwrap();
+
+        let mut report = HealthReport::new("managed-project-doctor");
+        run_checks(&mut report, &tmp);
+
+        for forbidden in [
+            "cargo-fmt",
+            "structure-Cargo.toml",
+            "structure-crates",
+            "structure-scripts-verify.sh",
+        ] {
+            assert!(
+                report
+                    .findings
+                    .iter()
+                    .all(|finding| finding.check_name != forbidden),
+                "managed project doctor must not emit {forbidden}: {:?}",
+                report.findings
+            );
+        }
+        assert!(report
+            .findings
+            .iter()
+            .any(|finding| finding.check_name == "project-integration"));
+        assert!(report
+            .findings
+            .iter()
+            .any(|finding| finding.check_name == "project-protocol"));
+        let _ = std::fs::remove_dir_all(tmp);
     }
 }

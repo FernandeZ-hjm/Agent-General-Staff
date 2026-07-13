@@ -140,12 +140,10 @@ fn add_codegraph_claude_checks(report: &mut suite_doctor::HealthReport) {
         )),
     }
 }
-pub(crate) fn cmd_private_verify(profile: &str, target: Option<PathBuf>, format: &str) {
-    if profile != "private" {
-        eprintln!("ags verify: unsupported profile '{profile}'");
-        std::process::exit(2);
-    }
-    let target = private_install_target(target);
+/// Build the installed-kernel/runtime health report without rendering or
+/// exiting so `ags doctor` can use the same diagnostic authority as setup
+/// verification.
+pub(crate) fn private_install_health_report(target: &Path) -> suite_doctor::HealthReport {
     let mut report = suite_doctor::HealthReport::new("private-install-verify");
 
     let required = [
@@ -445,6 +443,17 @@ pub(crate) fn cmd_private_verify(profile: &str, target: Option<PathBuf>, format:
             e,
         )),
     }
+
+    report
+}
+
+pub(crate) fn cmd_private_verify(profile: &str, target: Option<PathBuf>, format: &str) {
+    if profile != "private" {
+        eprintln!("ags verify: unsupported profile '{profile}'");
+        std::process::exit(2);
+    }
+    let target = private_install_target(target);
+    let report = private_install_health_report(&target);
 
     match format {
         "json" => {

@@ -11,4 +11,5 @@ serde_json = "1"
 serde_yaml = "0.9"
 ags-platform = { path = "../ags-platform" }
 capability-route = { path = "../capability-route" }
+project-discovery = { path = "../project-discovery" }
 skill-governance = { path = "../skill-governance" }

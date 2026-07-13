@@ -96,8 +96,9 @@ Verification gate:
 
 交付：
 按 protocol/agent-task-protocol.md 输出交付报告，必须包含 cargo test 的完整输出。
+完成前通过 `superpowers` 执行 `verification-before-completion` playbook。
 
-[skill: verification-before-completion]
+[skill: superpowers]
 ```
 
 2. Validate the task card:
