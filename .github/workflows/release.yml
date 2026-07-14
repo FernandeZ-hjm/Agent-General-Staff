@@ -1,0 +1,133 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: Verify release (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-
+            ${{ runner.os }}-cargo-
+
+      - name: Verify tag and release-note version
+        shell: bash
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 | python -c 'import json,sys; data=json.load(sys.stdin); print(next(p["version"] for p in data["packages"] if p["name"] == "ags-cli"))')"
+          test "$GITHUB_REF_NAME" = "v$version"
+          grep -Fqx "## Release $version" RELEASE_NOTES.md
+          git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features
+
+      - name: Test
+        run: cargo test --all
+        env:
+          RUSTFLAGS: "-D warnings"
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Verify release boundary
+        run: cargo run -q -p ags-cli -- verify --scope release --format text
+
+      - name: Install cargo-deny
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          if command -v cargo-deny >/dev/null 2>&1; then
+            cargo deny --version
+          else
+            cargo install cargo-deny --locked
+          fi
+
+      - name: Supply-chain and full Bash verification
+        if: matrix.os == 'ubuntu-latest'
+        run: bash scripts/verify.sh
+
+  publish:
+    name: Create GitHub Release
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Extract release notes
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          python3 - "$version" <<'PY'
+          import pathlib
+          import sys
+
+          version = sys.argv[1]
+          lines = pathlib.Path("RELEASE_NOTES.md").read_text().splitlines()
+          heading = f"## Release {version}"
+          try:
+              start = lines.index(heading) + 1
+          except ValueError as error:
+              raise SystemExit(f"missing release-notes heading: {heading}") from error
+          end = next(
+              (index for index in range(start, len(lines)) if lines[index].startswith("## Release ")),
+              len(lines),
+          )
+          notes = "\n".join(lines[start:end]).strip()
+          if not notes:
+              raise SystemExit(f"release-notes section is empty: {heading}")
+          pathlib.Path("release-notes-current.md").write_text(notes + "\n")
+          PY
+
+      - name: Create release from existing tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --latest \
+            --title "Agent General Staff $version Public Edition" \
+            --notes-file release-notes-current.md

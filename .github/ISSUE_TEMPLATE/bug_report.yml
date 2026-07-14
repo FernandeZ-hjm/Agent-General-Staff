@@ -11,7 +11,7 @@ body:
     attributes:
       label: AGS version
       description: Output of `ags --version`
-      placeholder: "2.7.0"
+      placeholder: "0.2.7"
     validations:
       required: true
   - type: dropdown

@@ -338,6 +338,8 @@ Third-party skills change agent behavior and may affect the local development en
 - [docs/comparison.md](docs/comparison.md) — AGS compared with other governance approaches
 - [examples/](examples/) — Public-safe examples: demo project, task cards, sample outputs, synthetic receipts
 - [evals/](evals/) — Reproducible experiment scenarios: authority escalation, unverified delivery, solution-as-execution
+- [RELEASE_NOTES.md](RELEASE_NOTES.md) — current capabilities and historical release notes
+- [GitHub Releases](https://github.com/FernandeZ-hjm/Agent-General-Staff/releases) — formal versions published after tag-triggered verification
 - [COMMERCIAL.md](COMMERCIAL.md) — Commercial use, attribution, and brand notes under GPL-3.0
 
 ## License

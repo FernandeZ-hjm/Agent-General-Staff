@@ -345,6 +345,8 @@ AGS 可以推荐第三方开发技能，但不会默认安装。
 - [docs/comparison.md](docs/comparison.md) — AGS 与其他治理方案的对比
 - [examples/](examples/) — 公开安全样例：demo 项目、任务卡、输出样例、合成 receipt
 - [evals/](evals/) — 可复现评估实验：越权拦截、无验证交付、方案即执行
+- [RELEASE_NOTES.md](RELEASE_NOTES.md) — 当前版本能力与历史发布说明
+- [GitHub Releases](https://github.com/FernandeZ-hjm/Agent-General-Staff/releases) — 经 tag 触发验证后发布的正式版本
 - [COMMERCIAL.md](COMMERCIAL.md) — GPL-3.0 许可证下的商业使用、署名和品牌说明
 
 ## 许可证

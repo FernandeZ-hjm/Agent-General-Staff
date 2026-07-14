@@ -4806,6 +4806,7 @@ mod tests {
         make_symlink(&ctx.repo_root.join(source), &parent.join(name)).unwrap();
     }
 
+    #[cfg(unix)]
     fn write_codex_plugin_skill(ctx: &ConsoleContext, name: &str) {
         write_file(
             &ctx.home
@@ -5259,6 +5260,7 @@ mod tests {
 
     /// Read-only thin-index drift scan classifies `.bak` leftovers and dangling
     /// symlinks as drift and a valid symlink as clean — never mutating. (point 2)
+    #[cfg(unix)]
     #[test]
     fn scan_thin_index_drift_classifies_bak_and_dangling() {
         let base = std::env::temp_dir().join(format!("ags-drift-{}", std::process::id()));
@@ -6058,6 +6060,7 @@ mod tests {
     /// (not-routable) until adopted. Also exercises symlink safety — dangling
     /// links, external targets, and symlink loops are recognized without panic
     /// and never linked into the AGS store.
+    #[cfg(unix)]
     #[test]
     fn discovers_host_dir_system_user_and_unmanaged_skills_fail_closed() {
         let (ctx, base) = ctx_with("hostdir-discovery", canned_list());

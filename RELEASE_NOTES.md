@@ -9,6 +9,10 @@ to ship the `ags` CLI, canonical task-card protocols, execution-policy checks,
 release-boundary verification, memory-capsule templates, and public
 skill-governance workflows.
 
+The current CLI/package version is `0.2.7`; current release tags use the same
+`v0.2.7` form. Older `2.x` headings below are preserved as historical product
+release labels and are not rewritten.
+
 ## Release 0.2.7
 
 ### Unified routing model
@@ -51,11 +55,32 @@ skill-governance workflows.
   routing remains available as an internal advisory crate
   (`crates/capability-route`) and via `ags gate capability-request`.
 
+### Capability host integrity
+
+- `ags capability verify --host <host> --strict` derives its expected set from
+  the AGS source authority recorded during installation, so running the command
+  from an empty or newly governed project cannot silently reduce coverage.
+- Required parent skills now fail closed when their host entry is missing.
+  Bundled router skills also verify internal playbook completeness and reject
+  stale playbooks exposed as standalone host skills.
+- `ags doctor` reports these third-party host-routing gaps as formal failures,
+  and the setup recommendation view recognizes skills exposed through the
+  shared `~/.agents/skills` store.
+
 ### Cross-platform CI hardening
 
 - Windows and macOS CI stabilized: path separator normalization, LF line
   endings via `.gitattributes`, `#[cfg(unix)]` gates on shell-dependent tests,
   `PATHEXT`-aware command lookup, and temp-path spelling fixes.
+
+### GitHub release automation
+
+- Pushing an explicit `v<workspace-version>` tag now starts a release workflow.
+  It verifies that the tag matches the Cargo workspace version, points to a
+  commit on `main`, has a matching release-notes section, and passes the full
+  Linux/macOS/Windows matrix before creating the GitHub Release.
+- The workflow never creates tags and currently publishes the source release
+  only; prebuilt platform binaries remain out of scope.
 
 ### Task compiler updates
 
