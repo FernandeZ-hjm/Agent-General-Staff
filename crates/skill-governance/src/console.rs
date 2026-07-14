@@ -3209,7 +3209,7 @@ fn next_backup_path(dest: &Path) -> PathBuf {
     let base = format!("{}.bak", dest.display());
     let mut candidate = PathBuf::from(&base);
     let mut i = 1;
-    while candidate.exists() {
+    while std::fs::symlink_metadata(&candidate).is_ok() {
         candidate = PathBuf::from(format!("{base}.{i}"));
         i += 1;
     }
@@ -3222,7 +3222,7 @@ fn next_replaced_path(dest: &Path) -> PathBuf {
     let base = format!("{}.ags-replaced", dest.display());
     let mut candidate = PathBuf::from(&base);
     let mut i = 1;
-    while candidate.exists() {
+    while std::fs::symlink_metadata(&candidate).is_ok() {
         candidate = PathBuf::from(format!("{base}.{i}"));
         i += 1;
     }
@@ -3401,7 +3401,8 @@ fn transactional_relink(
     ))
 }
 
-/// Move an existing thin index aside to `.bak`. Missing entry → no-op.
+/// Move an existing thin index to a temporary rollback sibling. Missing entry
+/// is a no-op; successful batches remove the rollback sibling before returning.
 fn transactional_unlink(entry: &Path) -> std::io::Result<Option<(String, AppliedChange)>> {
     if std::fs::symlink_metadata(entry).is_err() {
         return Ok(None);
@@ -3409,7 +3410,7 @@ fn transactional_unlink(entry: &Path) -> std::io::Result<Option<(String, Applied
     let bak = next_backup_path(entry);
     std::fs::rename(entry, &bak)?;
     Ok(Some((
-        format!("unlinked {} (moved to {})", entry.display(), bak.display()),
+        format!("unlinked {} (no .bak kept)", entry.display()),
         AppliedChange::Unlink {
             entry: entry.to_path_buf(),
             backup: bak,
@@ -3427,14 +3428,14 @@ fn rollback_change(change: &AppliedChange) -> std::io::Result<()> {
         AppliedChange::Relink { entry, previous } => {
             remove_host_entry(entry)?;
             if let Some(old) = previous {
-                if old.exists() {
+                if std::fs::symlink_metadata(old).is_ok() {
                     std::fs::rename(old, entry)?;
                 }
             }
             Ok(())
         }
         AppliedChange::Unlink { entry, backup } => {
-            if backup.exists() {
+            if std::fs::symlink_metadata(backup).is_ok() {
                 if std::fs::symlink_metadata(entry).is_ok() {
                     remove_host_entry(entry)?;
                 }
@@ -3455,17 +3456,27 @@ fn rollback_changes(changes: &[AppliedChange]) -> Vec<String> {
     errors
 }
 
-fn cleanup_successful_relinks(changes: &[AppliedChange]) -> Vec<String> {
+fn cleanup_successful_changes(changes: &[AppliedChange]) -> Vec<String> {
     let mut errors = Vec::new();
     for change in changes {
-        if let AppliedChange::Relink {
-            previous: Some(old),
-            ..
-        } = change
-        {
-            if let Err(e) = remove_host_entry(old) {
-                errors.push(format!("cleanup replaced entry {}: {e}", old.display()));
+        match change {
+            AppliedChange::Relink {
+                previous: Some(old),
+                ..
+            } => {
+                if let Err(e) = remove_host_entry(old) {
+                    errors.push(format!("cleanup replaced entry {}: {e}", old.display()));
+                }
             }
+            AppliedChange::Unlink { backup, .. } => {
+                if let Err(e) = remove_host_entry(backup) {
+                    errors.push(format!(
+                        "cleanup unlinked-entry backup {}: {e}",
+                        backup.display()
+                    ));
+                }
+            }
+            _ => {}
         }
     }
     errors
@@ -3572,7 +3583,7 @@ fn guarded_apply(confirmed: bool, planned: &[PlannedWrite], ctx: &ConsoleContext
             _ => {} // unknown ops already rejected in preflight
         }
     }
-    let cleanup_errors = cleanup_successful_relinks(&changes);
+    let cleanup_errors = cleanup_successful_changes(&changes);
     if !cleanup_errors.is_empty() {
         outcome.errors = cleanup_errors;
         outcome.applied_writes.clear();
@@ -6263,6 +6274,20 @@ mod tests {
         assert!(!ctx.home.join(".codex/skills/superpowers").is_symlink());
         assert!(!shared.join("brainstorming").is_symlink());
         assert!(!shared.join("writing-plans").is_symlink());
+        assert!(
+            !ctx.home.join(".codex/skills/superpowers.bak").exists()
+                && std::fs::symlink_metadata(ctx.home.join(".codex/skills/superpowers.bak"))
+                    .is_err(),
+            "successful unlink must not leave a Codex backup entry"
+        );
+        for name in ["brainstorming", "writing-plans"] {
+            let backup = shared.join(format!("{name}.bak"));
+            assert!(
+                !backup.exists() && std::fs::symlink_metadata(&backup).is_err(),
+                "successful unlink must not leave shared backup drift: {}",
+                backup.display()
+            );
+        }
         assert!(shared.join("user-owned/SKILL.md").is_file());
 
         let _ = std::fs::remove_dir_all(&base);
