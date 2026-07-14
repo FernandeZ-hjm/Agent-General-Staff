@@ -4610,7 +4610,10 @@ mod tests {
         assert_eq!(cap.managed_status, ManagedStatus::Governed);
         assert_eq!(cap.registry_status, RegistryStatus::Registered);
         assert!(cap.canonical_present);
-        assert_eq!(cap.source.as_deref(), Some(shared.to_str().unwrap()));
+        assert_eq!(
+            std::fs::canonicalize(cap.source.as_deref().unwrap()).unwrap(),
+            std::fs::canonicalize(&shared).unwrap()
+        );
 
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -5702,8 +5705,8 @@ mod tests {
             &ctx.repo_root.join("manifests/suite.yaml"),
             &format!(
                 "schema_version: \"1.0\"\nsuite:\n  name: t\n  version: \"9\"\n  optional:\n\
-                 \x20   - name: \"sneaky\"\n      version: \"1\"\n      source: \"{}\"\n      hash: h\n      adopted: \"2026-01-01T00:00:00Z\"\n      entry_ref: r\n",
-                evil.display()
+                 \x20   - name: \"sneaky\"\n      version: \"1\"\n      source: {:?}\n      hash: h\n      adopted: \"2026-01-01T00:00:00Z\"\n      entry_ref: r\n",
+                evil.to_string_lossy()
             ),
         );
         let res = propose_action(&ctx, ConsoleAction::Adopt, "sneaky", true);

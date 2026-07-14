@@ -1120,55 +1120,43 @@ else
     failures=$((failures + 1))
 fi
 
-# Dry-run proposal: no writes/errors; any needed relink targets the external body.
-echo -n "[....] skill propose external lark-calendar keeps owner + thin-index invariants "
+# Public projection carries no third-party body registry. A body appearing only
+# in the shared store must stay unmanaged and fail closed without writes.
+echo -n "[....] skill propose unregistered external lark-calendar fails closed "
 external_skill_home=/tmp/ags-verify-external-skill-home
 rm -rf "$external_skill_home"
 mkdir -p "$external_skill_home/.agents/skills/lark-calendar"
 printf '%s\n' '---' 'name: lark-calendar' 'description: isolated external fixture.' '---' \
     > "$external_skill_home/.agents/skills/lark-calendar/SKILL.md"
-if HOME="$external_skill_home" target/release/ags skill --format json > /tmp/verify-skill-external-inv.json 2>&1 \
-    && HOME="$external_skill_home" target/release/ags skill propose --action adopt --skill lark-calendar --format json > /tmp/verify-skill-propose.json 2>&1; then
+set +e
+HOME="$external_skill_home" AGS_SOURCE_ROOT="$REPO_ROOT" \
+    target/release/ags skill propose --action adopt --skill lark-calendar --format json \
+    > /tmp/verify-skill-propose.json 2>&1
+skill_propose_rc=$?
+set -e
+if [ "$skill_propose_rc" -eq 1 ]; then
     if python3 - <<'PY'
 import json
 
 proposal = json.load(open('/tmp/verify-skill-propose.json'))
-inventory = json.load(open('/tmp/verify-skill-external-inv.json'))['inventory']
 
+assert proposal['found'] is False
 assert proposal['apply_requested'] is False
 assert proposal['applied'] is False
-assert proposal['apply_status'] == 'dry-run'
+assert proposal['planned_writes'] == []
 assert proposal['applied_writes'] == []
 assert proposal['apply_errors'] == []
-
-relinks = [w for w in proposal['planned_writes'] if w['op'] == 'relink']
-for w in relinks:
-    path = w['path']
-    assert w['from'].endswith('/.agents/skills/lark-calendar'), w
-    if '/.claude/skills/' in path:
-        pass
-    elif '/.codebuddy/skills/' in path:
-        pass
-    else:
-        raise AssertionError(f"unexpected relink path: {path}")
-
-lark = next(c for c in inventory['capabilities'] if c['name'] == 'lark-calendar')
-assert lark['managed_status'] == 'governed', lark
-assert lark['source'].endswith('/.agents/skills/lark-calendar'), lark['source']
-codex_visible = any(
-    v['host'] == 'codex' and v['status'] == 'visible'
-    for v in lark['host_visibility']
-)
-assert codex_visible, lark['host_visibility']
+assert any('not found in the managed inventory' in reason for reason in proposal['blocked_reasons'])
 PY
     then
         echo "OK"
     else
-        echo "FAIL (external owner, dry-run safety, thin-index target, or Codex visibility invariant)"
+        echo "FAIL (unregistered external body must remain unmanaged and write nothing)"
         failures=$((failures + 1))
     fi
 else
-    echo "FAIL (skill propose failed)"
+    echo "FAIL (expected fail-closed rc=1, got rc=$skill_propose_rc)"
+    cat /tmp/verify-skill-propose.json
     failures=$((failures + 1))
 fi
 rm -rf "$external_skill_home"
