@@ -138,7 +138,8 @@ pub(crate) enum Commands {
     /// 诊断 AGS 内核/runtime 与目标项目纳管链路. Diagnose the installed AGS
     /// kernel/runtime plus the target's AGS onboarding projection (agents /
     /// skills / hooks / MCP / project init / memory capsule / update drift /
-    /// receipts). Doctor never runs project source formatting, tests, or builds;
+    /// receipts), including required third-party capability host routing.
+    /// Doctor never runs project source formatting, tests, or builds;
     /// those belong to `ags verify`. Read-only by default; --fix runs only safe
     /// whitelisted repairs.
     Doctor {

@@ -44,6 +44,51 @@ pub fn run(repo_root: &Path) -> HealthReport {
     report
 }
 
+/// Convert the canonical host capability verification result into the doctor
+/// finding that guards third-party routing readiness. This keeps doctor and
+/// `ags capability verify --strict` on the same expected-set semantics.
+pub fn third_party_capability_routing_finding(
+    verify: &skill_governance::console::HostVerifyResult,
+) -> Finding {
+    let gaps: Vec<String> = verify
+        .checks
+        .iter()
+        .filter(|check| {
+            check.expected
+                && check.visibility != skill_governance::console::HostVisibilityStatus::Visible
+        })
+        .map(|check| format!("{} ({:?})", check.name, check.visibility))
+        .collect();
+    if verify.status == "ok" && gaps.is_empty() {
+        return Finding::pass(
+            "third-party-capability-routing",
+            format!(
+                "{} expected capability entries are visible to {}",
+                verify.summary.expected, verify.host
+            ),
+        );
+    }
+
+    Finding::fail(
+        "third-party-capability-routing",
+        format!(
+            "{} capability routing is not ready for {}",
+            gaps.len(),
+            verify.host
+        ),
+        format!(
+            "Expected capability gaps: {}. Install or restore missing third-party bodies through their declared owner, run `ags skill sync --apply` for AGS-owned thin indexes, restart {}, then run `ags capability verify --host {} --strict`.",
+            if gaps.is_empty() {
+                verify.status.clone()
+            } else {
+                gaps.join(", ")
+            },
+            verify.host,
+            verify.host
+        ),
+    )
+}
+
 /// Stub entry point — kept for backward compatibility with existing
 /// callers that don't yet pass `--format`.
 ///
@@ -288,7 +333,46 @@ pub fn render_repair_json(result: &RepairResult) -> String {
 
 #[cfg(test)]
 mod doctor_scope_tests {
-    use super::repair_plan;
+    use super::{repair_plan, third_party_capability_routing_finding, CheckStatus};
+    use skill_governance::console::{
+        HostCheck, HostVerifyResult, HostVerifySummary, HostVisibilityStatus,
+    };
+
+    #[test]
+    fn third_party_capability_routing_is_formal_failure_for_expected_gap() {
+        let verify = HostVerifyResult {
+            schema_version: "test".to_string(),
+            host: "codex".to_string(),
+            supported: true,
+            status: "incomplete".to_string(),
+            checks: vec![HostCheck {
+                name: "superpowers".to_string(),
+                kind: "skill".to_string(),
+                visibility: HostVisibilityStatus::NotVisible,
+                expected: true,
+                evidence: vec!["required host entry missing".to_string()],
+            }],
+            summary: HostVerifySummary {
+                total: 1,
+                visible: 0,
+                not_visible: 1,
+                degraded: 0,
+                expected: 1,
+                failed: 1,
+                all_visible: false,
+            },
+            thin_index_drift: None,
+            note: String::new(),
+        };
+
+        let finding = third_party_capability_routing_finding(&verify);
+        assert_eq!(finding.check_name, "third-party-capability-routing");
+        assert_eq!(finding.status, CheckStatus::Fail);
+        assert!(finding
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("superpowers")));
+    }
 
     #[test]
     fn repair_plan_never_formats_target_source() {

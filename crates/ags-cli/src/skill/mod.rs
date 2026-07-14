@@ -2,11 +2,10 @@
 use crate::capability::cmd_capability_sync;
 use crate::cli::SkillAction;
 use crate::receipt_bridge::emit_ags_action_receipt;
-use std::path::PathBuf;
 
 /// Shared dispatch: `skill scan`
 fn cmd_skill_scan(format: &str) {
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root = crate::context::capability_authority_root_or_exit("ags skill scan");
     let result = skill_governance::scan_skills(&root);
 
     match format {
@@ -16,7 +15,7 @@ fn cmd_skill_scan(format: &str) {
 }
 /// Shared dispatch: `skill check`
 fn cmd_skill_check(format: &str) {
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root = crate::context::capability_authority_root_or_exit("ags skill check");
     let result = skill_governance::check_skills(&root);
 
     match format {
@@ -35,7 +34,7 @@ fn cmd_skill_check(format: &str) {
 /// installers/registrars are advised, never executed.
 fn cmd_skill_propose(action: &str, skill_name: &str, apply: bool, format: &str) {
     use skill_governance::console;
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root = crate::context::capability_authority_root_or_exit("ags skill propose");
     let Some(parsed) = console::ConsoleAction::from_str(action) else {
         eprintln!("skill propose: unknown action '{action}'");
         std::process::exit(2);
@@ -64,7 +63,7 @@ fn cmd_skill_propose(action: &str, skill_name: &str, apply: bool, format: &str) 
 /// visible).
 fn cmd_skill_verify(host: &str, strict: bool, format: &str) {
     use skill_governance::console;
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root = crate::context::capability_authority_root_or_exit("ags skill verify");
     let ctx = console::ConsoleContext::system(root);
     let result = console::verify_host(&ctx, host);
     let status = result.status.clone();
@@ -80,7 +79,7 @@ fn cmd_skill_verify(host: &str, strict: bool, format: &str) {
 }
 /// Shared dispatch: `skill inventory`
 fn cmd_skill_inventory(format: &str, write: bool) {
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root = crate::context::capability_authority_root_or_exit("ags skill inventory");
     let result = skill_governance::scan_skill_inventory(&root);
 
     match format {
@@ -108,7 +107,7 @@ fn cmd_skill_inventory(format: &str, write: bool) {
 /// Reads manifests/skills-registry.yaml and reports the upstream comparison
 /// sources and the suite skills that watch them. Performs NO network crawl.
 fn cmd_skill_upstream(format: &str) {
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root = crate::context::capability_authority_root_or_exit("ags skill upstream");
     let result = skill_governance::upstream_proposal(&root);
 
     match format {
@@ -133,7 +132,7 @@ fn cmd_skill_sync(apply: bool, format: &str) {
 /// never deleted. Emits a receipt when writes occur.
 fn cmd_skill_dedupe(apply: bool, format: &str) {
     use skill_governance::console;
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root = crate::context::capability_authority_root_or_exit("ags skill dedupe");
     let result = console::analyze_duplicates(&root, apply);
     match format {
         "json" => println!("{}", console::render_dedupe_json(&result)),
@@ -189,7 +188,7 @@ fn cmd_skill_dedupe(apply: bool, format: &str) {
 }
 fn cmd_skill_overview(format: &str, fix: bool) {
     use skill_governance::console;
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root = crate::context::capability_authority_root_or_exit("ags skill overview");
     let scan = skill_governance::scan_skills(&root);
     let check = skill_governance::check_skills(&root);
     // Unified management-console inventory: skills + MCPs + suite interface +

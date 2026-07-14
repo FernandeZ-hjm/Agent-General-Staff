@@ -47,10 +47,12 @@ pub(crate) enum CapabilityAction {
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
     },
-    /// Verify cross-Agent host visibility for a host (read-only).
+    /// Verify cross-Agent host visibility and required capability coverage (read-only).
     ///
-    /// Canonical home for host-visibility checks (`ags skill verify` remains a
-    /// compatibility alias). Claude Code / Codex supported; Cursor reserved.
+    /// Resolves the installed AGS capability authority independently of the
+    /// current project directory. Missing required registry parents remain in
+    /// the expected set and fail closed. `ags skill verify` remains a
+    /// compatibility alias. Claude Code / Codex supported; Cursor reserved.
     Verify {
         /// Host to verify: claude-code | codex (cursor reserved)
         #[arg(long, default_value = "claude-code")]

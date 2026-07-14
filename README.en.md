@@ -134,6 +134,13 @@ Every run leaves a receipt you can trace. `ags receipt` records the task card, e
 
 Third-party skills can be recommended, never installed for you by default. `ags skill` provides a management console: `inventory` to audit on-disk skill assets, `verify` to check host visibility, `propose` for dry-run proposals, `adopt` / `ignore` for confirmed writes. Every change is recorded, confirmed, and bounded.
 
+`ags capability verify --host <host> --strict` derives a stable expected set
+from the AGS source authority recorded at installation, so running it from a
+different project cannot silently shrink coverage. Missing required parent
+skills, incomplete internal playbooks, and stale playbooks exposed as standalone
+skills fail closed; `ags doctor` reports the same host-routing gaps as formal
+failures.
+
 ### Memory Capsule
 
 Let experience escape the chat log and become a project asset. After each task, AGS saves task snapshots, key decisions, verification results, and context summaries. A later agent reads the project profile and task memory before continuing, instead of re-explaining the requirement from scratch. The larger the project, the longer the task chain, the more agents involved — the more this matters.
@@ -236,6 +243,7 @@ For architectural details, see [docs/architecture.md](docs/architecture.md).
 | `ags verify lane` | Classify verification path by diff risk |
 | `ags receipt verify` | Verify execution receipt integrity |
 | `ags mcp serve` | Start the AGS MCP stdio server |
+| `ags capability verify --host <host> --strict` | Verify required capabilities, parent skills, and internal entrypoints for a host |
 
 **Agent entry:** `/ags` is the Claude Code entry. All AGS tasks should call `ags_preflight` via AGS MCP first, with the CLI as a fallback only. Run `ags <command> --help` for full subcommand details.
 

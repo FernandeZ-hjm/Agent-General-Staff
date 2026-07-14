@@ -156,6 +156,11 @@ Agent General Staff 在公开版中提供完整的技能治理框架，但不预
 `ags skill install --skill <name> --confirm` 或参考 `docs/skill-recommendations.md`。
 所有第三方技能必须由用户自行选择可信来源并显式确认安装。
 
+Capability expected 集合以已安装 AGS source authority 为准，不得随执行命令的项目 cwd
+变化。registry 声明为 required+routable 的真实父能力即使本体缺失也必须进入 inventory
+与 strict verify 分母；内部 playbook 不作为独立 expected skill，但其文件完整性由父能力
+承担。`ags doctor` 以 `third-party-capability-routing` 正式检查聚合这一闭环。
+
 ## Protocol Safety Assertions
 
 workflow-sync-check 强制执行以下关键协议安全断言。缺失或矛盾改写始终为 FAIL，

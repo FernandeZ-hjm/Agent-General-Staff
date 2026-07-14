@@ -13,6 +13,30 @@ fn compose_doctor_report(
     report
 }
 
+fn capability_routing_report(target: &Path) -> suite_doctor::HealthReport {
+    let mut report = suite_doctor::HealthReport::new("capability-routing");
+    let explicit = std::env::var_os("AGS_SOURCE_ROOT").map(std::path::PathBuf::from);
+    match crate::context::resolve_capability_authority_root(
+        target,
+        &capability_route::locate_runtime_home(),
+        explicit,
+    ) {
+        Ok(authority_root) => {
+            let ctx = skill_governance::console::ConsoleContext::system(authority_root);
+            let verify = skill_governance::console::verify_host(&ctx, "codex");
+            report.add(suite_doctor::third_party_capability_routing_finding(
+                &verify,
+            ));
+        }
+        Err(detail) => report.add(suite_doctor::Finding::fail(
+            "third-party-capability-routing",
+            "capability authority root could not be resolved",
+            detail,
+        )),
+    }
+    report
+}
+
 /// Shared dispatch: `doctor` / `suite-doctor`
 pub(crate) fn cmd_doctor(format: &str, repair: bool, dry_run: bool, target: &Path) {
     if !repair {
@@ -21,7 +45,9 @@ pub(crate) fn cmd_doctor(format: &str, repair: bool, dry_run: bool, target: &Pat
         let runtime_home = default_private_runtime_home();
         let kernel = crate::setup::private_install_health_report(&runtime_home);
         let project = suite_doctor::run(target);
-        let report = compose_doctor_report(kernel, project);
+        let capability = capability_routing_report(target);
+        let mut report = compose_doctor_report(kernel, project);
+        report.findings.extend(capability.findings);
         match format {
             "json" => println!("{}", suite_doctor::render_json(&report)),
             _ => {

@@ -1,6 +1,6 @@
 //! `ags capability` thin facade.
 use crate::cli::CapabilityAction;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Shared dispatch: `capability list`
 fn cmd_capability_list(target: &Path, format: &str) {
@@ -92,7 +92,7 @@ fn capability_sync_exit_code(
 /// `ags capability inventory` — unified cross-Agent inventory + host visibility.
 fn cmd_capability_inventory(hosts: &[String], format: &str) {
     use skill_governance::console;
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root = crate::context::capability_authority_root_or_exit("ags capability inventory");
     let ctx = console::ConsoleContext::system(root);
     let default_hosts = capability_default_hosts();
     let host_refs: Vec<&str> = if hosts.is_empty() {
@@ -110,7 +110,7 @@ fn cmd_capability_inventory(hosts: &[String], format: &str) {
 /// home for the check `ags skill verify` also exposes for compatibility).
 pub(crate) fn cmd_capability_verify(host: &str, strict: bool, format: &str) {
     use skill_governance::console;
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root = crate::context::capability_authority_root_or_exit("ags capability verify");
     let ctx = console::ConsoleContext::system(root);
     let result = console::verify_host(&ctx, host);
     let status = result.status.clone();
@@ -128,7 +128,7 @@ pub(crate) fn cmd_capability_verify(host: &str, strict: bool, format: &str) {
 /// guard; MCP / CLI registration is advised, never executed.
 fn cmd_capability_install(capability: &str, apply: bool, format: &str) {
     use skill_governance::console;
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root = crate::context::capability_authority_root_or_exit("ags capability install");
     let ctx = console::ConsoleContext::system(root);
     let result = console::propose_action(&ctx, console::ConsoleAction::Adopt, capability, apply);
     match format {
@@ -153,7 +153,7 @@ fn cmd_capability_install(capability: &str, apply: bool, format: &str) {
 /// user asked AGS to perform the sync. Advised-only MCPs never fail the batch.
 pub(crate) fn cmd_capability_sync(apply: bool, format: &str) {
     use skill_governance::console;
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root = crate::context::capability_authority_root_or_exit("ags capability sync");
     let ctx = console::ConsoleContext::system(root);
     let hosts = capability_default_hosts();
     let result = console::sync_plan(&ctx, &hosts, apply);

@@ -523,6 +523,14 @@ struct RegistrySkillBody {
     manager: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RequiredRegistrySkill {
+    name: String,
+    profile: String,
+    local_path: Option<String>,
+    source_type: Option<String>,
+}
+
 /// Read `manifests/mcp-registry.yaml` and return entries from both the
 /// `suite_interfaces:` (AGS self) and `mcps:` (governed) sections. Lenient:
 /// returns an empty list when the file is missing or unparseable.
@@ -579,6 +587,7 @@ fn read_mcp_registry(repo_root: &Path) -> Vec<RegistryEntry> {
 pub struct RoutingRead {
     pub map: HashMap<String, RoutingMetadata>,
     external_skill_bodies: HashMap<String, RegistrySkillBody>,
+    required_skill_parents: Vec<RequiredRegistrySkill>,
     /// Internal-entrypoint route targets declared under a `route_targets:`
     /// section — (name, routing) pairs synthesized into route-target inventory
     /// rows. Each routing carries a `parent`; these are NEVER standalone bodies.
@@ -666,6 +675,25 @@ fn collect_routing(item: &serde_yaml::Value, read: &mut RoutingRead) {
     };
     match serde_yaml::from_value::<RoutingMetadata>(routing_val.clone()) {
         Ok(meta) => {
+            if item.get("profile").and_then(|v| v.as_str()) == Some("required")
+                && meta.route_state == RouteState::Routable
+                && meta.parent.is_none()
+                && is_safe_path_component(name)
+            {
+                read.required_skill_parents.push(RequiredRegistrySkill {
+                    name: name.to_string(),
+                    profile: "required".to_string(),
+                    local_path: item
+                        .get("local_path")
+                        .and_then(|v| v.as_str())
+                        .map(ToString::to_string),
+                    source_type: item
+                        .get("source")
+                        .and_then(|source| source.get("type"))
+                        .and_then(|v| v.as_str())
+                        .map(ToString::to_string),
+                });
+            }
             read.map.insert(name.to_string(), meta);
         }
         Err(_) => read.parse_failures.push(name.to_string()),
@@ -901,6 +929,21 @@ fn skill_path_visibility_for_host(
     canonical_source: Option<&Path>,
     external_shared: bool,
 ) -> HostVisibility {
+    if external_shared && canonical_source.is_none_or(|source| !source.join("SKILL.md").is_file()) {
+        return HostVisibility {
+            host: host.to_string(),
+            supported: true,
+            status: HostVisibilityStatus::NotVisible,
+            evidence: vec![format!(
+                "required shared skill body is missing: {}",
+                ctx.home
+                    .join(".agents/skills")
+                    .join(name)
+                    .join("SKILL.md")
+                    .display()
+            )],
+        };
+    }
     if external_shared
         && canonical_source
             .map(|source| !canonical_within_shared_store(&ctx.home, name, source))
@@ -965,6 +1008,124 @@ fn skill_path_visibility_for_host(
         supported: true,
         status: HostVisibilityStatus::Visible,
         evidence,
+    }
+}
+
+fn host_skill_body_dirs(ctx: &ConsoleContext, host: &str, name: &str) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(subdir) = host_skills_subdir(host) {
+        roots.push(ctx.home.join(subdir));
+    }
+    roots.extend(shared_skill_dirs_for_host(ctx, host));
+    roots
+        .into_iter()
+        .map(|root| root.join(name))
+        .filter(|body| body.join("SKILL.md").is_file())
+        .collect()
+}
+
+fn apply_playbook_entrypoint_integrity(
+    ctx: &ConsoleContext,
+    caps: &mut [ManagedCapability],
+    route_targets: &[(String, RoutingMetadata)],
+) {
+    let mut by_parent: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for (_, routing) in route_targets {
+        let (Some(parent), Some(entrypoint)) = (&routing.parent, &routing.entrypoint) else {
+            continue;
+        };
+        if parent.kind == ManagedKind::Skill && entrypoint.kind == EntrypointKind::Playbook {
+            by_parent
+                .entry(parent.name.clone())
+                .or_default()
+                .push(entrypoint.name.clone());
+        }
+    }
+
+    for cap in caps.iter_mut() {
+        let Some(playbooks) = by_parent.get(&cap.name) else {
+            continue;
+        };
+        let mut degraded = false;
+        for visibility in &mut cap.host_visibility {
+            if visibility.status != HostVisibilityStatus::Visible {
+                continue;
+            }
+            let bodies = host_skill_body_dirs(ctx, &visibility.host, &cap.name);
+            let loadable = bodies.iter().any(|body| {
+                playbooks.iter().all(|playbook| {
+                    body.join("playbooks")
+                        .join(playbook)
+                        .join("SKILL.md")
+                        .is_file()
+                })
+            });
+            if !loadable {
+                visibility.status = HostVisibilityStatus::Degraded;
+                visibility.evidence.push(format!(
+                    "parent skill is visible but required playbook entrypoint(s) are missing: {}",
+                    playbooks.join(", ")
+                ));
+                degraded = true;
+            }
+        }
+        if degraded {
+            cap.health_status = HealthStatus::Degraded;
+            cap.risk_notes.push(
+                "One or more declared playbook entrypoints are not loadable from the host-visible parent body."
+                    .to_string(),
+            );
+        }
+    }
+}
+
+fn apply_route_target_exposure_shape(
+    caps: &mut [ManagedCapability],
+    route_targets: &[(String, RoutingMetadata)],
+) {
+    let conflicts: Vec<(String, String, Vec<String>)> = route_targets
+        .iter()
+        .filter_map(|(entrypoint_name, routing)| {
+            let parent = routing.parent.as_ref()?;
+            let standalone = caps.iter().find(|cap| {
+                cap.name == *entrypoint_name
+                    && !cap.is_route_target()
+                    && cap
+                        .host_visibility
+                        .iter()
+                        .any(|visibility| visibility.status == HostVisibilityStatus::Visible)
+            })?;
+            let hosts = standalone
+                .host_visibility
+                .iter()
+                .filter(|visibility| visibility.status == HostVisibilityStatus::Visible)
+                .map(|visibility| visibility.host.clone())
+                .collect();
+            Some((entrypoint_name.clone(), parent.name.clone(), hosts))
+        })
+        .collect();
+
+    for (entrypoint_name, parent_name, hosts) in conflicts {
+        if let Some(parent) = caps.iter_mut().find(|cap| cap.name == parent_name) {
+            for visibility in &mut parent.host_visibility {
+                if hosts.iter().any(|host| host == &visibility.host) {
+                    visibility.status = HostVisibilityStatus::Degraded;
+                    visibility.evidence.push(format!(
+                        "unexpected standalone entrypoint '{entrypoint_name}' is also visible; invoke it only through parent '{parent_name}'"
+                    ));
+                }
+            }
+            parent.health_status = HealthStatus::Degraded;
+            parent.risk_notes.push(format!(
+                "Internal entrypoint '{entrypoint_name}' is exposed as a standalone host skill."
+            ));
+        }
+        if let Some(standalone) = caps.iter_mut().find(|cap| cap.name == entrypoint_name) {
+            standalone.risk_notes.push(format!(
+                "Unexpected standalone exposure: this entrypoint belongs to parent '{parent_name}'."
+            ));
+        }
     }
 }
 
@@ -1748,6 +1909,60 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
         });
     }
 
+    // Required routable parent skills declared only in the registry must still
+    // materialize in the expected universe. A fresh machine with no host body
+    // needs a real NotVisible row so strict verify cannot silently shrink its
+    // denominator and report a false-green result.
+    for required in &routing_meta.required_skill_parents {
+        if known_skill_names.iter().any(|name| name == &required.name) {
+            continue;
+        }
+        known_skill_names.push(required.name.clone());
+        let host_system = required.source_type.as_deref() == Some("host-system");
+        let source = required
+            .local_path
+            .as_deref()
+            .map(|path| ctx.repo_root.join(path))
+            .or_else(|| {
+                hosts.iter().find_map(|host| {
+                    host_skill_body_dirs(ctx, host, &required.name)
+                        .into_iter()
+                        .next()
+                })
+            })
+            .or_else(|| {
+                (!host_system).then(|| ctx.home.join(".agents/skills").join(&required.name))
+            });
+        let canonical_present = source
+            .as_ref()
+            .is_some_and(|body| body.join("SKILL.md").is_file());
+        caps.push(ManagedCapability {
+            kind: ManagedKind::Skill,
+            name: required.name.clone(),
+            source: source.map(|path| path.to_string_lossy().to_string()),
+            profile: Some(required.profile.clone()),
+            managed_status: if host_system {
+                ManagedStatus::HostSystem
+            } else {
+                ManagedStatus::Governed
+            },
+            registry_status: RegistryStatus::Registered,
+            canonical_present,
+            expected_hosts: supported_skill_hosts()
+                .into_iter()
+                .map(ToString::to_string)
+                .collect(),
+            host_visibility: Vec::new(),
+            health_status: HealthStatus::Unknown,
+            actions: Vec::new(),
+            risk_notes: vec![format!(
+                "Required registry parent (source.type={}); absence remains an expected-host failure.",
+                required.source_type.as_deref().unwrap_or("unspecified")
+            )],
+            routing: None,
+        });
+    }
+
     // 2. Local skill directories not in the manifest → Discovered (opt-in).
     let inv = crate::scan_skill_inventory(&ctx.repo_root);
     for e in &inv.entries {
@@ -1899,7 +2114,9 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
         if cap.host_visibility.is_empty() {
             for host in &hosts {
                 let probe = probes.iter().find(|(h, _)| h == host).map(|(_, p)| p);
-                let canonical_source = if matches!(cap.kind, ManagedKind::Skill) {
+                let canonical_source = if matches!(cap.kind, ManagedKind::Skill)
+                    && !matches!(cap.managed_status, ManagedStatus::HostSystem)
+                {
                     cap.source
                         .as_deref()
                         .map(|source| resolve_source(&ctx.repo_root, source))
@@ -1946,6 +2163,9 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
             }
         }
     }
+
+    apply_route_target_exposure_shape(&mut caps, &routing_meta.route_targets);
+    apply_playbook_entrypoint_integrity(ctx, &mut caps, &routing_meta.route_targets);
 
     // 6. Synthesize route-target rows for internal entrypoints (playbook / MCP
     //    tool / CLI subcommand) declared under `route_targets:`. Routing-only:
@@ -4197,6 +4417,190 @@ mod tests {
     }
 
     #[test]
+    fn required_registry_parent_missing_body_is_expected() {
+        let (ctx, base) = ctx_with("required-registry-parent-missing", canned_list());
+        write_file(
+            &ctx.repo_root.join("manifests/skills-registry.yaml"),
+            "schema_version: \"1.0\"\n\
+             skills:\n\
+             \x20 - name: superpowers\n\
+             \x20   profile: required\n\
+             \x20   routing:\n\
+             \x20     route_state: routable\n\
+             \x20     invoke_hint: \"[skill: superpowers]\"\n\
+             \x20   source:\n\
+             \x20     type: host-system\n\
+             \x20     upstream: superpowers\n",
+        );
+
+        let inv = build_inventory(&ctx, &["codex"]);
+        let cap = find(&inv, "superpowers");
+        assert_eq!(cap.profile.as_deref(), Some("required"));
+        assert_eq!(cap.registry_status, RegistryStatus::Registered);
+        assert!(!cap.canonical_present);
+        assert!(cap.expected_hosts.iter().any(|host| host == "codex"));
+        assert_eq!(
+            cap.host_visibility
+                .iter()
+                .find(|visibility| visibility.host == "codex")
+                .map(|visibility| visibility.status.clone()),
+            Some(HostVisibilityStatus::NotVisible)
+        );
+
+        let verify = verify_host(&ctx, "codex");
+        assert_eq!(verify.status, "incomplete");
+        assert!(verify.checks.iter().any(|check| {
+            check.name == "superpowers"
+                && check.expected
+                && check.visibility == HostVisibilityStatus::NotVisible
+        }));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn required_host_system_parent_accepts_direct_codex_host_body() {
+        let (ctx, base) = ctx_with("required-host-system-direct", canned_list());
+        write_file(
+            &ctx.repo_root.join("manifests/skills-registry.yaml"),
+            "schema_version: \"1.0\"\n\
+             skills:\n\
+             \x20 - name: superpowers\n\
+             \x20   profile: required\n\
+             \x20   routing:\n\
+             \x20     route_state: routable\n\
+             \x20     invoke_hint: \"[skill: superpowers]\"\n\
+             \x20   source:\n\
+             \x20     type: host-system\n",
+        );
+        write_file(
+            &ctx.home.join(".codex/skills/superpowers/SKILL.md"),
+            "---\nname: superpowers\ndescription: host body.\n---\n",
+        );
+
+        let inv = build_inventory(&ctx, &["codex"]);
+        let cap = find(&inv, "superpowers");
+        assert_eq!(cap.managed_status, ManagedStatus::HostSystem);
+        assert!(cap.canonical_present);
+        assert_eq!(
+            cap.host_visibility
+                .iter()
+                .find(|visibility| visibility.host == "codex")
+                .map(|visibility| visibility.status.clone()),
+            Some(HostVisibilityStatus::Visible)
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn entrypoint_integrity_degrades_visible_parent_without_expectation_leak() {
+        let (ctx, base) = ctx_with("entrypoint-integrity", canned_list());
+        write_file(
+            &ctx.repo_root.join("manifests/skills-registry.yaml"),
+            "schema_version: \"1.0\"\n\
+             skills:\n\
+             \x20 - name: superpowers\n\
+             \x20   profile: required\n\
+             \x20   routing:\n\
+             \x20     route_state: routable\n\
+             \x20     invoke_hint: \"[skill: superpowers]\"\n\
+             \x20   source:\n\
+             \x20     type: host-system\n\
+             route_targets:\n\
+             \x20 - name: verification-before-completion\n\
+             \x20   routing:\n\
+             \x20     route_state: routable\n\
+             \x20     invoke_hint: \"[skill: superpowers]\"\n\
+             \x20     parent: { kind: skill, name: superpowers }\n\
+             \x20     entrypoint: { kind: playbook, name: verification-before-completion }\n",
+        );
+        write_file(
+            &ctx.home.join(".agents/skills/superpowers/SKILL.md"),
+            "---\nname: superpowers\ndescription: parent router.\n---\n",
+        );
+
+        let inv = build_inventory(&ctx, &["codex"]);
+        let parent = find(&inv, "superpowers");
+        assert_eq!(parent.health_status, HealthStatus::Degraded);
+        assert_eq!(
+            parent
+                .host_visibility
+                .iter()
+                .find(|visibility| visibility.host == "codex")
+                .map(|visibility| visibility.status.clone()),
+            Some(HostVisibilityStatus::Degraded)
+        );
+        let entrypoint = find(&inv, "verification-before-completion");
+        assert!(entrypoint.is_route_target());
+        assert!(entrypoint.expected_hosts.is_empty());
+
+        let verify = verify_host(&ctx, "codex");
+        assert!(verify.checks.iter().any(|check| {
+            check.name == "superpowers"
+                && check.expected
+                && check.visibility == HostVisibilityStatus::Degraded
+        }));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn entrypoint_exposure_shape_degrades_parent_when_playbook_is_standalone() {
+        let (ctx, base) = ctx_with("entrypoint-exposure-shape", canned_list());
+        write_file(
+            &ctx.repo_root.join("manifests/skills-registry.yaml"),
+            "schema_version: \"1.0\"\n\
+             skills:\n\
+             \x20 - name: superpowers\n\
+             \x20   profile: required\n\
+             \x20   routing:\n\
+             \x20     route_state: routable\n\
+             \x20     invoke_hint: \"[skill: superpowers]\"\n\
+             \x20   source:\n\
+             \x20     type: host-system\n\
+             route_targets:\n\
+             \x20 - name: verification-before-completion\n\
+             \x20   routing:\n\
+             \x20     route_state: routable\n\
+             \x20     invoke_hint: \"[skill: superpowers]\"\n\
+             \x20     parent: { kind: skill, name: superpowers }\n\
+             \x20     entrypoint: { kind: playbook, name: verification-before-completion }\n",
+        );
+        write_file(
+            &ctx.home.join(".agents/skills/superpowers/SKILL.md"),
+            "---\nname: superpowers\ndescription: parent router.\n---\n",
+        );
+        write_file(
+            &ctx.home.join(
+                ".agents/skills/superpowers/playbooks/verification-before-completion/SKILL.md",
+            ),
+            "---\nname: verification-before-completion\ndescription: nested playbook.\n---\n",
+        );
+        write_file(
+            &ctx.home
+                .join(".codex/skills/verification-before-completion/SKILL.md"),
+            "---\nname: verification-before-completion\ndescription: stale standalone entry.\n---\n",
+        );
+
+        let inv = build_inventory(&ctx, &["codex"]);
+        let parent = find(&inv, "superpowers");
+        assert_eq!(parent.health_status, HealthStatus::Degraded);
+        assert!(parent.host_visibility.iter().any(|visibility| {
+            visibility.host == "codex"
+                && visibility.status == HostVisibilityStatus::Degraded
+                && visibility
+                    .evidence
+                    .iter()
+                    .any(|item| item.contains("unexpected standalone entrypoint"))
+        }));
+        let standalone = find(&inv, "verification-before-completion");
+        assert!(standalone.expected_hosts.is_empty());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn external_registry_skill_is_governed_from_shared_store() {
         let (ctx, base) = ctx_with("external-registry", canned_list());
         let shared = seed_external_skill(&ctx);
@@ -4222,7 +4626,7 @@ mod tests {
         assert!(!cap.canonical_present);
         assert_eq!(
             cap.host_visibility[0].status,
-            HostVisibilityStatus::Degraded
+            HostVisibilityStatus::NotVisible
         );
 
         let proposal = propose_action(&ctx, ConsoleAction::Adopt, "lark-calendar", true);
