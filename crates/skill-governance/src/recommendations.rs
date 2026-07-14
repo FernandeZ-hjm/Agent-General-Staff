@@ -51,7 +51,8 @@ pub struct RecommendationStatus {
     /// "installed" when a local body exists at the install location, else
     /// "not-installed". AGS never creates this — the user installs manually.
     pub local_install: String,
-    /// Per-host thin-index visibility (a stat of `<home>/<host>/skills/<id>`).
+    /// Per-host visibility through either a direct thin index or the shared
+    /// multi-agent skill body.
     pub host_visibility: Vec<HostVisibilityLite>,
     pub next_step: String,
 }
@@ -59,7 +60,8 @@ pub struct RecommendationStatus {
 #[derive(Debug, Clone, Serialize)]
 pub struct HostVisibilityLite {
     pub host: String,
-    /// "visible" when a host thin-index entry exists, else "not-visible".
+    /// "visible" when a loadable direct or shared `SKILL.md` exists, else
+    /// "not-visible".
     pub status: String,
 }
 
@@ -83,11 +85,12 @@ pub fn read_recommendations(repo_root: &Path) -> RecommendationsDoc {
 /// Pure filesystem stat against `home`; never spawns a process or writes.
 pub fn recommendation_status(rec: &Recommendation, home: &Path) -> RecommendationStatus {
     let installed = local_body_present(rec, home);
+    let shared_body = home.join(".agents/skills").join(&rec.id).join("SKILL.md");
     let host_visibility = HOST_SKILL_DIRS
         .iter()
         .map(|(host, subdir)| {
             let entry = home.join(subdir).join(&rec.id);
-            let visible = std::fs::symlink_metadata(&entry).is_ok();
+            let visible = entry.join("SKILL.md").is_file() || shared_body.is_file();
             HostVisibilityLite {
                 host: host.to_string(),
                 status: if visible { "visible" } else { "not-visible" }.to_string(),
@@ -230,6 +233,7 @@ mod tests {
         };
         let st = recommendation_status(&rec, &home);
         assert_eq!(st.local_install, "installed");
+        assert!(st.host_visibility.iter().all(|h| h.status == "visible"));
         let _ = std::fs::remove_dir_all(&home);
     }
 }
