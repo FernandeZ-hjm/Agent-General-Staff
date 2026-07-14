@@ -149,7 +149,7 @@ ags verify --scope local
 | `ags init` | Onboard a target project into AGS governance |
 | `ags doctor` | Full-pipeline health diagnostics; `--fix` for safe repairs |
 | `ags agents` | Govern local agent hosts: `scan`, `govern`, `verify` |
-| `ags skill` | Skill management console: `inventory`, `dedupe`, `update`, `sync`, `verify` |
+| `ags skill` | Skill management console: `inventory`, `dedupe`, `update`, `sync`, `verify`; sync also maintains the shared parent index for registry-declared playbooks and removes only retired dangling child links |
 | `ags capability` | Cross-agent capability layer: `inventory`, `verify`, `install`, `sync` |
 | `ags update` | Unified update: `check`, `notify`, `plan`, `apply`, `verify` |
 

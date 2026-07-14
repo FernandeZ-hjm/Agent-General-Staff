@@ -2173,9 +2173,15 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
     //    actions, never adopted/synced. capability-route derefs their
     //    availability + `primary` to the parent capability.
     for (name, routing) in &routing_meta.route_targets {
-        if known_skill_names.iter().any(|n| n == name) {
-            continue;
-        }
+        // Registry route-target declarations are authoritative over stale
+        // host/plugin bodies with the same upstream name. Keeping the discovered
+        // row would turn an internal playbook back into a standalone routable
+        // skill and reintroduce duplicate host injection.
+        let shadowed_body = caps
+            .iter()
+            .position(|cap| cap.name == *name)
+            .map(|index| caps.remove(index));
+        known_skill_names.retain(|known| known != name);
         known_skill_names.push(name.clone());
         let kind = routing
             .parent
@@ -2195,9 +2201,18 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
             host_visibility: Vec::new(),
             health_status: HealthStatus::Unknown,
             actions: Vec::new(),
-            risk_notes: vec![
-                "Internal entrypoint route target of a parent capability; routing-only, never a host body, never adopted/synced.".to_string(),
-            ],
+            risk_notes: {
+                let mut notes = vec![
+                    "Internal entrypoint route target of a parent capability; routing-only, never a host body, never adopted/synced.".to_string(),
+                ];
+                if let Some(body) = shadowed_body {
+                    notes.push(format!(
+                        "A stale standalone '{}' body was discovered from {:?} and shadowed by the registry route target.",
+                        body.name, body.source
+                    ));
+                }
+                notes
+            },
             routing: Some(routing.clone()),
         });
     }
@@ -2425,6 +2440,11 @@ pub struct HostVerifyResult {
     /// skills dir). Reported, never auto-cleaned.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thin_index_drift: Option<ThinIndexDrift>,
+    /// Shared multi-agent index drift. Codex loads `~/.agents/skills` in
+    /// addition to its host-specific directory, so stale entries here are part
+    /// of Codex visibility integrity rather than invisible machine clutter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_thin_index_drift: Option<ThinIndexDrift>,
     pub note: String,
 }
 
@@ -2434,7 +2454,16 @@ pub struct HostVerifyResult {
 /// directories are reported as informational (could be legitimate local skills).
 fn scan_thin_index_drift(home: &Path, host: &str) -> Option<ThinIndexDrift> {
     let sub = host_skills_subdir(host)?;
-    let dir = home.join(sub);
+    scan_skill_dir_drift(&home.join(sub), host)
+}
+
+fn scan_shared_thin_index_drift(home: &Path, host: &str) -> Option<ThinIndexDrift> {
+    (host == "codex")
+        .then(|| home.join(".agents/skills"))
+        .and_then(|dir| scan_skill_dir_drift(&dir, "shared"))
+}
+
+fn scan_skill_dir_drift(dir: &Path, label: &str) -> Option<ThinIndexDrift> {
     let read = std::fs::read_dir(&dir).ok()?;
     let mut total = 0usize;
     let (mut clean, mut bak, mut broken, mut realdir) = (0usize, 0usize, 0usize, 0usize);
@@ -2467,7 +2496,7 @@ fn scan_thin_index_drift(home: &Path, host: &str) -> Option<ThinIndexDrift> {
         }
     }
     Some(ThinIndexDrift {
-        host: host.to_string(),
+        host: label.to_string(),
         skills_dir: dir.to_string_lossy().to_string(),
         total_entries: total,
         clean_symlinks: clean,
@@ -2502,6 +2531,7 @@ pub fn verify_host(ctx: &ConsoleContext, host: &str) -> HostVerifyResult {
                 all_visible: true,
             },
             thin_index_drift: None,
+            shared_thin_index_drift: None,
             note: if deferred {
                 format!("Host '{host}' visibility check is reserved for a later phase. Model fields are stable; no probing performed.")
             } else {
@@ -2549,10 +2579,18 @@ pub fn verify_host(ctx: &ConsoleContext, host: &str) -> HostVerifyResult {
         .iter()
         .filter(|c| c.expected && c.visibility == HostVisibilityStatus::Degraded)
         .count();
+    let thin_index_drift = scan_thin_index_drift(&ctx.home, host);
+    let shared_thin_index_drift = scan_shared_thin_index_drift(&ctx.home, host);
+    let removable_drift = thin_index_drift
+        .as_ref()
+        .is_some_and(|drift| drift.has_drift)
+        || shared_thin_index_drift
+            .as_ref()
+            .is_some_and(|drift| drift.has_drift);
     let all_visible = failed == 0 && expected_degraded == 0;
     let status = if failed > 0 {
         "incomplete"
-    } else if expected_degraded > 0 {
+    } else if expected_degraded > 0 || removable_drift {
         "degraded"
     } else {
         "ok"
@@ -2574,8 +2612,9 @@ pub fn verify_host(ctx: &ConsoleContext, host: &str) -> HostVerifyResult {
             all_visible,
         },
         checks,
-        thin_index_drift: scan_thin_index_drift(&ctx.home, host),
-        note: "Read-only host-visibility verify. status=incomplete means an expected capability is not visible. Restart the host after adopt/update so it re-scans entry points; use --strict to gate (exit nonzero unless status=ok). thin_index_drift reports legacy `.bak`/dangling-symlink drift only; capability sync no longer creates `.bak` backups.".to_string(),
+        thin_index_drift,
+        shared_thin_index_drift,
+        note: "Read-only host-visibility verify. status=incomplete means an expected capability is not visible; removable host/shared `.bak` or dangling-symlink drift degrades strict verification. Restart the host or open a new task after sync so it re-scans entry points; use --strict to gate (exit nonzero unless status=ok).".to_string(),
     }
 }
 
@@ -3447,10 +3486,11 @@ fn guarded_apply(confirmed: bool, planned: &[PlannedWrite], ctx: &ConsoleContext
     if !confirmed {
         return outcome;
     }
-    let allowed_roots: Vec<PathBuf> = supported_skill_hosts()
+    let mut allowed_roots: Vec<PathBuf> = supported_skill_hosts()
         .iter()
         .filter_map(|h| host_skills_subdir(h).map(|s| ctx.home.join(s)))
         .collect();
+    allowed_roots.push(ctx.home.join(".agents/skills"));
 
     // ── Preflight: validate ALL destinations before mutating ANY ──
     let mut preflight_errors: Vec<String> = Vec::new();
@@ -3625,6 +3665,20 @@ pub fn render_verify_text(result: &HostVerifyResult) -> String {
                 lines.push(format!("      {e}"));
             }
         }
+        for (label, drift) in [
+            ("host", result.thin_index_drift.as_ref()),
+            ("shared", result.shared_thin_index_drift.as_ref()),
+        ] {
+            if let Some(drift) = drift {
+                lines.push(format!(
+                    "  {label} thin-index drift: dir={}, broken={}, bak={}, has_drift={}",
+                    drift.skills_dir, drift.broken_symlinks, drift.bak_leftovers, drift.has_drift
+                ));
+                for sample in &drift.drift_samples {
+                    lines.push(format!("      {sample}"));
+                }
+            }
+        }
     }
     lines.push(String::new());
     lines.push(format!("NOTE: {}", result.note));
@@ -3744,7 +3798,20 @@ pub struct CapabilitySyncResult {
     pub hosts: Vec<String>,
     pub apply_requested: bool,
     pub items: Vec<ConsoleProposalResult>,
+    pub shared_store_hygiene: SharedStoreHygieneResult,
     pub summary: CapabilitySyncSummary,
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SharedStoreHygieneResult {
+    pub apply_requested: bool,
+    /// "dry-run" | "applied" | "failed" | "blocked" | "nothing-to-do"
+    pub apply_status: String,
+    pub planned_writes: Vec<PlannedWrite>,
+    pub applied_writes: Vec<String>,
+    pub apply_errors: Vec<String>,
+    pub blocked_reasons: Vec<String>,
     pub note: String,
 }
 
@@ -3768,26 +3835,200 @@ fn is_syncable(cap: &ManagedCapability) -> bool {
     )
 }
 
+/// Plan the one-time shared-index migration for skills that expose internal
+/// playbook entrypoints through one host-visible parent. The registry metadata
+/// is the authority: children with `entrypoint.kind=playbook` must not remain
+/// standalone host skills. Cleanup is intentionally narrow — only dangling
+/// symlinks are unlinked; resolving links and real directories are preserved.
+fn shared_store_hygiene_plan(
+    ctx: &ConsoleContext,
+    inventory: &ManagedInventoryResult,
+    apply: bool,
+) -> SharedStoreHygieneResult {
+    let mut parent_playbooks: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for cap in &inventory.capabilities {
+        let Some(routing) = cap.routing.as_ref() else {
+            continue;
+        };
+        let (Some(parent), Some(entrypoint)) = (&routing.parent, &routing.entrypoint) else {
+            continue;
+        };
+        if parent.kind == ManagedKind::Skill && entrypoint.kind == EntrypointKind::Playbook {
+            parent_playbooks
+                .entry(parent.name.clone())
+                .or_default()
+                .push(cap.name.clone());
+        }
+    }
+
+    let shared_root = ctx.home.join(".agents/skills");
+    let mut planned_writes = Vec::new();
+    let mut blocked_reasons = Vec::new();
+    for (parent_name, mut playbooks) in parent_playbooks {
+        if !is_safe_path_component(&parent_name) {
+            blocked_reasons.push(format!(
+                "Unsafe playbook parent name '{parent_name}' — shared migration refused."
+            ));
+            continue;
+        }
+        let Some(parent) = inventory
+            .capabilities
+            .iter()
+            .find(|cap| cap.name == parent_name && is_syncable(cap))
+        else {
+            continue;
+        };
+        let Some(source) = parent.source.as_deref() else {
+            blocked_reasons.push(format!(
+                "No canonical source for playbook parent '{parent_name}' — shared migration refused."
+            ));
+            continue;
+        };
+        let canonical = resolve_source(&ctx.repo_root, source);
+        if !canonical.join("SKILL.md").is_file()
+            || !canonical_source_allowed(ctx, parent, &canonical)
+        {
+            blocked_reasons.push(format!(
+                "Canonical parent body for '{parent_name}' is missing or outside its approved store: {}",
+                canonical.display()
+            ));
+            continue;
+        }
+
+        let parent_entry = shared_root.join(&parent_name);
+        if !thin_index_matches_canonical(&parent_entry, &canonical, &parent_name) {
+            match std::fs::symlink_metadata(&parent_entry) {
+                Ok(meta) if !meta.file_type().is_symlink() => blocked_reasons.push(format!(
+                    "Shared parent entry is user-owned/non-symlink; refusing to replace it: {}",
+                    parent_entry.display()
+                )),
+                _ => planned_writes.push(PlannedWrite {
+                    op: "relink".to_string(),
+                    path: parent_entry.display().to_string(),
+                    from: Some(canonical.display().to_string()),
+                    detail: format!(
+                        "shared parent thin index for internal playbooks ({parent_name})"
+                    ),
+                }),
+            }
+        }
+
+        let codex_entry = ctx.home.join(".codex/skills").join(&parent_name);
+        match std::fs::symlink_metadata(&codex_entry) {
+            Ok(meta) if !meta.file_type().is_symlink() => blocked_reasons.push(format!(
+                "Codex parent entry is user-owned/non-symlink; refusing to replace or remove it: {}",
+                codex_entry.display()
+            )),
+            Ok(_) => planned_writes.push(PlannedWrite {
+                op: "unlink".to_string(),
+                path: codex_entry.display().to_string(),
+                from: None,
+                detail: format!(
+                    "remove duplicate Codex parent entry after shared migration ({parent_name})"
+                ),
+            }),
+            Err(_) => {}
+        }
+
+        playbooks.sort();
+        playbooks.dedup();
+        for playbook in playbooks {
+            if !is_safe_path_component(&playbook) {
+                blocked_reasons.push(format!(
+                    "Unsafe playbook name '{playbook}' — retired-link cleanup refused."
+                ));
+                continue;
+            }
+            let entry = shared_root.join(&playbook);
+            let is_symlink = std::fs::symlink_metadata(&entry)
+                .map(|meta| meta.file_type().is_symlink())
+                .unwrap_or(false);
+            if is_symlink && !entry.exists() {
+                planned_writes.push(PlannedWrite {
+                    op: "unlink".to_string(),
+                    path: entry.display().to_string(),
+                    from: None,
+                    detail: format!(
+                        "retire dangling standalone playbook entry; use parent '{parent_name}'"
+                    ),
+                });
+            }
+        }
+    }
+
+    let outcome = guarded_apply(apply && blocked_reasons.is_empty(), &planned_writes, ctx);
+    let apply_status = if !apply {
+        "dry-run"
+    } else if !blocked_reasons.is_empty() {
+        "blocked"
+    } else if !outcome.errors.is_empty() {
+        "failed"
+    } else if planned_writes.is_empty() {
+        "nothing-to-do"
+    } else {
+        "applied"
+    }
+    .to_string();
+
+    SharedStoreHygieneResult {
+        apply_requested: apply,
+        apply_status,
+        planned_writes,
+        applied_writes: outcome.applied_writes,
+        apply_errors: outcome.errors,
+        blocked_reasons,
+        note: "Registry-derived shared-index hygiene: create the host-visible parent for internal playbooks and unlink only retired dangling child symlinks. Resolving links, real directories, and canonical bodies are never removed. Restart the host or open a new task after apply.".to_string(),
+    }
+}
+
 /// Build (and, with `apply`, perform) the cross-host entry plan for every
 /// adopted/governed capability. Builds the inventory once and reuses it.
 pub fn sync_plan(ctx: &ConsoleContext, hosts: &[&str], apply: bool) -> CapabilitySyncResult {
     let inventory = build_inventory(ctx, hosts);
+    let shared_store_hygiene = shared_store_hygiene_plan(ctx, &inventory, apply);
+    let hygiene_succeeded = shared_store_hygiene.blocked_reasons.is_empty()
+        && shared_store_hygiene.apply_errors.is_empty();
+    let refreshed_inventory;
+    let inventory_for_items = if apply && hygiene_succeeded {
+        refreshed_inventory = build_inventory(ctx, hosts);
+        &refreshed_inventory
+    } else {
+        &inventory
+    };
     let mut items: Vec<ConsoleProposalResult> = Vec::new();
-    for cap in &inventory.capabilities {
+    for cap in &inventory_for_items.capabilities {
         if is_syncable(cap) {
-            items.push(propose_action_inner(
+            let mut item = propose_action_inner(
                 ctx,
-                &inventory,
+                inventory_for_items,
                 ConsoleAction::Adopt,
                 &cap.name,
-                apply,
-            ));
+                apply && hygiene_succeeded,
+            );
+            if !apply
+                && shared_store_hygiene.planned_writes.iter().any(|write| {
+                    write.op == "relink"
+                        && Path::new(&write.path).file_name()
+                            == Some(std::ffi::OsStr::new(&cap.name))
+                        && Path::new(&write.path).starts_with(ctx.home.join(".agents/skills"))
+                })
+            {
+                let codex_entry = ctx.home.join(".codex/skills").join(&cap.name);
+                item.planned_writes
+                    .retain(|write| Path::new(&write.path) != codex_entry);
+                item.note.push_str(
+                    " Shared parent migration will expose this capability to Codex; the duplicate host-specific Codex write is suppressed.",
+                );
+            }
+            items.push(item);
         }
     }
 
     let summary = CapabilitySyncSummary {
         considered: items.len(),
-        planned_writes: items.iter().map(|i| i.planned_writes.len()).sum(),
+        planned_writes: items.iter().map(|i| i.planned_writes.len()).sum::<usize>()
+            + shared_store_hygiene.planned_writes.len(),
         applied: items.iter().filter(|i| i.applied).count(),
         advised_only: items
             .iter()
@@ -3796,12 +4037,15 @@ pub fn sync_plan(ctx: &ConsoleContext, hosts: &[&str], apply: bool) -> Capabilit
         blocked: items
             .iter()
             .filter(|i| !i.blocked_reasons.is_empty())
-            .count(),
-        failed: items.iter().filter(|i| !i.apply_errors.is_empty()).count(),
+            .count()
+            + usize::from(!shared_store_hygiene.blocked_reasons.is_empty()),
+        failed: items.iter().filter(|i| !i.apply_errors.is_empty()).count()
+            + usize::from(!shared_store_hygiene.apply_errors.is_empty()),
         needs_action: items
             .iter()
             .filter(|i| !i.planned_writes.is_empty() || !i.advised_commands.is_empty())
-            .count(),
+            .count()
+            + usize::from(!shared_store_hygiene.planned_writes.is_empty()),
     };
 
     CapabilitySyncResult {
@@ -3809,6 +4053,7 @@ pub fn sync_plan(ctx: &ConsoleContext, hosts: &[&str], apply: bool) -> Capabilit
         hosts: hosts.iter().map(|h| h.to_string()).collect(),
         apply_requested: apply,
         items,
+        shared_store_hygiene,
         summary,
         note: if apply {
             "Cross-Agent sync apply: AGS-owned skill thin-index writes were performed through the single guard; MCP / CLI-backed capabilities are advised-only (AGS ran nothing). Restart each host, then `ags capability verify --host <host>`.".to_string()
@@ -3851,6 +4096,17 @@ pub fn render_sync_text(result: &CapabilitySyncResult) -> String {
         result.summary.blocked,
         result.summary.failed,
     ));
+    lines.push(format!(
+        "Shared-store hygiene: {} (planned {}, applied {}, blocked {}, errors {})",
+        result.shared_store_hygiene.apply_status,
+        result.shared_store_hygiene.planned_writes.len(),
+        result.shared_store_hygiene.applied_writes.len(),
+        result.shared_store_hygiene.blocked_reasons.len(),
+        result.shared_store_hygiene.apply_errors.len()
+    ));
+    for write in &result.shared_store_hygiene.planned_writes {
+        lines.push(format!("  {} {}", write.op, write.path));
+    }
     lines.push(String::new());
     lines.push("─ Capabilities ─".to_string());
     if result.items.is_empty() {
@@ -5287,6 +5543,52 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn shared_thin_index_drift_degrades_codex_verify() {
+        let (original, base) = ctx_with("shared-drift", canned_list());
+        let ctx = ConsoleContext::new(
+            original.repo_root.clone(),
+            original.home.clone(),
+            Box::new(StrictMcpRunner {
+                claude: canned_list(),
+                codex: CommandOutcome::Ran {
+                    success: true,
+                    stdout: "Name       Command   Args   Env   Cwd   Status   Auth\n\
+                             ags        ags       mcp    -     -     enabled  Unsupported\n\
+                             context7   npx       args   -     -     enabled  Unsupported\n\
+                             codegraph  cg        mcp    -     -     enabled  Unsupported\n"
+                        .to_string(),
+                },
+            }),
+        );
+        link_skill_entry(
+            &ctx,
+            ".agents/skills",
+            "demo-skill",
+            "global-skills/demo-skill",
+        );
+        let shared = ctx.home.join(".agents/skills");
+        std::fs::create_dir_all(&shared).unwrap();
+        std::os::unix::fs::symlink(
+            ctx.home.join("missing-retired-playbook"),
+            shared.join("brainstorming"),
+        )
+        .unwrap();
+
+        let verify = verify_host(&ctx, "codex");
+        let json: serde_json::Value = serde_json::from_str(&render_verify_json(&verify)).unwrap();
+
+        assert_eq!(json["status"], "degraded");
+        assert_eq!(
+            json["shared_thin_index_drift"]["skills_dir"],
+            shared.display().to_string()
+        );
+        assert_eq!(json["shared_thin_index_drift"]["broken_symlinks"], 1);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[test]
     fn all_renders_produce_parseable_json() {
         let (ctx, base) = ctx_with("json", canned_list());
@@ -5848,6 +6150,121 @@ mod tests {
                 w.path
             );
         }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    fn superpowers_migration_ctx(tag: &str) -> (ConsoleContext, PathBuf) {
+        let (ctx, base) = ctx_with(tag, canned_list());
+        write_file(
+            &ctx.repo_root.join("global-skills/superpowers/SKILL.md"),
+            "---\nname: superpowers\ndescription: parent router.\n---\n",
+        );
+        write_file(
+            &ctx.repo_root.join("manifests/suite.yaml"),
+            "schema_version: \"1.0\"\n\
+             suite:\n  name: \"test-suite\"\n  version: \"9.9.9\"\n  required:\n\
+             \x20   - name: \"superpowers\"\n      version: \"1.0\"\n      source: \"global-skills/superpowers\"\n      hash: \"h1\"\n      adopted: \"2026-01-01T00:00:00Z\"\n      entry_ref: \"superpowers-ref\"\n",
+        );
+        write_file(
+            &ctx.repo_root.join("manifests/skills-registry.yaml"),
+            "schema_version: \"1.0\"\nskills:\n\
+             \x20 - name: superpowers\n\
+             \x20   profile: required\n\
+             \x20   routing:\n\
+             \x20     route_state: routable\n\
+             \x20     invoke_hint: \"[skill: superpowers]\"\n\
+             \x20   source:\n\
+             \x20     type: bundled\n\
+             \x20     path: global-skills/superpowers\n\
+             route_targets:\n\
+             \x20 - name: brainstorming\n\
+             \x20   routing:\n\
+             \x20     route_state: routable\n\
+             \x20     parent: { kind: skill, name: superpowers }\n\
+             \x20     entrypoint: { kind: playbook, name: brainstorming }\n\
+             \x20     invoke_hint: \"[skill: superpowers]\"\n\
+             \x20 - name: writing-plans\n\
+             \x20   routing:\n\
+             \x20     route_state: routable\n\
+             \x20     parent: { kind: skill, name: superpowers }\n\
+             \x20     entrypoint: { kind: playbook, name: writing-plans }\n\
+             \x20     invoke_hint: \"[skill: superpowers]\"\n",
+        );
+        let shared = ctx.home.join(".agents/skills");
+        std::fs::create_dir_all(&shared).unwrap();
+        for name in ["brainstorming", "writing-plans"] {
+            std::os::unix::fs::symlink(ctx.home.join(format!("missing-{name}")), shared.join(name))
+                .unwrap();
+        }
+        write_file(
+            &shared.join("user-owned/SKILL.md"),
+            "---\nname: user-owned\ndescription: preserve me.\n---\n",
+        );
+        (ctx, base)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sync_plan_dry_run_plans_shared_parent_and_retired_dangling_cleanup() {
+        let (ctx, base) = superpowers_migration_ctx("sync-shared-dry-run");
+        let result = sync_plan(&ctx, &["codex"], false);
+        let json: serde_json::Value = serde_json::from_str(&render_sync_json(&result)).unwrap();
+        let writes = json["shared_store_hygiene"]["planned_writes"]
+            .as_array()
+            .expect("shared hygiene writes");
+
+        assert!(writes.iter().any(|write| {
+            write["op"] == "relink"
+                && write["path"]
+                    .as_str()
+                    .is_some_and(|path| path.ends_with("/.agents/skills/superpowers"))
+        }));
+        let parent = result
+            .items
+            .iter()
+            .find(|item| item.capability == "superpowers")
+            .expect("superpowers sync item");
+        assert!(parent
+            .planned_writes
+            .iter()
+            .all(|write| !write.path.ends_with("/.codex/skills/superpowers")));
+        for name in ["brainstorming", "writing-plans"] {
+            assert!(writes.iter().any(|write| {
+                write["op"] == "unlink"
+                    && write["path"]
+                        .as_str()
+                        .is_some_and(|path| path.ends_with(&format!("/.agents/skills/{name}")))
+            }));
+            assert!(ctx.home.join(".agents/skills").join(name).is_symlink());
+        }
+        assert!(!ctx.home.join(".agents/skills/superpowers").exists());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sync_plan_apply_migrates_shared_parent_and_only_dangling_playbooks() {
+        let (ctx, base) = superpowers_migration_ctx("sync-shared-apply");
+        let shared = ctx.home.join(".agents/skills");
+        link_skill_entry(
+            &ctx,
+            ".codex/skills",
+            "superpowers",
+            "global-skills/superpowers",
+        );
+
+        let result = sync_plan(&ctx, &["codex"], true);
+        let json: serde_json::Value = serde_json::from_str(&render_sync_json(&result)).unwrap();
+
+        assert_eq!(json["shared_store_hygiene"]["apply_status"], "applied");
+        assert!(shared.join("superpowers/SKILL.md").is_file());
+        assert!(!ctx.home.join(".codex/skills/superpowers").is_symlink());
+        assert!(!shared.join("brainstorming").is_symlink());
+        assert!(!shared.join("writing-plans").is_symlink());
+        assert!(shared.join("user-owned/SKILL.md").is_file());
+
         let _ = std::fs::remove_dir_all(&base);
     }
 

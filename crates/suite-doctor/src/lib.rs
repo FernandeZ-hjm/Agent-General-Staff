@@ -362,6 +362,7 @@ mod doctor_scope_tests {
                 all_visible: false,
             },
             thin_index_drift: None,
+            shared_thin_index_drift: None,
             note: String::new(),
         };
 
