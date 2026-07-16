@@ -9,14 +9,14 @@
 //!
 //! `ags_preflight` is the **mandatory first call** for all AGS scenarios.
 //! Hosts MUST complete preflight (MCP or CLI fallback `ags session preflight
-//! --for <agent>`) before invoking any other AGS tool. `ags_solution_check`
-//! is a phase gate, NOT a preflight substitute.
+//! --for <agent>`) before invoking any other AGS tool. `ags_route_request`
+//! is the unique requirement router, NOT a preflight substitute.
 //!
 //! # Identity
 //!
 //! AGS MCP is the suite's own host adapter — NOT a governed third-party MCP.
 //! In `manifests/mcp-registry.yaml`, `ags` resides under `suite_interfaces:`,
-//! not under the governed `mcps:` list.
+//! not alongside governed MCPs such as `context7` under `mcps:`.
 //!
 //! # Usage
 //!

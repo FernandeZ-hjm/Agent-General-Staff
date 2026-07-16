@@ -27,7 +27,7 @@ pub fn list_prompts() -> PromptListResult {
                 description: Some(
                     "Load the AGS global governance kernel — initialization gate \
                      (call ags_preflight FIRST), mandatory lifecycle, critical rules, \
-                     host boundaries, and stop conditions. \
+                     host boundaries and stop conditions. \
                      Best loaded at session start or when the host first encounters \
                      a development-related request. The initialization gate is \
                      non-negotiable: MCP preflight or CLI fallback must complete \
@@ -39,17 +39,16 @@ pub fn list_prompts() -> PromptListResult {
             PromptDef {
                 name: "ags_solution_phase".to_string(),
                 description: Some(
-                    "Guide the user through AGS solution formation: understand the \
-                     request, gather relevant project context, present the solution, \
-                     and wait for user confirmation. Reminds that \"方案 OK\" \
-                     authorizes neither mutation nor a task card; the next explicit \
-                     instruction selects direct edit or task-card handoff."
+                    "Guide solution formation only after the canonical RequestDecision \
+                     shows unresolved design work. Keep AGS stateless, use host-owned \
+                     context, and do not turn solution confirmation into task-card authority."
                         .to_string(),
                 ),
                 arguments: Some(vec![PromptArgument {
                     name: "user_request".to_string(),
                     description: Some(
-                        "The user's development request or requirement summary".to_string(),
+                        "The complete current request context to pass to ags_route_request."
+                            .to_string(),
                     ),
                     required: Some(true),
                 }]),
@@ -57,10 +56,10 @@ pub fn list_prompts() -> PromptListResult {
             PromptDef {
                 name: "ags_task_card_request_gate".to_string(),
                 description: Some(
-                    "Enforce the task-card handoff gate. After solution confirmation, \
-                     distinguish same-session direct execution authorization from an \
-                     explicit task-card/handoff instruction. Without the latter, card output is blocked with \
-                     `executable_allowed=false, block_reason=task_card_not_requested`."
+                    "Enforce the task-card handoff gate. Distinguish same-session \
+                     execution from handoff, then require both an explicit \
+                     task-card instruction and structured confirmed-contract evidence. \
+                     Missing or reopened solution state blocks card output."
                         .to_string(),
                 ),
                 arguments: None,
@@ -99,7 +98,7 @@ fn prompt_global_kernel() -> PromptGetResult {
             "AGS global governance kernel — load at session start or upon first \
              development request. Leads with mandatory initialization gate \
              (call ags_preflight FIRST), then establishes lifecycle, critical rules, \
-             host boundaries, and stop conditions."
+             host boundaries and stop conditions."
                 .to_string(),
         ),
         messages: vec![PromptMessage {
@@ -122,10 +121,13 @@ fn prompt_solution_phase(arguments: &serde_json::Value) -> PromptGetResult {
         "## AGS Solution Phase\n\n\
          **User request**: {}\n\n\
          ### Instructions\n\n\
-         1. **Understand the request**. Clarify ambiguities. Diagnose if it describes a problem.\n\
+         0. **Route once first** with `ags_route_request`, passing complete host-owned \
+         conversation context. Continue this prompt only when the RequestDecision selects \
+         a solution-forming SkillDemand or reports missing design input. DirectResponse \
+         delivers and stops. MachineCli is consumed by MCP.\n\
+         1. **Understand unresolved decisions**. Clarify ambiguities. Diagnose if needed.\n\
          2. **Read context capsule and task memory** (AGS preflight should have surfaced paths).\n\
-         3. **Read relevant project docs surfaced by preflight**. Keep context gathering \
-         explicit and source-backed.\n\
+         3. **Use only explicitly available methods**; external advice cannot override AGS gates.\n\
          4. **Form a concrete solution** — not a task card. Include: approach, impact scope, \
          risks, alternatives considered.\n\
          5. **Present the solution to the user** and wait for explicit confirmation (\"方案 OK\").\n\
@@ -137,23 +139,21 @@ fn prompt_solution_phase(arguments: &serde_json::Value) -> PromptGetResult {
          - Proposed approach with rationale\n\
          - Impact scope and blast radius\n\
          - Risks and mitigations\n\
-         - Alternatives considered\n\n\
+         - Alternatives considered\n\
          ### Key rules\n\n\
          - Do NOT classify as Light/Medium/Heavy yet.\n\
          - Do NOT generate a task card yet.\n\
-         - \"方案 OK\" authorizes neither mutation nor a task card.\n\n\
+         - \"方案 OK\" authorizes neither mutation nor a task card.\n\
+         - AGS is the governance authority.\n\n\
          ### Next phase\n\n\
-         After user confirmation, use `ags_solution_check` or \
-         `ags_task_card_request_gate` to distinguish direct execution authorization from \
-         task-card handoff.",
+         After user confirmation, submit the complete updated context through \
+         `ags_route_request`. Task-card handoff still requires both structured gates.",
         user_request
     );
 
     PromptGetResult {
         description: Some(
-            "Guide through AGS solution formation phase — understand, gather context, \
-             form solution, present, wait for confirmation."
-                .to_string(),
+            "Guard and guide the conditional AGS solution formation phase.".to_string(),
         ),
         messages: vec![PromptMessage {
             role: "user".to_string(),

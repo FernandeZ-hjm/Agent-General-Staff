@@ -65,6 +65,8 @@ scripts/                    # Public-safe scripts
 crates/                     # Rust crates (public-safe core)
   ags-cli/                  # Unified CLI entry point
   ags-mcp/                  # AGS MCP host initialization adapter
+  request-router/           # Unique natural-language RequestDecision router
+  skill-resolver/           # Closed SkillDemand mapping
   task-card-validator/      # Task-card validation
   execution-policy/         # Execution policy resolver
   suite-doctor/             # Suite health diagnostics

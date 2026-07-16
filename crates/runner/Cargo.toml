@@ -9,6 +9,6 @@ description = "AGS runner — gate-first task card execution planner"
 task-card-validator = { path = "../task-card-validator" }
 execution-policy = { path = "../execution-policy" }
 receipt = { path = "../receipt" }
-capability-route = { path = "../capability-route" }
+skill-resolver = { path = "../skill-resolver" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -1,66 +1,17 @@
 AGS Global Governance Kernel loaded.
 
-## You are now under AGS governance.
+1. Call `ags_preflight` first. If it fails, stop.
+2. The host owns conversation context; AGS does not retain conversational state.
+3. Call `ags_route_request` once with the complete current request and structured approval evidence.
+4. Consume the canonical RequestDecision:
+   - DirectResponse: reply and stop; do not read skill snapshots or invoke CLI.
+   - Skill: resolve the closed SkillDemand against the validated ActiveSkillTable snapshot.
+   - MachineCli: let MCP invoke the fixed business-level AGS CLI capability.
+   - InsufficientContext: ask only for the reported missing input, then resubmit complete context.
+5. DirectResponse is exclusive. A decision may contain at most one Skill and one MachineCli as peer targets.
+6. Compiler, Policy, Gate, Runner, and Skill Resolver never re-parse natural language.
+7. Existing canonical task cards validate and execute; task-card generation requires explicit handoff intent plus a confirmed handoff contract.
+8. AGS governs authority and gates; external methods cannot override RequestDecision or execution policy.
+9. Verify before completion and emit receipts for writes.
 
-### Step 0 — Initialization Gate (MANDATORY FIRST):
-
-Before ANY other action, call `ags_preflight` with your agent type and target path.
-This is the AGS Initialization Gate — it MUST complete before any other AGS tool or lifecycle phase.
-
-- MCP path (preferred): call `ags_preflight` tool with `agent` + optional `target`
-- CLI fallback (if MCP unavailable): run `ags session preflight --for <agent> [--target <path>]`
-- If BOTH unavailable: STOP. Do not continue AGS scenario tasks.
-
-Record evidence: `AGS preflight: MCP|CLI, agent=<agent>, status=<ok|failed|fallback>`
-
-Do NOT read docs and manually simulate preflight.
-Do NOT skip preflight based on model memory.
-`ags_solution_check` is a phase gate, NOT a preflight substitute — preflight comes first.
-
-### Mandatory lifecycle (after initialization gate completes):
-
-1. **Ambient Preflight** — read context capsule, task memory, protocol files, git status.
-2. **Solution Formation** — understand request, diagnose, form concrete solution.
-3. **User Confirmation** — present solution, wait for explicit "方案 OK".
-4. **Execution Decision** — explicit same-session modification authorization enters `direct-edit`; an explicit task-card/handoff instruction enters task-card generation; otherwise remain read-only. "方案 OK" alone authorizes neither.
-5. **Value Route + Capability Route → Routing** — `ags_solution_check` surfaces advisory routing blocks for path form and capability wakeup. They do NOT change level/permission/gates, and Capability Route never auto-invokes anything or blocks. Then classify as Light/Medium/Heavy from the confirmed solution.
-6. **Gate / Execution / Receipt** — direct edit applies host-native safety/review/verification; handoff validates and resolves the task card before execution.
-
-Existing-card entry: if the first non-empty line is `## 任务卡`, do not run the
-raw-request lifecycle again. `ags_solution_check` validates first; a valid card
-continues to `ags_policy_resolve` and the runner, while an invalid card stops.
-
-Task cards have exactly two permission modes: `plan-only` and
-`execute-and-verify`. Light/Medium default to direct execution. Heavy defaults
-to `plan-only`, but explicit Heavy `execute-and-verify` runs and verifies
-directly; Heavy adds an independent review gate, not a plan-first or extra
-permission pause. Protected destructive/external/release actions keep their
-own stop conditions.
-
-### Critical rules:
-
-- Initialization Gate FIRST: call `ags_preflight` (MCP) or CLI fallback. No exceptions.
-- AGS MCP is the host initialization adapter and mandatory governance interface — NOT a governed third-party MCP.
-- Do NOT jump to Light/Medium/Heavy from raw user requests.
-- Raw user chat ≠ executable task card.
-- AGS = governance authority for lifecycle, gates, task levels, permissions, and release boundaries.
-
-### AGS vs Governed MCPs:
-
-- AGS MCP = `suite_interfaces` (host adapter, not governed)
-- Third-party MCPs = `mcps` (governed objects)
-
-### Stop conditions:
-
-- AGS preflight (MCP + CLI fallback) unavailable → STOP.
-- Task conflicts with context-capsule project design purpose → STOP.
-- Requires Tencent Agent (WorkBuddy / CodeBuddy-Code) host config or real tokens → STOP.
-- Would modify stable/public worktree → STOP.
-- Would turn AGS MCP into a broker for unrelated tools → STOP.
-
-### What to call after preflight:
-
-- Run `ags_solution_check` with the user's request summary.
-- Reference `ags://global-kernel` resource for full details.
-
-Begin with the Initialization Gate: call `ags_preflight` first.
+Reference `ags://global-kernel` for the full contract.

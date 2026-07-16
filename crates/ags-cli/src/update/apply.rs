@@ -147,7 +147,7 @@ pub(in crate::update) fn cmd_update_apply(
         // so this command still reaches its own receipt / JSON / exit handling.
         // `None` preserves the machine's recorded Capability Route enrollment
         // (suite-only default if none) — update never silently changes it.
-        let (rt_report, _t, _pt) = run_private_apply(target.clone(), force, false, None);
+        let (rt_report, _t, _pt) = run_private_apply(target.clone(), force, false);
         let rt_ok = rt_report.exit_code() == 0;
         if !rt_ok {
             all_ok = false;

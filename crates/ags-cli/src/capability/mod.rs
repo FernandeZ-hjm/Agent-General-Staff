@@ -1,6 +1,6 @@
 //! `ags capability` thin facade.
 use crate::cli::CapabilityAction;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Shared dispatch: `capability list`
 fn cmd_capability_list(target: &Path, format: &str) {
@@ -49,7 +49,30 @@ fn cmd_capability_show(name: &str, target: &Path, format: &str) {
 // MCP / CLI-backed registration is advised per host, never run by AGS.
 /// Default hosts the cross-Agent capability layer reports on.
 fn capability_default_hosts() -> Vec<&'static str> {
-    vec!["claude-code", "codex"]
+    vec!["claude-code", "codex", "codebuddy-code"]
+}
+
+/// Rebuild and persist the single-host ActiveSkillTable snapshot after a
+/// successful capability-affecting write. This is lifecycle maintenance, not a
+/// routing layer: the request router never calls it.
+pub(crate) fn refresh_skill_snapshot(
+    authority_root: &Path,
+    runtime_home: &Path,
+    active_host: &str,
+) -> Result<PathBuf, String> {
+    let snapshot = skill_resolver::build_capability_snapshot(authority_root, active_host)
+        .map_err(|error| format!("skill snapshot build failed: {error:?}"))?;
+    let path = skill_resolver::snapshot_path(runtime_home);
+    let parent = path
+        .parent()
+        .ok_or_else(|| "skill snapshot path has no parent".to_string())?;
+    std::fs::create_dir_all(parent)
+        .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+    let json = serde_json::to_string_pretty(&snapshot)
+        .map_err(|error| format!("skill snapshot serialization failed: {error}"))?;
+    std::fs::write(&path, json + "\n")
+        .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+    Ok(path)
 }
 
 // Pure exit-code policy for the capability commands, factored out of the I/O
@@ -131,6 +154,18 @@ fn cmd_capability_install(capability: &str, apply: bool, format: &str) {
     let root = crate::context::capability_authority_root_or_exit("ags capability install");
     let ctx = console::ConsoleContext::system(root);
     let result = console::propose_action(&ctx, console::ConsoleAction::Adopt, capability, apply);
+    let code = capability_install_exit_code(apply, &result);
+    if apply && code == 0 {
+        refresh_skill_snapshot(
+            &ctx.repo_root,
+            &skill_resolver::locate_runtime_home(),
+            "codex",
+        )
+        .unwrap_or_else(|error| {
+            eprintln!("ags capability install: {error}");
+            std::process::exit(1);
+        });
+    }
     match format {
         "json" => println!("{}", console::render_proposal_json(&result)),
         _ => println!("{}", console::render_proposal_text(&result)),
@@ -138,7 +173,6 @@ fn cmd_capability_install(capability: &str, apply: bool, format: &str) {
     // Exit nonzero when an `--apply` could not actually be carried out by AGS:
     // blocked, a write failed, or the action is advised-only (the user must run
     // the advised host command). Mirrors `ags skill propose` semantics.
-    let code = capability_install_exit_code(apply, &result);
     if code != 0 {
         std::process::exit(code);
     }
@@ -157,11 +191,22 @@ pub(crate) fn cmd_capability_sync(apply: bool, format: &str) {
     let ctx = console::ConsoleContext::system(root);
     let hosts = capability_default_hosts();
     let result = console::sync_plan(&ctx, &hosts, apply);
+    let code = capability_sync_exit_code(apply, &result.summary);
+    if apply && code == 0 {
+        refresh_skill_snapshot(
+            &ctx.repo_root,
+            &skill_resolver::locate_runtime_home(),
+            "codex",
+        )
+        .unwrap_or_else(|error| {
+            eprintln!("ags capability sync: {error}");
+            std::process::exit(1);
+        });
+    }
     match format {
         "json" => println!("{}", console::render_sync_json(&result)),
         _ => println!("{}", console::render_sync_text(&result)),
     }
-    let code = capability_sync_exit_code(apply, &result.summary);
     if code != 0 {
         std::process::exit(code);
     }
@@ -243,6 +288,61 @@ mod capability_exit_code_tests {
     }
 }
 
+/// `ags capability snapshot` — derive the machine-local capability snapshot +
+/// attestation hash. It contains the strict ActiveSkillTable intersection for
+/// one host and a deterministic `snapshot_hash`. With `--write`, persists to
+/// the machine-local runtime home (never tracked or published).
+fn cmd_capability_snapshot(host: &str, target: &Path, write: bool, format: &str) {
+    let requested = if target.as_os_str().is_empty() || target == Path::new(".") {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    } else {
+        target.to_path_buf()
+    };
+    let explicit = std::env::var_os("AGS_SOURCE_ROOT").map(PathBuf::from);
+    let root = crate::context::resolve_capability_authority_root(
+        &requested,
+        &skill_resolver::locate_runtime_home(),
+        explicit,
+    )
+    .unwrap_or_else(|detail| {
+        eprintln!("ags capability snapshot: refused — {detail}");
+        std::process::exit(1);
+    });
+    let snapshot = skill_resolver::build_capability_snapshot(&root, host).unwrap_or_else(|error| {
+        eprintln!("ags capability snapshot: build failed — {error:?}");
+        std::process::exit(1);
+    });
+
+    let mut written: Option<String> = None;
+    if write {
+        let path = refresh_skill_snapshot(&root, &skill_resolver::locate_runtime_home(), host)
+            .unwrap_or_else(|error| {
+                eprintln!("snapshot: {error}");
+                std::process::exit(1);
+            });
+        written = Some(path.to_string_lossy().to_string());
+    }
+
+    match format {
+        "json" => println!(
+            "{}",
+            serde_json::to_string_pretty(&snapshot).unwrap_or_default()
+        ),
+        _ => {
+            println!("ActiveSkillTable snapshot (machine-local)");
+            println!("Active host: {}", snapshot.active_host);
+            println!("Snapshot hash: {}", snapshot.snapshot_hash);
+            println!("Active skills: {}", snapshot.active_skills.len());
+            match &written {
+                Some(p) => println!("Written: {}", p),
+                None => println!(
+                    "(dry-run — pass --write to persist to the machine-local runtime home; never tracked)"
+                ),
+            }
+        }
+    }
+}
+
 pub(crate) fn run(action: CapabilityAction) {
     match action {
         CapabilityAction::List { target, format } => cmd_capability_list(&target, &format),
@@ -263,5 +363,11 @@ pub(crate) fn run(action: CapabilityAction) {
             format,
         } => cmd_capability_install(&capability, apply, &format),
         CapabilityAction::Sync { apply, format } => cmd_capability_sync(apply, &format),
+        CapabilityAction::Snapshot {
+            host,
+            target,
+            write,
+            format,
+        } => cmd_capability_snapshot(&host, &target, write, &format),
     }
 }

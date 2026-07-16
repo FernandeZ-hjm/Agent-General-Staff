@@ -7,35 +7,30 @@ pipeline, and the memory capsule mechanism.
 
 ## 1. AGS Lifecycle
 
-The AGS governance lifecycle is a linear sequence of phases. Each phase gates
-the next — no phase may be skipped or executed out of order.
+AGS separates natural-language routing from structured execution. The host owns
+conversation context; Request Router is the only component that reads it.
 
 ```mermaid
 flowchart TD
-    A[User Request] --> B[1. Ambient Preflight]
+    A[Human Request] --> B[1. Ambient Preflight]
     B --> B0{AGS MCP available?}
     B0 -->|Yes| B1[ags_preflight via AGS MCP]
     B0 -->|No| B1F[CLI fallback: ags session preflight]
-    B1 --> B2[Read context capsule + task memory]
-    B1F --> B2
-    B2 --> B3[Check git status]
-    B3 --> B4[Load protocol files]
-    B4 --> C[2. Solution Phase]
-    C --> C1[Understand request]
-    C1 --> C2[Diagnose if needed]
-    C2 --> C3[Form solution]
-    C3 --> C4[Present to user]
-    C4 --> D{User confirms?}
-    D -->|方案 OK| E[3. Execution Contract]
-    E --> F{Task-card instruction?}
-    F -->|生成任务卡| G[4. Task-Card Instruction Gate ✅]
-    F -->|No| F_WAIT[Wait — ags task compile blocks without --task-card-requested]
-    F_WAIT --> F
-    D -->|No| C
-    G --> H[5. Routing Phase]
-    H --> H1[Light / Medium / Heavy classification]
-    H1 --> I[6. Task Card Generation]
-    I --> J[7. Gate Check]
+    B1 --> MCP[MCP ags_route_request]
+    B1F --> MCP
+    MCP --> RR[Request Router<br/>only natural-language node]
+    RR --> RD{RequestDecision}
+    RD -->|DirectResponse| DIRECT[Host responds]
+    RD -->|SkillDemand| SR[Skill Resolver<br/>closed ActiveSkillTable mapping]
+    RD -->|MachineCli| FIXED[MCP fixed argv<br/>real ags CLI]
+    SR --> SKILL[Host loads selected skill]
+    FIXED --> J[Structured capability input]
+    RD -->|Task-card handoff| C[Solution formation if needed]
+    C --> E[Confirmed handoff contract]
+    E --> F{Explicit task-card request?}
+    F -->|Yes| I[Task Card Generation]
+    F -->|No| F_WAIT[Wait; do not compile]
+    I --> J[Gate Check]
     J --> J1[ags task validate — hard gate]
     J1 -->|Pass| K[8. Policy Resolution]
     J1 -->|Fail| J_FAIL[Fix task card]
@@ -51,9 +46,8 @@ flowchart TD
 
     style B fill:#e1f5fe
     style C fill:#fff3e0
+    style RR fill:#7e57c2,color:#fff
     style E fill:#f3e5f5
-    style G fill:#ffeb3b
-    style H fill:#e8f5e9
     style J fill:#ffcdd2
     style K fill:#ffcdd2
     style M fill:#c8e6c9
@@ -65,7 +59,8 @@ flowchart TD
 | Gate | What It Blocks | Hard/Soft |
 |---|---|---|
 | AGS MCP initialization gate | AGS scenarios before `ags_preflight` completes | Hard, with CLI fallback only if MCP is unavailable |
-| Task-card instruction gate | Routing before explicit "生成任务卡" | Hard |
+| Request contract | DirectResponse is exclusive; at most one SkillDemand and one MachineCli coexist | Hard |
+| Task-card instruction gate | Compilation without explicit request and confirmed handoff contract | Hard |
 | Task-card validation | Execution of invalid task cards | Hard |
 | Policy resolution | Execution with wrong permission/parallelism | Soft (downgrades, never rejects) |
 | Verification gate | Delivery claims without evidence | Per task card |
@@ -95,6 +90,8 @@ graph TD
     B --> C11[capability-registry<br/>Capability Detection]
     B --> C12[runner<br/>Runner Launch]
     B --> C13[ags-mcp<br/>Host Initialization Adapter]
+    B --> C14[request-router<br/>RequestDecision]
+    B --> C15[skill-resolver<br/>Closed SkillDemand Mapping]
 
     C2 --> C1
     C2 --> C8
@@ -105,6 +102,8 @@ graph TD
     C13 --> C7
     C13 --> C1
     C13 --> C6
+    C13 --> C14
+    C13 --> C15
 
     style A fill:#1565c0,color:#fff
     style B fill:#1976d2,color:#fff
@@ -132,6 +131,8 @@ graph TD
 | `capability-registry` | Detect available capabilities (MCP, tools, skills) | `skill-governance` |
 | `runner` | Launch executor with resolved policy | `scripts/run-task-card.sh` |
 | `ags-mcp` | Expose read-only AGS governance tools/resources/prompts over stdio MCP; requires `ags_preflight` first | MCP hosts: Codex, Claude Code, Cursor, WorkBuddy |
+| `request-router` | Convert complete conversation context into one closed `RequestDecision` | `ags-mcp` |
+| `skill-resolver` | Map `SkillDemand` against a validated machine snapshot without language parsing or fallback | `ags-mcp`, `ags-cli` |
 
 ## 3. AGS MCP Host Initialization Adapter
 
@@ -145,13 +146,13 @@ flowchart LR
     HOST[MCP Host<br/>Codex / Claude Code / Cursor / WorkBuddy]
     AGSMCP[AGS MCP<br/>ags mcp serve --transport stdio]
     PREFLIGHT[ags_preflight<br/>mandatory first call]
-    PHASE[ags_solution_check<br/>phase gate]
+    ROUTE[ags_route_request<br/>RequestDecision]
     TOOLS[Read-only AGS tools<br/>agent instructions / protocol status / task validate / verify local]
     CLI[CLI fallback<br/>ags session preflight]
 
     HOST --> AGSMCP
     AGSMCP --> PREFLIGHT
-    PREFLIGHT --> PHASE
+    PREFLIGHT --> ROUTE
     PREFLIGHT --> TOOLS
     HOST -. MCP unavailable .-> CLI
 

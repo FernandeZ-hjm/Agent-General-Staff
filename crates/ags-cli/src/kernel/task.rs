@@ -20,6 +20,7 @@ fn cmd_task_compile(
     output: &str,
     check_only: bool,
     task_card_requested: bool,
+    confirmed_handoff_contract: bool,
 ) {
     use std::io::Read;
 
@@ -34,6 +35,14 @@ fn cmd_task_compile(
             "  The user must explicitly issue a task-card instruction before an executable card can be generated."
         );
         eprintln!("  Use --task-card-requested after receiving: \"生成任务卡\", \"按这个方案出任务卡\", \"交给 Claude Code 执行\", etc.");
+        std::process::exit(1);
+    }
+
+    if !confirmed_handoff_contract && output == "card" {
+        eprintln!("task compile: --confirmed-handoff-contract is required for --output card");
+        eprintln!(
+            "  Confirm the solution/diagnosis, scope, verification, and handoff contract before compiling."
+        );
         std::process::exit(1);
     }
 
@@ -65,8 +74,13 @@ fn cmd_task_compile(
     let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
     // Compile
-    let (compiled_card, report) =
-        task_compiler::compile(&content, &project_root, check_only, task_card_requested);
+    let (compiled_card, report) = task_compiler::compile_with_contract(
+        &content,
+        &project_root,
+        check_only,
+        task_card_requested,
+        confirmed_handoff_contract,
+    );
 
     // Validate the compiled card using the canonical validator
     let (validation_passed, validation_errors) = if !report.missing_slots.is_empty() {
@@ -104,6 +118,7 @@ fn cmd_task_compile(
         },
         check_only,
         task_card_requested: report.task_card_requested,
+        confirmed_handoff_contract: report.confirmed_handoff_contract,
         executable_allowed: report.executable_allowed,
         block_reason: report.block_reason,
     };
@@ -198,6 +213,14 @@ pub(crate) fn run(action: TaskAction) {
             output,
             check_only,
             task_card_requested,
-        } => cmd_task_compile(&path, &format, &output, check_only, task_card_requested),
+            confirmed_handoff_contract,
+        } => cmd_task_compile(
+            &path,
+            &format,
+            &output,
+            check_only,
+            task_card_requested,
+            confirmed_handoff_contract,
+        ),
     }
 }

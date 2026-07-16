@@ -4,7 +4,7 @@
 //! never clones, installs, downloads, or writes host config / skill thin-index
 //! for these — the block reports local-install + host-visibility status (via
 //! filesystem stat only) and a manual next step. Mirrors the other setup
-//! section renderers (`capability_route_enrollment_*`).
+//! section renderers.
 
 use skill_governance::recommendations::{read_recommendations, recommendation_status};
 use std::path::Path;

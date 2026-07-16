@@ -902,7 +902,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
     let (role_description, permissions, stop_conditions, required_reads) =
         match agent_type {
             AgentType::Codex => (
-                "Codex owns ambient preflight, solution formation, user confirmation, execution decision, task routing, and review. Classification happens only after the solution is confirmed — never from raw user requests. An explicit same-session modification instruction authorizes host-native direct execution without a task card; an explicit task-card/handoff instruction authorizes generation of a self-contained handoff contract for another executor. `方案 OK` alone authorizes neither path. The lifecycle is: preflight → solution → user decision → direct edit OR task-card handoff → gate/verification/receipt."
+                "Codex owns ambient preflight, host conversation context, conditional solution formation, execution decision, task routing, and review. MCP `ags_route_request` is the only natural-language routing node and returns one structured RequestDecision. DirectResponse delivers and stops; SkillDemand is resolved against ActiveSkillTable; MachineCli is invoked through fixed argv on the real AGS CLI. An already approved contract plus an explicit same-session modification instruction enters host-native direct execution without repeating solution formation or compiling a task card. New unresolved solutions require confirmation. Task-card generation requires both an explicit handoff instruction and a confirmed handoff contract; reopened solution work stays in solution formation. `方案 OK` alone authorizes neither mutation path."
                     .to_string(),
                 AgentPermissions {
                     default_permission_mode: "execute-and-verify".to_string(),
@@ -922,7 +922,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
                         .to_string(),
                     "Do not change public-full sanitized payload boundary, canonical task-card skeleton, or execution-policy M1-M10 rules without explicit approval."
                         .to_string(),
-                    "Do not generate task cards or call `ags task compile --task-card-requested` until the user explicitly issues a task-card/handoff instruction. This compiler gate does not restrict authorized same-session direct execution."
+                    "Do not generate task cards or call `ags task compile --task-card-requested --confirmed-handoff-contract` until the RequestDecision selects task compilation and the handoff contract is confirmed. This compiler gate does not restrict authorized same-session direct execution."
                         .to_string(),
                 ],
                 vec![
@@ -990,7 +990,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
                         .to_string(),
                     "On resume/continue: reread the task card, run `git status --short`, reconfirm review_targets, and honor the card's permission mode (plan-only awaits explicit approval; execute-and-verify resumes execution and verification)."
                         .to_string(),
-                    "Do not generate task cards or call `ags task compile --task-card-requested` from raw user requests or solution-phase outputs. Only Codex/Cursor may generate task cards after receiving an explicit user task-card instruction (\"生成任务卡\", \"按这个方案出任务卡\", etc.). \"方案 OK\" alone is not a task-card generation trigger."
+                    "Do not generate task cards or call `ags task compile --task-card-requested --confirmed-handoff-contract` from raw user requests or solution-phase outputs. Only consume a confirmed handoff contract selected for task compilation. \"方案 OK\" alone is not a task-card generation trigger."
                         .to_string(),
                 ],
                 vec![
@@ -1027,7 +1027,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
                 ],
             ),
             AgentType::Cursor => (
-                "Cursor owns ambient preflight, solution formation, user confirmation, execution decision, task routing, and review inside its IDE workflow. Classification happens only after the solution is confirmed — never from raw user requests. Explicit same-session modification authorization enters direct execution; explicit delegation enters canonical task-card handoff. `方案 OK` alone authorizes neither path."
+                "Cursor owns ambient preflight, host conversation context, conditional solution formation, execution decision, task routing, and review inside its IDE workflow. MCP `ags_route_request` is the only natural-language routing node and returns one structured RequestDecision. DirectResponse delivers and stops; SkillDemand is resolved against ActiveSkillTable; MachineCli uses fixed argv on the real AGS CLI. Explicit same-session modification authorization enters direct execution; task compilation requires both the MachineCli decision and a confirmed handoff contract. `方案 OK` alone authorizes neither mutation path."
                     .to_string(),
                 AgentPermissions {
                     default_permission_mode: "execute-and-verify".to_string(),
@@ -1106,7 +1106,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
                     "Use the explicit `target` project path supplied by the host; do not assume the desktop workspace folder is the governed project.".to_string(),
                     "Do not perform Light/Medium/Heavy task classification from raw user requests.".to_string(),
                     "Do not install hooks, runner adapters, dependencies, or production wiring without explicit protected-operation authorization.".to_string(),
-                    "Do not generate task cards or call `ags task compile --task-card-requested` until the user explicitly issues a task-card instruction.".to_string(),
+                    "Do not generate task cards or call `ags task compile --task-card-requested --confirmed-handoff-contract` until the RequestDecision selects task compilation and the handoff contract is confirmed.".to_string(),
                     "If the host cannot identify the target project, stop and ask for the repository path instead of running `ags init` in the current desktop workspace.".to_string(),
                 ],
                 vec![
@@ -2469,7 +2469,11 @@ Some other text here.
         assert!(instructions
             .instructions_text
             .contains("same-session modification instruction"));
-        assert!(instructions.instructions_text.contains("task-card/handoff"));
+        assert!(instructions.instructions_text.contains("ags_route_request"));
+        assert!(instructions.instructions_text.contains("RequestDecision"));
+        assert!(instructions
+            .instructions_text
+            .contains("confirmed handoff contract"));
     }
 
     #[test]
@@ -2504,9 +2508,14 @@ Some other text here.
         assert!(instructions
             .instructions_text
             .contains("same-session modification authorization"));
+        assert!(instructions.instructions_text.contains("ags_route_request"));
+        assert!(instructions.instructions_text.contains("RequestDecision"));
         assert!(instructions
             .instructions_text
-            .contains("canonical task-card handoff"));
+            .contains("MachineCli decision"));
+        assert!(instructions
+            .instructions_text
+            .contains("confirmed handoff contract"));
     }
 
     #[test]

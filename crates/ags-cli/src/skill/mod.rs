@@ -42,6 +42,21 @@ fn cmd_skill_propose(action: &str, skill_name: &str, apply: bool, format: &str) 
     let ctx = console::ConsoleContext::system(root);
     let result = console::propose_action(&ctx, parsed, skill_name, apply);
 
+    let apply_unfulfilled = apply && matches!(result.apply_status.as_str(), "advised-only");
+    let failed =
+        !result.blocked_reasons.is_empty() || !result.apply_errors.is_empty() || apply_unfulfilled;
+    if apply && !failed {
+        crate::capability::refresh_skill_snapshot(
+            &ctx.repo_root,
+            &skill_resolver::locate_runtime_home(),
+            "codex",
+        )
+        .unwrap_or_else(|error| {
+            eprintln!("ags skill propose: {error}");
+            std::process::exit(1);
+        });
+    }
+
     match format {
         "json" => println!("{}", console::render_proposal_json(&result)),
         _ => println!("{}", console::render_proposal_text(&result)),
@@ -51,8 +66,7 @@ fn cmd_skill_propose(action: &str, skill_name: &str, apply: bool, format: &str) 
     // blocked, a write failed, or the action is advised-only (AGS performed
     // nothing and the user must run the advised command). A clean dry-run, a
     // successful apply, and a genuine no-op all exit 0.
-    let apply_unfulfilled = apply && matches!(result.apply_status.as_str(), "advised-only");
-    if !result.blocked_reasons.is_empty() || !result.apply_errors.is_empty() || apply_unfulfilled {
+    if failed {
         std::process::exit(1);
     }
 }
@@ -107,7 +121,7 @@ fn cmd_skill_inventory(format: &str, write: bool) {
 /// Reads manifests/skills-registry.yaml and reports the upstream comparison
 /// sources and the suite skills that watch them. Performs NO network crawl.
 fn cmd_skill_upstream(format: &str) {
-    let root = crate::context::capability_authority_root_or_exit("ags skill upstream");
+    let root = crate::context::capability_authority_root_or_exit("ags skill update");
     let result = skill_governance::upstream_proposal(&root);
 
     match format {
@@ -188,14 +202,14 @@ fn cmd_skill_dedupe(apply: bool, format: &str) {
 }
 fn cmd_skill_overview(format: &str, fix: bool) {
     use skill_governance::console;
-    let root = crate::context::capability_authority_root_or_exit("ags skill overview");
+    let root = crate::context::capability_authority_root_or_exit("ags skill");
     let scan = skill_governance::scan_skills(&root);
     let check = skill_governance::check_skills(&root);
     // Unified management-console inventory: skills + MCPs + suite interface +
     // CLI-backed, with canonical body status + per-host thin-index visibility
-    // across Claude Code and Codex. Read-only.
+    // across Claude Code, Codex, and CodeBuddy-Code. Read-only.
     let ctx = console::ConsoleContext::system(root);
-    let inventory = console::build_inventory(&ctx, &["claude-code", "codex"]);
+    let inventory = console::build_inventory(&ctx, &["claude-code", "codex", "codebuddy-code"]);
 
     match format {
         "json" => {

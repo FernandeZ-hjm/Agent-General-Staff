@@ -39,14 +39,6 @@ pub(crate) enum Commands {
         /// Register AGS MCP servers in Claude Code user config after setup.
         #[arg(long)]
         register_claude: bool,
-        /// Capability Route enrollment mode written to machine-local runtime
-        /// evidence (off | suite-only | adopted | review-all). Omit to PRESERVE
-        /// the machine's existing enrollment (suite-only when none) — this keeps
-        /// `ags setup --yes` idempotent. Plan-only without --yes. AGS records the
-        /// choice only — never auto-installs or logs in.
-        #[arg(long = "capability-route",
-              value_parser = ["off", "suite-only", "adopted", "review-all"])]
-        capability_route: Option<String>,
         /// Print plan only, even if --yes is omitted.
         #[arg(long)]
         dry_run: bool,

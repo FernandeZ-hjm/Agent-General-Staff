@@ -14,23 +14,27 @@ Agents working in this repository must follow the canonical protocol files under
 `protocol/` before changing code, generating task cards, installing hooks, or
 declaring completion.
 
-AGS is a standing engineering hub for development work. When a development
-request arrives, governance engages automatically:
+AGS is a standing engineering hub. After preflight, the host sends complete
+conversation context through MCP `ags_route_request`; this is the only
+natural-language routing node. It returns one structured `RequestDecision` with
+peer targets `DirectResponse`, `SkillDemand`, and `MachineCli`. DirectResponse
+is exclusive; at most one Skill and one MachineCli may coexist. Skill Resolver
+only maps a closed demand against the validated ActiveSkillTable, and MCP invokes
+machine capabilities through fixed argv on the real `ags` CLI. Compiler, Policy,
+Gate, and Runner never re-parse natural language.
 
 ```text
-ambient preflight
-  -> solution formation
-  -> user decision
-  -> same-session direct execution OR task-card handoff
-  -> task routing
-  -> gate / verification / receipt
+human request -> MCP -> Request Router -> RequestDecision
+  -> DirectResponse OR SkillDemand / MachineCli
+  -> structured consumer -> gate / verification / receipt
 ```
 
-Do not classify raw user requests as Light / Medium / Heavy. Classification
-happens only after preflight, solution formation, and user confirmation.
+Do not classify raw user requests as Light / Medium / Heavy. Preflight is always
+required, but solution formation is conditional: use a supplied and approved
+solution when one exists; otherwise form one before classification.
 `方案 OK` confirms the design but does not authorize mutation. Explicit
 same-session modification authorization enters `direct-edit`; explicit handoff
-authorization enters task-card compilation.
+authorization plus a confirmed closed handoff contract enters task-card compilation.
 
 ## Required Reads
 
@@ -214,17 +218,18 @@ scripts/                # Public-safe scripts
   verify.sh             # Verification wrapper
 
 crates/                 # Rust crates (public-safe core)
-  ags-cli/              # Unified CLI (2.7: kernel architecture)
+  ags-cli/              # Unified CLI and machine capability surface
     src/kernel/         # Governance kernel — gate / policy / runner / receipt / rollback
     src/agents/         # Built-in agent dispatch — govern / scan / verify / host_specs
     src/setup/          # Setup plan / apply / verify / rollback
     src/init/           # Project integration overlay
     src/update/         # Self-update plan / apply / repair / rollback
-    src/capability/     # Capability routing entry
+    src/capability/     # Machine capability inventory and snapshots
     src/skill/          # Skill governance entry
     src/doctor/         # Health diagnostics entry
     src/cli/            # Command routing — actions + kernel_actions
-  capability-route/     # Advisory routing (2.7)
+  request-router/       # The only natural-language RequestDecision router
+  skill-resolver/       # Closed SkillDemand-to-skill mapping
   task-card-validator/  # Task-card validation
   execution-policy/     # Execution policy resolver
   suite-doctor/         # Suite health diagnostics
@@ -239,7 +244,6 @@ crates/                 # Rust crates (public-safe core)
   ags-mcp/              # MCP stdio server
   ags-platform/         # Cross-platform primitives
   task-compiler/        # Task-card compiler
-  prompt-request-classifier/  # Prompt request classification
 
 docs/                   # Documentation
   skill-recommendations.md

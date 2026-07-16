@@ -474,7 +474,7 @@ pub(in crate::update) fn notifier_status_line(runtime_home: &Path) -> String {
 // ── Command entry ───────────────────────────────────────────────────────────
 
 pub(in crate::update) fn cmd_update_notify(format: &str) {
-    let runtime_home = capability_route::locate_runtime_home();
+    let runtime_home = skill_resolver::locate_runtime_home();
     let out = evaluate(&runtime_home);
     if format == "json" {
         println!(

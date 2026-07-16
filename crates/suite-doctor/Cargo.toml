@@ -10,6 +10,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
 ags-platform = { path = "../ags-platform" }
-capability-route = { path = "../capability-route" }
+skill-resolver = { path = "../skill-resolver" }
 project-discovery = { path = "../project-discovery" }
 skill-governance = { path = "../skill-governance" }

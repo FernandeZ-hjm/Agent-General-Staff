@@ -1,357 +1,155 @@
 # AGS MCP: Host Initialization Adapter
 
-AGS governance kernel exposed as a **host initialization adapter** over MCP
-(Model Context Protocol). It is the mandatory governance interface for all MCP
-hosts (Tencent Agent [WorkBuddy, CodeBuddy-Code], Codex, Cursor, Claude Code)
-operating in AGS scenarios.
-
-**AGS MCP is not a governed third-party MCP.** It is the suite's own host
-adapter — the MCP transport layer for the AGS governance kernel. In
-`manifests/mcp-registry.yaml`, `ags` resides under `suite_interfaces:`, not
-under the governed `mcps:` list.
+> AGS 0.2.8 MCP 是宿主初始化与结构化消费适配器，不是另一套业务实现。
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────┐
-│              MCP Host                        │
-│ (Tencent Agent / Codex / Cursor / Claude Code)│
-│                                              │
-│  Step 0: ags_preflight ← MANDATORY FIRST │
-│           (initialization gate)              │
-│           ↓                                  │
-│  Step 1-N: all other AGS tools               │
-└───┬──────────────────────────────────────────┘
-    │
-    ▼
-┌──────────┐
-│ AGS MCP  │
-│ (host    │
-│ adapter, │
-│ mandatory│
-│ first)   │
-│ stdio    │
-└──────────┘
+```text
+Human request
+  → Host conversation context
+  → AGS MCP
+  → Request Router (the only natural-language node)
+  → RequestDecision
+      ├─ DirectResponse → host replies
+      ├─ SkillDemand → Skill Resolver → SkillSelection
+      └─ MachineCli → fixed argv → real ags executable
 ```
 
-AGS MCP exposes AGS lifecycle and gate checks only. It does not proxy, wrap, or
-broker unrelated tools.
+Compiler、Policy、Gate、Runner 只消费结构化 contract。MCP 不复制它们的实现。
 
 ## AGS Initialization Gate
 
-The AGS Initialization Gate is the mandatory first step for any host operating
-in an AGS scenario. The host MUST complete `ags_preflight` (MCP) or its CLI
-fallback before invoking any other AGS tool or entering solution formation.
+任何 AGS 场景的第一调用必须是：
 
-### Trigger conditions (AGS scenarios)
-
-An AGS scenario is active when any of the following is true:
-
-- The repository is under AGS governance (`ags project detect` returns `suite`
-  or `integrated`, or `AGENTS.md` + `CLAUDE.md` root entry files exist)
-- The task involves task cards (generation, validation, execution, archival)
-- AGS skill governance is involved (skill adopt/ignore/sync/proposal)
-- AGS MCP governance is involved (MCP registry writes, adoption logs, trust
-  level changes)
-- Multi-agent routing is involved (task handoff between Codex / Claude Code /
-  Cursor)
-- AGS release boundary is involved (private → stable → public promotion)
-- Execution policy is involved (permission downgrades, parallelism strategy,
-  launch arg resolution)
-- The user explicitly requests AGS protocol, task cards, review gates, or
-  verification gates
-
-### Legal invocation paths (in priority order)
-
-1. **MCP path (preferred)**: call `ags_preflight` tool with `agent` parameter
-   (`codex` / `claude-code` / `cursor` / `tencent-agent` / `workbuddy` /
-   `codebuddy-code`) and optional `target`. WorkBuddy and CodeBuddy-Code are
-   Tencent Agent host clients; unknown ids use the generic governed-host profile.
-2. **CLI fallback**: when MCP is unavailable, run
-   `ags session preflight --for <agent> [--target <path>]`.
-
-Both paths are valid. CLI fallback requires the same evidence recording as MCP.
-
-### Prohibition rules
-
-- Do NOT read protocol documents and manually simulate preflight output.
-- Do NOT skip preflight based on model memory, user oral description, or
-  host built-in rules.
-- Do NOT enter solution formation, task routing, execution, or delivery
-  without recording preflight evidence.
-- `ags_solution_check`, `ags_task_validate`, `ags_policy_resolve`, and
-  `ags_verify_local` are NOT substitutes for preflight. The host MUST
-  complete preflight first; it should reject calls to other AGS tools
-  before preflight is done.
-
-### Failure handling
-
-- **MCP unavailable**: report `AGS MCP unavailable`, then execute CLI fallback
-  (`ags session preflight --for <agent>`).
-- **CLI fallback also unavailable**: stop. Do not continue AGS scenario tasks.
-  Report the stop reason to the user.
-- **CLI fallback succeeds but MCP unavailable**: subsequent AGS tool calls use
-  CLI equivalents (`ags task validate` etc.); record `status=fallback` in
-  evidence.
-
-### Evidence format
-
-In solutions, task cards, or delivery reports, record preflight evidence as:
-
-```
-AGS preflight: MCP|CLI, agent=<agent-id>, status=<ok|failed|fallback>
+```text
+ags_preflight(agent, target?)
 ```
 
-| Value | Meaning |
-|-------|---------|
-| `ok` | MCP preflight or CLI fallback succeeded with `exit_code=0` |
-| `fallback` | MCP unavailable, CLI fallback succeeded |
-| `failed` | Both MCP and CLI fallback failed, execution stopped |
+MCP 不可用时才使用 `ags session preflight --for <agent> --target <path>`。失败不得自动放行。
 
 ## Installation
 
 ```bash
-# Build from source
-cargo build -p ags-cli --release
-
-# Run as MCP server
-./target/release/ags mcp serve --transport stdio
+cargo build -p ags-mcp
+ags mcp serve --transport stdio
 ```
 
 ## Transport
 
-V1 supports `--transport stdio` only. The server reads line-delimited
-JSON-RPC 2.0 messages from stdin and writes responses to stdout.
-Stderr is reserved for server logging.
-
-Future transports (SSE, WebSocket) may be added in later versions.
+当前支持 stdio JSON-RPC 2.0，MCP protocol version `2024-11-05`。
 
 ## MCP Capabilities
 
 ### Tools (7)
 
-| Tool | Description |
-|------|-------------|
-| `ags_preflight` | **Mandatory first call.** Aggregated session preflight — project identity, protocol status, agent instructions, memory paths, stop conditions, warnings, failures, next steps. Must be called before any other AGS tool in AGS scenarios. |
-| `ags_protocol_status` | Protocol file inventory — which files are present/missing, validator entry, risk boundaries |
-| `ags_agent_instructions` | Agent-specific instructions — for Codex/Claude Code/Cursor/Tencent Agent (WorkBuddy, CodeBuddy-Code) |
-| `ags_task_validate` | Validate a task card against the canonical format gate |
-| `ags_policy_resolve` | Resolve execution policy for a validated task card |
-| `ags_verify_local` | Run local-scope verification (fmt, test, build, fixtures, YAML, preflight). Fixed-scope — not downgradable by caller input |
-| `ags_solution_check` | Validate-first entry for a raw request, solution summary, or existing canonical task card. A `summary` whose first non-empty line is `## 任务卡` is validated before classification: valid cards skip generation and continue to policy/runner; invalid cards stop. Raw input retains deterministic request/advisory classification plus the advisory `value_route` block (效价比路由) |
+| Tool | 作用 |
+|---|---|
+| `ags_preflight` | 强制第一调用，建立宿主/项目预检状态 |
+| `ags_protocol_status` | 读取项目协议状态 |
+| `ags_agent_instructions` | 读取宿主特定指令 |
+| `ags_task_validate` | 验证现有结构化任务卡 |
+| `ags_policy_resolve` | 对已验证任务卡解析策略 |
+| `ags_verify_local` | 执行固定 local verification scope |
+| `ags_route_request` | 唯一自然语言需求路由入口 |
 
-> **Initialization gate rule**: `ags_preflight` is the mandatory first call.
-> All other tools (including `ags_solution_check`, `ags_task_validate`, etc.) must only
-> be called after preflight completes. Hosts should reject calls to other AGS
-> tools before preflight is done.
+旧的 phase classifier 与独立 capability classifier 已删除；不存在并行调试入口。
 
-### Entry intent recognition (deterministic)
+### `ags_route_request`
 
-`ags_solution_check` runs the deterministic `prompt-request-classifier` over the
-`summary` argument and returns two advisory fields:
+输入：
 
-Before that classifier runs, a canonical `## 任务卡` header triggers
-existing-card validation. Valid cards return `phase=existing_task_card`,
-`task_card_generation_required=false`, and `next_tool=ags_policy_resolve`;
-invalid card-shaped input returns `phase=invalid_task_card` and
-`block_reason=validation_failed`. Neither path falls through to card generation.
-
-- `detected_task_card_request` (bool) — the summary matches a prompt/task-card
-  request ("给我提示词", "生成任务卡", "交给 Claude Code", "给 CC 执行",
-  "写个 prompt", "让 Claude 做", …). Bare artifact names are not requests.
-- `detected_triggers` (string array) — the matched trigger phrases.
-- `direct_execution_authorized` (bool) — the live instruction explicitly
-  authorizes same-session host-native mutation and does not request a handoff.
-
-Task-card detection is advisory and never authorizes mutation. Explicit direct
-authorization may return `phase=direct_execution_authorized` and
-`executable_allowed=true` without a task card; an explicit handoff still requires
-`task_card_requested=true` before card generation. The two paths do not authorize
-each other.
-
-The frontstage **output-shape gate** and the `governance_miss` event live on the
-CLI side (`ags gate output`), NOT in MCP — AGS MCP stays read-only and never
-emits or persists `governance_miss`. See `protocol/agent-task-protocol.md` §3.6.
-
-### Advisory intent no-mutation (deterministic)
-
-`ags_solution_check` also classifies advisory/consultation intent and returns
-three optional fields (present only when advisory intent is detected):
-
-- `detected_advisory_intent` (bool) — the summary matches a consultation trigger
-  ("你看看是否", "是否需要", "要不要", "评估一下", "你觉得", "should we",
-  "evaluate", …).
-- `mutation_allowed` (bool) — `false` blocks write-type tool calls; cleared to
-  `true` only by an explicit execution authorization ("按这个改", "开始实现",
-  "implement this", …). Bare "执行" is intentionally not an authorization.
-- `advisory_block_reason` (string) — `advisory_intent_no_mutation` when blocked.
-
-Advisory intent no-mutation, direct execution authorization, the task-card
-handoff gate, and task-card execution permission are separate concerns — none
-substitutes for another.
-See `protocol/agent-task-protocol.md` §3.7.
-
-### Value Route (效价比路由)
-
-`ags_solution_check` also returns a `value_route` block — the minimal
-execution-path *form* that still covers the task's risk, derived deterministically
-from the same classification signals. Fields: `recommended_path` (one of
-`read-only-advisory` / `direct-edit` / `plan-first` / `claude-code-route` /
-`stop-for-scope`), `rationale`, `rejected_lighter` / `rejected_heavier`
-(`{path, reason}`), `requires_user_confirmation`, `needs_planner_judgment`,
-`advisory` (always `true`), and `authority_note`.
-
-This is **advisory only**: Value Route shapes the path form and never changes the
-Light / Medium / Heavy level, permission mode, Review gate, or Verification gate.
-The same `value_route` block is exposed on the CLI side by `ags gate
-prompt-request`. See `protocol/agent-task-protocol.md` §3.9.
-
-If the host turns that route into a task card, non-mutating advisory/planning
-routes use `Permission mode: plan-only`; implementation routes use
-`Permission mode: execute-and-verify`. These are the only task-card permission
-modes.
-
-### Quiet-by-default visible status
-
-`ags_preflight`, `ags_solution_check`, and `ags_policy_resolve` carry an optional
-`visible_status` field — the single foreground decision state (`OK`,
-`NEEDS_USER_DECISION`, `BLOCKED_BY_POLICY`, `RISK_ESCALATED`,
-`DONE_WITH_RECEIPT`, `ADVISORY_NO_MUTATION`). Full report detail stays in the
-response as audit evidence; `visible_status` is the quiet summary. Quiet affects
-only the foreground — trace, receipt, and archive writes are unchanged. All new
-fields are optional (`skip_serializing_if`), so existing clients are unaffected.
-See `protocol/agent-task-protocol.md` §3.8.
-
-### Resources (5)
-
-| URI | Content |
-|-----|---------|
-| `ags://global-kernel` | AGS global governance kernel — initialization gate, lifecycle, rules, host boundaries |
-| `ags://protocol/agent-task-protocol` | Canonical agent task protocol |
-| `ags://protocol/task-card-template` | Fixed task-card skeleton |
-| `ags://protocol/runtime-adapters` | Runtime adapter definitions and rules |
-| `ags://protocol/task-routing` | Light/Medium/Heavy routing criteria |
-
-### Prompts (4)
-
-| Prompt | Description |
-|--------|-------------|
-| `ags_global_kernel` | Load AGS governance kernel at session start — including mandatory initialization gate |
-| `ags_solution_phase` | Guide through solution formation and context-backed proposal |
-| `ags_task_card_request_gate` | Distinguish direct execution from task-card handoff and enforce handoff generation |
-| `ags_delivery_report` | Produce a valid AGS delivery report |
-
-## AGS vs Governed MCPs
-
-AGS MCP is structurally distinct from third-party MCPs governed by AGS:
-
-| Layer | Contains | Role |
-|-------|----------|------|
-| `suite_interfaces` (in `manifests/mcp-registry.yaml`) | `ags` | **Host initialization adapter** — mandatory governance interface; NOT a governed object |
-| `mcps` (in `manifests/mcp-registry.yaml`) | registered external MCPs | **Governed third-party MCPs** — reviewed, registered, and managed by AGS |
-
-AGS is not in the `mcps:` list. It does not have an adoption entry in the MCP
-adoption log. It is the governance authority, not a governed entity.
-
-## JSON-RPC Protocol
-
-### Initialize
-
-```json
-→ {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"...","version":"..."}}}
-← {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{"listChanged":false},"resources":{"listChanged":false,"subscribe":false},"prompts":{"listChanged":false}},"serverInfo":{"name":"ags-mcp","version":"0.2.7"}}}
-```
-
-### Tools
-
-```json
-→ {"jsonrpc":"2.0","id":2,"method":"tools/list"}
-← {"jsonrpc":"2.0","id":2,"result":{"tools":[...]}}
-
-→ {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"ags_preflight","arguments":{"agent":"codex"}}}
-← {"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"..."}]}}
-```
-
-### Resources
-
-```json
-→ {"jsonrpc":"2.0","id":4,"method":"resources/list"}
-← {"jsonrpc":"2.0","id":4,"result":{"resources":[...]}}
-
-→ {"jsonrpc":"2.0","id":5,"method":"resources/read","params":{"uri":"ags://global-kernel"}}
-← {"jsonrpc":"2.0","id":5,"result":{"contents":[{"uri":"ags://global-kernel","mimeType":"text/markdown","text":"..."}]}}
-```
-
-### Prompts
-
-```json
-→ {"jsonrpc":"2.0","id":6,"method":"prompts/list"}
-← {"jsonrpc":"2.0","id":6,"result":{"prompts":[...]}}
-
-→ {"jsonrpc":"2.0","id":7,"method":"prompts/get","params":{"name":"ags_solution_phase","arguments":{"user_request":"..."}}}
-← {"jsonrpc":"2.0","id":7,"result":{"description":"...","messages":[{"role":"user","content":{"type":"text","text":"..."}}]}}
-```
-
-## Tencent Agent Registration (WorkBuddy / CodeBuddy-Code)
-
-Tencent Agent is the host family; WorkBuddy and CodeBuddy-Code are its host
-clients. They are host platforms that enter AGS through MCP; this is distinct
-from task-card `Runtime adapter` authority. `ags setup` emits three equivalent
-platform MCP registration snippets:
-`hosts/tencent-agent.mcp.snippet.json` (primary), `hosts/workbuddy.mcp.snippet.json`
-(compatibility), and `hosts/codebuddy-code.mcp.snippet.json`.
-
-# In a Tencent Agent host (WorkBuddy / CodeBuddy-Code) MCP configuration
-# (do NOT write from this task):
 ```json
 {
-  "mcpServers": {
-    "ags": {
-      "role": "host_initialization_adapter",
-      "command": "ags",
-      "args": ["mcp", "serve", "--transport", "stdio"],
-      "mandatory_first_tool": "ags_preflight",
-      "_comment": "AGS MCP is a host initialization adapter."
-    }
-  }
+  "request": "...",
+  "approved_contract": false,
+  "confirmed_handoff_contract": false,
+  "active_host": "codex",
+  "target": "."
 }
 ```
 
-> **Note**: This task does NOT write Tencent Agent (WorkBuddy / CodeBuddy-Code)
-> configuration. Manual registration by the user is required.
+宿主负责把对话上下文整理进 `request` 和两个结构化证据字段。AGS 路由器无状态。
+
+输出包含 canonical `RequestDecision`，以及按 target 类型产生的消费结果：
+
+- `DirectResponse`：不读取技能快照，不调用 CLI；
+- `Skill`：加载并校验 active host 的快照，确定性解析 skill；
+- `MachineCli`：调用真实 `ags` 二进制。
+
+### Machine CLI 固定映射
+
+| Capability | 固定 CLI 入口 |
+|---|---|
+| `TaskCompile` | `ags task compile - --format json --output report --task-card-requested --confirmed-handoff-contract` |
+| `TaskExecute` | `ags run - --format json` |
+| `TaskValidate` | `ags task validate -` |
+| `PolicyResolve` | `ags policy resolve - --format json` |
+| `ProjectVerify` | `ags verify --scope local --format json --target <target>` |
+| `ReceiptVerify` | `ags receipt verify - --format json` |
+| `SkillTagsVerify` | 需要结构化任务卡，不能从原始文本推导 |
+
+实现使用 `std::process::Command`、固定 argv 和 stdin pipe；禁止 shell 和任意命令字符串。
+
+### Skill snapshot
+
+Skill 目标要求 `<runtime_home>/capability-snapshot/capability-snapshot.json` 与当前 registry/runtime hash 一致。缺失或 stale 返回治理前置条件失败：
+
+```text
+code: skill_snapshot_stale
+next: ags capability snapshot --host <host> --write
+```
+
+不自动重建、不自动替代技能。DirectResponse 与纯 MachineCli 不依赖该快照。
+
+### Resources (5)
+
+AGS 暴露 global kernel、agent task protocol、task routing、task-card template 与 runtime adapters 五项只读协议资源。全局内核资源 URI 是 `ags://global-kernel`。
+
+### Prompts (4)
+
+Prompts 用于加载治理说明，不承担自然语言路由。宿主会话启动时可加载 `ags_global_kernel`；Prompt 不能绕过 preflight、RequestDecision 或 task-card 双门槛。
+
+## AGS vs Governed MCPs
+
+AGS MCP 位于 `manifests/mcp-registry.yaml` 的 `suite_interfaces`；第三方 MCP 位于 `mcps`。AGS 自身不是被治理的第三方 MCP。
+
+## JSON-RPC Protocol
+
+Server info：
+
+```json
+{
+  "name": "ags-mcp",
+  "version": "0.2.8"
+}
+```
+
+Wire example: `serverInfo: {"name":"ags-mcp","version":"0.2.8"}`.
+
+## Tencent Agent Registration (WorkBuddy / CodeBuddy-Code)
+
+这些宿主注册同一个 `ags mcp serve --transport stdio` 入口，并遵守相同 preflight 与 RequestDecision contract。标准宿主 ID 是 `tencent-agent`，客户端 ID 是 `workbuddy` 和 `codebuddy-code`。AGS 不从本命令面写宿主配置。
 
 ## Verification
 
 ```bash
-# Build
-cargo build -p ags-cli
-
-# Run MCP server
-cargo run -p ags-cli -- mcp serve --transport stdio
-
-# Smoke test
-printf '{"jsonrpc":"2.0","id":1,"method":"initialize",...}\n{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n' | cargo run -p ags-cli -- mcp serve --transport stdio
-
-# Full verification
-ags verify --scope local
+cargo test -p request-router
+cargo test -p skill-resolver
+cargo test -p ags-mcp
+cargo test --workspace
+ags verify --scope full
 ```
 
 ## Stop Conditions
 
-The AGS MCP implementation must stop and report when asked to:
-- Write Tencent Agent (WorkBuddy / CodeBuddy-Code) host configuration
-- Read real tokens, node-local secrets, or host secrets
-- Modify user worktrees without explicit authorization
-- Change AGS lifecycle/gate semantics
-- Turn AGS MCP into a broker for unrelated tools
+- preflight 失败；
+- Skill snapshot stale；
+- task-card 双门槛不完整；
+- fixed CLI mapping 缺少结构化输入；
+- destructive / credential / external-write / release 边界触发。
 
 ## Version History
 
-| Version | Date | Changes |
-|---------|------|---------|
-| 2.6.0 | 2026-06-17 | Quiet governance release: advisory-intent no-mutation gate for consultation requests, `visible_status` quiet foreground summaries on MCP preflight/solution/policy responses, fixed-scope `ags_verify_local`, diff-aware `ags verify lane`, trusted shell MINIMAL/FULL push-lane routing, Tencent Agent host recognition, Value Route advisory output, expanded verification smoke tests, and copyable Markdown fenced-block delivery reports. |
-| 2.5.1 | 2026-06-15 | Local ignored governance overlay: `ags init` defaults to a `local` overlay that adds AGS-managed files to `.git/info/exclude` (idempotent managed block), `--mode shared|tracked` opts into a committed overlay, and `--migrate-tracked-overlay` safely migrates already-tracked AGS-owned files via `git rm --cached`. Task-card template sources collapsed to the single canonical `protocol/task-card-template.md` (per-level fallback templates removed) |
-| 2.5.0 | 2026-06-13 | Engineering self-consistency release: supply-chain gate (`deny.toml` + `cargo deny check`), Windows portability phase 1 (cross-platform home/temp/PATH-lookup helpers), skill asset inventory scanner, and `task-card-validator` module split (move-only, public API and validation messages unchanged) |
-| 2.4.0 | 2026-06-12 | Added human command facade (`setup`, `init`, `doctor`, `skill`, `help`), one-command host initialization, visible Codex command skills (`AGS Setup`, `AGS Init`, `AGS Skill`, `AGS Doctor`) with Chinese descriptions, retired visible Codex hub/preflight/verify entries, project onboarding `.gitignore` management, soft-coded host agent compatibility, and schema-safe MCP tool names |
-| 2.1.0 | 2026-06-10 | Added AGS Initialization Gate; repositioned as host initialization adapter; structural separation from governed MCPs |
-| 1.0.0 | 2026-06-10 | Initial release — 7 tools, 7 resources, 4 prompts, stdio transport only |
+| Version | Date | Change |
+|---|---|---|
+| 0.2.8 | 2026-07-16 | 唯一 Request Router、平级 RouteTarget、确定性 Skill Resolver、单 host hash 快照、MCP 固定 argv 调用真实 CLI；删除旧的双路由和机器加入层。 |

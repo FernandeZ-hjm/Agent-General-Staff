@@ -18,8 +18,8 @@
 //! - `cursor`: structured stub — reports launch plan, marks is_stub.
 //! - `generic`: capped at plan-only, requires human handoff.
 
-use capability_route::SkillTagGate;
 use execution_policy::{GateCheckOutput, ResolvedExecutionPolicy};
+use skill_resolver::SkillTagGate;
 use std::path::{Path, PathBuf};
 
 // ── Public types ──────────────────────────────────────────────────────────
@@ -116,12 +116,12 @@ pub fn run_task_card(
     current_task_approval: bool,
 ) -> LaunchPlan {
     // The runtime skill-tag gate reads the manifest routing authority + the
-    // machine-local capability snapshot/enrollment. Resolve both from the real
+    // machine-local ActiveSkillTable snapshot. Resolve both from the real
     // process cwd / runtime home; tests use `run_task_card_inner` to inject
     // hermetic roots.
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let manifest_root = capability_route::locate_manifest_root(&cwd);
-    let runtime_home = capability_route::locate_runtime_home();
+    let manifest_root = skill_resolver::locate_manifest_root(&cwd);
+    let runtime_home = skill_resolver::locate_runtime_home();
     run_task_card_inner(
         task_card_path,
         check_only,
@@ -292,7 +292,7 @@ pub fn run_task_card_inner(
     let skill_tags_gate: Option<SkillTagGate> = if skill_tags.is_empty() {
         None
     } else {
-        Some(capability_route::verify_skill_tags_with_runtime_home(
+        Some(skill_resolver::verify_skill_tags_with_runtime_home(
             &skill_tags,
             manifest_root,
             active_host,
@@ -588,14 +588,14 @@ pub fn render_text(plan: &LaunchPlan) -> String {
         lines.push(format!("  All accepted: {}", gate.all_accepted));
         for v in &gate.verdicts {
             lines.push(format!(
-                "    - [skill: {}] {} (routable={}, availability={})",
+                "    - [skill: {}] {}{}",
                 v.tag,
                 if v.accepted { "ACCEPT" } else { "REJECT" },
-                v.registry_routable,
-                serde_json::to_value(v.availability)
-                    .ok()
-                    .and_then(|x| x.as_str().map(String::from))
-                    .unwrap_or_default(),
+                if v.reason.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", v.reason)
+                },
             ));
         }
         lines.push(String::new());
@@ -958,9 +958,9 @@ mod tests {
 
     #[test]
     fn runtime_skill_tag_gate_stops_unavailable_tag() {
-        // The card PASSES the offline static validator (codebase-design is a
+        // The card PASSES the offline static validator (skill-creator is a
         // routable registry tag), but its runtime availability fails: an empty
-        // runtime home has no enrollment evidence, so the capability fail-closes
+        // runtime home has no ActiveSkillTable snapshot, so skill resolution stops
         // (`not-enrolled`) and the third gate stops the launch. This proves the
         // runtime gate runs automatically on the `ags run` launch-plan path —
         // not only as the manual `ags gate skill-tags` subcommand.
@@ -969,10 +969,10 @@ mod tests {
         let card_path = dir.join("card.md");
         std::fs::write(
             &card_path,
-            format!("{VALID_CARD}\n[skill: codebase-design]\n"),
+            format!("{VALID_CARD}\n[skill: skill-creator]\n"),
         )
         .unwrap();
-        let runtime_home = dir.join("runtime-home"); // absent enrollment.json → off
+        let runtime_home = dir.join("runtime-home"); // absent snapshot → governance precondition
 
         let plan = run_task_card_inner(
             &card_path.to_string_lossy(),
@@ -991,7 +991,7 @@ mod tests {
         );
         let gate = plan.skill_tags_gate.expect("skill_tags_gate present");
         assert!(!gate.all_accepted);
-        assert!(gate.rejected.iter().any(|t| t == "codebase-design"));
+        assert!(gate.rejected.iter().any(|t| t == "skill-creator"));
         assert!(
             !plan.receipt_plan.will_generate,
             "a blocked launch must not plan a receipt"
@@ -1038,7 +1038,7 @@ mod tests {
         let card_path = dir.join("card.md");
         std::fs::write(
             &card_path,
-            format!("{VALID_CARD}\n[skill: codebase-design]\n"),
+            format!("{VALID_CARD}\n[skill: skill-creator]\n"),
         )
         .unwrap();
         let runtime_home = dir.join("runtime-home");

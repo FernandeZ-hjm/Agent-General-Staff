@@ -48,28 +48,28 @@ skills:
     source: "https://github.com/obra/superpowers"
     license: "MIT"
     attribution: "Copyright (c) 2025 Jesse Vincent; retain upstream MIT notice when copying or adapting Superpowers material."
-    risk: low
-    risk_description: Read-only orchestration; no production writes.
+    risk: medium
+    risk_description: May perform authorized local workspace writes through selected playbooks; external or destructive boundaries remain separately gated.
     install_location: $HOME/.agents/skills/superpowers/
     manual_steps:
       - "Review https://github.com/obra/superpowers and its MIT license"
       - "mkdir -p ~/.agents/skills/superpowers"
-      - "Copy SKILL.md and playbooks/ into the directory"
+      - "Expose only the root SKILL.md; package nested workflows as playbooks/<name>/PLAYBOOK.md resources so recursive hosts do not discover duplicate skills"
 
   # ── Matt flow (mattpocock/skills) ───────────────────────────────────────
-  - id: grill-me
+  - id: grilling
     name: Plan Grilling
     tier: flow
     purpose: Relentless plan/design interrogation before building.
     recommendation_only: true
     source_kind: external
     upstream: "https://github.com/mattpocock/skills"
-    source: "https://github.com/mattpocock/skills/tree/main/skills/productivity/grill-me"
+    source: "https://github.com/mattpocock/skills/tree/main/skills/productivity/grilling"
     risk: low
     risk_description: Read-only interview; no writes.
-    install_location: $HOME/.agents/skills/grill-me/
+    install_location: $HOME/.agents/skills/grilling/
     manual_steps:
-      - "Review the upstream skill and copy SKILL.md into ~/.agents/skills/grill-me"
+      - "Review the upstream skill and copy SKILL.md into ~/.agents/skills/grilling"
 
   - id: review
     name: Branch / Change Review
@@ -193,8 +193,8 @@ skills:
     source_kind: external
     upstream: "https://github.com/mattpocock/skills"
     source: "https://github.com/mattpocock/skills/tree/main/skills/engineering/grill-with-docs"
-    risk: low
-    risk_description: Read-only alignment check.
+    risk: medium
+    risk_description: May create local ADR or glossary artifacts while aligning requirements; external writes remain separately gated.
     install_location: $HOME/.agents/skills/grill-with-docs/
     manual_steps:
       - "Review the upstream skill and copy SKILL.md (and reference .md files) into ~/.agents/skills/grill-with-docs"
@@ -212,24 +212,6 @@ skills:
     install_location: $HOME/.agents/skills/improve-codebase-architecture/
     manual_steps:
       - "Review the upstream skill and copy SKILL.md (and reference .md files) into ~/.agents/skills/improve-codebase-architecture"
-
-  # ── Workflow ────────────────────────────────────────────────────────────
-  - id: using-git-worktrees
-    name: Git Worktrees
-    tier: workflow
-    purpose: Isolated git worktree management for parallel feature branches.
-    recommendation_only: true
-    source_kind: external
-    upstream: "https://github.com/obra/superpowers"
-    source: "https://github.com/obra/superpowers/tree/main/skills/using-git-worktrees"
-    license: "MIT"
-    attribution: "Copyright (c) 2025 Jesse Vincent; retain upstream MIT notice when copying or adapting Superpowers material."
-    risk: low
-    risk_description: Local git operations only.
-    install_location: $HOME/.agents/skills/using-git-worktrees/
-    manual_steps:
-      - "Review https://github.com/obra/superpowers and its MIT license"
-      - "Copy skills/using-git-worktrees/SKILL.md into ~/.agents/skills/using-git-worktrees"
 
   # ── Security ────────────────────────────────────────────────────────────
   - id: supply-chain-risk-auditor

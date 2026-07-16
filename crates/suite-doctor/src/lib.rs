@@ -28,7 +28,7 @@ mod checks;
 mod report;
 mod types;
 
-pub use checks::{capability_route_coverage_check, capability_route_drift_check, run_checks};
+pub use checks::{run_checks, skill_resolution_coverage_check, skill_resolution_drift_check};
 pub use report::{render_json, render_text};
 pub use types::{CheckStatus, Finding, HealthReport, Severity};
 

@@ -60,7 +60,7 @@ pub struct JsonRpcError {
 pub const MCP_VERSION: &str = "2024-11-05";
 /// AGS MCP server name — the host initialization adapter (not a governed third-party MCP).
 pub const SERVER_NAME: &str = "ags-mcp";
-pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const SERVER_VERSION: &str = "0.2.8";
 
 // ── MCP Initialize Types ─────────────────────────────────────────────────────
 

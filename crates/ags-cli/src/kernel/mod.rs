@@ -66,8 +66,8 @@ pub(in crate::kernel) fn read_and_validate_task_card(
 /// mode. `approve_writes` (CLI flag / runner
 /// env) may additionally act as the M9 generic-adapter capability override.
 /// `current_task_approval` is the host-detected current-task instruction signal
-/// (an explicit "实现 / 修复 / 做完" on the live request via
-/// `prompt_request_classifier`). The stronger source wins when both are present.
+/// (an explicit "实现 / 修复 / 做完" on the live request). The
+/// stronger source wins when both are present.
 pub(in crate::kernel) fn build_policy_input(
     fields: &std::collections::HashMap<String, String>,
     approve_writes: bool,

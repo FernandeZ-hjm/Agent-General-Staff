@@ -23,7 +23,6 @@ pub(in crate::setup) struct PrivateInstallPlan {
 pub(in crate::setup) fn private_install_plan(
     source_root: &Path,
     target: &Path,
-    capability_route_mode: capability_route::EnrollmentMode,
 ) -> PrivateInstallPlan {
     let ags_mcp_json = r#"{
   "mcpServers": {
@@ -219,15 +218,6 @@ Each command skill routes through AGS preflight before acting.\n",
             mode: None,
         },
         InstallFile {
-            path: capability_route::enrollment_file_path(target),
-            description: format!(
-                "machine-local Capability Route enrollment evidence (mode={}); never a tracked manifest, no credential",
-                capability_route_mode.as_str()
-            ),
-            content: capability_route::render_enrollment_json(capability_route_mode, "ags setup"),
-            mode: None,
-        },
-        InstallFile {
             path: target.join("README.md"),
             description: "operator notes for this private runtime home".to_string(),
             content: readme,
@@ -350,115 +340,6 @@ Each command skill routes through AGS preflight before acting.\n",
     }
 }
 
-// ── Capability Route Enrollment (setup wizard, 五段链路第 1 段) ────────────────
-//
-// AGS surfaces a plan-only enrollment choice: which managed capabilities this
-// machine opts into Capability Route. The choice is machine-local runtime
-// evidence written to `<target>/capability-route/enrollment.json` on `--yes` — it
-// is never a tracked manifest, and AGS never auto-installs, registers, logs in,
-// or reads credentials for any capability. Non-interactive: the mode comes from
-// the `--capability-route` flag (default suite-only); CI never blocks on stdin.
-
-pub(in crate::setup) fn capability_route_enrollment_json(
-    mode: capability_route::EnrollmentMode,
-    target: &Path,
-) -> serde_json::Value {
-    let modes: Vec<serde_json::Value> = capability_route::EnrollmentMode::all()
-        .iter()
-        .map(|m| {
-            serde_json::json!({
-                "mode": m.as_str(),
-                "routes": m.description(),
-                "selected": *m == mode,
-                "default": *m == capability_route::EnrollmentMode::SuiteOnly,
-            })
-        })
-        .collect();
-    // Routing reads enrollment from the runtime home it resolves itself
-    // (AGS_RUNTIME_HOME → AGS_HOME → ~/.ags/runtime). Warn when this setup
-    // target is NOT that path: the evidence would be written somewhere routing
-    // won't read (fail-closed advisory degraded, never unsafe).
-    let routing_read_home = capability_route::locate_runtime_home();
-    let mut obj = serde_json::json!({
-        "selected_mode": mode.as_str(),
-        "default_mode": capability_route::EnrollmentMode::SuiteOnly.as_str(),
-        "evidence_path": capability_route::enrollment_file_path(target).to_string_lossy(),
-        "routing_read_path": capability_route::enrollment_file_path(&routing_read_home).to_string_lossy(),
-        "schema_version": capability_route::ENROLLMENT_SCHEMA,
-        "write_mode": "plan-only (writes on --yes)",
-        "modes": modes,
-        "boundary": "AGS records the routing-membership choice only. It never auto-installs, registers, logs in, or reads credentials for any capability. auth_status is runtime-derived and is never written here as configured.",
-        "fail_closed": "Missing or malformed evidence resolves to off (advisory degraded); Capability Route never blocks the user request or changes any gate.",
-        "set_with": "ags setup --capability-route <off|suite-only|adopted|review-all> --yes",
-    });
-    if target != routing_read_home {
-        obj["target_routing_note"] = serde_json::json!(
-            "This --target differs from the runtime home routing reads (AGS_RUNTIME_HOME → AGS_HOME → ~/.ags/runtime). Routing will not see enrollment written here unless AGS_RUNTIME_HOME (or AGS_HOME) points at this target. Fail-closed: routing degrades to advisory, never blocks."
-        );
-    }
-    obj
-}
-
-pub(in crate::setup) fn render_capability_route_enrollment_text(
-    mode: capability_route::EnrollmentMode,
-    target: &Path,
-) -> String {
-    let mut lines = vec![
-        "Capability Route Enrollment (五段链路第 1 段 · machine-local runtime evidence)"
-            .to_string(),
-        format!(
-            "  Selected mode: {} (default: {})",
-            mode.as_str(),
-            capability_route::EnrollmentMode::SuiteOnly.as_str()
-        ),
-        format!(
-            "  Evidence file: {}  [plan-only; writes on --yes]",
-            capability_route::enrollment_file_path(target).display()
-        ),
-        "  Modes:".to_string(),
-    ];
-    for m in capability_route::EnrollmentMode::all() {
-        let marker = if m == mode { "→" } else { " " };
-        lines.push(format!(
-            "    {} {:<11} {}",
-            marker,
-            m.as_str(),
-            m.description()
-        ));
-    }
-    lines.push(
-        "  Boundary: AGS records the routing-membership choice only — never auto-installs,"
-            .to_string(),
-    );
-    lines.push(
-        "            registers, logs in, or reads credentials. auth_status is runtime-derived,"
-            .to_string(),
-    );
-    lines.push("            never written here as configured.".to_string());
-    lines.push(
-        "  Fail-closed: missing/malformed evidence ⇒ off (advisory degraded); never blocks."
-            .to_string(),
-    );
-    let routing_read_home = capability_route::locate_runtime_home();
-    if target != routing_read_home {
-        lines.push(format!(
-            "  NOTE: routing reads enrollment from {} (AGS_RUNTIME_HOME → AGS_HOME → default);",
-            capability_route::enrollment_file_path(&routing_read_home).display()
-        ));
-        lines.push(
-            "        this --target differs, so routing won't see evidence written here unless"
-                .to_string(),
-        );
-        lines.push(
-            "        AGS_RUNTIME_HOME/AGS_HOME points at it (fail-closed advisory).".to_string(),
-        );
-    }
-    lines.push(
-        "  Set with: ags setup --capability-route <off|suite-only|adopted|review-all> --yes"
-            .to_string(),
-    );
-    lines.join("\n")
-}
 fn install_file_status(file: &InstallFile) -> &'static str {
     if codex_skill_thin_index_ancestor(&file.path).is_some() {
         return "thin-index-symlink";
@@ -664,11 +545,7 @@ mod install_plan_tests {
     #[test]
     fn private_install_plan_has_core_files() {
         let target = std::env::temp_dir().join("ags-private-install-plan-default-test");
-        let plan = private_install_plan(
-            &workspace_root(),
-            &target,
-            capability_route::EnrollmentMode::SuiteOnly,
-        );
+        let plan = private_install_plan(&workspace_root(), &target);
         assert!(plan
             .files
             .iter()
@@ -703,11 +580,7 @@ mod install_plan_tests {
     #[test]
     fn codex_visible_command_skills_are_exactly_the_canonical_five() {
         let target = std::env::temp_dir().join("ags-public-install-plan-five-set-test");
-        let plan = private_install_plan(
-            &workspace_root(),
-            &target,
-            capability_route::EnrollmentMode::SuiteOnly,
-        );
+        let plan = private_install_plan(&workspace_root(), &target);
 
         let spec_names: Vec<&str> = codex_ags_command_skill_specs()
             .iter()
@@ -781,11 +654,7 @@ mod install_plan_tests {
         // integration snippets. They register AGS MCP only; they do not create
         // runtime adapters or change execution-policy authority.
         let target = std::env::temp_dir().join("ags-tencent-snippet-struct-test");
-        let plan = private_install_plan(
-            &workspace_root(),
-            &target,
-            capability_route::EnrollmentMode::SuiteOnly,
-        );
+        let plan = private_install_plan(&workspace_root(), &target);
         for name in [
             "hosts/tencent-agent.mcp.snippet.json",
             "hosts/workbuddy.mcp.snippet.json",
@@ -824,6 +693,9 @@ mod install_plan_tests {
         assert!(content.contains("ags init --target ."));
         assert!(content.contains("/ags setup"));
         assert!(content.contains("/ags init"));
+        assert!(content.contains("MCP `ags_route_request`"));
+        assert!(content.contains("structured `RequestDecision`"));
+        assert!(content.contains("decision selects task compilation"));
         assert!(content.contains(AGS_VERSION));
     }
 
@@ -835,6 +707,9 @@ mod install_plan_tests {
             assert!(content.contains(&format!("name: \"{name}\"")));
             assert!(content.contains(&format!("/ags {route}")));
             assert!(content.contains("ags session preflight --for codex --target ."));
+            assert!(content.contains("明确要求任务卡/交接"));
+            assert!(content.contains("handoff contract 已独立确认"));
+            assert!(content.contains("未决或重开的 solution work"));
             assert!(content.contains(AGS_VERSION));
             assert!(content.contains("必须先执行"));
         }

@@ -21,35 +21,39 @@ state:
 - what review gate is required,
 - what evidence is required before claiming completion.
 
-## Lifecycle Boundary: Preflight / Solution Are Not Runner Execution
+## Lifecycle Boundary: Request Routing Is Not Runner Execution
 
 The fields defined in this file (Permission mode, Parallelism, Execution
 surface, launch args) govern task-card handoff execution. They do not govern
-the earlier lifecycle phases or authorized host-native `direct-edit`:
+the earlier lifecycle phases, bounded `direct-response`, or authorized
+host-native `direct-edit`:
 
 - **Ambient preflight** (project detection, context reading, git status) is a
   read-only discovery phase. It runs before any task card exists and is not
   constrained by Permission mode or Parallelism.
+- **Request Router** is the only natural-language routing node. Its structured
+  `RequestDecision` selects `DirectResponse`, `SkillDemand`, and/or one
+  business-level `MachineCli` capability before task-level classification.
 - **Solution phase** (understanding, diagnosis, solution formation, user
-  confirmation) is a framing phase performed by Codex / Cursor. It produces the
-  stable solution used by either direct execution or task-card handoff.
-- **Direct edit** is host-native same-session execution after explicit mutation
-  authorization. It does not compile a task card, but still obeys independent
-  protected-path, release, review, and verification boundaries.
+  confirmation) is conditional framing performed by Codex / Cursor only while
+  material decisions remain unresolved. An already approved contract is reused
+  instead of being designed again.
+- **Direct edit** is host-native same-session execution only when an approved
+  contract and an explicit live modification instruction are both present. It
+  does not compile a task card, but still obeys independent protected-path,
+  release, review, and verification boundaries. An unresolved or reopened
+  design returns to solution formation.
 
 Only after the user explicitly requests a task-card handoff and the card is
 compiled do runtime-adapter fields take effect. The runner, resolver, and gate
 operate on that card; they do not govern solution formation or direct edit.
 
-**Value Route is not a runtime adapter field.** The Value Route recommendation
-(`read-only-advisory` / `direct-edit` / `plan-first` / `claude-code-route` /
-`stop-for-scope`; see `protocol/agent-task-protocol.md` §3.9) is an advisory
-solution-phase signal about the execution-path *form*. It is distinct from
-`Runtime adapter`, `Permission mode`, and `Execution surface`, and it never sets
-or changes them. WorkBuddy and CodeBuddy-Code are Tencent Agent host clients;
+**RequestDecision is not a runtime adapter field.** It is distinct from
+`Runtime adapter`, `Permission mode`, and `Execution surface`, and never sets or
+changes them. WorkBuddy and CodeBuddy-Code are Tencent Agent host clients;
 like any host other than `codex` / `claude-code` / `cursor` they map to
 `Runtime adapter: generic` (M9 caps permission at `plan-only` without explicit
-approval). Value Route does not change that mapping.
+approval). Request routing does not change that mapping.
 
 Two distinct layers must not be conflated. The `default_permission_mode` reported
 by `ags agent instructions` / `ags session preflight` (for example,
@@ -62,11 +66,12 @@ execution-policy resolver acting on a task card's `Runtime adapter` field: M9 ca
 actual task-card writes gated at `plan-only` by M9, regardless of the discovery
 baseline shown in agent instructions.
 
-**Task-card handoff gate**: `ags task compile` requires
-`--task-card-requested` before it will output a handoff task card. Without this
-flag, card generation reports `executable_allowed=false` and
-`block_reason=task_card_not_requested`. Codex/Cursor pass this flag only after an
-explicit task-card/handoff instruction. This compiler gate does not apply to
+**Task-card handoff gate**: `ags task compile` requires both
+`--task-card-requested` and `--confirmed-handoff-contract` before it will output
+a handoff task card. Missing request evidence reports
+`block_reason=task_card_not_requested`; missing structured contract evidence
+reports `block_reason=handoff_contract_not_confirmed`; reopened solution work
+reports `solution_formation_required`. This compiler gate does not apply to
 authorized same-session `direct-edit`; \"方案 OK\" alone authorizes neither path.
 
 ## Generic Fields

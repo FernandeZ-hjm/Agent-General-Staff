@@ -2,7 +2,7 @@
 members = [
     "crates/ags-cli",
     "crates/task-card-validator",
-    "crates/prompt-request-classifier",
+    "crates/request-router",
     "crates/workflow-sync-check",
     "crates/suite-doctor",
     "crates/bootstrap-dry-run",
@@ -16,11 +16,11 @@ members = [
     "crates/skill-governance",
     "crates/ags-mcp",
     "crates/ags-platform",
-    "crates/capability-route",
+    "crates/skill-resolver",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.2.7"
+version = "0.2.8"
 edition = "2021"
 license = "GPL-3.0-only"

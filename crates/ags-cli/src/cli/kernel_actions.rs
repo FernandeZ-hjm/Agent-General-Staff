@@ -39,16 +39,23 @@ pub(crate) enum TaskAction {
         check_only: bool,
         /// Task card explicitly requested by the user.
         ///
-        /// This is the hard gate between "solution OK" and task card generation.
-        /// Without this flag, the compiler produces a diagnostic report only —
-        /// it will NOT output an executable task card.  Set this flag only after
-        /// the user has explicitly issued a task-card instruction ("生成任务卡",
-        /// "按这个方案出任务卡", "交给 Claude Code 执行", etc.).
+        /// This is one half of the hard gate between a confirmed handoff
+        /// contract and task-card generation. Without this flag, the compiler
+        /// produces a diagnostic report only. Set it only after an explicit
+        /// task-card instruction ("生成任务卡", "按这个方案出任务卡", etc.).
         ///
         /// Without --task-card-requested, the report will show
         /// executable_allowed=false with block_reason=task_card_not_requested.
         #[arg(long, default_value_t = false)]
         task_card_requested: bool,
+        /// Structured evidence that solution, scope, verification, and handoff
+        /// boundaries have already been confirmed for this task card.
+        ///
+        /// This does not authorize mutation. Task-card generation additionally
+        /// requires --task-card-requested and is still blocked when the intent
+        /// contains unresolved or reopened design work.
+        #[arg(long, default_value_t = false)]
+        confirmed_handoff_contract: bool,
     },
 }
 #[derive(Subcommand)]
@@ -134,36 +141,6 @@ pub(crate) enum GateAction {
         current_task_approval: bool,
     },
 
-    /// Entry gate for a raw request or an existing canonical task card.
-    ///
-    /// A payload beginning with the canonical `## 任务卡` header is validated
-    /// first: valid cards return `execute_task_card` with
-    /// `task_card_generation_required=false` and route directly to policy/runner
-    /// consumption; invalid card-shaped payloads stop and never fall through to
-    /// generation. Other input keeps the deterministic prompt-request-classifier
-    /// behavior:
-    /// task-card intent returns `require_task_card`, ordinary prose returns
-    /// `allow`. Session preflight remains a fail-closed precondition unless
-    /// `--no-preflight`.
-    PromptRequest {
-        /// User request text or complete task-card payload (use "-" for stdin).
-        request: String,
-        /// Target repository path for the preflight precondition and the
-        /// Capability Route manifest root (resolved from this path or a subdir).
-        #[arg(long, default_value = ".")]
-        target: PathBuf,
-        /// Active host for the advisory Capability Route and the preflight
-        /// precondition agent. Empty value is host-agnostic (fail-closed).
-        #[arg(long = "for", default_value = "claude-code")]
-        for_agent: String,
-        /// Skip the preflight precondition (pure classification only).
-        #[arg(long, default_value_t = false)]
-        no_preflight: bool,
-        /// Output format: text (human-readable) or json (machine-readable)
-        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
-        format: String,
-    },
-
     /// Frontstage output-shape gate: verify a candidate foreground answer is a
     /// canonical task card.
     ///
@@ -182,27 +159,6 @@ pub(crate) enum GateAction {
         format: String,
     },
 
-    /// Deterministic advisory Capability Route for a request — which managed
-    /// capability to suggest waking up, whether it is reachable, and the advisory
-    /// route_action (no-route / invoke-readonly / confirm-before-invoke /
-    /// blocked-by-policy). The same route is surfaced as the `capability_route`
-    /// block on `gate prompt-request` and the MCP `ags_solution_check`; this is
-    /// the standalone surface. Advisory only — never changes task level,
-    /// permission mode, Review gate, or Verification gate.
-    CapabilityRequest {
-        /// User request text (use "-" for stdin).
-        request: String,
-        /// Target repository path used to read capability manifests.
-        #[arg(long, default_value = ".")]
-        target: PathBuf,
-        /// Active host the route targets (default `claude-code`). An empty value
-        /// is host-agnostic (conservative, fail-closed).
-        #[arg(long = "for", default_value = "claude-code")]
-        for_agent: String,
-        /// Output format: text (human-readable) or json (machine-readable)
-        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
-        format: String,
-    },
     /// Task-card skill-tag availability gate (the three-gate rule).
     ///
     /// Validates a task card's trailing `[skill: …]` tags against BOTH the static

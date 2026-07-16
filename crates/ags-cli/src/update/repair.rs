@@ -36,7 +36,7 @@ pub(in crate::update) fn cmd_update_repair_local(
     guard_writable_target("ags update repair-local", &rt_target);
     // `None` preserves the machine's recorded Capability Route enrollment
     // (suite-only default if none) — repair never silently changes it.
-    let (report, _target, plan_text) = run_private_apply(target.clone(), force, false, None);
+    let (report, _target, plan_text) = run_private_apply(target.clone(), force, false);
     let passed = report.passed();
     let ar = receipt::build_action_receipt(
         "update-repair-local",

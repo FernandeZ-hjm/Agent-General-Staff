@@ -42,7 +42,7 @@ suite_interfaces:
     package:
       manager: "cargo"
       name: "ags-mcp"
-      version: "0.2.7"
+      version: "0.2.8"
       repository: "this repository"
       license: "MIT"
     install:
@@ -73,7 +73,7 @@ suite_interfaces:
         - "Check protocol status, export agent instructions, validate task cards."
         - "Resolve execution policy for validated task cards."
         - "Run local-scope verification checks."
-        - "Check solution formation phase and task-card instruction gate."
+        - "Return the canonical RequestDecision from the unique requirement router."
         - "Return AGS protocol resources and governance prompts."
       denied:
         - "Write files, install hooks, or modify any configuration."
@@ -89,7 +89,7 @@ suite_interfaces:
       rule: >
         In any AGS scenario, the host MUST call ags_preflight (or CLI fallback)
         before invoking any other AGS tool. All other AGS tools
-        (ags_solution_check, ags_task_validate, ags_policy_resolve,
+        (ags_route_request, ags_task_validate, ags_policy_resolve,
         ags_verify_local) require preflight to have completed first.
         Hosts should reject calls to these tools before preflight.
     risk:

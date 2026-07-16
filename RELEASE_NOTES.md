@@ -9,20 +9,41 @@ to ship the `ags` CLI, canonical task-card protocols, execution-policy checks,
 release-boundary verification, memory-capsule templates, and public
 skill-governance workflows.
 
-The current CLI/package version is `0.2.7`; current release tags use the same
-`v0.2.7` form. Older `2.x` headings below are preserved as historical product
+The current CLI/package version is `0.2.8`; current release tags use the same
+`v0.2.8` form. Older `2.x` headings below are preserved as historical product
 release labels and are not rewritten.
+
+## Release 0.2.8
+
+### One request router, one structured decision
+
+- Replaced overlapping request and skill routing implementations with one
+  natural-language `request-router`. MCP `ags_route_request` receives complete
+  host conversation context and returns a closed `RequestDecision`.
+- `DirectResponse` is exclusive. One `SkillDemand` and one business-level
+  `MachineCli` target may coexist; the router never assembles CLI subcommands
+  into a workflow.
+- Added `skill-resolver`, which maps closed demands against a validated
+  `ActiveSkillTable`. Missing skills return unavailable without automatic
+  substitution; alternatives remain advisory only.
+- MCP invokes machine capabilities through fixed argv on the real `ags` CLI.
+  Compiler, Policy, Gate, and Runner consume structured contracts and never
+  re-parse natural language.
+- Capability snapshots now carry a registry/runtime hash. Stale snapshots fail
+  closed and can be refreshed with `ags capability snapshot --write`.
+- Task-card compilation requires both an explicit task-card request and a
+  confirmed, closed handoff contract. Existing canonical task cards remain
+  validate-first inputs.
+- Removed compatibility routing aliases and enrollment state, added positive
+  and negative routing tests, and isolated MCP tests from machine-local
+  snapshots.
 
 ## Release 0.2.7
 
 ### Unified routing model
 
-- Entry architecture switched to **unified routing** (`gate prompt-request`).
-  Raw user requests are classified by `prompt-request-classifier` for intent,
-  routed through `capability-route` for capability wakeup advice, and evaluated
-  by `value-route` for execution-path form before deciding whether to enter the
-  task-card pipeline. Requests that do not require a task card are allowed
-  through as ordinary responses.
+- Entry architecture used the previous multi-stage request-routing model before
+  the single-decision architecture introduced in 0.2.8.
 - Existing canonical task cards are the validate-first exception: input whose
   first non-empty line is `## 任务卡` is validated before request
   classification. A valid card proceeds directly to policy/runner consumption;
@@ -51,9 +72,8 @@ release labels and are not rewritten.
 
 ### Capability skill retirement
 
-- The public `ags capability` skill entry is retired from setup. Capability
-  routing remains available as an internal advisory crate
-  (`crates/capability-route`) and via `ags gate capability-request`.
+- The public `ags capability` skill entry was retired from setup; capability
+  discovery remained available through the CLI compatibility surface.
 
 ### Capability host integrity
 
@@ -109,7 +129,7 @@ project license from MIT to GPL-3.0-only.
 
 ### Capability and routing
 
-- Retired the `auto-brainstorm` / `auto-debug` / `auto-verify` aliases. Brainstorm
+- Retired the legacy automatic routing aliases. Brainstorm
   demand now routes to `grill-with-docs`, debugging to `diagnosing-bugs`, and
   verification to `verification-before-completion`. The aliases are no longer
   suite-required or auto-triggered.
@@ -119,7 +139,7 @@ project license from MIT to GPL-3.0-only.
   `zoom-out` → `codebase-design`; `caveman-commit` removed (no replacement). The
   Light review gate now names `requesting-code-review`.
 - Capability Route ships as a tracked advisory routing crate
-  (`crates/capability-route`) — manifest-driven and advisory-only across the MCP, CLI,
+  — manifest-driven and advisory-only across the MCP, CLI,
   and skill-governance inventory surfaces.
 
 ### Diagnostics
@@ -165,9 +185,8 @@ surface:
   explicit execution authorization is present.
 - Quiet foreground status: MCP responses expose `visible_status` summaries while
   retaining full traceable evidence in the structured report.
-- Value Route: `ags_solution_check` and `ags gate prompt-request` expose an
-  advisory `value_route` block that recommends the lightest execution-path form
-  that still covers the risk.
+- The previous advisory phase gate recommended the lightest execution-path form
+  that still covered the risk.
 - Tencent Agent host recognition: WorkBuddy and CodeBuddy-Code are recognized as
   Tencent Agent host clients with governed-host preflight behavior.
 - Verification routing: `ags verify lane` and the shell lane-decision helper

@@ -64,6 +64,21 @@ pub(crate) enum CapabilityAction {
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
     },
+    /// Derive the machine-local ActiveSkillTable snapshot + attestation hash.
+    Snapshot {
+        /// Active host whose routable skill table is captured.
+        #[arg(long = "host", default_value = "codex")]
+        host: String,
+        /// Project root path (default: current directory).
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+        /// Write the snapshot JSON to the machine-local runtime home.
+        #[arg(long)]
+        write: bool,
+        /// Output format: text (default) or json.
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
     /// Plan (or, with `--apply`, perform) a single capability's cross-host entry.
     ///
     /// AGS-owned skill thin-index writes go through the confirmation guard

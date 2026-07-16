@@ -18,8 +18,9 @@ pub fn list_resources() -> ResourceListResult {
                 description: Some(
                     "AGS global governance kernel summary — lifecycle, rules, and host boundaries. \
                      Applicable to any project; does NOT assume the target is an AGS repo. \
-                     Includes: ambient preflight → solution formation → user decision → \
-                     direct execution or task-card handoff → routing → gate/verification/receipt. \
+                     Includes: ambient preflight → one structured RequestDecision; \
+                     DirectResponse is exclusive, while SkillDemand and one MachineCli may \
+                     coexist; structured consumers handle execution and verification. \
                      Critical: do NOT jump from raw user requests to Light/Medium/Heavy; \
                      \"方案 OK\" authorizes neither mutation nor task-card generation."
                         .to_string(),

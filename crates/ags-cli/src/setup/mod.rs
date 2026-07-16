@@ -24,8 +24,7 @@ use crate::setup::global_entry::{
     write_ags_global_entry,
 };
 use crate::setup::plan::{
-    capability_route_enrollment_json, cleanup_install_dir, private_install_plan,
-    render_capability_route_enrollment_text, render_private_plan_json, render_private_plan_text,
+    cleanup_install_dir, private_install_plan, render_private_plan_json, render_private_plan_text,
 };
 use crate::setup::recommendations::{
     render_third_party_recommendations_text, third_party_recommendations_json,
@@ -58,23 +57,14 @@ pub(in crate::setup) fn retired_codex_ags_skill_dirs() -> Vec<PathBuf> {
         codex_ags_named_skill_dir("ags-capability"),
     ]
 }
-pub(crate) fn cmd_private_plan(
-    profile: &str,
-    target: Option<PathBuf>,
-    format: &str,
-    capability_route_mode: Option<capability_route::EnrollmentMode>,
-) {
+pub(crate) fn cmd_private_plan(profile: &str, target: Option<PathBuf>, format: &str) {
     if profile != "private" {
         eprintln!("ags plan: unsupported profile '{profile}'");
         std::process::exit(2);
     }
     let source_root = source_root_or_exit("ags setup");
     let target = private_install_target(target);
-    // Resolve the EFFECTIVE mode the plan would write: an explicit flag wins;
-    // otherwise preserve the machine's existing enrollment (suite-only default if
-    // none). This makes the plan render match what apply would actually do.
-    let effective_mode = effective_enrollment_mode(capability_route_mode, &target);
-    let plan = private_install_plan(&source_root, &target, effective_mode);
+    let plan = private_install_plan(&source_root, &target);
     let wizard = cross_platform_init_plan(&home_dir(), &|c| ags_platform::is_on_path(c));
     match format {
         "json" => {
@@ -82,10 +72,6 @@ pub(crate) fn cmd_private_plan(
                 serde_json::from_str(&render_private_plan_json(&plan))
                     .unwrap_or_else(|_| serde_json::json!({}));
             if let Some(obj) = value.as_object_mut() {
-                obj.insert(
-                    "capability_route_enrollment".to_string(),
-                    capability_route_enrollment_json(effective_mode, &target),
-                );
                 obj.insert(
                     "cross_platform_init".to_string(),
                     cross_platform_init_json(&wizard),
@@ -106,11 +92,6 @@ pub(crate) fn cmd_private_plan(
         }
         _ => {
             println!("{}", render_private_plan_text(&plan));
-            println!();
-            println!(
-                "{}",
-                render_capability_route_enrollment_text(effective_mode, &target)
-            );
             println!();
             println!("{}", render_cross_platform_init_text(&wizard));
             println!();
@@ -140,35 +121,15 @@ pub(crate) fn cmd_private_plan(
 /// report, the resolved target, and the plan text. Callers decide output and
 /// exit so reusing paths (e.g. `ags update apply`) can still emit their own
 /// receipt / JSON after the runtime writes complete.
-/// Resolve the effective enrollment mode for an apply. `Some(mode)` is an
-/// explicit operator choice; `None` (update / repair re-runs) PRESERVES the
-/// machine's recorded enrollment, falling back to the `suite-only` default when
-/// no usable evidence exists — never silently disabling routing.
-fn effective_enrollment_mode(
-    requested: Option<capability_route::EnrollmentMode>,
-    target: &std::path::Path,
-) -> capability_route::EnrollmentMode {
-    if let Some(mode) = requested {
-        return mode;
-    }
-    let existing = capability_route::read_enrollment(target);
-    if existing.present {
-        existing.mode
-    } else {
-        capability_route::EnrollmentMode::SuiteOnly
-    }
-}
 pub(crate) fn run_private_apply(
     target: Option<PathBuf>,
     force: bool,
     register_claude: bool,
-    capability_route_mode: Option<capability_route::EnrollmentMode>,
 ) -> (suite_doctor::HealthReport, PathBuf, String) {
     let source_root = source_root_or_exit("ags setup");
     let target = private_install_target(target);
     guard_writable_target("ags setup", &target);
-    let mode = effective_enrollment_mode(capability_route_mode, &target);
-    let plan = private_install_plan(&source_root, &target, mode);
+    let plan = private_install_plan(&source_root, &target);
     let plan_text_before_apply = render_private_plan_text(&plan);
     let backup_stamp = unix_timestamp();
     let mut report = suite_doctor::HealthReport::new("private-install-apply");
@@ -187,6 +148,19 @@ pub(crate) fn run_private_apply(
     // runtime target — never a host config). Confirm-gated: only the apply path
     // reaches here.
     report.add(write_ags_global_entry(&target));
+    if report.passed() {
+        match crate::capability::refresh_skill_snapshot(&source_root, &target, "codex") {
+            Ok(path) => report.add(suite_doctor::Finding::pass(
+                "skill-active-table-snapshot",
+                format!("refreshed {}", path.display()),
+            )),
+            Err(error) => report.add(suite_doctor::Finding::fail(
+                "skill-active-table-snapshot",
+                "failed to refresh ActiveSkillTable snapshot",
+                error,
+            )),
+        }
+    }
     (report, target, plan_text_before_apply)
 }
 pub(crate) fn cmd_private_apply(
@@ -196,7 +170,6 @@ pub(crate) fn cmd_private_apply(
     force: bool,
     format: &str,
     register_claude: bool,
-    capability_route_mode: Option<capability_route::EnrollmentMode>,
 ) {
     if profile != "private" {
         eprintln!("ags apply: unsupported profile '{profile}'");
@@ -209,7 +182,7 @@ pub(crate) fn cmd_private_apply(
     }
 
     let (report, target, plan_text_before_apply) =
-        run_private_apply(target, force, register_claude, capability_route_mode);
+        run_private_apply(target, force, register_claude);
 
     match format {
         "json" => {
@@ -241,23 +214,14 @@ pub(crate) fn cmd_setup(
     register_claude: bool,
     dry_run: bool,
     format: &str,
-    capability_route_mode: Option<capability_route::EnrollmentMode>,
 ) {
     let did_apply = yes && !dry_run;
     let mut apply_code: Option<i32> = None;
     let mut receipt_path: Option<PathBuf> = None;
     if did_apply {
-        // Use the NON-exiting apply helper so the setup receipt + next-step are
-        // actually reached (cmd_private_apply exits the process). `None` (no flag)
-        // PRESERVES the machine's existing enrollment, keeping `ags setup --yes`
-        // idempotent — it never downgrades an `adopted`/`review-all` machine to the
-        // `suite-only` default. An explicit flag is `Some(..)` and wins.
-        let (report, rt_target, plan_text) = run_private_apply(
-            target.clone(),
-            force,
-            register_claude,
-            capability_route_mode,
-        );
+        // Use the non-exiting apply helper so setup can emit its receipt.
+        let (report, rt_target, plan_text) =
+            run_private_apply(target.clone(), force, register_claude);
         match format {
             "json" => {
                 let output = serde_json::json!({
@@ -316,7 +280,7 @@ pub(crate) fn cmd_setup(
         );
     }
     // Always show the Global Entry Protocol Templates gate + wizard.
-    cmd_private_plan("private", target, format, capability_route_mode);
+    cmd_private_plan("private", target, format);
     if did_apply && format != "json" {
         if let Some(p) = &receipt_path {
             println!("\n{}", receipt::render_action_receipt_summary_line(p));
@@ -349,79 +313,4 @@ fn print_setup_agent_governance_next_step() {
     println!("  • `ags agents scan`    inventory hosts + AGS MCP registration");
     println!("  • `ags agents govern`  plan AGS MCP onboarding (advise-only)");
     println!("  • then `ags skill` to govern skills, `ags init` to onboard a project.");
-}
-
-#[cfg(test)]
-mod enrollment_preserve_tests {
-    use super::effective_enrollment_mode;
-    use capability_route::{enrollment_file_path, render_enrollment_json, EnrollmentMode};
-    use std::path::{Path, PathBuf};
-
-    fn tmp(tag: &str) -> PathBuf {
-        let base =
-            std::env::temp_dir().join(format!("ags-setup-enr-{}-{}", std::process::id(), tag));
-        let _ = std::fs::remove_dir_all(&base);
-        std::fs::create_dir_all(&base).unwrap();
-        base
-    }
-
-    fn write_mode(home: &Path, mode: EnrollmentMode) {
-        let p = enrollment_file_path(home);
-        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-        std::fs::write(&p, render_enrollment_json(mode, "ags setup")).unwrap();
-    }
-
-    /// Codex review fix: a routine `ags setup --yes` WITHOUT `--capability-route`
-    /// must PRESERVE an existing adopted/review-all enrollment, never downgrade it
-    /// to the suite-only default.
-    #[test]
-    fn omitted_flag_preserves_existing_adopted_and_review_all() {
-        let h = tmp("adopted");
-        write_mode(&h, EnrollmentMode::Adopted);
-        assert_eq!(effective_enrollment_mode(None, &h), EnrollmentMode::Adopted);
-        let _ = std::fs::remove_dir_all(&h);
-
-        let h = tmp("review");
-        write_mode(&h, EnrollmentMode::ReviewAll);
-        assert_eq!(
-            effective_enrollment_mode(None, &h),
-            EnrollmentMode::ReviewAll
-        );
-        let _ = std::fs::remove_dir_all(&h);
-    }
-
-    #[test]
-    fn omitted_flag_defaults_suite_only_when_no_evidence() {
-        let h = tmp("none");
-        assert_eq!(
-            effective_enrollment_mode(None, &h),
-            EnrollmentMode::SuiteOnly
-        );
-        let _ = std::fs::remove_dir_all(&h);
-    }
-
-    #[test]
-    fn explicit_flag_overrides_existing_enrollment() {
-        // An explicit choice wins even over an existing broader enrollment.
-        let h = tmp("override");
-        write_mode(&h, EnrollmentMode::ReviewAll);
-        assert_eq!(
-            effective_enrollment_mode(Some(EnrollmentMode::Off), &h),
-            EnrollmentMode::Off
-        );
-        let _ = std::fs::remove_dir_all(&h);
-    }
-
-    /// Preserve must be byte-idempotent: re-rendering the preserved mode yields the
-    /// exact existing file, so a setup refresh reports "unchanged" (no --force, no
-    /// downgrade).
-    #[test]
-    fn preserve_re_renders_identical_bytes() {
-        let h = tmp("idem");
-        write_mode(&h, EnrollmentMode::Adopted);
-        let existing = std::fs::read_to_string(enrollment_file_path(&h)).unwrap();
-        let mode = effective_enrollment_mode(None, &h);
-        assert_eq!(existing, render_enrollment_json(mode, "ags setup"));
-        let _ = std::fs::remove_dir_all(&h);
-    }
 }

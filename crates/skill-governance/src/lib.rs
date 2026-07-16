@@ -1784,4 +1784,16 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["summary"]["crawl_performed"], false);
     }
+
+    #[test]
+    fn public_registry_keeps_superpowers_playbooks_metadata_only() {
+        let root = repo_root();
+        assert!(!root.join("global-skills").exists());
+        let registry = std::fs::read_to_string(root.join("manifests/skills-registry.yaml"))
+            .expect("read public skill registry");
+        assert!(registry.contains("skill_id: superpowers"));
+        assert!(registry.contains("entrypoint: brainstorming"));
+        assert!(registry.contains("parent: { kind: skill, name: superpowers }"));
+        assert!(registry.contains("entrypoint: { kind: playbook"));
+    }
 }

@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-pub const CONSOLE_SCHEMA_VERSION: &str = "0.2.7-skill-console";
+pub const CONSOLE_SCHEMA_VERSION: &str = "0.2.8-skill-console";
 
 // ── Command runner seam ─────────────────────────────────────────────────────
 
@@ -201,8 +201,8 @@ pub struct HostVisibility {
     pub evidence: Vec<String>,
 }
 
-/// What kind of state a capability mutates when invoked. Used by Capability
-/// Route to cross-check a routed capability against the Value Route posture.
+/// What kind of state a capability mutates when invoked. Retained as inventory
+/// metadata; execution authority is owned by Policy/Gate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum MutationSurface {
@@ -231,7 +231,7 @@ pub enum CostClass {
     Paid,
 }
 
-/// Whether a managed capability participates in Capability Route. Fail-closed by
+/// Whether a managed capability may enter ActiveSkillTable. Fail-closed by
 /// construction: the serde default is `NotRoutable`, so a capability is NEVER
 /// silently routed merely by carrying routing fields — only an explicit
 /// `route_state: routable` makes it a routing candidate. `Retired` keeps the row
@@ -242,7 +242,7 @@ pub enum CostClass {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum RouteState {
-    /// Explicitly participates in Capability Route.
+    /// Explicitly eligible for deterministic skill resolution.
     Routable,
     /// Intentionally never routed (e.g. AGS ops commands, personal packs). The
     /// fail-closed default: absence of an explicit state reads as not-routable.
@@ -309,7 +309,7 @@ pub struct EntrypointRef {
 
 /// Stable routing facts declared in a manifest (`skills-registry.yaml` /
 /// `mcp-registry.yaml`) and read into the inventory. This is the SINGLE source
-/// of truth for production Capability Route — there is no built-in fallback
+/// of truth for deterministic skill eligibility — there is no built-in fallback
 /// table. Only *stable facts* live here; the runtime `auth_status` (whether an
 /// account is actually configured) is DERIVED at route time and is NEVER stored
 /// in a tracked manifest.
@@ -423,7 +423,7 @@ pub struct ManagedCapability {
     /// Management actions the console offers for this capability.
     pub actions: Vec<String>,
     pub risk_notes: Vec<String>,
-    /// Stable routing facts from the manifest (Capability Route input). `None`
+    /// Stable routing facts from the manifest (Skill Resolver input). `None`
     /// when the manifest declares no `routing:` block — production routing does
     /// NOT fall back to a built-in table.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -452,7 +452,7 @@ pub struct ManagedInventorySummary {
     /// Count visible to Claude Code (host_visibility status == visible).
     pub claude_visible: usize,
     pub risk_flagged: usize,
-    /// Routing coverage (Capability Route) — members by route_state.
+    /// Skill-resolution coverage — members by route_state.
     #[serde(default)]
     pub routing_routable: usize,
     #[serde(default)]
@@ -576,7 +576,7 @@ fn read_mcp_registry(repo_root: &Path) -> Vec<RegistryEntry> {
     out
 }
 
-// ── Routing metadata reader (Capability Route, manifest = single authority) ───
+// ── Skill-resolution metadata reader (manifest = single authority) ───────────
 
 /// Result of reading routing metadata from the manifests: the parsed per-member
 /// `map` plus the `parse_failures` — names of members whose `routing:` block was
@@ -1024,6 +1024,67 @@ fn host_skill_body_dirs(ctx: &ConsoleContext, host: &str, name: &str) -> Vec<Pat
         .collect()
 }
 
+fn nested_playbook_skill_files(body: &Path) -> Vec<PathBuf> {
+    let root = body.join("playbooks");
+    let mut pending = vec![root];
+    let mut found = Vec::new();
+
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_dir() {
+                pending.push(path);
+            } else if entry.file_name() == "SKILL.md" && path.is_file() {
+                found.push(path);
+            }
+        }
+    }
+
+    found.sort();
+    found
+}
+
+fn playbook_body_issues(body: &Path, playbooks: &[String]) -> Vec<String> {
+    let missing: Vec<&str> = playbooks
+        .iter()
+        .filter_map(|playbook| {
+            (!body
+                .join("playbooks")
+                .join(playbook)
+                .join("PLAYBOOK.md")
+                .is_file())
+            .then_some(playbook.as_str())
+        })
+        .collect();
+    let nested = nested_playbook_skill_files(body);
+    let mut issues = Vec::new();
+    if !missing.is_empty() {
+        issues.push(format!(
+            "required PLAYBOOK.md resource(s) are missing from {}: {}",
+            body.display(),
+            missing.join(", ")
+        ));
+    }
+    if !nested.is_empty() {
+        issues.push(format!(
+            "nested SKILL.md file(s) are host-discoverable under {}: {}",
+            body.display(),
+            nested
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    issues
+}
+
 fn apply_playbook_entrypoint_integrity(
     ctx: &ConsoleContext,
     caps: &mut [ManagedCapability],
@@ -1053,27 +1114,27 @@ fn apply_playbook_entrypoint_integrity(
                 continue;
             }
             let bodies = host_skill_body_dirs(ctx, &visibility.host, &cap.name);
-            let loadable = bodies.iter().any(|body| {
-                playbooks.iter().all(|playbook| {
-                    body.join("playbooks")
-                        .join(playbook)
-                        .join("SKILL.md")
-                        .is_file()
-                })
-            });
-            if !loadable {
+            let issues: Vec<String> = if bodies.is_empty() {
+                vec![format!(
+                    "host-visible parent body for '{}' could not be resolved",
+                    cap.name
+                )]
+            } else {
+                bodies
+                    .iter()
+                    .flat_map(|body| playbook_body_issues(body, playbooks))
+                    .collect()
+            };
+            if !issues.is_empty() {
                 visibility.status = HostVisibilityStatus::Degraded;
-                visibility.evidence.push(format!(
-                    "parent skill is visible but required playbook entrypoint(s) are missing: {}",
-                    playbooks.join(", ")
-                ));
+                visibility.evidence.extend(issues);
                 degraded = true;
             }
         }
         if degraded {
             cap.health_status = HealthStatus::Degraded;
             cap.risk_notes.push(
-                "One or more declared playbook entrypoints are not loadable from the host-visible parent body."
+                "The host-visible parent must expose each declared playbook as PLAYBOOK.md resources and contain no nested SKILL.md entrypoints."
                     .to_string(),
             );
         }
@@ -1276,56 +1337,7 @@ fn thin_index_target_match(real_entry: &Path, real_canonical: &Path) -> Option<&
     if real_entry == real_canonical {
         return Some("AGS canonical body");
     }
-    if same_private_stable_suite_path(real_entry, real_canonical) {
-        return Some("AGS stable/private runtime twin");
-    }
     None
-}
-
-fn same_private_stable_suite_path(real_entry: &Path, real_canonical: &Path) -> bool {
-    let Some((entry_suite, entry_rel)) = split_suite_runtime_path(real_entry) else {
-        return false;
-    };
-    let Some((canonical_suite, canonical_rel)) = split_suite_runtime_path(real_canonical) else {
-        return false;
-    };
-
-    entry_suite != canonical_suite && entry_rel == canonical_rel
-}
-
-fn split_suite_runtime_path(path: &Path) -> Option<(&'static str, PathBuf)> {
-    const SUITE_PREFIX: &str = "agent-governance-suite-";
-    const SOURCE_SUFFIX: &str = "private";
-    const RUNTIME_SUFFIX: &str = "stable";
-
-    let mut suite = None;
-    let mut rel = PathBuf::new();
-
-    for component in path.components() {
-        if let Some(found) = suite {
-            rel.push(component.as_os_str());
-            suite = Some(found);
-            continue;
-        }
-        let Some(name) = component.as_os_str().to_str() else {
-            continue;
-        };
-        if let Some(suffix) = name.strip_prefix(SUITE_PREFIX) {
-            if suffix == SOURCE_SUFFIX {
-                suite = Some("source");
-            } else if suffix == RUNTIME_SUFFIX {
-                suite = Some("runtime");
-            }
-        }
-    }
-
-    suite.and_then(|found| {
-        if rel.components().next().is_some() {
-            Some((found, rel))
-        } else {
-            None
-        }
-    })
 }
 
 /// MCP-registration visibility for a host via its cached `<host> mcp list`.
@@ -1681,17 +1693,6 @@ fn classify_host_dir_entry(
     // by the suite/repo passes — skip to avoid a duplicate row.
     if canonical_within_store(repo_root, entry) {
         return None;
-    }
-    // A body inside a sibling AGS suite mirror (private<->stable) — recognized.
-    if split_suite_runtime_path(&real).is_some() {
-        return Some(HostDirCandidate {
-            source: real,
-            managed_status: ManagedStatus::Discovered,
-            canonical_present: has_skill_md,
-            risk_notes: vec![
-                "Discovered from a sibling AGS suite mirror. Opt-in candidate; not routable until registered.".to_string(),
-            ],
-        });
     }
     // A body inside another git project (not the AGS suite) — project-local.
     if let Some(proj) = find_git_root(&real) {
@@ -2170,8 +2171,8 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
     // 6. Synthesize route-target rows for internal entrypoints (playbook / MCP
     //    tool / CLI subcommand) declared under `route_targets:`. Routing-only:
     //    kind inherited from the parent, NO expected_hosts, NO host probe, NO
-    //    actions, never adopted/synced. capability-route derefs their
-    //    availability + `primary` to the parent capability.
+    //    actions, never adopted/synced. Skill Resolver resolves their
+    //    availability through the parent capability.
     for (name, routing) in &routing_meta.route_targets {
         // Registry route-target declarations are authoritative over stale
         // host/plugin bodies with the same upstream name. Keeping the discovered
@@ -3530,6 +3531,21 @@ fn guarded_apply(confirmed: bool, planned: &[PlannedWrite], ctx: &ConsoleContext
                 }
             }
             "unlink" => {}
+            "unlink-retired-suite-thin-index" => {
+                let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                    preflight_errors.push(format!(
+                        "retired thin-index cleanup {}: missing safe skill name",
+                        w.path
+                    ));
+                    continue;
+                };
+                if !retired_suite_thin_index_is_safe(ctx, path, name) {
+                    preflight_errors.push(format!(
+                        "retired thin-index cleanup {}: entry is no longer a proven AGS suite symlink",
+                        w.path
+                    ));
+                }
+            }
             other => preflight_errors.push(format!("unknown op '{other}' for {}", w.path)),
         }
     }
@@ -3580,6 +3596,36 @@ fn guarded_apply(confirmed: bool, planned: &[PlannedWrite], ctx: &ConsoleContext
                     return outcome;
                 }
             },
+            "unlink-retired-suite-thin-index" => {
+                let safe = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| retired_suite_thin_index_is_safe(ctx, path, name));
+                if !safe {
+                    outcome.errors.push(format!(
+                        "retired thin-index cleanup {}: safety proof changed before unlink",
+                        w.path
+                    ));
+                    outcome.errors.extend(rollback_changes(&changes));
+                    outcome.applied_writes.clear();
+                    return outcome;
+                }
+                match transactional_unlink(path) {
+                    Ok(Some((msg, change))) => {
+                        outcome.applied_writes.push(msg);
+                        changes.push(change);
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        outcome
+                            .errors
+                            .push(format!("retired thin-index cleanup {}: {e}", w.path));
+                        outcome.errors.extend(rollback_changes(&changes));
+                        outcome.applied_writes.clear();
+                        return outcome;
+                    }
+                }
+            }
             _ => {} // unknown ops already rejected in preflight
         }
     }
@@ -3846,6 +3892,191 @@ fn is_syncable(cap: &ManagedCapability) -> bool {
     )
 }
 
+/// Read the top-level skill registry authority for deliberately retired suite
+/// skills. External-manager bodies are excluded: AGS does not own their host
+/// entries and therefore must never clean them up automatically.
+fn retired_suite_skill_names(repo_root: &Path) -> Vec<String> {
+    let Ok(content) = std::fs::read_to_string(repo_root.join("manifests/skills-registry.yaml"))
+    else {
+        return Vec::new();
+    };
+    let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(&content) else {
+        return Vec::new();
+    };
+    let Some(skills) = doc.get("skills").and_then(serde_yaml::Value::as_sequence) else {
+        return Vec::new();
+    };
+
+    let mut names = std::collections::BTreeSet::new();
+    for skill in skills {
+        let Some(name) = skill.get("name").and_then(serde_yaml::Value::as_str) else {
+            continue;
+        };
+        let retired = skill
+            .get("routing")
+            .and_then(|routing| routing.get("route_state"))
+            .and_then(serde_yaml::Value::as_str)
+            == Some("retired");
+        let external_body = skill
+            .get("source")
+            .and_then(|source| source.get("type"))
+            .and_then(serde_yaml::Value::as_str)
+            == Some("external_cli_skill");
+        if retired && !external_body && is_safe_path_component(name) {
+            names.insert(name.to_string());
+        }
+    }
+    names.into_iter().collect()
+}
+
+fn normalized_absolute_path(path: &Path) -> Option<PathBuf> {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Prefix(_)
+            | std::path::Component::RootDir
+            | std::path::Component::Normal(_) => normalized.push(component.as_os_str()),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !normalized.pop() {
+                    return None;
+                }
+            }
+        }
+    }
+    normalized.is_absolute().then_some(normalized)
+}
+
+/// Return the current public authority root only when it has an AGS registry.
+/// Public AGS never trusts or mutates sibling workspaces.
+fn public_authority_root(repo_root: &Path) -> Option<PathBuf> {
+    let candidate = normalized_absolute_path(repo_root)
+        .or_else(|| std::fs::canonicalize(repo_root).ok())
+        .unwrap_or_else(|| repo_root.to_path_buf());
+    candidate
+        .join("manifests/skills-registry.yaml")
+        .is_file()
+        .then_some(candidate)
+}
+
+fn canonicalize_nearest_existing(path: &Path) -> Option<PathBuf> {
+    let mut current = Some(path);
+    while let Some(candidate) = current {
+        if let Ok(real) = std::fs::canonicalize(candidate) {
+            return Some(real);
+        }
+        current = candidate.parent();
+    }
+    None
+}
+
+fn suite_store_target_matches_name(relative: &Path, name: &str) -> bool {
+    let components: Vec<&std::ffi::OsStr> = relative
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(value) => Some(value),
+            _ => None,
+        })
+        .collect();
+    let expected = std::ffi::OsStr::new(name);
+    matches!(
+        components.as_slice(),
+        [store, skill]
+            if *store == std::ffi::OsStr::new("global-skills") && *skill == expected
+    ) || matches!(
+        components.as_slice(),
+        [store, profile, skill]
+            if *store == std::ffi::OsStr::new("skill-packs")
+                && is_safe_path_component(&profile.to_string_lossy())
+                && *skill == expected
+    )
+}
+
+/// Prove that `entry` is an AGS-owned retired-skill thin index. The entry must
+/// be a symlink; its resolved target must have the exact canonical-store shape
+/// for `name`; and both resolving and dangling targets must remain beneath the
+/// current public authority root. Real directories, arbitrary links, and
+/// name-mismatched links fail closed.
+fn retired_suite_thin_index_is_safe(ctx: &ConsoleContext, entry: &Path, name: &str) -> bool {
+    if !is_safe_path_component(name)
+        || !retired_suite_skill_names(&ctx.repo_root)
+            .iter()
+            .any(|retired| retired == name)
+        || std::fs::symlink_metadata(entry)
+            .map(|meta| !meta.file_type().is_symlink())
+            .unwrap_or(true)
+    {
+        return false;
+    }
+    let Ok(raw_target) = std::fs::read_link(entry) else {
+        return false;
+    };
+    let target = if raw_target.is_absolute() {
+        raw_target
+    } else {
+        let Some(parent) = entry.parent() else {
+            return false;
+        };
+        parent.join(raw_target)
+    };
+    let Some(target) = normalized_absolute_path(&target) else {
+        return false;
+    };
+
+    public_authority_root(&ctx.repo_root)
+        .into_iter()
+        .any(|root| {
+            let Some(root) = normalized_absolute_path(&root) else {
+                return false;
+            };
+            let Ok(relative) = target.strip_prefix(&root) else {
+                return false;
+            };
+            if !suite_store_target_matches_name(relative, name) {
+                return false;
+            }
+            match (
+                std::fs::canonicalize(&root),
+                canonicalize_nearest_existing(&target),
+            ) {
+                (Ok(real_root), Some(real_target_or_ancestor)) => {
+                    real_target_or_ancestor.starts_with(real_root)
+                }
+                _ => false,
+            }
+        })
+}
+
+fn plan_retired_suite_thin_index_cleanup(
+    ctx: &ConsoleContext,
+    planned_writes: &mut Vec<PlannedWrite>,
+) {
+    let mut roots: Vec<PathBuf> = supported_skill_hosts()
+        .into_iter()
+        .filter_map(host_skills_subdir)
+        .map(|subdir| ctx.home.join(subdir))
+        .collect();
+    roots.push(ctx.home.join(".agents/skills"));
+    roots.sort();
+    roots.dedup();
+
+    for name in retired_suite_skill_names(&ctx.repo_root) {
+        for root in &roots {
+            let entry = root.join(&name);
+            if retired_suite_thin_index_is_safe(ctx, &entry, &name) {
+                planned_writes.push(PlannedWrite {
+                    op: "unlink-retired-suite-thin-index".to_string(),
+                    path: entry.display().to_string(),
+                    from: None,
+                    detail: format!(
+                        "remove proven retired suite thin index ({name}); canonical body and non-suite entries untouched"
+                    ),
+                });
+            }
+        }
+    }
+}
+
 /// Plan the one-time shared-index migration for skills that expose internal
 /// playbook entrypoints through one host-visible parent. The registry metadata
 /// is the authority: children with `entrypoint.kind=playbook` must not remain
@@ -3876,6 +4107,7 @@ fn shared_store_hygiene_plan(
     let shared_root = ctx.home.join(".agents/skills");
     let mut planned_writes = Vec::new();
     let mut blocked_reasons = Vec::new();
+    plan_retired_suite_thin_index_cleanup(ctx, &mut planned_writes);
     for (parent_name, mut playbooks) in parent_playbooks {
         if !is_safe_path_component(&parent_name) {
             blocked_reasons.push(format!(
@@ -3897,12 +4129,22 @@ fn shared_store_hygiene_plan(
             continue;
         };
         let canonical = resolve_source(&ctx.repo_root, source);
+        playbooks.sort();
+        playbooks.dedup();
         if !canonical.join("SKILL.md").is_file()
             || !canonical_source_allowed(ctx, parent, &canonical)
         {
             blocked_reasons.push(format!(
                 "Canonical parent body for '{parent_name}' is missing or outside its approved store: {}",
                 canonical.display()
+            ));
+            continue;
+        }
+        let body_issues = playbook_body_issues(&canonical, &playbooks);
+        if !body_issues.is_empty() {
+            blocked_reasons.push(format!(
+                "Canonical parent body for '{parent_name}' has an unsafe playbook exposure shape: {}",
+                body_issues.join("; ")
             ));
             continue;
         }
@@ -3942,8 +4184,6 @@ fn shared_store_hygiene_plan(
             Err(_) => {}
         }
 
-        playbooks.sort();
-        playbooks.dedup();
         for playbook in playbooks {
             if !is_safe_path_component(&playbook) {
                 blocked_reasons.push(format!(
@@ -3989,7 +4229,7 @@ fn shared_store_hygiene_plan(
         applied_writes: outcome.applied_writes,
         apply_errors: outcome.errors,
         blocked_reasons,
-        note: "Registry-derived shared-index hygiene: create the host-visible parent for internal playbooks and unlink only retired dangling child symlinks. Resolving links, real directories, and canonical bodies are never removed. Restart the host or open a new task after apply.".to_string(),
+        note: "Registry-derived thin-index hygiene: create the host-visible parent for internal playbooks, unlink retired dangling child playbooks, and remove retired suite-skill links only when the symlink target is proven to live in the sibling private/stable/runtime canonical stores. Real directories, external or name-mismatched links, and canonical bodies are never removed. Restart the host or open a new task after apply.".to_string(),
     }
 }
 
@@ -5940,43 +6180,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    // The development private suite may verify hosts whose thin indexes point at
-    // the stable suite runtime. Treat the same relative skill body under the
-    // private/stable suite pair as visible, while unrelated external copies still
-    // fail the `non_canonical_symlink_is_degraded` guard above.
-    #[cfg(unix)]
-    #[test]
-    fn stable_runtime_twin_symlink_is_visible() {
-        let (ctx, base) = ctx_with_repo_dir(
-            "stable-runtime",
-            canned_list(),
-            &format!("agent-governance-suite-{}", "private"),
-        );
-        let stable_source = base.join(format!(
-            "agent-governance-suite-{}/skill-packs/optional/lark-shared",
-            "stable"
-        ));
-        write_file(
-            &stable_source.join("SKILL.md"),
-            "---\nname: lark-shared\ndescription: stable runtime body.\n---\n",
-        );
-        let skills = ctx.home.join(".claude/skills");
-        std::fs::create_dir_all(&skills).unwrap();
-        make_symlink(&stable_source, &skills.join("lark-shared")).unwrap();
-
-        let inv = build_inventory(&ctx, &["claude-code"]);
-        let vis = &find(&inv, "lark-shared").host_visibility[0];
-        assert_eq!(vis.status, HostVisibilityStatus::Visible);
-        assert!(
-            vis.evidence
-                .iter()
-                .any(|e| e.contains("AGS stable/private runtime twin")),
-            "{:?}",
-            vis.evidence
-        );
-        let _ = std::fs::remove_dir_all(&base);
-    }
-
     // Goal 2: canonical body status is modeled distinctly from host visibility.
     #[test]
     fn canonical_present_reflects_the_body() {
@@ -6171,6 +6374,15 @@ mod tests {
             &ctx.repo_root.join("global-skills/superpowers/SKILL.md"),
             "---\nname: superpowers\ndescription: parent router.\n---\n",
         );
+        for playbook in ["brainstorming", "writing-plans"] {
+            write_file(
+                &ctx.repo_root
+                    .join("global-skills/superpowers/playbooks")
+                    .join(playbook)
+                    .join("PLAYBOOK.md"),
+                &format!("# {playbook}\n"),
+            );
+        }
         write_file(
             &ctx.repo_root.join("manifests/suite.yaml"),
             "schema_version: \"1.0\"\n\
@@ -6471,6 +6683,164 @@ mod tests {
         assert!(
             names.contains(&"demo-skill"),
             "non-retired required skill still syncs: {names:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sync_plan_removes_only_proven_retired_suite_thin_indexes() {
+        let (ctx, base) = ctx_with_repo_dir(
+            "retired-thin-index-cleanup",
+            canned_list(),
+            "public-authority",
+        );
+        write_file(
+            &ctx.repo_root.join("manifests/skills-registry.yaml"),
+            "schema_version: \"1.0\"\nskills:\n\
+             \x20 - name: retired-safe\n    routing: { route_state: retired }\n\
+             \x20 - name: retired-real\n    routing: { route_state: retired }\n\
+             \x20 - name: retired-external\n    routing: { route_state: retired }\n\
+             \x20 - name: retired-mismatch\n    routing: { route_state: retired }\n",
+        );
+
+        write_file(
+            &ctx.repo_root.join("global-skills/retired-safe/SKILL.md"),
+            "---\nname: retired-safe\ndescription: retired public body.\n---\n",
+        );
+
+        let claude_safe = ctx.home.join(".claude/skills/retired-safe");
+        let codex_safe = ctx.home.join(".codex/skills/retired-safe");
+        let shared_dangling = ctx.home.join(".agents/skills/retired-safe");
+        std::fs::create_dir_all(claude_safe.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(codex_safe.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(shared_dangling.parent().unwrap()).unwrap();
+        make_symlink(
+            &ctx.repo_root.join("global-skills/retired-safe"),
+            &claude_safe,
+        )
+        .unwrap();
+        make_symlink(
+            &ctx.repo_root.join("global-skills/retired-safe"),
+            &codex_safe,
+        )
+        .unwrap();
+        make_symlink(
+            &ctx.repo_root.join("global-skills/retired-safe"),
+            &shared_dangling,
+        )
+        .unwrap();
+
+        let real_entry = ctx.home.join(".codebuddy/skills/retired-real");
+        write_file(
+            &real_entry.join("SKILL.md"),
+            "---\nname: retired-real\ndescription: user-owned.\n---\n",
+        );
+        let outside = base.join("external/retired-external");
+        write_file(
+            &outside.join("SKILL.md"),
+            "---\nname: retired-external\ndescription: external.\n---\n",
+        );
+        let external_entry = ctx.home.join(".codebuddy/skills/retired-external");
+        make_symlink(&outside, &external_entry).unwrap();
+        let mismatch_entry = ctx.home.join(".codebuddy/skills/retired-mismatch");
+        make_symlink(
+            &ctx.repo_root.join("global-skills/retired-safe"),
+            &mismatch_entry,
+        )
+        .unwrap();
+
+        let dry_run = sync_plan(&ctx, &["claude-code", "codex", "codebuddy-code"], false);
+        let retired_writes: Vec<&PlannedWrite> = dry_run
+            .shared_store_hygiene
+            .planned_writes
+            .iter()
+            .filter(|write| write.detail.contains("retired suite thin index"))
+            .collect();
+        assert_eq!(
+            retired_writes.len(),
+            3,
+            "only the three proven links plan cleanup"
+        );
+        assert!(retired_writes.iter().all(|write| {
+            write.op == "unlink-retired-suite-thin-index" && write.path.ends_with("/retired-safe")
+        }));
+        for entry in [&claude_safe, &codex_safe, &shared_dangling] {
+            assert!(
+                std::fs::symlink_metadata(entry).is_ok(),
+                "dry-run preserves {entry:?}"
+            );
+        }
+        let forged_cleanup = guarded_apply(
+            true,
+            &[PlannedWrite {
+                op: "unlink-retired-suite-thin-index".to_string(),
+                path: real_entry.display().to_string(),
+                from: None,
+                detail: "forged cleanup request".to_string(),
+            }],
+            &ctx,
+        );
+        assert!(
+            !forged_cleanup.errors.is_empty(),
+            "the mutation guard must independently reject a real directory"
+        );
+        assert!(
+            real_entry.is_dir(),
+            "guard rejection preserves the real directory"
+        );
+        let active_entry = ctx.home.join(".codebuddy/skills/demo-skill");
+        make_symlink(
+            &ctx.repo_root.join("global-skills/demo-skill"),
+            &active_entry,
+        )
+        .unwrap();
+        let forged_active_cleanup = guarded_apply(
+            true,
+            &[PlannedWrite {
+                op: "unlink-retired-suite-thin-index".to_string(),
+                path: active_entry.display().to_string(),
+                from: None,
+                detail: "forged cleanup request for active suite skill".to_string(),
+            }],
+            &ctx,
+        );
+        assert!(
+            !forged_active_cleanup.errors.is_empty(),
+            "the mutation guard must independently require registry retirement"
+        );
+        assert!(
+            active_entry.is_symlink(),
+            "active suite links are never retired"
+        );
+
+        let applied = sync_plan(&ctx, &["claude-code", "codex", "codebuddy-code"], true);
+        assert_eq!(
+            applied.shared_store_hygiene.apply_status, "applied",
+            "cleanup errors: {:?}",
+            applied.shared_store_hygiene.apply_errors
+        );
+        for entry in [&claude_safe, &codex_safe, &shared_dangling] {
+            assert!(
+                std::fs::symlink_metadata(entry).is_err(),
+                "proven retired AGS thin index should be removed: {entry:?}"
+            );
+        }
+        assert!(real_entry.is_dir(), "real directories are never removed");
+        assert!(
+            std::fs::symlink_metadata(&external_entry)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "external symlinks are never removed"
+        );
+        assert!(
+            std::fs::symlink_metadata(&mismatch_entry)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "suite links whose target name does not match are never removed"
         );
 
         let _ = std::fs::remove_dir_all(&base);

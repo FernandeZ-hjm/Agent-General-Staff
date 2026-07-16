@@ -4,22 +4,23 @@ version = 4
 
 [[package]]
 name = "ags-cli"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "ags-mcp",
  "ags-platform",
  "ags-verify",
  "bootstrap-dry-run",
  "capability-registry",
- "capability-route",
  "clap",
  "execution-policy",
  "project-discovery",
- "prompt-request-classifier",
  "receipt",
+ "request-router",
  "runner",
+ "serde",
  "serde_json",
  "skill-governance",
+ "skill-resolver",
  "suite-doctor",
  "task-card-validator",
  "task-compiler",
@@ -28,25 +29,25 @@ dependencies = [
 
 [[package]]
 name = "ags-mcp"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "ags-verify",
- "capability-route",
  "execution-policy",
  "project-discovery",
- "prompt-request-classifier",
+ "request-router",
  "serde",
  "serde_json",
+ "skill-resolver",
  "task-card-validator",
 ]
 
 [[package]]
 name = "ags-platform"
-version = "0.2.7"
+version = "0.2.8"
 
 [[package]]
 name = "ags-verify"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "serde",
  "serde_json",
@@ -126,7 +127,7 @@ dependencies = [
 
 [[package]]
 name = "bootstrap-dry-run"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "ags-platform",
  "serde",
@@ -137,22 +138,11 @@ dependencies = [
 
 [[package]]
 name = "capability-registry"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "serde",
  "serde_json",
  "tempfile",
-]
-
-[[package]]
-name = "capability-route"
-version = "0.2.7"
-dependencies = [
- "ags-platform",
- "prompt-request-classifier",
- "serde",
- "serde_json",
- "skill-governance",
 ]
 
 [[package]]
@@ -254,7 +244,7 @@ dependencies = [
 
 [[package]]
 name = "execution-policy"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "serde",
  "serde_json",
@@ -409,17 +399,9 @@ dependencies = [
 
 [[package]]
 name = "project-discovery"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "ags-platform",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "prompt-request-classifier"
-version = "0.2.7"
-dependencies = [
  "serde",
  "serde_json",
 ]
@@ -441,7 +423,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "receipt"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "serde",
  "serde_json",
@@ -450,14 +432,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "runner"
-version = "0.2.7"
+name = "request-router"
+version = "0.2.8"
 dependencies = [
- "capability-route",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "runner"
+version = "0.2.8"
+dependencies = [
  "execution-policy",
  "receipt",
  "serde",
  "serde_json",
+ "skill-resolver",
  "task-card-validator",
 ]
 
@@ -555,11 +545,24 @@ dependencies = [
 
 [[package]]
 name = "skill-governance"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+]
+
+[[package]]
+name = "skill-resolver"
+version = "0.2.8"
+dependencies = [
+ "ags-platform",
+ "request-router",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "skill-governance",
 ]
 
 [[package]]
@@ -570,15 +573,15 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "suite-doctor"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "ags-platform",
- "capability-route",
  "project-discovery",
  "serde",
  "serde_json",
  "serde_yaml",
  "skill-governance",
+ "skill-resolver",
 ]
 
 [[package]]
@@ -594,11 +597,11 @@ dependencies = [
 
 [[package]]
 name = "task-card-validator"
-version = "0.2.7"
+version = "0.2.8"
 
 [[package]]
 name = "task-compiler"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "ags-platform",
  "serde",
@@ -818,7 +821,7 @@ dependencies = [
 
 [[package]]
 name = "workflow-sync-check"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "serde",
  "serde_json",

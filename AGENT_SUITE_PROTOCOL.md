@@ -29,12 +29,14 @@ AGS 定位为开发相关工作中的**常驻工程中枢**，不是需要用户
 `$ags-skill` / `$ags-doctor` 命令技能，以及 `ags mcp serve` 提供的 MCP 内核桥。
 凡是 AGS 相关任务，都必须优先通过 AGS MCP 显式调用 `ags_preflight`；CLI 预检只作为
 MCP 不可用时的降级路径。
-开发请求到达时，AGS 治理自动接入：ambient preflight → solution formation →
-user decision → value route（效价比路由，advisory）→ same-session direct execution
-或 task-card handoff → task routing → gate / verification / receipt。不得从原始用户
-请求直接跳到 Light / Medium / Heavy 分级。"方案 OK" 只确认方案，不授权写入；
+开发请求到达时，宿主在 preflight 后把完整对话上下文交给 MCP
+`ags_route_request`。Request Router 是唯一自然语言路由节点，返回结构化
+`RequestDecision`；Skill Resolver 只做闭集技能映射，MCP 用固定 argv 调用
+真实 `ags` CLI。不得从原始用户请求直接跳到 Light / Medium / Heavy
+分级。"方案 OK" 只确认方案，不授权写入；
 用户明确授权同会话修改时进入 `direct-edit`，明确要求任务卡或跨 Agent 交接时才进入
-task-card handoff。`ags task compile --task-card-requested` 只约束任务卡生成，不是所有
+task-card handoff。`ags task compile --task-card-requested
+--confirmed-handoff-contract` 只约束任务卡生成，不是所有
 本地执行的前置门槛。
 
 首个非空行已经是 `## 任务卡` 的输入属于 existing task card。入口必须先校验：

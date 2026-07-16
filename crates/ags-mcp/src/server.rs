@@ -32,6 +32,9 @@ use crate::{prompts, resources, tools};
 struct PreflightState {
     preflight_completed: bool,
     preflight_agent: Option<String>,
+    /// Resolved target path from the successful preflight RESULT (never raw call
+    /// arguments). Reused as the default `target` context for
+    /// `ags_route_request` when the caller does not pass one explicitly.
     preflight_target: Option<String>,
 }
 
@@ -44,9 +47,12 @@ impl PreflightState {
         }
     }
 
-    fn mark_completed(&mut self, agent: String, target: Option<String>) {
+    /// Record a successful preflight. `agent` is the NORMALIZED agent and
+    /// `target` is the RESOLVED target — both taken from the preflight result
+    /// JSON, not the raw call arguments.
+    fn mark_completed(&mut self, agent: Option<String>, target: Option<String>) {
         self.preflight_completed = true;
-        self.preflight_agent = Some(agent);
+        self.preflight_agent = agent;
         self.preflight_target = target;
     }
 }
@@ -70,6 +76,27 @@ fn is_successful_preflight_result(result: &str) -> bool {
         .is_some_and(|failures| failures.is_empty());
 
     exit_code_ok && !should_stop && failures_empty
+}
+
+/// Extract the normalized agent and resolved target from a successful preflight
+/// result JSON. These come from the preflight OUTPUT (normalized agent, resolved
+/// target path), never from the raw call arguments, so later phase tools reuse
+/// the same context AGS actually resolved.
+fn preflight_context_from_result(result: &str) -> (Option<String>, Option<String>) {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(result) else {
+        return (None, None);
+    };
+    let agent = value
+        .get("agent")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    let target = value
+        .get("target")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    (agent, target)
 }
 
 /// Prompts that enter an AGS lifecycle phase and therefore require preflight.
@@ -243,32 +270,32 @@ fn handle_tools_call(req: &JsonRpcRequest, preflight: &mut PreflightState) -> Js
         return JsonRpcResponse::error(req.id.clone(), -32000, PREFLIGHT_GATE_ERROR);
     }
 
-    let tool_arguments = tools::inject_preflight_defaults(
+    // Inject preflight-derived defaults (active_host / target) for phase tools
+    // that consume them. Explicit tool arguments always win — only absent keys
+    // are filled. This runs only AFTER the initialization gate above, so an
+    // a retired pre-router phase tool is still blocked rather than routed
+    // host-agnostic.
+    let arguments = tools::inject_preflight_defaults(
         tool_name,
         arguments,
         preflight.preflight_agent.as_deref(),
         preflight.preflight_target.as_deref(),
     );
 
-    match tools::call_tool(tool_name, &tool_arguments) {
+    match tools::call_tool(tool_name, &arguments) {
         Ok(result) => {
             // Mark preflight as completed only when the preflight report itself
             // is clean. A successful JSON-RPC tool call may still report
             // overall_status=Stop / exit_code=1 for an ungoverned target.
             if tools::is_preflight_tool_name(tool_name) && is_successful_preflight_result(&result) {
-                let agent = tool_arguments
-                    .get("agent")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-                let target = tool_arguments
-                    .get("target")
-                    .and_then(|v| v.as_str())
-                    .map(ToString::to_string);
+                // Use the NORMALIZED agent + RESOLVED target from the preflight
+                // result JSON, not the raw call arguments.
+                let (agent, target) = preflight_context_from_result(&result);
                 preflight.mark_completed(agent, target);
                 log_error(&format!(
-                    "preflight completed for agent: {}",
-                    preflight.preflight_agent.as_deref().unwrap_or("unknown")
+                    "preflight completed for agent: {} target: {}",
+                    preflight.preflight_agent.as_deref().unwrap_or("unknown"),
+                    preflight.preflight_target.as_deref().unwrap_or("unknown"),
                 ));
             }
 
@@ -477,6 +504,16 @@ mod tests {
             Some("claude-code"),
             "preflight agent must be recorded"
         );
+        // Target must be recorded from the RESOLVED preflight result, not raw args.
+        let recorded_target = preflight
+            .preflight_target
+            .as_deref()
+            .expect("preflight target must be recorded from the result");
+        assert_eq!(
+            recorded_target,
+            suite_root(),
+            "recorded target should be the resolved suite root"
+        );
     }
 
     #[test]
@@ -500,7 +537,7 @@ mod tests {
             "failed preflight must not open the gate"
         );
 
-        let gated_params = json!({"name": "ags_solution_check", "arguments": {"summary": "after failed preflight"}});
+        let gated_params = json!({"name": "ags_route_request", "arguments": {"request": "after failed preflight"}});
         let gated_req = make_request("tools/call", Some(gated_params));
         let gated_resp = handle_tools_call(&gated_req, &mut preflight);
         assert!(
@@ -513,12 +550,12 @@ mod tests {
     #[test]
     fn non_preflight_tool_blocked_before_preflight() {
         let mut preflight = PreflightState::new();
-        let params = json!({"name": "ags_solution_check", "arguments": {"summary": "test"}});
+        let params = json!({"name": "ags_route_request", "arguments": {"request": "test"}});
         let req = make_request("tools/call", Some(params));
         let resp = handle_tools_call(&req, &mut preflight);
         assert!(
             has_error(&resp),
-            "ags_solution_check must be blocked before preflight"
+            "ags_route_request must be blocked before preflight"
         );
         assert!(
             error_contains(&resp, "Initialization Gate"),
@@ -545,7 +582,7 @@ mod tests {
         );
 
         let gated_params =
-            json!({"name": "ags_solution_check", "arguments": {"summary": "still gated"}});
+            json!({"name": "ags_route_request", "arguments": {"request": "still gated"}});
         let gated_req = make_request("tools/call", Some(gated_params));
         let gated_resp = handle_tools_call(&gated_req, &mut preflight);
         assert!(
@@ -557,7 +594,7 @@ mod tests {
     #[test]
     fn non_preflight_tool_allowed_after_preflight() {
         let mut preflight = PreflightState::new();
-        preflight.mark_completed("claude-code".to_string(), Some(suite_root()));
+        preflight.mark_completed(Some("claude-code".to_string()), None);
 
         let params = json!({"name": "ags_protocol_status", "arguments": {}});
         let req = make_request("tools/call", Some(params));
@@ -565,22 +602,6 @@ mod tests {
         assert!(
             is_success(&resp),
             "ags_protocol_status must be allowed after preflight"
-        );
-    }
-
-    #[test]
-    fn legacy_dotted_preflight_alias_still_allowed() {
-        let mut preflight = PreflightState::new();
-        let params = json!({
-            "name": "ags.preflight",
-            "arguments": {"agent": "claude-code", "target": suite_root()}
-        });
-        let req = make_request("tools/call", Some(params));
-        let resp = handle_tools_call(&req, &mut preflight);
-        assert!(is_success(&resp), "legacy ags.preflight alias must work");
-        assert!(
-            preflight.preflight_completed,
-            "legacy preflight alias must open the gate after a clean report"
         );
     }
 
@@ -667,7 +688,7 @@ mod tests {
     #[test]
     fn solution_phase_prompt_allowed_after_preflight() {
         let mut preflight = PreflightState::new();
-        preflight.mark_completed("claude-code".to_string(), Some(suite_root()));
+        preflight.mark_completed(Some("claude-code".to_string()), None);
 
         let params = json!({"name": "ags_solution_phase", "arguments": {"user_request": "test"}});
         let req = make_request("prompts/get", Some(params));
@@ -696,7 +717,7 @@ mod tests {
     fn initialize_resets_preflight_state() {
         let mut initialized = false;
         let mut preflight = PreflightState::new();
-        preflight.mark_completed("codex".to_string(), Some(suite_root()));
+        preflight.mark_completed(Some("codex".to_string()), Some("/tmp/x".to_string()));
 
         let req = make_request(
             "initialize",
@@ -718,5 +739,94 @@ mod tests {
             preflight.preflight_agent.is_none(),
             "preflight agent must be cleared on initialize"
         );
+        assert!(
+            preflight.preflight_target.is_none(),
+            "preflight target must be cleared on initialize"
+        );
+    }
+
+    // ── route_request inherits preflight context (agent + target) ───────────
+
+    /// After a successful `ags_preflight`, an `ags_route_request` call that omits
+    /// `active_host` / `target` must inherit them from the recorded preflight
+    /// state — the route is computed for the preflight agent, not host-agnostic.
+    #[test]
+    fn route_request_inherits_preflight_agent_and_target() {
+        let mut preflight = PreflightState::new();
+        // 1. Complete preflight for codex against the suite root.
+        let pf_params = json!({
+            "name": "ags_preflight",
+            "arguments": {"agent": "codex", "target": suite_root()}
+        });
+        let pf_req = make_request("tools/call", Some(pf_params));
+        let pf_resp = handle_tools_call(&pf_req, &mut preflight);
+        assert!(is_success(&pf_resp), "preflight must succeed");
+        assert_eq!(preflight.preflight_agent.as_deref(), Some("codex"));
+        assert!(preflight.preflight_target.is_some());
+
+        let inherited = tools::inject_preflight_defaults(
+            "ags_route_request",
+            json!({"request": "测试失败，帮我诊断"}),
+            preflight.preflight_agent.as_deref(),
+            preflight.preflight_target.as_deref(),
+        );
+        assert_eq!(inherited["active_host"], "codex");
+        assert_eq!(
+            inherited["target"],
+            preflight.preflight_target.as_deref().unwrap()
+        );
+
+        // 2. route_request WITHOUT active_host/target → inherits preflight ctx.
+        let sc_params = json!({
+            "name": "ags_route_request",
+            "arguments": {"request": "测试失败，帮我诊断"}
+        });
+        let sc_req = make_request("tools/call", Some(sc_params));
+        let sc_resp = handle_tools_call(&sc_req, &mut preflight);
+        assert!(
+            is_success(&sc_resp),
+            "route_request must succeed after preflight"
+        );
+
+        let text = sc_resp
+            .result
+            .as_ref()
+            .and_then(|r| r.get("content"))
+            .and_then(|c| c.as_array())
+            .and_then(|a| a.first())
+            .and_then(|c| c.get("text"))
+            .and_then(|t| t.as_str())
+            .expect("route_request must return text content");
+        let v: serde_json::Value = serde_json::from_str(text).expect("valid json");
+
+        assert_eq!(v["decision"]["targets"][0]["kind"], "skill");
+        assert_eq!(v["skill_results"].as_array().unwrap().len(), 1);
+    }
+
+    /// Explicit `active_host` in the call wins over the recorded preflight agent.
+    #[test]
+    fn route_request_explicit_active_host_wins_over_preflight() {
+        let mut preflight = PreflightState::new();
+        preflight.mark_completed(Some("codex".to_string()), Some(suite_root()));
+
+        let sc_params = json!({
+            "name": "ags_route_request",
+            "arguments": {"request": "解释代码", "active_host": "claude-code"}
+        });
+        let sc_req = make_request("tools/call", Some(sc_params));
+        let sc_resp = handle_tools_call(&sc_req, &mut preflight);
+        assert!(is_success(&sc_resp));
+
+        let text = sc_resp
+            .result
+            .as_ref()
+            .and_then(|r| r.get("content"))
+            .and_then(|c| c.as_array())
+            .and_then(|a| a.first())
+            .and_then(|c| c.get("text"))
+            .and_then(|t| t.as_str())
+            .expect("text content");
+        let v: serde_json::Value = serde_json::from_str(text).expect("valid json");
+        assert_eq!(v["decision"]["targets"][0]["kind"], "direct_response");
     }
 }

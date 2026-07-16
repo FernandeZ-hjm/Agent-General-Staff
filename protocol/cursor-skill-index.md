@@ -8,7 +8,17 @@ When a task references a skill, open only the relevant SKILL.md. When a task doe
 
 - Paths in this document that contain `$HOME` are template paths. Before opening any SKILL.md, expand `$HOME` to the actual home directory of the current machine.
 
-- Use `grill-with-docs` for open-ended feature, design, architecture, or recommendation work before implementing.
+- Bounded content compression, summary, translation, formatting, approved-field
+  normalization, and approved-template conversion use `DirectResponse`; do not
+  load an engineering workflow skill.
+- Use the `superpowers` parent with the `brainstorming` entrypoint only for an
+  explicit brainstorm or unresolved system/cross-module architecture boundary.
+- Use one precise specialist when its task characteristic is present:
+  `codebase-design` (module interface/testability), `domain-modeling` (domain
+  terms/model), `improve-codebase-architecture` (architecture debt), `prototype`
+  (throwaway experiment), or `grilling` (pressure-test an existing plan).
+- Use `grill-with-docs` only when the user explicitly requests a
+  documentation/ADR/glossary-grounded alignment interview; it is manual-only.
 - Use `diagnosing-bugs` for errors, failing tests, broken behavior, performance issues, or unexpected runtime output.
 - Use the `superpowers` parent with the `verification-before-completion`
   entrypoint before claiming work is complete, fixed, passing, or ready to hand off.
@@ -16,26 +26,20 @@ When a task references a skill, open only the relevant SKILL.md. When a task doe
 - Do not stack unrelated skills. Prefer one or two strong procedural guardrails over a long list.
 - If a skill file is missing or unreadable, report that briefly and continue with the nearest safe workflow.
 - For delegated Claude Code CLI work, follow `protocol/agent-task-protocol.md` and use `protocol/task-card-template.md`.
-- Include the required `[skill: xxx]` tags in the task card and require a delivery report.
+- Include only optional `[skill: xxx]` tags precisely selected by Skill Resolver
+  or the confirmed contract; no skill tag is required by task level. Require a
+  delivery report independently.
 - Task-card tags name host-visible capability bodies. For Superpowers workflows,
   use `[skill: superpowers]` once and name required internal playbooks such as
   `verification-before-completion` or `test-driven-development` in the task body;
   child playbook names are not standalone task-card tags.
 
-## Retired aliases (superseded)
+## Closed demand routing
 
-The `auto-brainstorm` / `auto-debug` / `auto-verify` skills are **RETIRED**
-(`manifests/skills-registry.yaml` → `routing.route_state: retired`). They are no
-longer auto-triggered or part of the suite manifest's active skill set; their
-demands route to the canonical successors instead:
-
-- brainstorm → primary `grill-with-docs` (superpowers `brainstorming` playbook is a secondary method hint)
-- debug → primary `diagnosing-bugs` (`systematic-debugging` is a secondary method hint)
-- verify → primary `superpowers`, entrypoint `verification-before-completion`
-
-Superpowers playbooks keep their upstream names as registry-only route targets
-under the single host-visible `superpowers` body. Do not author new task cards
-that wake the `auto-*` aliases.
+Compatibility aliases are absent. Request Router emits a closed `SkillDemand`
+and Skill Resolver maps it against the validated `ActiveSkillTable`. Missing
+skills return unavailable; alternatives are advisory and never auto-selected.
+Superpowers playbooks remain internal entrypoints of one host-visible parent.
 
 ## Manual skills
 
@@ -86,7 +90,8 @@ Use this when Cursor needs to hand work to Claude Code CLI, another agent, or a 
 - 按任务卡 Permission mode 执行：`plan-only` 只诊断和出计划，
   `execute-and-verify` 直接执行并验证；Heavy 不另行强制计划
 - 完成后运行相关验证
-- 加载 `superpowers` 父技能并执行 `verification-before-completion` playbook
-
-[skill: superpowers]
+- 接续后把完整上下文重新交给 MCP `ags_route_request`；验证是协议 gate，仅当
+  Skill Resolver / 原任务卡精确选择 `superpowers` 时才读取其
+  `verification-before-completion` playbook。Continuation 自由文本不得携带
+  `[skill: ...]` 元数据。
 ```

@@ -8,25 +8,29 @@ Before responding or executing tasks in this repository, also read and follow:
 
 ## AGS: Standing Engineering Hub
 
-Agent General Staff (AGS) is a standing engineering hub for development work,
-not a CLI toolbox you invoke separately. Public AGS exposes Claude Code `/ags`,
-Codex `$ags-setup` / `$ags-init` / `$ags-skill` / `$ags-doctor`, and the
-`ags mcp serve --transport stdio` kernel bridge. When a development request
-arrives, AGS governance engages automatically: ambient preflight → solution
-formation → user decision → same-session direct execution OR task-card handoff →
-gate / verification / receipt.
+Agent General Staff (AGS) is a standing engineering hub. After preflight, the
+host sends complete conversation context through MCP `ags_route_request`; this
+is the only natural-language routing node. It returns one structured
+`RequestDecision` with peer targets `DirectResponse`, `SkillDemand`, and
+`MachineCli`. DirectResponse is exclusive; at most one Skill and one MachineCli
+may coexist. Skill Resolver only maps a closed demand against the validated
+ActiveSkillTable, and MCP invokes machine capabilities through fixed argv on the
+real `ags` CLI. Compiler, Policy, Gate, and Runner never re-parse natural language.
 
 When AGS MCP is available, every AGS-related task must explicitly call the MCP
 `ags_preflight` tool first. CLI preflight is a fallback path only when MCP is not
 available.
 
 Do not jump to Light / Medium / Heavy classification from raw user requests.
-Always complete preflight and solution formation first. "方案 OK" confirms the
-design but does not authorize mutation. An explicit same-session modification
+Preflight is always required, but solution formation is conditional: use an
+already supplied and approved solution when one exists; otherwise form one before
+classification. "方案 OK" confirms the design but does not authorize mutation.
+An explicit same-session modification
 instruction enters `direct-edit`; an explicit task-card/handoff instruction enters
 task-card generation. The task card template (`protocol/task-card-template.md`)
 takes a confirmed handoff contract as input, not raw chat messages. `ags task
-compile` requires `--task-card-requested` because it generates a handoff artifact;
+compile` requires both `--task-card-requested` and
+`--confirmed-handoff-contract` because it generates a handoff artifact;
 task cards are not a prerequisite for authorized host-native direct edits.
 
 An input whose first non-empty line is the canonical `## 任务卡` header is an

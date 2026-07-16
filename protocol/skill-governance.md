@@ -1,332 +1,142 @@
 # Skill Governance Protocol
 
-Agent Governance Suite 技能治理总协议。定义本地 Agent 技能的 source of truth、候选来源层级、
-治理生命周期和写入规则。本文件是技能同步、adoption log、ignore list 和 suite manifest 的
-协议权威源。
-
-**这是唯一 canonical 技能治理协议。不得为 Cursor、Codex、Claude Code 各自创建独立技能治理文档。**
+> AGS 0.2.8 技能本体、可见性与确定性解析协议。
 
 ## Source of Truth
 
-本地仓内账本是**治理决策与路由元数据**的唯一 source of truth：
-
-- `governance/skill-adoption-log.yaml` — 已接纳技能的 append-only 审计日志
-- `governance/skill-ignore-list.yaml` — 已拒绝/忽略技能的审计日志
-- `manifests/suite.yaml` — 套件 manifest，声明 required/optional/personal 技能
-- `manifests/skills-registry.yaml` — member-level routing、owner 与外部本体引用
-
-技能**内容本体**的 canonical owner 与治理元数据分层：suite-owned 本体以仓内文件为
-内容权威；registry 声明 `source.type: external_cli_skill` 的本体以外部 manager 在
-`~/.agents/skills/<name>` 维护的内容为权威。AGS 对后者只治理元数据、thin index 和验证，
-不把外部内容复制进仓库。
-
-以下来源在完成治理前仅作为**候选来源**，不得直接成为治理 source of truth：
-
-- GitHub 仓库（包括官方 skill 仓库、社区 skill 仓库）
-- 插件市场 / CLI 工具输出（`npx skills add`、`lark-cli update` 等）
-- 本地拖拽目录 / 手动拷贝的技能目录
-- 外部 Agent 运行时自动下载的技能缓存
-
-所有候选来源的技能必须经过完整治理生命周期后才能进入 adoption log；suite-owned 技能
-进入 suite manifest，externally governed 技能只进入 skills registry。
+- `manifests/skills-registry.yaml`：技能身份、canonical source、routing metadata、`demand_routes`。
+- `manifests/suite.yaml`：套件 required / optional / personal 集合。
+- 受管外部源或宿主系统目录：canonical 技能本体；公开版不捆绑第三方技能正文。
+- host 目录：thin index 或宿主系统技能；不是第二份 canonical 本体。
+- `<runtime_home>/capability-snapshot/capability-snapshot.json`：单机、单 active host 的可用性快照；不入库、不进入 public projection。
 
 ## 治理生命周期
 
-技能从候选来源进入 suite manifest 或 externally governed registry 必须经过以下阶段，
-不得跳过：
-
 ### 1. Discover（发现）
 
-识别候选技能来源。可以来自：
-
-- 套件 manifest 中声明的 optional 技能引用
-- 用户手动指定的路径、URL 或技能名
-- 项目 profile 或 context capsule 中引用的技能
-
-此阶段只做 inventory，不修改任何文件。
+发现 suite、用户、宿主系统、project-local 和外部技能，但被发现不等于可路由。
 
 ### 2. Scan（扫描）
 
-对候选技能执行只读安全检查：
-
-- 文件结构完整性（是否包含 SKILL.md 或等价入口）
-- 已知风险模式匹配（`curl | bash`、`eval`、未审查网络请求等）
-- 与现有 ignore list 交叉比对
-- 与已接纳技能的冲突检测（同名、同路径、同功能）
-
-Scan 结果写入 proposal，不做 adoption/ignore 决策。
+检查名称、canonical body、hash、重复实现、健康状态和 host visibility。
 
 ### 3. Proposal（提案）
 
-基于 scan 结果生成 adoption proposal。Proposal 包含：
+所有变更先输出 dry-run proposal；外部 installer、registrar 和登录动作只给建议。
 
-- 技能名、来源、hash
-- Scan 发现的风险项（无风险则注明 clean）
-- 建议决策：adopt / ignore / defer
-- 若建议 adopt：列出目标路径、与现有技能的交互影响
-- 若建议 ignore：列出 risk category 和 review date
+### 4. Apply（写入）
 
-Proposal 是只读建议，不执行写入。必须等待人工确认后才能进入 adopt 或 ignore 阶段。
+只有显式 `--apply` 才能写 AGS-owned thin index、受管 metadata 或可逆 quarantine。禁止静默覆盖 canonical 本体。
 
-### 4. Dry-Run（干运行）
+### 5. Verify（验证）
 
-在人工确认 adopt 后、实际写入前，必须执行 dry-run：
-
-- 展示将要写入的文件列表和路径
-- 展示 diff（新增、修改、覆盖）
-- 展示将要更新的 adoption log entry
-- 如涉及用户目录（`$HOME/.agents/skills` 等），显式标红警告
-
-Dry-run 不得产生任何文件系统副作用。只有 dry-run 通过且人工二次确认后，才能进入写入阶段。
-
-### 5. Apply（写入）
-
-按以下顺序写入：
-
-1. Backup：如目标路径已有同名技能，先备份到 `governance/backups/`
-2. Write：将技能文件写入目标路径
-3. Log：在 `governance/skill-adoption-log.yaml` 追加 adoption entry
-4. Manifest：更新 `manifests/suite.yaml` 的 required/optional 列表
-
-写入阶段不得：
-
-- 静默覆盖用户目录（`$HOME/.agents/skills`、`$HOME/.codex/skills`、`$HOME/.codex/plugins/cache`）
-- 在执行 `npx skills add/remove/update`、`lark-cli update` 或任何外部 CLI 安装命令
-- 在未先 backup 的情况下覆盖已有技能
-- 在 dry-run 未通过或人工未确认的情况下写入
-
-### 6. Verify（验证）
-
-写入后验证：
-
-- 目标文件存在且内容与 dry-run diff 一致
-- Adoption log entry 格式正确，可被 YAML parser 解析
-- Suite manifest 更新正确
-- 已有技能未受影响（hash 比对）
+验证 canonical 单例、宿主可见性、registry 路由字段和快照 freshness。
 
 ## 写入规则（硬门禁）
 
-所有技能写入操作必须遵守以下规则。违反任何一条即停止，不得继续：
-
-1. **Dry-run 先行**：任何写入操作前必须完成 dry-run 并展示 diff
-2. **Diff before apply**：人工必须在看到 diff 后才能确认 apply
-3. **人工确认**：adopt / ignore / rollback 决策不得由 Agent 自动做出
-4. **禁止静默覆盖用户目录**：任何对 `$HOME/.agents/skills`、`$HOME/.codex/skills`、`$HOME/.codex/plugins/cache` 的写入必须显式标出并要求独立确认
-5. **Backup before mutate**：覆盖已有技能前必须先备份
-6. **Append-only log**：adoption log 和 ignore list 只能追加或显式 supersede，不得删除历史记录
-7. **不得接管外部 CLI**：不得运行 `lark-cli update`、`npx skills add/remove/update` 或等价命令
-8. **不得自动安装未审查技能**：所有新技能必须走完整 scan → proposal → dry-run → confirm → apply 链路
+- 用户未确认时不写。
+- 写前检查 symlink/path traversal/canonical 边界。
+- 批量写入必须事务化或可回滚。
+- 不读取或写入凭据；tracked manifest 不得声称 auth 已配置。
+- 外部 MCP/CLI 注册保持 advice-only，除非另有明确授权的专用命令面。
 
 ## 与 AGS 任务卡系统的关系
 
-技能治理任务使用 AGS 标准任务卡骨架（`protocol/task-card-template.md`），并补充以下规则：
+Request Router 返回闭集 `SkillDemand`；Skill Resolver 再把 demand 映射为 `SkillSelection`。任务卡 compiler 不参与自然语言技能选择。
 
-- `适用治理文档` 填写本文件路径
-- `非目标` 明确禁止写入用户目录、运行外部 CLI、自动应用 patch
-- `实施要求` 说明默认先 scan / dry-run，人工确认后才能 adopt / ignore
-- 涉及 `notebooklm` 或项目自管输出层业务契约时，必须注明只可引用不可 adopt
+任务卡 `[skill: name]` 需要三闸：
 
-详细填槽规则见 `protocol/task-card-template.md` 的 "Skill Governance 治理任务补充" 章节。
+1. registry 中 `route_state: routable`；
+2. `invoke_hint` 合法且与父技能身份一致；
+3. 当前 ActiveSkillTable 中可用。
+
+任何一闸失败都停止。不得自动换成职责相似技能。
 
 ## 技能边界
 
-以下技能类型的**内容本体生命周期**不归套件所有，不能被 AGS 安装、更新或打包；AGS 可在
-registry 中治理其 routing / auth / mutation metadata，并分发或验证 thin index：
+技能是方法能力，不是权限层。它不能改变 task level、permission mode、review gate、verification gate、protected-path 或 release boundary。
 
-- **外部官方 CLI 技能**：`notebooklm`、`lark-*` 系列（飞书开放平台技能）等由外部 CLI 或服务管理本体
-- **输出层业务技能**：项目自管输出层技能和业务契约为业务运行时契约，不得改写为开发套件任务卡或技能治理对象
-- **项目自管输出层技能**：项目内 `output/`、`dist/` 等自管输出目录下的技能，治理权归项目自身
-
-套件分发的 public-safe 技能清单由 `manifests/suite.yaml` 的 allowlist 规则（见
-`AGENT_SUITE_PROTOCOL.md` public-full sanitized 发布边界）和 `governance/skill-ignore-list.yaml`
-共同决定。
+Superpowers 等技能族只向宿主暴露父技能。内部 playbook 通过 `demand_routes.entrypoint` 选择，但不作为独立 host skill 或任务卡 tag。
 
 ## 第三方技能与 MCP 纳管控制台（`ags skill` console）
 
-`ags skill` 不只是静态账本检查，而是本机第三方技能、MCP、CLI-backed
-capability 的统一纳管控制台。控制台模型与写入边界由
-`crates/skill-governance/src/console.rs` 实现，CLI 入口在 `crates/ags-cli`。
+`ags skill` 是人类前台命令面；`ags capability` 是跨宿主可见性和快照的底层命令面。两者不承担自然语言需求路由。
 
 ### Canonical 本体 + per-host thin index（核心心智模型）
 
-AGS 电脑上每个能力**只保留一套 canonical 本体**：套件技能由 AGS 持有，外部官方
-CLI 技能由其 manager 持有；AGS 不复制或接管外部本体。各宿主
-（Claude Code、Codex、Cursor）**只拥有薄索引（thin index）**——一个指回 canonical
-本体的可发现入口，宿主重启后即可识别。
-
-AGS 自身的 Stop hook / context-memory helper scripts（
-`scripts/raw-tool-call-stop-guard.js`、`scripts/context-memory.sh`、
-`scripts/claude-stop-memory-capture.py`）属于 suite-owned setup payload：
-`ags setup --yes --register-claude` 安装到 `$HOME/.agents/scripts/`。它们不是第三方
-技能，不通过 `ags skill adopt/update` 纳管。
-
-- **canonical 本体**：suite-owned 本体位于仓内 `global-skills/` / `skill-packs/`；
-  externally governed 本体由 registry 声明 owner，并在运行期解析到共享
-  `~/.agents/skills/<name>`。机器绝对路径只进入本地 inventory / snapshot，不入 manifest。
-  两类本体都由 `canonical_present` 建模。
-- **thin index**：宿主入口 `<host>/skills/<name>`，实现为 **symlink → canonical 目录**
-  （本机实测 Claude Code 用相对 symlink、Codex 用绝对 symlink，均指向
-  `~/.agents/skills/`）。symlink 让 `references/` 等依赖文件随本体一起可达，**绝不
-  逐文件复制 SKILL.md**（否则 Lark 类技能会丢失 `references/` 而运行时不可用）。
-- **角色边界（goal 7）**：做方案的当前 agent 可使用**完整工具本体**（canonical 全部
-  文件）；其他 agent / 其他宿主**只需要 thin-index 可见性**即可发现并调用能力，不需要
-  也不应各自复制一套本体。
+一个技能只有一个 canonical body。宿主入口可以是符号链接、插件入口或系统技能，但不得复制并分叉实现。
 
 ### 统一能力模型
 
-每个被纳管对象建模为一个 `ManagedCapability`，至少包含以下结构化字段：
+inventory 可以包含 Skill、MCP、Suite Interface、CLI-backed capability。只有 `kind=Skill` 能进入 ActiveSkillTable。
 
-| 字段 | 含义 |
-|---|---|
-| `kind` | `skill` / `mcp` / `suite-interface` / `cli-backed` |
-| `name` | 能力名 |
-| `source` | canonical 来源路径或注册表引用 |
-| `canonical_present` | 声明 owner 的 canonical 本体当前是否存在（与 host visibility 分开建模） |
-| `managed_status` | `suite-managed` / `governed` / `suite-interface` / `discovered` / `ignored` / `unmanaged` |
-| `registry_status` | `registered` / `not-registered`（是否在 AGS 注册表内） |
-| `host_visibility` | 每个宿主一条 thin-index 可见性：`visible` / `not-visible` / `degraded` / `unsupported` / `deferred` |
-| `health_status` | 运行时健康：`healthy` / `degraded` / `unknown` / `unhealthy`（与 host visibility 分开建模） |
-| `actions` | 控制台对该能力开放的动作 |
-| `risk_notes` | 风险/边界提示 |
+### 路由纳管契约（Skill Resolver metadata）
 
-默认 `ags skill` inventory 必须同时展示 canonical 本体状态与各宿主 thin-index
-可见性（claude-code + codex），不得只探测单一宿主。
+技能 registry 的 routing block 至少声明：
 
-inventory 来源：suite manifest 技能、本机 skill 目录（`global-skills/` /
-`skill-packs/`）、`manifests/skills-registry.yaml` 声明的 externally governed 本体、
-`manifests/mcp-registry.yaml` 的 `mcps:`（被治理 MCP）与
-`suite_interfaces:`（AGS 自身，host initialization adapter，**不是**被治理第三方
-MCP），以及 CLI-backed 家族（如 `lark-cli`）。
+```yaml
+routing:
+  route_state: routable | not-routable | retired
+  invoke_hint: "[skill: canonical-name]"
+```
 
-### Parent capability 与内部 entrypoint
+顶层 `demand_routes` 必须覆盖 `SkillDemand::all()`，且 demand 唯一：
 
-能力本体（真实 host-visible body：`skill` / `mcp` / `cli-backed`）与其内部入口
-（playbook / tool / command / subcommand）必须分层建模。内部入口在 manifest 的
-`route_targets:` 段通过 `routing.parent` + `routing.entrypoint` 声明，继承 parent 的
-运行时可用性；它不产生独立宿主安装预期，也不产生自己的 thin-index 写入。
-
-任务卡 `[skill: xxx]` 只标记真实 host-visible parent capability，且必须使用该 parent
-自己的 same-name `invoke_hint`；内部 route target 名称不是合法任务卡标签。需要指定
-内部入口时，应在任务正文中写明 entrypoint。例如 Superpowers 任务卡统一写
-`[skill: superpowers]`，并在正文要求执行 `verification-before-completion` 或
-`test-driven-development` playbook。parent 可以为了任务卡可调用而保持
-`route_state: routable` 且不声明 `intent_tags`；此时它不参与 demand 候选竞争，用户
-意图仍由带 `intent_tags` 的内部 route target 匹配。
+```yaml
+demand_routes:
+  - demand:
+      category: engineering
+      demand: debugging
+    skill_id: diagnosing-bugs
+```
 
 ### Host visibility 与 runtime health 分层
 
-以下是**不同**证据，不得混为一谈（参见 `tests/fixtures/skill-console-lark.md`）：
+registry 说明“允许路由什么”；机器 inventory 说明“当前真的有什么”。两者不能互相代替。
 
-1. skill 源文件在仓内存在；
-2. 宿主 skill 可加载（`~/.claude/skills/<name>/SKILL.md` 可解析，symlink 目标存在）；
-3. MCP server 已在宿主注册（`claude mcp list/get` 可发现）；
-4. MCP 已连接（runtime health）；
-5. 外部 endpoint doctor 通过（如 Feishu/Lark，只能作为 degraded observation，
-   不得依赖真实网络或真实账号）。
+## ActiveSkillTable 与快照
 
-Claude Code 与 Codex 宿主检查均已实现（skill path：`~/.claude/skills` /
-`~/.codex/skills`，symlink-aware；MCP 注册：`claude mcp list` / `codex mcp list`）。
-Cursor 为预留接口，返回 `deferred`，但模型与 JSON 字段保持稳定。宿主 CLI 不可用时
-返回 `degraded`，不得 panic。expected host 由 required 技能 + 注册表
-`installed_clients` 判定，逐宿主独立。
+ActiveSkillTable 的集合定义：
 
-### Capability authority 与 expected-set coverage
-
-`ags capability inventory|verify` 以及前台兼容入口 `ags skill verify` 的 manifest 权威必须
-优先从已安装 runtime 的 `install-manifest.json.source_root` 解析。只有安装清单缺失或不可用
-时，当前目录中的完整 AGS suite checkout 才可作为回退。普通纳管项目只是调用位置，不得
-改变机器 expected capability 集合；同一台机器从不同项目执行 verify 必须得到同一套
-suite expected 分母。
-
-registry 中 `profile: required` 且 `routing.route_state: routable` 的真实父技能必须始终
-materialize 为 inventory row。即使 canonical body 或宿主入口尚不存在，也必须保留
-`expected_hosts` 并报告 `not-visible`；禁止通过省略整行缩小 strict verify 分母。带
-`routing.parent` 的内部 route target 仍不独立进入 expected 集合，但 playbook entrypoint
-必须在宿主可见父技能内实际存在；同名旧独立宿主入口也视为 exposure-shape 冲突。两者
-都会使父能力降级并令 strict verify fail-closed。
-
-### 纳管链路（硬性顺序）
-
-```
-discover → scan → propose → dry-run → confirm/apply → host restart/new task → verify → audit evidence
+```text
+Skill
+∩ canonical_present
+∩ healthy
+∩ routable
+∩ active_host visible
 ```
 
-- **discover / scan**：只读盘点本机技能、MCP、CLI-backed capability（`ags skill`、
-  `ags skill scan`、`ags skill check`）。
-- **propose**：对 discovered capability 生成 adopt / update / remove / uninstall /
-  repair / verify 的 dry-run 提案（`ags skill propose --action <verb> --skill <name>`）。
-- **dry-run**：默认行为。无确认参数时只输出计划，**不写用户目录、不写宿主配置、
-  不运行外部安装器**。
-- **confirm/apply**：仅当显式传入 `--apply` 时执行受保护写入。所有写入集中经过
-  一个 guard，且**只写 thin index**——对每个支持的宿主在 `<host>/skills/<name>`
-  创建 symlink → canonical 本体（覆盖前把旧入口整体 rename 到 `.bak`）。技能 adopt /
-  update / repair 不复制本体；remove / uninstall 只移走 thin index，canonical 本体
-  原样保留。MCP 仍只 advise（`claude mcp add/remove` / `codex mcp add/remove`），AGS
-  永不运行 `npx skills add/remove`、`lark-cli update` 或任何外部安装/注册命令。写入
-  目标必经 containment 断言，限定在各宿主 skills 根之内。
-- **共享 playbook 索引迁移**：当 registry 将若干 playbook 声明为一个父技能的内部
-  entrypoint 时，`ags skill sync` 以 registry 为权威，在 `~/.agents/skills/` 建立唯一父
-  技能入口，并只清理这些子 playbook 的失效软链接。仍可解析的软链接、真实目录和
-  canonical 本体一律保留；共享父技能无可信 canonical source 时停止迁移。
-- **host restart/new task**：apply 后重启 Claude Code / Codex / Cursor，或开启新任务，
-  让宿主丢弃会话启动时缓存的旧技能清单并重扫 thin index。
-- **verify**：`ags skill verify --host <host>` 重启后复核宿主可见性。
-- **audit evidence**：在 delivery report / receipt 中记录 dry-run 计划、apply 写入
-  清单、host visibility 证据；adoption log 仍按既有 append-only 规则记录采纳决策。
+快照字段至少包括：schema version、active host、registry hash、runtime hash、active-table hash、snapshot hash、active skills。
 
-### 写入边界（与上文硬门禁一致）
+路由调用只读取并校验快照；不一致时返回 `skill_snapshot_stale`。刷新必须是显式命令或已授权写入动作的收尾步骤，不允许在路由途中静默刷新。
 
-- 默认命令（`ags skill` / `scan` / `check` / `propose` / `verify`）只读。
-- 任何真实写入或外部命令必须由显式确认参数（`--apply`）保护。
-- 写入型代码路径必须支持测试注入 root / home / config 目录；测试只能使用临时目录和
-  mock command，不得触碰真实 `$HOME`。
-- 第三方能力默认 opt-in；控制台不得 silently bundle 或 silently install。
-- AGS 自身（`suite_interfaces.ags`）是治理权威，不能通过控制台 adopt / remove。
+系统不再使用额外的机器加入模式。是否可路由由 registry + 真实机器状态的交集直接决定。
 
-### 写入与验证的失败语义（硬化要求）
+## 写入与验证的失败语义
 
-- **apply 失败必须上抛，advised-only 不算 applied**：`applied=true` 仅当**至少有一
-  个 AGS 自有写入被规划且全部成功**；任一失败进 `apply_errors`、`applied=false`、CLI
-  退出非零。MCP/CLI-backed 动作 AGS 不写任何文件、只 advise——`apply_status` 标为
-  `advised-only`、`applied=false`，`--apply` 时 CLI 退出非零（提示用户自行执行 advised
-  命令），不得报告为已执行。`apply_status` 取值：`dry-run` / `applied` / `failed` /
-  `advised-only` / `nothing-to-do` / `blocked`。
-- **写入必须事务化 + 多宿主预检**：每个宿主的 relink 走 stage→backup→atomic swap，
-  任一步失败自动回滚，绝不把现有入口删一半。多宿主 apply 先**预检所有目标**（containment
-  + skills 目录可创建），任一宿主预检失败则**零变更中止**，后面的宿主失败不会让前面的
-  宿主处于半改状态。
-- **路径必须收敛**：capability 名落盘前先校验为安全单段路径（拒绝 `/`、`\`、`..`、
-  绝对路径、多段路径）；guard 再断言写入目标位于各宿主 skills 根之内。
-- **canonical 源必须收敛**：symlink 目标必须 canonicalize 后落在 owner 对应的 approved
-  store。suite-owned 只允许 `global-skills/` / `skill-packs/`；registry 声明
-  `source.type: external_cli_skill` 的本体只允许 `~/.agents/skills/<name>`。canonical
-  `SKILL.md` 的 front-matter `name` 必须与 capability name 一致；坏的/陈旧的 source、
-  `..` 逃逸、owner store 外目录、名字不符一律 blocked。
-- **verify 必须覆盖共享技能目录漂移**：Codex 同时消费宿主专用目录与
-  `~/.agents/skills/`，因此 verify 必须扫描两者。任一目录存在 `.bak` 残留或 dangling
-  symlink 时返回 `status=degraded`，`--strict` 退出非零；不能只因宿主专用目录干净就
-  报告全绿。
-- **verify 必须反映不可见**：`host_visibility` 区分 `expected`（按 required 技能 +
-  注册表 `installed_clients` 判定）。存在 expected 但不可见的能力时，verify
-  `status=incomplete`、`all_visible=false`；`ags skill verify --strict` 在
-  `status!=ok` 时退出非零，作为 apply 后的门禁；默认无 `--strict` 为只读信息模式。
+- dry-run：报告 blocked/needs-action，但不因未写而失败。
+- `--apply`：写入失败或被阻止时非零退出。
+- advised-only 外部动作不得伪装成 applied。
+- snapshot stale 是 Skill 目标的治理前置条件失败，不影响纯 DirectResponse 或纯 MachineCli。
 
 ## 当前实现状态
 
-当前 2.5 私有主库已从旧套件备份迁入技能治理分类账，并将 `ags skill`
-实现为第三方技能与 MCP 纳管控制台的第一版可执行闭环：
+0.2.8 已实现：
 
-- **已落地**：本协议、`governance/skill-sync.md`、`governance/skill-adoption-log.yaml`、`governance/skill-ignore-list.yaml`、`manifests/suite.yaml`、`manifests/skills-registry.yaml`、`manifests/mcp-registry.yaml`、`global-skills/`、`skill-packs/optional/`、`skill-packs/personal/`
-- **已实现只读入口**：`ags skill`（统一 inventory）、`ags skill scan`、`ags skill check`、`ags skill propose`（dry-run）、`ags skill verify --host <host>`、`ags skill inventory`
-- **已实现受确认保护的 apply 路径**：`ags skill propose --action <verb> --skill <name> --apply` 经单一 guard 执行 AGS 自有宿主入口写入（事务化替换，成功后不留下 `.bak`）；无 `--apply` 时只 dry-run
-- **已迁移分类**：required 核心开发技能、optional 集成/第三方技能包、personal 用户风格技能、ignored 外部/不纳管技能
-- **仍不接管外部 CLI**：`npx skills add/remove/update`、`lark-cli update`、`claude mcp add/remove` 等外部安装/注册命令一律只 advise、永不执行；AGS 只做纳管、提案、确认保护、入口分发和验证
+- 唯一 Request Router；
+- 闭集 SkillDemand；
+- registry 固定 demand 映射；
+- 单 host ActiveSkillTable 快照与 hash 校验；
+- 写入动作自动刷新 Codex 快照；
+- 无额外加入层、无相似技能 fallback、无自然语言二次分类。
+
+## Public / stable 投影边界
+
+registry 和协议可投影；机器 snapshot、runtime path、host inventory、credential/auth 状态不得进入公开投影。
 
 ## 协议引用
 
-- 同步阶段边界：`governance/skill-sync.md`
-- 采纳日志 schema：`governance/skill-adoption-log.yaml`
-- 忽略列表 schema：`governance/skill-ignore-list.yaml`
-- 套件 manifest schema：`manifests/suite.yaml`
-- 任务卡模板（技能治理补充）：`protocol/task-card-template.md`
-- 套件级协议概述（public-full sanitized 边界）：`AGENT_SUITE_PROTOCOL.md`
+- `protocol/agent-task-protocol.md`
+- `protocol/task-routing.md`
+- `protocol/mcp-server.md`
+- `protocol/task-card-template.md`

@@ -52,7 +52,7 @@ pub(in crate::agents) fn agents_scan_rows(
 pub(in crate::agents) fn agents_governance_chain() -> Vec<&'static str> {
     vec![
         "ags_preflight (host initialization gate)",
-        "ags_solution_check (solution/direct-edit/task-card-handoff decision)",
+        "ags_route_request (canonical RequestDecision)",
         "ags_task_validate (task-card format gate)",
         "ags_policy_resolve (execution policy)",
         "review gate + verification gate (delivery)",
@@ -69,7 +69,7 @@ pub(in crate::agents) fn ags_mcp_tool_surface() -> Vec<&'static str> {
         "ags_agent_instructions",
         "ags_task_validate",
         "ags_policy_resolve",
-        "ags_solution_check",
+        "ags_route_request",
         "ags_verify_local",
     ]
 }

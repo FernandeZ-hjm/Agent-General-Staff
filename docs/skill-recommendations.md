@@ -41,7 +41,7 @@ Upstream: https://github.com/mattpocock/skills · each is `external`,
 recommendation-only, Low risk unless noted, installed under
 `$HOME/.agents/skills/<id>/`.
 
-- **grill-me** — relentless plan/design interrogation before building — `skills/productivity/grill-me`
+- **grilling** — pressure-test an existing plan/design before building — `skills/productivity/grilling`
 - **review** — review changes since a fixed point (standards + spec axes) — `skills/in-progress/review`
 - **decision-mapping** — map decisions and trade-offs before committing — `skills/in-progress/decision-mapping`
 - **resolving-merge-conflicts** — resolve an in-progress git merge/rebase conflict — `skills/engineering/resolving-merge-conflicts`
@@ -50,9 +50,8 @@ recommendation-only, Low risk unless noted, installed under
 - **triage** — backlog and issue triage — `skills/engineering/triage`
 - **handoff** — clean context handoff to another agent/session — `skills/productivity/handoff`
 
-> `grill-me` (Matt), `grill-with-docs` (Matt, requirements alignment), and the
-> Superpowers `grilling` playbook are **distinct** skills — keep their separate
-> upstream names; do not alias one to another.
+> `grilling` pressure-tests an existing plan. `grill-with-docs` is reserved for
+> an explicitly requested docs/ADR/glossary-grounded alignment interview.
 
 The `test-driven-development` and `verification-before-completion` workflows are
 internal playbooks of the installed `superpowers` parent. Do not install or tag

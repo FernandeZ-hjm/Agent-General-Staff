@@ -51,22 +51,9 @@ fn main() {
             yes,
             force,
             register_claude,
-            capability_route: capability_route_flag,
             dry_run,
             format,
-        } => setup::cmd_setup(
-            target,
-            yes,
-            force,
-            register_claude,
-            dry_run,
-            &format,
-            // None (flag omitted) ⇒ preserve existing enrollment; Some ⇒ explicit
-            // operator choice. clap restricts the value, so parsing always succeeds.
-            capability_route_flag
-                .as_deref()
-                .and_then(capability_route::EnrollmentMode::from_cli_str),
-        ),
+        } => setup::cmd_setup(target, yes, force, register_claude, dry_run, &format),
         Commands::Init {
             target,
             slug,
@@ -86,11 +73,7 @@ fn main() {
             profile,
             target,
             format,
-        } => setup::cmd_private_plan(
-            &profile, target, &format,
-            // Hidden M1 alias: preserve existing enrollment (suite-only default).
-            None,
-        ),
+        } => setup::cmd_private_plan(&profile, target, &format),
         Commands::Apply {
             profile,
             target,
@@ -98,17 +81,7 @@ fn main() {
             force,
             register_claude,
             format,
-        } => setup::cmd_private_apply(
-            &profile,
-            target,
-            yes,
-            force,
-            &format,
-            register_claude,
-            // Hidden M1 alias: preserve the machine's recorded enrollment (or the
-            // suite-only default) rather than clobbering it.
-            None,
-        ),
+        } => setup::cmd_private_apply(&profile, target, yes, force, &format, register_claude),
         Commands::Agents { action } => agents::run(action),
         Commands::Skill {
             action,

@@ -18,7 +18,7 @@ fn capability_routing_report(target: &Path) -> suite_doctor::HealthReport {
     let explicit = std::env::var_os("AGS_SOURCE_ROOT").map(std::path::PathBuf::from);
     match crate::context::resolve_capability_authority_root(
         target,
-        &capability_route::locate_runtime_home(),
+        &skill_resolver::locate_runtime_home(),
         explicit,
     ) {
         Ok(authority_root) => {

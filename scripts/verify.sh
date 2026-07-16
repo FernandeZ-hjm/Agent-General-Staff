@@ -223,7 +223,7 @@ else
 fi
 echo -n "[....] task compile output is classic + passes real validator "
 compile_intent=$'任务：verify.sh e2e compile smoke\n目标：确认编译产物为经典骨架并通过真实校验器'
-if printf '%s' "$compile_intent" | cargo run -q -p ags-cli -- task compile - --task-card-requested --output card > /tmp/verify-compiled-card.md 2>/dev/null \
+if printf '%s' "$compile_intent" | cargo run -q -p ags-cli -- task compile - --task-card-requested --confirmed-handoff-contract --output card > /tmp/verify-compiled-card.md 2>/dev/null \
     && ! grep -q "AGENT_SUITE_COMPACT_TASK_CARD_V1" /tmp/verify-compiled-card.md \
     && head -n 1 /tmp/verify-compiled-card.md | grep -q "^## 任务卡" \
     && cargo run -q -p ags-cli -- task validate /tmp/verify-compiled-card.md > /tmp/verify-compiled-validate.log 2>&1; then
@@ -260,82 +260,29 @@ else
     echo "OK (single canonical task-card template; no fallback/compact sources)"
 fi
 
-# ── Prompt Request / Output Gate Smoke (entry intent-recognition) ───────────
-echo "--- Prompt Request / Output Gate Smoke ---"
+# ── RequestDecision / Output Gate Smoke ─────────────────────────────────────
+echo "--- RequestDecision / Output Gate Smoke ---"
 
-# Positive: a task-card/prompt request must be detected and require a card.
-echo -n "[....] gate prompt-request detects '给我提示词' (require_task_card) "
-if cargo run -q -p ags-cli -- gate prompt-request "给我提示词" --no-preflight --format json > /tmp/verify-gate-pr-pos.log 2>&1 \
-    && grep -q '"decision": "require_task_card"' /tmp/verify-gate-pr-pos.log \
-    && grep -q '"is_task_card_request": true' /tmp/verify-gate-pr-pos.log; then
+echo -n "[....] unique request router contract tests "
+if cargo test -q -p request-router --test request_decision; then
     echo "OK"
 else
-    echo "FAIL (task-card request not detected)"
-    cat /tmp/verify-gate-pr-pos.log
+    echo "FAIL"
     failures=$((failures + 1))
 fi
 
-# Negative: discussing task-card architecture must NOT be classified as a request.
-echo -n "[....] task-card discussion stays prose (allow) "
-if cargo run -q -p ags-cli -- gate prompt-request "任务卡不该限制 Codex" --no-preflight --format json > /tmp/verify-gate-pr-neg.log 2>&1 \
-    && grep -q '"decision": "allow"' /tmp/verify-gate-pr-neg.log \
-    && grep -q '"is_task_card_request": false' /tmp/verify-gate-pr-neg.log; then
+echo -n "[....] deterministic skill resolver contract tests "
+if cargo test -q -p skill-resolver --test skill_resolver; then
     echo "OK"
 else
-    echo "FAIL (prose misclassified as task-card request)"
-    cat /tmp/verify-gate-pr-neg.log
+    echo "FAIL"
     failures=$((failures + 1))
 fi
 
-# Existing canonical cards are execution contracts, not raw prompt requests.
-echo -n "[....] existing canonical card skips generation and routes to execution "
-if cargo run -q -p ags-cli -- gate prompt-request - --no-preflight --format json \
-    < "$REPO_ROOT/tests/fixtures/valid-full.md" > /tmp/verify-gate-existing-card.log 2>&1 \
-    && grep -q '"entry_kind": "existing_task_card"' /tmp/verify-gate-existing-card.log \
-    && grep -q '"decision": "execute_task_card"' /tmp/verify-gate-existing-card.log \
-    && grep -q '"task_card_generation_required": false' /tmp/verify-gate-existing-card.log; then
-    echo "OK"
-else
-    echo "FAIL (valid existing card was routed back through generation)"
-    cat /tmp/verify-gate-existing-card.log
-    failures=$((failures + 1))
-fi
-
-echo -n "[....] invalid card-shaped input fails closed before prompt classification "
-if printf '## 任务卡\n\nExecutor: Codex\nPermission mode: unsupported-permission-mode\n' \
-    | cargo run -q -p ags-cli -- gate prompt-request - --no-preflight --format json \
-        > /tmp/verify-gate-invalid-card.log 2>&1; then
-    echo "FAIL (invalid card-shaped input was allowed)"
-    cat /tmp/verify-gate-invalid-card.log
-    failures=$((failures + 1))
-elif grep -q '"entry_kind": "invalid_task_card"' /tmp/verify-gate-invalid-card.log \
-    && grep -q '"block_reason": "validation_failed"' /tmp/verify-gate-invalid-card.log \
-    && grep -q '"task_card_generation_required": false' /tmp/verify-gate-invalid-card.log; then
-    echo "OK"
-else
-    echo "FAIL (invalid card did not fail closed with validation_failed)"
-    cat /tmp/verify-gate-invalid-card.log
-    failures=$((failures + 1))
-fi
-
-# Direct execution authorization selects direct-edit without manufacturing a card.
-echo -n "[....] explicit same-session authorization selects direct-edit "
-if cargo run -q -p ags-cli -- gate prompt-request "可以，开改" --no-preflight --format json > /tmp/verify-gate-vr.log 2>&1 \
-    && grep -q '"value_route"' /tmp/verify-gate-vr.log \
-    && grep -q '"direct_execution_authorized": true' /tmp/verify-gate-vr.log \
-    && grep -q '"recommended_path": "direct-edit"' /tmp/verify-gate-vr.log \
-    && grep -q '"authority_note"' /tmp/verify-gate-vr.log; then
-    echo "OK"
-else
-    echo "FAIL (direct execution authorization did not select direct-edit)"
-    cat /tmp/verify-gate-vr.log
-    failures=$((failures + 1))
-fi
-
-# Positive end-to-end: request → compiled canonical card → gate output ALLOW.
-echo -n "[....] '给我提示词' → compile → gate output ALLOW + validator-clean "
-pr_intent=$'任务：verify.sh prompt-request e2e smoke\n目标：确认触发词请求经编译产出经典骨架并通过 output gate'
-if printf '%s' "$pr_intent" | cargo run -q -p ags-cli -- task compile - --task-card-requested --output card > /tmp/verify-gate-card.md 2>/dev/null \
+# Positive end-to-end: confirmed structured contract → canonical card → output ALLOW.
+echo -n "[....] confirmed contract → compile → gate output ALLOW + validator-clean "
+handoff_contract=$'任务：verify.sh RequestDecision e2e smoke\n目标：确认结构化交接契约经编译产出经典骨架并通过 output gate'
+if printf '%s' "$handoff_contract" | cargo run -q -p ags-cli -- task compile - --task-card-requested --confirmed-handoff-contract --output card > /tmp/verify-gate-card.md 2>/dev/null \
     && cargo run -q -p ags-cli -- gate output /tmp/verify-gate-card.md --format json > /tmp/verify-gate-out-pos.log 2>&1 \
     && grep -q '"decision": "allow"' /tmp/verify-gate-out-pos.log \
     && cargo run -q -p ags-cli -- task validate /tmp/verify-gate-card.md > /dev/null 2>&1; then
@@ -343,23 +290,6 @@ if printf '%s' "$pr_intent" | cargo run -q -p ags-cli -- task compile - --task-c
 else
     echo "FAIL (canonical card rejected by output gate or validator)"
     cat /tmp/verify-gate-out-pos.log
-    failures=$((failures + 1))
-fi
-
-# Negative end-to-end (fail-closed): a non-canonical foreground answer for a
-# detected task-card request must be BLOCKED with a governance_miss event.
-echo -n "[....] non-'## 任务卡' output for a request is BLOCKED + governance_miss "
-if printf 'This is a normal prose answer, not a task card.\n' \
-    | cargo run -q -p ags-cli -- gate output - --for-request "给我提示词" --format json > /tmp/verify-gate-out-neg.log 2>&1; then
-    echo "FAIL (non-canonical output was allowed — gate not fail-closed)"
-    cat /tmp/verify-gate-out-neg.log
-    failures=$((failures + 1))
-elif grep -q '"block_reason": "bad_output_shape"' /tmp/verify-gate-out-neg.log \
-    && grep -q '"event": "governance_miss"' /tmp/verify-gate-out-neg.log; then
-    echo "OK (blocked, governance_miss emitted)"
-else
-    echo "FAIL (blocked, but missing bad_output_shape/governance_miss — fail closed)"
-    cat /tmp/verify-gate-out-neg.log
     failures=$((failures + 1))
 fi
 
@@ -1281,7 +1211,7 @@ else
     failures=$((failures + 1))
 fi
 
-# ── Five-Segment Command Surface (0.2.7) ────────────────────────────────────
+# ── Five-Segment Command Surface (0.2.8) ────────────────────────────────────
 echo ""
 echo "--- Five-Segment Command Surface (agents / update / skill) ---"
 
@@ -1458,12 +1388,12 @@ else
     echo "FAIL"
     failures=$((failures + 1))
 fi
-echo -n "[....] agent-task-protocol.md has Value Route (效价比) section "
-if grep -q 'Value Route' "$REPO_ROOT/protocol/agent-task-protocol.md" \
-    && grep -q '效价比' "$REPO_ROOT/protocol/agent-task-protocol.md"; then
+echo -n "[....] agent-task-protocol.md has unique Request Router contract "
+if grep -q 'Request Router（唯一需求路由）' "$REPO_ROOT/protocol/agent-task-protocol.md" \
+    && grep -q 'RequestDecision' "$REPO_ROOT/protocol/agent-task-protocol.md"; then
     echo "OK"
 else
-    echo "FAIL (Value Route / 效价比 missing from agent-task-protocol.md)"
+    echo "FAIL (unique Request Router contract missing from agent-task-protocol.md)"
     failures=$((failures + 1))
 fi
 

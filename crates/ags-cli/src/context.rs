@@ -188,11 +188,8 @@ pub(crate) fn resolve_capability_authority_root(
 pub(crate) fn capability_authority_root_or_exit(command: &str) -> PathBuf {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let explicit = std::env::var_os("AGS_SOURCE_ROOT").map(PathBuf::from);
-    match resolve_capability_authority_root(
-        &cwd,
-        &capability_route::locate_runtime_home(),
-        explicit,
-    ) {
+    match resolve_capability_authority_root(&cwd, &skill_resolver::locate_runtime_home(), explicit)
+    {
         Ok(root) => root,
         Err(detail) => {
             eprintln!("{command}: refused — {detail}");

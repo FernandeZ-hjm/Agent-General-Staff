@@ -52,7 +52,7 @@ fn mcp_smoke_current_exe() -> Result<(), String> {
 
     let input = concat!(
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"ags-install-verify\",\"version\":\"0\"}}}\n",
-        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"ags_solution_check\",\"arguments\":{\"summary\":\"before preflight\"}}}\n"
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"ags_route_request\",\"arguments\":{\"request\":\"before preflight\"}}}\n"
     );
     if let Some(stdin) = child.stdin.as_mut() {
         stdin

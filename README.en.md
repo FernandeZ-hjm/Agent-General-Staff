@@ -151,13 +151,13 @@ The repository ships a `deny.toml` (RustSec advisories + license allowlist + cra
 
 ## How It Works
 
-AGS does not allow an agent to jump from a single user sentence straight into execution. In 2.7, AGS uses a **unified routing model**: every user request first passes through `gate prompt-request` for intent classification, capability routing, and value routing before deciding whether to enter the task-card pipeline.
+AGS 0.2.8 has exactly one natural-language routing node. After preflight, the host sends complete conversation context to MCP `ags_route_request`; Request Router returns one structured `RequestDecision`. It may select a direct response, a skill demand, or a machine CLI capability. A direct response is exclusive, while one skill and one business-level CLI capability may coexist. Skill Resolver only maps a closed demand against a validated `ActiveSkillTable`; MCP invokes the real `ags` CLI with fixed argv. Compiler, Policy, Gate, and Runner never re-parse natural language.
 
 ```text
-User request → unified routing (intent classification + capability route + value route)
-  → task card required?
-      yes → preflight → solution → compile task card → validate → policy → execute → verify → receipt → memory
-      no  → allow ordinary response
+User request → MCP → Request Router → RequestDecision
+  ├─ DirectResponse → host response
+  ├─ SkillDemand → Skill Resolver → host skill
+  └─ MachineCli → MCP fixed argv → ags CLI internal execution chain
 ```
 
 Once inside the task-card pipeline, the **three-gate threshold** still applies:
@@ -166,18 +166,20 @@ Once inside the task-card pipeline, the **three-gate threshold** still applies:
 2. **Task-card instruction** — the user explicitly asks for a task card ("Solution OK" ≠ "go")
 3. **Task routing** — Light / Medium / Heavy, determining execution policy
 
-Without the middle gate (task-card instruction), routing must not proceed.
+Without both the task-card instruction and a confirmed handoff contract, task-card compilation must not proceed.
 
 ```mermaid
 flowchart TD
-    A[User Request] --> R[Unified Routing<br/>gate prompt-request]
-    R --> R1[Intent Classification<br/>prompt-request-classifier]
-    R1 --> R2[Capability Route<br/>capability-route]
-    R2 --> R3[Value Route<br/>value-route]
-    R3 --> D0{Task card required?}
-    D0 -->|No| PASS[Allow ordinary response]
-    D0 -->|Yes| B[1. Preflight<br/>ags_preflight / CLI fallback]
-    B --> B1[Read context capsule + task memory]
+    A[User Request] --> B[1. Preflight<br/>ags_preflight / CLI fallback]
+    B --> MCP[MCP<br/>ags_route_request]
+    MCP --> R[Request Router<br/>only natural-language node]
+    R --> D0{RequestDecision}
+    D0 -->|DirectResponse| PASS[Host response]
+    D0 -->|SkillDemand| SR[Skill Resolver<br/>closed ActiveSkillTable mapping]
+    D0 -->|MachineCli| MC[MCP fixed argv<br/>ags CLI capability]
+    SR --> HOST[Host loads skill]
+    MC --> K
+    D0 -->|Task-card handoff| B1[Read context capsule + task memory]
     B1 --> C[2. Solution Phase]
     C --> C1[Understand → Diagnose → Form solution]
     C1 --> D{User confirms?}
@@ -185,7 +187,7 @@ flowchart TD
     D -->|Revise| C
     E --> F{Task-card instruction?}
     F -->|Generate task card| G[4. Task-Card Instruction Gate ✅]
-    F -->|Not received| F_WAIT[Wait — ags task compile<br/>blocks without --task-card-requested]
+    F -->|Not received| F_WAIT[Wait — ags task compile<br/>requires explicit request + confirmed handoff]
     F_WAIT --> F
     G --> H[5. Routing<br/>Light / Medium / Heavy]
     H --> I[6. Task Card Generation<br/>ags task compile]
@@ -201,7 +203,7 @@ flowchart TD
     O --> P[12. Task Memory Update]
 
     style R fill:#7e57c2,color:#fff
-    style R1 fill:#9575cd,color:#fff
+    style MCP fill:#9575cd,color:#fff
     style PASS fill:#c8e6c9
     style B fill:#e1f5fe
     style C fill:#fff3e0
@@ -215,7 +217,7 @@ For architectural details, see [docs/architecture.md](docs/architecture.md).
 
 ## Common Commands
 
-2.7 uses a unified routing + five-stage pipeline CLI architecture: 5 top-level commands cover the full governance lifecycle, while kernel subcommands handle task cards, policies, verification, and receipts.
+0.2.8 uses one Request Router plus a five-stage CLI architecture: five human-facing commands cover the governance lifecycle, while `MachineCli` is the post-routing machine capability surface consumed by MCP.
 
 ### Five-Stage Pipeline (Global Management)
 

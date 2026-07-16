@@ -1,9 +1,9 @@
 [package]
-name = "prompt-request-classifier"
+name = "request-router"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Deterministic classifier for prompt / task-card request intent (AGS entry gate)"
+description = "AGS unique natural-language requirement router"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

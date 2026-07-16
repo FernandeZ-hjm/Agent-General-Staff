@@ -45,45 +45,6 @@ registry:
         when the CLI contract, install flow, or output structure changes.
 
 skills:
-  - name: auto-brainstorm
-    profile: required
-    local_path: global-skills/auto-brainstorm
-    description: Automatic solution exploration before implementation
-    auto_trigger: true
-    routing:
-      route_state: retired
-      intent_tags: []
-    source:
-      type: local
-      relationship: suite_overlay
-      update_policy: local_canonical_no_upstream
-
-  - name: auto-debug
-    profile: required
-    local_path: global-skills/auto-debug
-    description: Automatic debug loop for errors and failures
-    auto_trigger: true
-    routing:
-      route_state: retired
-      intent_tags: []
-    source:
-      type: local
-      relationship: suite_overlay
-      update_policy: local_canonical_no_upstream
-
-  - name: auto-verify
-    profile: required
-    local_path: global-skills/auto-verify
-    description: Automatic verification before claiming completion
-    auto_trigger: true
-    routing:
-      route_state: retired
-      intent_tags: []
-    source:
-      type: local
-      relationship: suite_overlay
-      update_policy: local_canonical_no_upstream
-
   - name: prompt-maker
     profile: required
     local_path: global-skills/prompt-maker
@@ -97,6 +58,11 @@ skills:
     profile: required
     local_path: global-skills/claude-delivery-report
     description: Claude Code delivery report template
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: claude-delivery-report]"
+      mutation_surface: read-only
+      route_priority: 60
     source:
       type: local
       relationship: suite_local
@@ -229,6 +195,11 @@ skills:
     profile: required
     local_path: global-skills/improve-codebase-architecture
     description: Architecture improvement for tangled or hard-to-test code
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: improve-codebase-architecture]"
+      mutation_surface: local-write
+      route_priority: 40
     source:
       type: upstream_git
       upstream: mattpocock_skills
@@ -275,15 +246,25 @@ skills:
       update_policy: local_canonical_no_upstream
 
   - name: skill-creator
-    profile: required
-    local_path: global-skills/skill-creator
-    description: Create, edit, and evaluate skills
+    routing:
+      route_state: routable
+      intent_tags: [skill-authoring]
+      scope_tags: ["*"]
+      mutation_surface: local-write
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: skill-creator]"
+      route_priority: 30
+      is_compatibility_alias: false
+      capability_group: [skill-authoring]
+      upstream_group: "host-system"
+      examples:
+        positive: ["创建一个新技能", "create a new skill"]
+        negative: ["帮我修复这个报错"]
     source:
-      type: upstream_git
-      upstream: mattpocock_skills
-      path: skills/productivity/write-a-skill
-      relationship: conceptually_related
-      update_policy: crawl_then_manual_review
+      type: host-system
+      relationship: host_discovered
+      update_policy: host_managed_no_upstream
 
   - name: graphify
     profile: required
@@ -310,6 +291,126 @@ skills:
       relationship: registry_adopted_host_body
       update_policy: crawl_then_diff_proposal
 
+  - name: domain-modeling
+    profile: required
+    description: Build and sharpen a project's domain model
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: domain-modeling]"
+      mutation_surface: local-write
+      route_priority: 55
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/engineering/domain-modeling
+      relationship: upstream_aligned
+      update_policy: crawl_then_diff_proposal
+
+  - name: grilling
+    profile: required
+    description: Pressure-test an existing plan or design
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: grilling]"
+      mutation_surface: read-only
+      route_priority: 45
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/productivity/grilling
+      relationship: upstream_aligned
+      update_policy: crawl_then_diff_proposal
+
+  - name: to-prd
+    profile: required
+    description: Synthesize the current conversation into a project PRD
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: to-prd]"
+      mutation_surface: external-write
+      route_priority: 40
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/engineering/to-prd
+      relationship: upstream_aligned
+      update_policy: crawl_then_diff_proposal
+
+  - name: to-issues
+    profile: required
+    description: Break a PRD or plan into independently-grabbable issue slices
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: to-issues]"
+      mutation_surface: external-write
+      route_priority: 60
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/engineering/to-issues
+      relationship: upstream_aligned
+      update_policy: crawl_then_diff_proposal
+
+  - name: triage
+    profile: required
+    description: Triage issues and external PRs into agent-ready briefs
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: triage]"
+      mutation_surface: external-write
+      route_priority: 40
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/engineering/triage
+      relationship: upstream_aligned
+      update_policy: crawl_then_diff_proposal
+
+  - name: decision-mapping
+    profile: required
+    description: Map loose ideas into sequenced investigation tickets
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: decision-mapping]"
+      mutation_surface: local-write
+      route_priority: 50
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/in-progress/decision-mapping
+      relationship: upstream_aligned
+      update_policy: crawl_then_diff_proposal
+
+  - name: resolving-merge-conflicts
+    profile: required
+    description: Resolve an in-progress git merge or rebase conflict
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: resolving-merge-conflicts]"
+      mutation_surface: local-write
+      route_priority: 35
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/engineering/resolving-merge-conflicts
+      relationship: upstream_aligned
+      update_policy: crawl_then_diff_proposal
+
+  - name: handoff
+    profile: required
+    description: Compact the current conversation into a fresh-session handoff
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: handoff]"
+      mutation_surface: local-write
+      route_priority: 40
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/productivity/handoff
+      relationship: upstream_aligned
+      update_policy: crawl_then_diff_proposal
+
   # ags-capability retired from the front-stage command-skill set (2.7): the
   # `ags capability ...` CLI and Cross-Agent sync engine remain, but the
   # host-visible `ags-capability` command skill is no longer installed. The row
@@ -325,13 +426,351 @@ skills:
       relationship: retired_history_record
       update_policy: none_retired
 
+# Metadata-only host skills. Public AGS never bundles these bodies; the Skill
+# Resolver activates a row only when the current machine snapshot also proves
+# that the named skill is healthy and visible to the active host.
+  - name: claude-mem
+    routing: { route_state: routable, invoke_hint: "[skill: claude-mem]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: obsidian-vault
+    routing: { route_state: routable, invoke_hint: "[skill: obsidian-vault]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-mail
+    routing: { route_state: routable, invoke_hint: "[skill: lark-mail]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-calendar
+    routing: { route_state: routable, invoke_hint: "[skill: lark-calendar]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-doc
+    routing: { route_state: routable, invoke_hint: "[skill: lark-doc]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-sheets
+    routing: { route_state: routable, invoke_hint: "[skill: lark-sheets]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-base
+    routing: { route_state: routable, invoke_hint: "[skill: lark-base]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-im
+    routing: { route_state: routable, invoke_hint: "[skill: lark-im]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-approval
+    routing: { route_state: routable, invoke_hint: "[skill: lark-approval]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-task
+    routing: { route_state: routable, invoke_hint: "[skill: lark-task]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-wiki
+    routing: { route_state: routable, invoke_hint: "[skill: lark-wiki]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-minutes
+    routing: { route_state: routable, invoke_hint: "[skill: lark-minutes]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-vc
+    routing: { route_state: routable, invoke_hint: "[skill: lark-vc]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-vc-agent
+    routing: { route_state: routable, invoke_hint: "[skill: lark-vc-agent]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-drive
+    routing: { route_state: routable, invoke_hint: "[skill: lark-drive]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-contact
+    routing: { route_state: routable, invoke_hint: "[skill: lark-contact]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-attendance
+    routing: { route_state: routable, invoke_hint: "[skill: lark-attendance]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-okr
+    routing: { route_state: routable, invoke_hint: "[skill: lark-okr]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-event
+    routing: { route_state: routable, invoke_hint: "[skill: lark-event]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-slides
+    routing: { route_state: routable, invoke_hint: "[skill: lark-slides]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-whiteboard
+    routing: { route_state: routable, invoke_hint: "[skill: lark-whiteboard]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-markdown
+    routing: { route_state: routable, invoke_hint: "[skill: lark-markdown]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-apps
+    routing: { route_state: routable, invoke_hint: "[skill: lark-apps]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-openapi-explorer
+    routing: { route_state: routable, invoke_hint: "[skill: lark-openapi-explorer]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-workflow-meeting-summary
+    routing: { route_state: routable, invoke_hint: "[skill: lark-workflow-meeting-summary]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: lark-workflow-standup-report
+    routing: { route_state: routable, invoke_hint: "[skill: lark-workflow-standup-report]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: 产经破壁机-撰稿
+    routing: { route_state: routable, invoke_hint: "[skill: 产经破壁机-撰稿]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: 产经破壁机-选题策划
+    routing: { route_state: routable, invoke_hint: "[skill: 产经破壁机-选题策划]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: 深度科技评论
+    routing: { route_state: routable, invoke_hint: "[skill: 深度科技评论]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: 六爻问卦
+    routing: { route_state: routable, invoke_hint: "[skill: 六爻问卦]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  - name: 辐射塔罗牌
+    routing: { route_state: routable, invoke_hint: "[skill: 辐射塔罗牌]" }
+    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+
+demand_routes:
+  - demand: { category: engineering, demand: debugging }
+    skill_id: diagnosing-bugs
+  - demand: { category: engineering, demand: module_design }
+    skill_id: codebase-design
+  - demand: { category: engineering, demand: domain_modeling }
+    skill_id: domain-modeling
+  - demand: { category: engineering, demand: architecture_improvement }
+    skill_id: improve-codebase-architecture
+  - demand: { category: engineering, demand: system_architecture }
+    skill_id: superpowers
+    entrypoint: brainstorming
+  - demand: { category: engineering, demand: brainstorming }
+    skill_id: superpowers
+    entrypoint: brainstorming
+  - demand: { category: engineering, demand: prototype }
+    skill_id: prototype
+  - demand: { category: engineering, demand: plan_grilling }
+    skill_id: grilling
+  - demand: { category: engineering, demand: docs_grounded_grilling }
+    skill_id: grill-with-docs
+  - demand: { category: engineering, demand: implementation_planning }
+    skill_id: superpowers
+    entrypoint: writing-plans
+  - demand: { category: engineering, demand: approved_plan_execution }
+    skill_id: superpowers
+    entrypoint: executing-plans
+  - demand: { category: engineering, demand: test_driven_development }
+    skill_id: superpowers
+    entrypoint: test-driven-development
+  - demand: { category: engineering, demand: completion_verification }
+    skill_id: superpowers
+    entrypoint: verification-before-completion
+  - demand: { category: engineering, demand: code_review }
+    skill_id: review
+  - demand: { category: engineering, demand: review_request }
+    skill_id: superpowers
+    entrypoint: requesting-code-review
+  - demand: { category: engineering, demand: skill_authoring }
+    skill_id: skill-creator
+  - demand: { category: engineering, demand: prd_authoring }
+    skill_id: to-prd
+  - demand: { category: engineering, demand: issue_slicing }
+    skill_id: to-issues
+  - demand: { category: engineering, demand: issue_triage }
+    skill_id: triage
+  - demand: { category: engineering, demand: decision_mapping }
+    skill_id: decision-mapping
+  - demand: { category: engineering, demand: merge_conflict_resolution }
+    skill_id: resolving-merge-conflicts
+  - demand: { category: engineering, demand: context_handoff }
+    skill_id: handoff
+  - demand: { category: engineering, demand: branch_review }
+    skill_id: review
+  - demand: { category: engineering, demand: delivery_reporting }
+    skill_id: claude-delivery-report
+  - demand: { category: knowledge, demand: conversation_memory_recall }
+    skill_id: claude-mem
+  - demand: { category: knowledge, demand: vault_knowledge }
+    skill_id: obsidian-vault
+  - demand: { category: lark, demand: mail }
+    skill_id: lark-mail
+  - demand: { category: lark, demand: calendar }
+    skill_id: lark-calendar
+  - demand: { category: lark, demand: document }
+    skill_id: lark-doc
+  - demand: { category: lark, demand: spreadsheet }
+    skill_id: lark-sheets
+  - demand: { category: lark, demand: base }
+    skill_id: lark-base
+  - demand: { category: lark, demand: messaging }
+    skill_id: lark-im
+  - demand: { category: lark, demand: approval }
+    skill_id: lark-approval
+  - demand: { category: lark, demand: task }
+    skill_id: lark-task
+  - demand: { category: lark, demand: wiki }
+    skill_id: lark-wiki
+  - demand: { category: lark, demand: minutes }
+    skill_id: lark-minutes
+  - demand: { category: lark, demand: meeting_history }
+    skill_id: lark-vc
+  - demand: { category: lark, demand: meeting_agent }
+    skill_id: lark-vc-agent
+  - demand: { category: lark, demand: drive }
+    skill_id: lark-drive
+  - demand: { category: lark, demand: contact }
+    skill_id: lark-contact
+  - demand: { category: lark, demand: attendance }
+    skill_id: lark-attendance
+  - demand: { category: lark, demand: okr }
+    skill_id: lark-okr
+  - demand: { category: lark, demand: event }
+    skill_id: lark-event
+  - demand: { category: lark, demand: slides }
+    skill_id: lark-slides
+  - demand: { category: lark, demand: whiteboard }
+    skill_id: lark-whiteboard
+  - demand: { category: lark, demand: markdown }
+    skill_id: lark-markdown
+  - demand: { category: lark, demand: app_development }
+    skill_id: lark-apps
+  - demand: { category: lark, demand: open_api_exploration }
+    skill_id: lark-openapi-explorer
+  - demand: { category: lark, demand: meeting_summary_workflow }
+    skill_id: lark-workflow-meeting-summary
+  - demand: { category: lark, demand: standup_report_workflow }
+    skill_id: lark-workflow-standup-report
+  - demand: { category: content, demand: industry_article_writing }
+    skill_id: 产经破壁机-撰稿
+  - demand: { category: content, demand: industry_topic_planning }
+    skill_id: 产经破壁机-选题策划
+  - demand: { category: content, demand: technology_commentary }
+    skill_id: 深度科技评论
+  - demand: { category: personal, demand: liu_yao_divination }
+    skill_id: 六爻问卦
+  - demand: { category: personal, demand: tarot_divination }
+    skill_id: 辐射塔罗牌
+
 route_targets:
-  # Superpowers playbooks are internal entrypoints of one real host-visible body.
-  # Task cards tag only `[skill: superpowers]` and name a playbook in task prose.
-  # Playbooks inherit availability from `superpowers`, never create host-visible
-  # install expectations, and never produce thin-index writes of their own.
+  - name: brainstorming
+    description: Conversational resolution of explicit brainstorms or unresolved system architecture
+    routing:
+      route_state: routable
+      parent: { kind: skill, name: superpowers }
+      entrypoint: { kind: playbook, name: brainstorming }
+      intent_tags: [brainstorm, system-architecture]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: superpowers]"
+      route_priority: 40
+      capability_group: [engineering-process]
+      upstream_group: "obra/superpowers:brainstorming"
+      examples:
+        positive: ["帮我 brainstorm 一个方案", "设计跨 MCP、CLI、Vault 的新架构，明确架构边界"]
+        negative: ["设计一个登录功能", "按已确认方案开始实现", "解释一下什么是系统架构", "翻译 system architecture 这个术语"]
+  - name: dispatching-parallel-agents
+    description: Dispatch independent tasks to parallel agents
+    routing:
+      route_state: not-routable
+      parent: { kind: skill, name: superpowers }
+      entrypoint: { kind: playbook, name: dispatching-parallel-agents }
+      intent_tags: [parallel-agents, delegate, fanout]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: superpowers]"
+      route_priority: 55
+      capability_group: [engineering-process]
+      upstream_group: "obra/superpowers:dispatching-parallel-agents"
+  - name: executing-plans
+    description: Execute an approved written implementation plan
+    routing:
+      route_state: routable
+      parent: { kind: skill, name: superpowers }
+      entrypoint: { kind: playbook, name: executing-plans }
+      intent_tags: [execute-plan]
+      scope_tags: ["*"]
+      mutation_surface: local-write
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: superpowers]"
+      route_priority: 60
+      capability_group: [engineering-process]
+      upstream_group: "obra/superpowers:executing-plans"
+  - name: finishing-a-development-branch
+    description: Finish and hand off a development branch
+    routing:
+      route_state: not-routable
+      parent: { kind: skill, name: superpowers }
+      entrypoint: { kind: playbook, name: finishing-a-development-branch }
+      intent_tags: [finish-branch, branch-completion, development-closeout]
+      scope_tags: ["*"]
+      mutation_surface: local-write
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: superpowers]"
+      route_priority: 50
+      capability_group: [engineering-process, git-workflow]
+      upstream_group: "obra/superpowers:finishing-a-development-branch"
+  - name: receiving-code-review
+    description: Evaluate and address received code-review feedback
+    routing:
+      route_state: not-routable
+      parent: { kind: skill, name: superpowers }
+      entrypoint: { kind: playbook, name: receiving-code-review }
+      intent_tags: [address-review, receive-review, code-review-feedback]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: superpowers]"
+      route_priority: 55
+      capability_group: [code-review]
+      upstream_group: "obra/superpowers:receiving-code-review"
+  - name: requesting-code-review
+    description: Request code review before significant completion
+    routing:
+      route_state: routable
+      parent: { kind: skill, name: superpowers }
+      entrypoint: { kind: playbook, name: requesting-code-review }
+      intent_tags: [code-review]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: superpowers]"
+      route_priority: 45
+      capability_group: [code-review, verification]
+      upstream_group: "obra/superpowers:requesting-code-review"
+  - name: subagent-driven-development
+    description: Execute a plan through independent task agents
+    routing:
+      route_state: not-routable
+      parent: { kind: skill, name: superpowers }
+      entrypoint: { kind: playbook, name: subagent-driven-development }
+      intent_tags: [subagent-development, implementation-plan, parallel-execution]
+      scope_tags: ["*"]
+      mutation_surface: local-write
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: superpowers]"
+      route_priority: 50
+      capability_group: [engineering-process]
+      upstream_group: "obra/superpowers:subagent-driven-development"
+  - name: systematic-debugging
+    description: Superpowers systematic debugging playbook
+    routing:
+      route_state: not-routable
+      parent: { kind: skill, name: superpowers }
+      entrypoint: { kind: playbook, name: systematic-debugging }
+      intent_tags: [debug]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: superpowers]"
+      route_priority: 70
+      capability_group: [engineering-process]
+      upstream_group: "obra/superpowers:systematic-debugging"
+      examples:
+        positive: ["这个测试失败了，帮我系统排查", "测试挂了，帮我看下"]
+        negative: ["解释一下这段正常代码"]
   - name: test-driven-development
-    description: Superpowers test-driven-development playbook
+    description: Superpowers test-driven development playbook
     routing:
       route_state: routable
       parent: { kind: skill, name: superpowers }
@@ -345,8 +784,31 @@ route_targets:
       route_priority: 45
       capability_group: [engineering-process, verification]
       upstream_group: "obra/superpowers:test-driven-development"
+  - name: using-git-worktrees
+    description: Create or use an isolated Git worktree
+    routing:
+      route_state: not-routable
+      parent: { kind: skill, name: superpowers }
+      entrypoint: { kind: playbook, name: using-git-worktrees }
+      intent_tags: [git-worktree, isolated-workspace, branch-isolation]
+      scope_tags: ["*"]
+      mutation_surface: local-write
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: superpowers]"
+      route_priority: 50
+      capability_group: [engineering-process, git-workflow]
+      upstream_group: "obra/superpowers:using-git-worktrees"
+  - name: using-superpowers
+    description: Internal help for the Superpowers workflow
+    routing:
+      route_state: not-routable
+      parent: { kind: skill, name: superpowers }
+      entrypoint: { kind: playbook, name: using-superpowers }
+      capability_group: [engineering-process]
+      upstream_group: "obra/superpowers:using-superpowers"
   - name: verification-before-completion
-    description: Superpowers verification-before-completion playbook (verify route target)
+    description: Verify evidence before claiming completion
     routing:
       route_state: routable
       parent: { kind: skill, name: superpowers }
@@ -358,51 +820,46 @@ route_targets:
       cost_class: free
       invoke_hint: "[skill: superpowers]"
       route_priority: 50
-      is_compatibility_alias: false
       capability_group: [engineering-process, verification]
-      upstream_group: "obra/superpowers"
+      upstream_group: "obra/superpowers:verification-before-completion"
       examples:
-        positive: ["做完了验证一下", "验证一下"]
-        negative: ["帮我修复这个报错"]
-
-  - name: systematic-debugging
-    description: Superpowers systematic-debugging playbook (secondary debug method hint)
+        positive: ["做完了验证一下"]
+        negative: ["任务还没开始，先解释需求"]
+  - name: writing-plans
+    description: Turn an approved design into an implementation plan
     routing:
       route_state: routable
       parent: { kind: skill, name: superpowers }
-      entrypoint: { kind: playbook, name: systematic-debugging }
-      intent_tags: [debug]
+      entrypoint: { kind: playbook, name: writing-plans }
+      intent_tags: [planning]
       scope_tags: ["*"]
-      mutation_surface: read-only
+      mutation_surface: local-write
       requires_auth: false
       cost_class: free
       invoke_hint: "[skill: superpowers]"
-      route_priority: 70
-      is_compatibility_alias: false
+      route_priority: 60
       capability_group: [engineering-process]
-      upstream_group: "obra/superpowers"
+      upstream_group: "obra/superpowers:writing-plans"
       examples:
-        positive: ["帮我系统排查这个报错"]
-        negative: ["帮我做代码审查"]
-
-  - name: brainstorming
-    description: Superpowers brainstorming playbook (secondary brainstorm method hint)
+        positive: ["把已批准的设计整理成实施计划", "write an implementation plan"]
+        negative: ["implementation plan 是什么", "执行已批准的实施计划"]
+  - name: writing-skills
+    description: Create or revise an agent skill
     routing:
       route_state: routable
       parent: { kind: skill, name: superpowers }
-      entrypoint: { kind: playbook, name: brainstorming }
-      intent_tags: [brainstorm]
+      entrypoint: { kind: playbook, name: writing-skills }
+      intent_tags: [skill-authoring]
       scope_tags: ["*"]
-      mutation_surface: read-only
+      mutation_surface: local-write
       requires_auth: false
       cost_class: free
       invoke_hint: "[skill: superpowers]"
-      route_priority: 70
-      is_compatibility_alias: false
-      capability_group: [engineering-process]
-      upstream_group: "obra/superpowers"
+      route_priority: 40
+      capability_group: [skill-authoring]
+      upstream_group: "obra/superpowers:writing-skills"
       examples:
-        positive: ["帮我 brainstorm 一个方案"]
+        positive: ["帮我写一个新技能", "create a new skill"]
         negative: ["帮我修复这个报错"]
 
 candidate_skills:
@@ -445,16 +902,6 @@ candidate_skills:
       type: upstream_git
       upstream: mattpocock_skills
       path: skills/engineering/triage
-
-  - name: grill-me
-    profile: candidate
-    adoption_priority: low
-    adoption_mode: evaluate_only
-    rationale: Overlaps with grill-with-docs and should be compared before adoption.
-    source:
-      type: upstream_git
-      upstream: mattpocock_skills
-      path: skills/productivity/grill-me
 
   - name: ubiquitous-language
     profile: candidate

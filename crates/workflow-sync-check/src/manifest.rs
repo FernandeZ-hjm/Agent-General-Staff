@@ -108,7 +108,6 @@ pub const PUBLIC_FORBIDDEN_PAYLOAD: &[&str] = &[
     "private-advisory/",
     "assets/private-method-memory/",
     "crates/ags-mcp/assets/private-method-memory/",
-    "crates/capability-route/assets/private-method-memory/",
     "mcp/private-advisory.mcp.json",
     "hosts/claude-code.private-advisory-mcp.snippet.json",
     "bin/private-advisory-proxy-mcp",
@@ -363,9 +362,6 @@ mod tests {
         ));
         assert!(is_public_forbidden_payload(
             "crates/ags-mcp/assets/private-method-memory/capsules.json"
-        ));
-        assert!(is_public_forbidden_payload(
-            "crates/capability-route/assets/private-method-memory/genes.json"
         ));
         assert!(is_public_forbidden_payload("mcp/private-advisory.mcp.json"));
         assert!(is_public_forbidden_payload(

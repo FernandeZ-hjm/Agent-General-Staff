@@ -47,7 +47,7 @@ Aliases: `/ags onboard`, `/ags manage`, `/ags 纳管`.
 - Empty or `preflight`: report the AGS preflight result and next allowed actions.
 - `doctor`: run `ags doctor --target .` and summarize the findings.
 - `verify`: run `ags verify --scope local --target .` and summarize the check results.
-- Any other text: treat it as the user request. Prefer MCP `ags_preflight` first; if MCP is unavailable, run `ags session preflight --for claude-code --target .`. Complete AGS solution formation and do not generate an executable task card until the user explicitly asks for one.
+- Any other text: treat it as the user request. Prefer MCP `ags_preflight` first; if MCP is unavailable, run `ags session preflight --for claude-code --target .`. Send complete conversation context to MCP `ags_route_request` and consume its structured `RequestDecision`; do not reclassify natural language in Compiler, Policy, Gate, or Runner. Generate an executable task card only when the decision selects task compilation, the handoff contract is independently confirmed, and no unresolved/reopened solution work remains.
 
 Current AGS version expected by this command: {AGS_VERSION}.
 "#
@@ -135,7 +135,7 @@ ags session preflight --for codex --target .
 
 ## 安全边界
 
-不要绕过 AGS 做临时初始化。除非用户明确要求生成任务卡，否则不要生成可执行任务卡。
+不要绕过 AGS 做临时初始化。只有用户明确要求任务卡/交接、handoff contract 已独立确认，且不存在未决或重开的 solution work 时，才可生成可执行任务卡；缺少任一条件都不得生成。
 
 此技能期望的 AGS 版本：{AGS_VERSION}。
 "#

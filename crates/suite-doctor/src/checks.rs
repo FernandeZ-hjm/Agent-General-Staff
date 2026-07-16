@@ -743,83 +743,18 @@ fn scan_yaml_credentials(value: &YamlValue, path: &str, out: &mut Vec<String>) {
     }
 }
 
-/// Read-only Capability Route drift check. Three boundaries, never writes, never
+/// Read-only skill-resolution drift check. Two boundaries, never writes, never
 /// probes a host CLI:
-///  1. **manifest routing lifecycle** — each `auto-*` alias must have an
-///     explicit lifecycle posture: either retired (`route_state: retired`) or
-///     still active as a compatibility alias (`route_state: routable` +
-///     `is_compatibility_alias: true`). Anything else warns (route degrades,
-///     never blocks).
-///  2. **auth-evidence boundary** — NO tracked manifest may carry a credential
+///  1. **auth-evidence boundary** — NO tracked manifest may carry a credential
 ///     key or assert a configured auth status. A violation is the one blocking
-///     capability-route FAIL: runtime auth posture is runtime-derived only and
+///     skill-resolution FAIL: runtime auth posture is runtime-derived only and
 ///     must never be tracked. Mirrors the credential grep in the verification gate.
-///  3. **runtime enrollment** — machine-local evidence presence + mode. Absent ⇒
-///     warn (advisory degraded), never a fail; enrollment lives in the runtime
-///     home, never in a tracked manifest.
-pub fn capability_route_drift_check(repo_root: &Path) -> Vec<Finding> {
+///  2. **ActiveSkillTable snapshot** — machine-local presence and freshness.
+
+pub fn skill_resolution_drift_check(repo_root: &Path) -> Vec<Finding> {
     let mut findings = Vec::new();
 
-    // 1. Manifest routing lifecycle — auto-* aliases may be retired OR remain
-    //    active compatibility aliases while a successor gap exists (notably
-    //    verify). Both states are explicit; anything else warns.
-    let skills_path = repo_root.join("manifests/skills-registry.yaml");
-    match std::fs::read_to_string(&skills_path) {
-        Ok(content) => match serde_yaml::from_str::<YamlValue>(&content) {
-            Ok(doc) => {
-                let skills = doc.get("skills").and_then(|v| v.as_sequence());
-                let invalid_aliases: Vec<&str> = ["auto-brainstorm", "auto-debug", "auto-verify"]
-                    .into_iter()
-                    .filter(|alias| {
-                        let valid = skills
-                            .into_iter()
-                            .flatten()
-                            .filter(|item| {
-                                item.get("name").and_then(|n| n.as_str()) == Some(*alias)
-                            })
-                            .any(|item| {
-                                let routing = item.get("routing");
-                                let route_state = routing
-                                    .and_then(|r| r.get("route_state"))
-                                    .and_then(|s| s.as_str());
-                                let is_alias = routing
-                                    .and_then(|r| r.get("is_compatibility_alias"))
-                                    .and_then(|b| b.as_bool())
-                                    .unwrap_or(false);
-                                route_state == Some("retired")
-                                    || (route_state == Some("routable") && is_alias)
-                            });
-                        !valid
-                    })
-                    .collect();
-                if invalid_aliases.is_empty() {
-                    findings.push(Finding::pass(
-                        "capability-route-manifest-routing",
-                        "auto-* aliases have explicit lifecycle state",
-                    ));
-                } else {
-                    findings.push(Finding::warn(
-                        "capability-route-manifest-routing",
-                        "auto-* alias lifecycle is not explicit",
-                        format!(
-                            "Set each alias to either route_state: retired, or route_state: routable with is_compatibility_alias: true. Invalid/missing: {}. Route degrades but never blocks.",
-                            invalid_aliases.join(", ")
-                        ),
-                    ));
-                }
-            }
-            Err(e) => findings.push(Finding::skip(
-                "capability-route-manifest-routing",
-                format!("skills-registry.yaml unparseable: {e}"),
-            )),
-        },
-        Err(_) => findings.push(Finding::skip(
-            "capability-route-manifest-routing",
-            "skills-registry.yaml not present (non-suite edition)",
-        )),
-    }
-
-    // 2. Auth-evidence boundary — tracked manifests must carry no credential key
+    // 1. Auth-evidence boundary — tracked manifests must carry no credential key
     // and assert no configured auth status. Parses each manifest and walks it
     // recursively, normalizing KEYS case-insensitively, so credential-shaped
     // fields (`api_key`, `Authorization`, `client_secret`, spaced/cased/nested
@@ -843,12 +778,12 @@ pub fn capability_route_drift_check(repo_root: &Path) -> Vec<Finding> {
     }
     if violations.is_empty() {
         findings.push(Finding::pass(
-            "capability-route-auth-boundary",
+            "skill-resolution-auth-boundary",
             "no credential key or configured auth status in tracked manifests",
         ));
     } else {
         findings.push(Finding::fail(
-            "capability-route-auth-boundary",
+            "skill-resolution-auth-boundary",
             "tracked manifest carries a credential key or configured auth status",
             format!(
                 "auth_status is runtime-derived and must never be tracked. Offending line(s): {}",
@@ -857,29 +792,38 @@ pub fn capability_route_drift_check(repo_root: &Path) -> Vec<Finding> {
         ));
     }
 
-    // 3. Runtime enrollment evidence (machine-local). Absent ⇒ advisory warn,
-    // never a fail; it lives in the runtime home, never a tracked manifest.
-    let runtime_home = capability_route::locate_runtime_home();
-    let evidence = capability_route::enrollment_file_path(&runtime_home);
-    let enrollment = capability_route::read_enrollment(&runtime_home);
-    if enrollment.present {
-        findings.push(Finding::info(
-            "capability-route-enrollment",
+    // 2. Machine-local ActiveSkillTable snapshot. Missing or stale state is a
+    // governance precondition failure for Skill targets, never an advisory
+    // deterministic active-skill snapshot.
+    let runtime_home = skill_resolver::locate_runtime_home();
+    let evidence = skill_resolver::snapshot_path(&runtime_home);
+    match std::fs::read_to_string(&evidence)
+        .ok()
+        .and_then(|content| serde_json::from_str::<skill_resolver::CapabilitySnapshot>(&content).ok())
+    {
+        Some(snapshot) => match skill_resolver::load_validated_snapshot(
+            repo_root,
+            &runtime_home,
+            &snapshot.active_host,
+        ) {
+            Ok(_) => findings.push(Finding::info(
+                "skill-active-table-snapshot",
+                format!("ActiveSkillTable snapshot is current ({})", evidence.display()),
+            )),
+            Err(_) => findings.push(Finding::fail(
+                "skill-active-table-snapshot",
+                "machine-local skill snapshot is stale",
+                "Run `ags capability snapshot --write` before routing a Skill target.",
+            )),
+        },
+        None => findings.push(Finding::warn(
+            "skill-active-table-snapshot",
+            "machine-local ActiveSkillTable snapshot is missing",
             format!(
-                "Capability Route enrolled: mode={} (evidence at {})",
-                enrollment.mode.as_str(),
+                "Run `ags capability snapshot --write` (expected at {}). DirectResponse and pure MachineCli routes remain available.",
                 evidence.display()
             ),
-        ));
-    } else {
-        findings.push(Finding::warn(
-            "capability-route-enrollment",
-            "no machine-local Capability Route enrollment evidence",
-            format!(
-                "Run `ags setup --capability-route <suite-only|adopted|review-all> --yes` to enroll (expected at {}). Routing degrades to advisory; it never blocks.",
-                evidence.display()
-            ),
-        ));
+        )),
     }
 
     findings
@@ -891,9 +835,9 @@ pub fn capability_route_drift_check(repo_root: &Path) -> Vec<Finding> {
 /// routing-source manifests. A missing route_state is exactly the
 /// indistinguishable "forgot to annotate" gap the 2.7 closure removes, so it is a
 /// FAIL — but it gates the MANIFEST AUTHOR (CI / doctor), never a live route:
-/// Capability Route stays advisory regardless of this finding. Hermetic: reads
+/// Skill Resolution stays advisory regardless of this finding. Hermetic: reads
 /// manifests only, never probes a host.
-pub fn capability_route_coverage_check(repo_root: &Path) -> Vec<Finding> {
+pub fn skill_resolution_coverage_check(repo_root: &Path) -> Vec<Finding> {
     let mut findings = Vec::new();
 
     // Classify one registry entry's `routing` block EXACTLY as production
@@ -943,14 +887,14 @@ pub fn capability_route_coverage_check(repo_root: &Path) -> Vec<Finding> {
                     .unwrap_or_default(),
                 Err(e) => {
                     return vec![Finding::skip(
-                        "capability-route-coverage",
+                        "skill-resolution-coverage",
                         format!("skills-registry.yaml unparseable: {e}"),
                     )]
                 }
             },
             Err(_) => {
                 return vec![Finding::skip(
-                    "capability-route-coverage",
+                    "skill-resolution-coverage",
                     "skills-registry.yaml not present (non-suite edition)",
                 )]
             }
@@ -993,7 +937,7 @@ pub fn capability_route_coverage_check(repo_root: &Path) -> Vec<Finding> {
     }
     if malformed.is_empty() && missing.is_empty() {
         findings.push(Finding::pass(
-            "capability-route-coverage",
+            "skill-resolution-coverage",
             "every adopted skill declares a valid, explicit routing.route_state (typed parse)",
         ));
     } else {
@@ -1011,7 +955,7 @@ pub fn capability_route_coverage_check(repo_root: &Path) -> Vec<Finding> {
             ));
         }
         findings.push(Finding::fail(
-            "capability-route-coverage",
+            "skill-resolution-coverage",
             "adopted skills with invalid or missing routing.route_state",
             detail,
         ));
@@ -1028,12 +972,12 @@ pub fn capability_route_coverage_check(repo_root: &Path) -> Vec<Finding> {
                     .collect();
                 if mcp_bad.is_empty() {
                     findings.push(Finding::pass(
-                        "capability-route-coverage-mcp",
+                        "skill-resolution-coverage-mcp",
                         "every governed MCP declares a valid, explicit routing.route_state",
                     ));
                 } else {
                     findings.push(Finding::fail(
-                        "capability-route-coverage-mcp",
+                        "skill-resolution-coverage-mcp",
                         "governed MCPs with invalid or missing routing.route_state",
                         format!(
                             "Fix routing.route_state (valid + explicit) in mcp-registry.yaml for: {}.",
@@ -1058,10 +1002,10 @@ pub fn run_checks(report: &mut HealthReport, repo_root: &Path) {
     // projects never inherit Cargo or suite workspace layout requirements;
     // source formatting/build checks belong to `ags verify`.
     if identity.is_ags_suite {
-        for finding in capability_route_drift_check(repo_root) {
+        for finding in skill_resolution_drift_check(repo_root) {
             report.add(finding);
         }
-        for finding in capability_route_coverage_check(repo_root) {
+        for finding in skill_resolution_coverage_check(repo_root) {
             report.add(finding);
         }
         report.add(runtime_profile_declared(repo_root));
@@ -1101,10 +1045,10 @@ mod tests {
             "suite:\n  required:\n    - name: \"routed-skill\"\n    - name: \"orphan-skill\"\n  optional:\n    - name: \"parked-skill\"\n  personal:\n    \"routed-skill\":\n      version: x\n",
         )
         .unwrap();
-        let findings = capability_route_coverage_check(&base);
+        let findings = skill_resolution_coverage_check(&base);
         let cov = findings
             .iter()
-            .find(|f| f.check_name == "capability-route-coverage")
+            .find(|f| f.check_name == "skill-resolution-coverage")
             .expect("coverage finding present");
         assert_eq!(cov.status, CheckStatus::Fail);
         assert!(cov.detail.as_deref().unwrap_or("").contains("orphan-skill"));
@@ -1136,10 +1080,10 @@ mod tests {
             "mcps:\n  - name: \"bad-mcp\"\n    routing:\n      route_state: nope\n",
         )
         .unwrap();
-        let findings = capability_route_coverage_check(&base);
+        let findings = skill_resolution_coverage_check(&base);
         let cov = findings
             .iter()
-            .find(|f| f.check_name == "capability-route-coverage")
+            .find(|f| f.check_name == "skill-resolution-coverage")
             .expect("coverage finding present");
         assert_eq!(
             cov.status,
@@ -1152,7 +1096,7 @@ mod tests {
         assert!(!d.contains("ok-skill"), "ok-skill must not be flagged: {d}");
         let mcp = findings
             .iter()
-            .find(|f| f.check_name == "capability-route-coverage-mcp")
+            .find(|f| f.check_name == "skill-resolution-coverage-mcp")
             .expect("mcp coverage finding present");
         assert_eq!(
             mcp.status,
@@ -1163,18 +1107,14 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    // ── capability_route_drift_check (read-only, hermetic temp manifests) ──
+    // ── skill_resolution_drift_check (read-only, hermetic temp manifests) ──
 
     fn write_clean_skills(dir: &Path) {
-        std::fs::write(
-            dir.join("manifests/skills-registry.yaml"),
-            "skills:\n  - name: auto-brainstorm\n    routing:\n      route_state: retired\n      intent_tags: []\n  - name: auto-debug\n    routing:\n      route_state: retired\n      intent_tags: []\n  - name: auto-verify\n    routing:\n      route_state: retired\n      intent_tags: []\n",
-        )
-        .unwrap();
+        std::fs::write(dir.join("manifests/skills-registry.yaml"), "skills: []\n").unwrap();
     }
 
     #[test]
-    fn capability_route_drift_auth_boundary_fails_on_configured() {
+    fn skill_resolution_drift_auth_boundary_fails_on_configured() {
         let base = std::env::temp_dir().join(format!("ags-doctor-cr-fail-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(base.join("manifests")).unwrap();
@@ -1185,22 +1125,17 @@ mod tests {
             "mcps:\n  - name: x\n    auth_status: configured\n",
         )
         .unwrap();
-        let findings = capability_route_drift_check(&base);
+        let findings = skill_resolution_drift_check(&base);
         let auth = findings
             .iter()
-            .find(|f| f.check_name == "capability-route-auth-boundary")
+            .find(|f| f.check_name == "skill-resolution-auth-boundary")
             .unwrap();
         assert_eq!(auth.status, CheckStatus::Fail);
-        let routing = findings
-            .iter()
-            .find(|f| f.check_name == "capability-route-manifest-routing")
-            .unwrap();
-        assert_eq!(routing.status, CheckStatus::Pass);
         let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
-    fn capability_route_auth_boundary_catches_varied_credential_keys() {
+    fn skill_resolution_auth_boundary_catches_varied_credential_keys() {
         // Codex review fix: the scan must catch credential-shaped keys beyond the
         // three lowercase substrings — different keys, casing, spacing, nesting.
         let cases = [
@@ -1227,10 +1162,10 @@ mod tests {
             std::fs::create_dir_all(base.join("manifests")).unwrap();
             write_clean_skills(&base);
             std::fs::write(base.join("manifests/mcp-registry.yaml"), mcp).unwrap();
-            let findings = capability_route_drift_check(&base);
+            let findings = skill_resolution_drift_check(&base);
             let auth = findings
                 .iter()
-                .find(|f| f.check_name == "capability-route-auth-boundary")
+                .find(|f| f.check_name == "skill-resolution-auth-boundary")
                 .unwrap();
             assert_eq!(
                 auth.status,
@@ -1242,7 +1177,7 @@ mod tests {
     }
 
     #[test]
-    fn capability_route_auth_boundary_no_false_positive_on_legit_keys() {
+    fn skill_resolution_auth_boundary_no_false_positive_on_legit_keys() {
         // authority / requires_auth / auth_kind / is_compatibility_alias are all
         // legitimate keys in the real manifests and must NOT trip the gate.
         let base = std::env::temp_dir().join(format!("ags-doctor-cr-legit-{}", std::process::id()));
@@ -1251,13 +1186,13 @@ mod tests {
         write_clean_skills(&base);
         std::fs::write(
             base.join("manifests/mcp-registry.yaml"),
-            "mcps:\n  - name: x\n    requires_auth: false\n    auth_kind: feishu\n    authority:\n      allowed:\n        - do a thing\n      denied:\n        - Read or write real tokens, secrets, or settings.\n",
+            "mcps:\n  - name: x\n    requires_auth: false\n    auth_kind: feishu\n    authority:\n      allowed:\n        - do a thing\n      denied:\n        - Read or write real tokens, credential payloads, or settings.\n",
         )
         .unwrap();
-        let findings = capability_route_drift_check(&base);
+        let findings = skill_resolution_drift_check(&base);
         let auth = findings
             .iter()
-            .find(|f| f.check_name == "capability-route-auth-boundary")
+            .find(|f| f.check_name == "skill-resolution-auth-boundary")
             .unwrap();
         assert_eq!(
             auth.status,
@@ -1268,7 +1203,7 @@ mod tests {
     }
 
     #[test]
-    fn capability_route_auth_boundary_clean_on_real_manifests() {
+    fn skill_resolution_auth_boundary_clean_on_real_manifests() {
         // The hardened scanner must not regress the real repo manifests (which have
         // `authority:` blocks, `requires_auth:`, and prose mentioning tokens/secrets).
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1276,10 +1211,10 @@ mod tests {
             .unwrap()
             .parent()
             .unwrap();
-        let findings = capability_route_drift_check(repo_root);
+        let findings = skill_resolution_drift_check(repo_root);
         let auth = findings
             .iter()
-            .find(|f| f.check_name == "capability-route-auth-boundary")
+            .find(|f| f.check_name == "skill-resolution-auth-boundary")
             .unwrap();
         assert_eq!(
             auth.status,
@@ -1289,84 +1224,21 @@ mod tests {
     }
 
     #[test]
-    fn capability_route_drift_passes_clean_and_writes_nothing() {
+    fn skill_resolution_drift_passes_clean_and_writes_nothing() {
         let base = std::env::temp_dir().join(format!("ags-doctor-cr-ok-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(base.join("manifests")).unwrap();
         write_clean_skills(&base);
         std::fs::write(base.join("manifests/mcp-registry.yaml"), "mcps: []\n").unwrap();
-        let findings = capability_route_drift_check(&base);
+        let findings = skill_resolution_drift_check(&base);
         let auth = findings
             .iter()
-            .find(|f| f.check_name == "capability-route-auth-boundary")
+            .find(|f| f.check_name == "skill-resolution-auth-boundary")
             .unwrap();
         assert_eq!(auth.status, CheckStatus::Pass);
         // Read-only: the drift check writes nothing (manifests dir unchanged).
         let n = std::fs::read_dir(base.join("manifests")).unwrap().count();
         assert_eq!(n, 2);
-        let _ = std::fs::remove_dir_all(&base);
-    }
-
-    #[test]
-    fn capability_route_drift_allows_active_compat_aliases() {
-        let base =
-            std::env::temp_dir().join(format!("ags-doctor-cr-active-alias-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
-        std::fs::create_dir_all(base.join("manifests")).unwrap();
-        std::fs::write(
-            base.join("manifests/skills-registry.yaml"),
-            "skills:\n  - name: auto-brainstorm\n    routing:\n      route_state: routable\n      intent_tags: [brainstorm]\n      is_compatibility_alias: true\n  - name: auto-debug\n    routing:\n      route_state: routable\n      intent_tags: [debug]\n      is_compatibility_alias: true\n  - name: auto-verify\n    routing:\n      route_state: routable\n      intent_tags: [verify]\n      is_compatibility_alias: true\n",
-        )
-        .unwrap();
-        std::fs::write(base.join("manifests/mcp-registry.yaml"), "mcps: []\n").unwrap();
-        let findings = capability_route_drift_check(&base);
-        let routing = findings
-            .iter()
-            .find(|f| f.check_name == "capability-route-manifest-routing")
-            .unwrap();
-        assert_eq!(routing.status, CheckStatus::Pass);
-        let _ = std::fs::remove_dir_all(&base);
-    }
-
-    #[test]
-    fn capability_route_enrollment_finding_is_never_a_fail() {
-        // The enrollment finding reflects machine-local state (present ⇒ Info,
-        // absent ⇒ Warn). Either way it must NEVER be a Fail: a missing enrollment
-        // is advisory degraded, not a blocking failure. Locks that contract.
-        let base = std::env::temp_dir().join(format!("ags-doctor-cr-enr-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
-        std::fs::create_dir_all(base.join("manifests")).unwrap();
-        write_clean_skills(&base);
-        std::fs::write(base.join("manifests/mcp-registry.yaml"), "mcps: []\n").unwrap();
-        let findings = capability_route_drift_check(&base);
-        let enr = findings
-            .iter()
-            .find(|f| f.check_name == "capability-route-enrollment")
-            .expect("enrollment finding is always emitted");
-        assert_ne!(enr.status, CheckStatus::Fail);
-        assert_ne!(enr.severity, Severity::Fail);
-        let _ = std::fs::remove_dir_all(&base);
-    }
-
-    #[test]
-    fn capability_route_drift_warns_on_missing_alias_lifecycle() {
-        let base = std::env::temp_dir().join(format!("ags-doctor-cr-miss-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
-        std::fs::create_dir_all(base.join("manifests")).unwrap();
-        // auto-debug present but neither retired nor explicitly marked as a
-        // compatibility alias; the other two absent → warn.
-        std::fs::write(
-            base.join("manifests/skills-registry.yaml"),
-            "skills:\n  - name: auto-debug\n    routing:\n      intent_tags: [debug]\n",
-        )
-        .unwrap();
-        std::fs::write(base.join("manifests/mcp-registry.yaml"), "mcps: []\n").unwrap();
-        let findings = capability_route_drift_check(&base);
-        let routing = findings
-            .iter()
-            .find(|f| f.check_name == "capability-route-manifest-routing")
-            .unwrap();
-        assert_eq!(routing.status, CheckStatus::Warn);
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -1502,7 +1374,7 @@ mod tests {
         if is_public_edition(repo_root) {
             assert_eq!(f.status, CheckStatus::Skip);
         } else {
-            // Private/stable runtime should declare installed profiles.
+            // Installed runtime profiles should declare their expected files.
             assert_eq!(f.status, CheckStatus::Pass);
         }
         assert_eq!(f.check_name, "runtime_profile_declared");

@@ -168,7 +168,7 @@ mod tests {
         // Upstream canonical names are present.
         for want in [
             "superpowers",
-            "grill-me",
+            "grilling",
             "review",
             "decision-mapping",
             "resolving-merge-conflicts",

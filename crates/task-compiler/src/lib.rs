@@ -16,15 +16,14 @@
 //!   `task_card_validator` (see tests), not just a heuristic self-check.
 //! - **Input semantics** — the canonical input is an approved execution
 //!   contract (the confirmed solution), not raw user chat. The compiler
-//!   accepts flexible intent files for backward compatibility, but
-//!   generators (Codex / Cursor) must only feed it confirmed execution
-//!   contracts. Direct compilation of raw user natural-language requests
-//!   into executable task cards is discouraged and may produce incomplete
-//!   or misclassified output.
+//!   accepts flexible intent files for backward compatibility, but executable
+//!   output requires structured evidence that the handoff contract is
+//!   confirmed. Raw natural-language requests can only produce diagnostics.
 //! - **Task-card request gate** — the compiler enforces a hard gate between
 //!   "solution OK" and "task card generation". Without an explicit user
-//!   task-card instruction (signalled via `task_card_requested = true`),
-//!   the compiler MUST NOT output an executable task card. It can still
+//!   task-card instruction (`task_card_requested = true`) AND a confirmed
+//!   handoff contract (`confirmed_handoff_contract = true`), the compiler MUST
+//!   NOT output an executable task card. It can still
 //!   produce a diagnostic report showing what WOULD be compiled, but
 //!   `executable_allowed` will be `false` and the compiled card text will
 //!   be suppressed. This gate closes the enforcement gap where a
@@ -245,6 +244,13 @@ pub fn parse_intent(input: &str) -> ParsedIntent {
     let free_text = free_lines.join("\n").trim().to_string();
 
     ParsedIntent { fields, free_text }
+}
+
+/// Whether the input uses at least one recognized task-card/contract field.
+/// Callers that receive a split context field can use this to distinguish a
+/// structured contract from unstructured narrative summary.
+pub fn is_structured_contract_intent(intent: &str) -> bool {
+    !parse_intent(intent).fields.is_empty()
 }
 
 /// Check if a trimmed line starts with a known field header.
@@ -507,14 +513,11 @@ fn detect_memory_slug(root: &Path) -> Option<String> {
     let canonical = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let s = canonical.to_string_lossy();
 
-    if s.contains("example-private-suite") {
-        return Some("example-private-suite".to_string());
-    }
-    if s.contains("example-stable-suite") {
-        return Some("example-stable-suite".to_string());
-    }
     if s.contains("ai-dev-env-bootstrap") {
         return Some("ai-dev-env-bootstrap".to_string());
+    }
+    if s.contains("Agent-General-Staff") {
+        return Some("agent-general-staff".to_string());
     }
 
     // Fallback: derive from directory name
@@ -579,13 +582,16 @@ pub struct CompileReport {
     /// Whether the user explicitly requested a task card
     /// (`--task-card-requested` flag).
     pub task_card_requested: bool,
+    /// Whether the caller supplied structured evidence that the solution,
+    /// scope, verification, and handoff contract is confirmed.
+    pub confirmed_handoff_contract: bool,
     /// Whether executable task card output is allowed.
-    /// Requires `task_card_requested=true` AND `check_only=false`
-    /// AND no missing slots.
+    /// Requires both handoff gates, `check_only=false`, and no missing slots.
     pub executable_allowed: bool,
     /// If executable output is blocked, the reason.
-    /// Possible values: "task_card_not_requested", "check_only",
-    /// "missing_slots", or `null` when allowed.
+    /// Possible values: "task_card_not_requested",
+    /// "handoff_contract_not_confirmed", "check_only", "missing_slots", or
+    /// `null` when allowed.
     pub block_reason: Option<String>,
 }
 
@@ -598,22 +604,23 @@ pub struct CompileReport {
 ///
 /// # Task-card request gate
 ///
-/// `task_card_requested` is the hard gate between "solution OK" and task card
-/// generation. Without it, the compiler produces a diagnostic report only —
+/// `task_card_requested` and `confirmed_handoff_contract` form the hard gate
+/// between "solution OK" and task-card generation. Without either, the compiler
+/// produces a diagnostic report only —
 /// `executable_allowed` is `false`, `block_reason` is set to
-/// `"task_card_not_requested"`, and the compiled task card text is suppressed.
-/// Generators (Codex/Cursor) must only pass `task_card_requested=true` after the
-/// user has explicitly issued a task-card instruction ("生成任务卡", "按这个方案出任务卡",
-/// "交给 Claude Code 执行", etc.).
+/// the corresponding gate reason, and the compiled task card text is suppressed.
+/// The compiler does not interpret the contract as natural language. The
+/// requirement router owns that decision before this structured seam.
 ///
 /// Returns the compiled card text and the full compile report.
 /// If `check_only` is true, the compiled card is only validated but
 /// the report is still returned for inspection.
-pub fn compile(
+pub fn compile_with_contract(
     intent: &str,
     project_root: &Path,
     check_only: bool,
     task_card_requested: bool,
+    confirmed_handoff_contract: bool,
 ) -> (String, CompileReport) {
     let ctx = gather_project_context(project_root);
     let parsed = parse_intent(intent);
@@ -881,9 +888,12 @@ pub fn compile(
         });
     }
 
-    // ── Phase 3b: Heavy task permission downgrade ───────────────────
-    // Per protocol: Heavy tasks default to plan-only when the user does
-    // not explicitly set a permission mode.
+    // ── Phase 3b: Heavy default permission (unspecified-field default) ──
+    // Compiler default ONLY: when a Heavy card does not declare a Permission
+    // mode, fill plan-only as the conservative default for the unspecified
+    // field. This is NOT the resolver's M4 — task LEVEL never downgrades an
+    // explicitly declared permission. The perm_source_is_default guard ensures
+    // an explicit Permission mode is always preserved.
     let task_level = fields.get("任务级别：").map(|s| s.as_str()).unwrap_or("");
     if task_level == "Heavy" {
         // Check if permission mode was default-filled (not user-provided)
@@ -891,7 +901,7 @@ pub fn compile(
             .iter()
             .any(|s| s.field == "Permission mode:" && s.source == SlotSource::Default);
         if perm_source_is_default {
-            // Replace the direct-execution default with Heavy's plan-only default.
+            // Fill the unspecified Permission mode with the conservative default.
             fields.insert("Permission mode:".to_string(), "plan-only".to_string());
             // Update slot_sources: replace the Default entry
             if let Some(entry) = slot_sources
@@ -902,7 +912,9 @@ pub fn compile(
                 entry.source = SlotSource::Default;
             }
             assumptions.push(
-                "Heavy task: permission mode defaulted to plan-only (protocol M4/M7 rule)"
+                "Heavy task: Permission mode unspecified — compiler default plan-only \
+                 (conservative default for an unspecified field; an explicit \
+                 Permission mode is always preserved)"
                     .to_string(),
             );
         }
@@ -960,12 +972,15 @@ pub fn compile(
 
     // ── Phase 7: task-card handoff generation gate ──────────────────
     // Determine whether executable output is allowed.
-    // Three conditions must all be met:
+    // Four conditions must all be met:
     //   1. User explicitly requested a task card (task_card_requested)
-    //   2. Not in check-only mode
-    //   3. No missing slots
+    //   2. The handoff contract is confirmed through structured caller state
+    //   3. Not in check-only mode
+    //   4. No missing slots
     let (executable_allowed, block_reason) = if !task_card_requested {
         (false, Some("task_card_not_requested".to_string()))
+    } else if !confirmed_handoff_contract {
+        (false, Some("handoff_contract_not_confirmed".to_string()))
     } else if check_only {
         (false, Some("check_only".to_string()))
     } else if !missing_slots.is_empty() {
@@ -996,8 +1011,9 @@ pub fn compile(
             "Executable output blocked: {}",
             match reason.as_str() {
                 "task_card_not_requested" => {
-                    "task card not requested (use --task-card-requested after user task-card instruction)"
+                    "task card not requested (use --task-card-requested only after an explicit handoff instruction)"
                 }
+                "handoff_contract_not_confirmed" => "handoff contract not confirmed (supply structured --confirmed-handoff-contract evidence)",
                 "check_only" => "check-only mode",
                 "missing_slots" => "missing required slots",
                 other => other,
@@ -1017,6 +1033,7 @@ pub fn compile(
         validation_errors: effective_validation_errors,
         check_only,
         task_card_requested,
+        confirmed_handoff_contract,
         executable_allowed,
         block_reason,
     };
@@ -1032,6 +1049,19 @@ pub fn compile(
     };
 
     (gated_card, report)
+}
+
+/// Backward-compatible diagnostic compiler. The legacy signature has no way to
+/// carry structured confirmation, so it deliberately fails closed and never
+/// emits executable task-card text. Call [`compile_with_contract`] at a governed
+/// handoff boundary.
+pub fn compile(
+    intent: &str,
+    project_root: &Path,
+    check_only: bool,
+    task_card_requested: bool,
+) -> (String, CompileReport) {
+    compile_with_contract(intent, project_root, check_only, task_card_requested, false)
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -1248,6 +1278,28 @@ pub fn compile_simple(
     }
 }
 
+/// Governed convenience compiler with explicit structured handoff state.
+#[allow(clippy::result_large_err)]
+pub fn compile_simple_with_contract(
+    intent: &str,
+    project_root: &Path,
+    task_card_requested: bool,
+    confirmed_handoff_contract: bool,
+) -> Result<String, CompileReport> {
+    let (card, report) = compile_with_contract(
+        intent,
+        project_root,
+        false,
+        task_card_requested,
+        confirmed_handoff_contract,
+    );
+    if report.executable_allowed && report.missing_slots.is_empty() {
+        Ok(card)
+    } else {
+        Err(report)
+    }
+}
+
 /// Render only the compiled task card as plain text (no report wrapper).
 /// Returns an empty string if the card is empty.
 pub fn render_card_text(report: &CompileReport) -> String {
@@ -1265,6 +1317,14 @@ pub fn render_report_text(report: &CompileReport) -> String {
     lines.push(format!(
         "Task card requested: {}",
         if report.task_card_requested {
+            "YES"
+        } else {
+            "NO"
+        }
+    ));
+    lines.push(format!(
+        "Handoff contract confirmed: {}",
+        if report.confirmed_handoff_contract {
             "YES"
         } else {
             "NO"
@@ -1351,6 +1411,26 @@ pub fn render_report_json(report: &CompileReport) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Most compiler tests exercise rendering and validation after a governed
+    // handoff. Keep that premise explicit while public legacy callers remain
+    // fail-closed by default.
+    fn compile(
+        intent: &str,
+        project_root: &Path,
+        check_only: bool,
+        task_card_requested: bool,
+    ) -> (String, CompileReport) {
+        super::compile_with_contract(intent, project_root, check_only, task_card_requested, true)
+    }
+
+    fn compile_simple(
+        intent: &str,
+        project_root: &Path,
+        task_card_requested: bool,
+    ) -> Result<String, CompileReport> {
+        super::compile_simple_with_contract(intent, project_root, task_card_requested, true)
+    }
 
     #[test]
     fn test_parse_intent_simple_inline() {
@@ -1528,6 +1608,10 @@ mod tests {
             "missing task_card_requested"
         );
         assert!(
+            v.get("confirmed_handoff_contract").is_some(),
+            "missing confirmed_handoff_contract"
+        );
+        assert!(
             v.get("executable_allowed").is_some(),
             "missing executable_allowed"
         );
@@ -1563,6 +1647,32 @@ mod tests {
             !report.validation_passed,
             "validation_passed must be false when executable is blocked"
         );
+    }
+
+    #[test]
+    fn legacy_compile_signature_fails_closed_without_structured_contract() {
+        let intent = "任务：legacy bypass test\n目标：verify contract gate";
+        let project_root = Path::new(".");
+        let (card, report) = super::compile(intent, project_root, false, true);
+
+        assert!(card.is_empty());
+        assert!(report.task_card_requested);
+        assert!(!report.confirmed_handoff_contract);
+        assert!(!report.executable_allowed);
+        assert_eq!(
+            report.block_reason,
+            Some("handoff_contract_not_confirmed".to_string())
+        );
+    }
+
+    #[test]
+    fn confirmed_contract_text_is_not_reclassified_by_compiler() {
+        let intent = "任务：设计跨 MCP、CLI、Vault 的新架构并生成任务卡\n目标：定义新架构边界";
+        let project_root = Path::new(".");
+        let (card, report) = super::compile_with_contract(intent, project_root, false, true, true);
+
+        assert!(report.confirmed_handoff_contract);
+        assert_eq!(card.is_empty(), !report.executable_allowed);
     }
 
     #[test]
@@ -1943,16 +2053,8 @@ mod tests {
             errors,
             card
         );
-        let has_absolute_path = card.contains("目标文件夹路径：\n- /")
-            || card.contains("目标文件夹路径：\n- \\\\?\\")
-            || card.lines().any(|l| {
-                l.starts_with("- ")
-                    && l.len() > 3
-                    && l.as_bytes()[2].is_ascii_alphabetic()
-                    && l.contains(":\\")
-            });
         assert!(
-            has_absolute_path,
+            card.contains("目标文件夹路径：\n- /"),
             "compiled card must render an absolute target folder path:\n{}",
             card
         );
