@@ -2053,15 +2053,15 @@ mod tests {
             errors,
             card
         );
+        let target_folder = report
+            .slot_sources
+            .iter()
+            .find(|slot| slot.field == "目标文件夹路径：")
+            .and_then(|slot| slot.value.strip_prefix("- "))
+            .expect("compiled report must contain the target folder slot");
         assert!(
-            card.contains("目标文件夹路径：\n- /"),
-            "compiled card must render an absolute target folder path:\n{}",
-            card
-        );
-        assert!(
-            !card.contains("目标文件夹路径：\n- ."),
-            "compiled card must not render a relative target folder path:\n{}",
-            card
+            std::path::Path::new(target_folder).is_absolute(),
+            "compiled card must render an absolute target folder path, got {target_folder:?}:\n{card}"
         );
     }
 
