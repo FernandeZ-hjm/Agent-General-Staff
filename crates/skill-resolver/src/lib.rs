@@ -145,7 +145,27 @@ pub fn locate_runtime_home() -> PathBuf {
         .join(".ags/runtime")
 }
 
-pub fn snapshot_path(runtime_home: &Path) -> PathBuf {
+pub fn snapshot_path(runtime_home: &Path, active_host: &str) -> PathBuf {
+    let host = active_host.trim();
+    let host = if host.is_empty() {
+        "host-agnostic".to_string()
+    } else {
+        host.chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                    character
+                } else {
+                    '_'
+                }
+            })
+            .collect()
+    };
+    runtime_home
+        .join("capability-snapshot")
+        .join(format!("{host}.json"))
+}
+
+fn legacy_snapshot_path(runtime_home: &Path) -> PathBuf {
     runtime_home
         .join("capability-snapshot")
         .join("capability-snapshot.json")
@@ -372,8 +392,12 @@ pub fn load_validated_snapshot(
 ) -> Result<(CapabilitySnapshot, ActiveSkillTable), SnapshotLoadError> {
     let expected =
         build_capability_snapshot(manifest_root, active_host).map_err(SnapshotLoadError::Build)?;
-    let content = std::fs::read_to_string(snapshot_path(runtime_home))
-        .map_err(|_| SnapshotLoadError::SkillSnapshotStale)?;
+    let host_path = snapshot_path(runtime_home, active_host);
+    let content = match std::fs::read_to_string(&host_path) {
+        Ok(content) => content,
+        Err(_) => std::fs::read_to_string(legacy_snapshot_path(runtime_home))
+            .map_err(|_| SnapshotLoadError::SkillSnapshotStale)?,
+    };
     let snapshot: CapabilitySnapshot =
         serde_json::from_str(&content).map_err(|_| SnapshotLoadError::SkillSnapshotStale)?;
     let table = snapshot

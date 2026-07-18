@@ -518,7 +518,7 @@ mod tests {
         )
         .unwrap();
         let snapshot = skill_resolver::build_capability_snapshot(&suite, "codex").unwrap();
-        let snapshot_path = skill_resolver::snapshot_path(&runtime);
+        let snapshot_path = skill_resolver::snapshot_path(&runtime, "codex");
         std::fs::create_dir_all(snapshot_path.parent().unwrap()).unwrap();
         std::fs::write(&snapshot_path, serde_json::to_string(&snapshot).unwrap()).unwrap();
 

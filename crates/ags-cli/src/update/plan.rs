@@ -117,7 +117,7 @@ pub(in crate::update) fn cmd_update_verify(target: Option<PathBuf>, strict: bool
         finding.check_name == "skill-resolution-auth-boundary"
             && finding.status == suite_doctor::CheckStatus::Fail
     });
-    let snapshot_path = skill_resolver::snapshot_path(&home);
+    let snapshot_path = skill_resolver::snapshot_path(&home, "codex");
     let snapshot_present = snapshot_path.is_file();
     let skill_snapshot_current =
         skill_resolver::load_validated_snapshot(&source, &home, "codex").is_ok();

@@ -796,33 +796,24 @@ pub fn skill_resolution_drift_check(repo_root: &Path) -> Vec<Finding> {
     // governance precondition failure for Skill targets, never an advisory
     // deterministic active-skill snapshot.
     let runtime_home = skill_resolver::locate_runtime_home();
-    let evidence = skill_resolver::snapshot_path(&runtime_home);
-    match std::fs::read_to_string(&evidence)
-        .ok()
-        .and_then(|content| serde_json::from_str::<skill_resolver::CapabilitySnapshot>(&content).ok())
-    {
-        Some(snapshot) => match skill_resolver::load_validated_snapshot(
-            repo_root,
-            &runtime_home,
-            &snapshot.active_host,
-        ) {
-            Ok(_) => findings.push(Finding::info(
-                "skill-active-table-snapshot",
-                format!("ActiveSkillTable snapshot is current ({})", evidence.display()),
-            )),
-            Err(_) => findings.push(Finding::fail(
-                "skill-active-table-snapshot",
-                "machine-local skill snapshot is stale",
-                "Run `ags capability snapshot --write` before routing a Skill target.",
-            )),
-        },
-        None => findings.push(Finding::warn(
+    let evidence = skill_resolver::snapshot_path(&runtime_home, "codex");
+    match skill_resolver::load_validated_snapshot(repo_root, &runtime_home, "codex") {
+        Ok(_) => findings.push(Finding::info(
             "skill-active-table-snapshot",
-            "machine-local ActiveSkillTable snapshot is missing",
+            format!("Codex ActiveSkillTable snapshot is current ({})", evidence.display()),
+        )),
+        Err(_) if !evidence.is_file() => findings.push(Finding::warn(
+            "skill-active-table-snapshot",
+            "machine-local Codex ActiveSkillTable snapshot is missing",
             format!(
-                "Run `ags capability snapshot --write` (expected at {}). DirectResponse and pure MachineCli routes remain available.",
+                "Run `ags capability snapshot --host codex --write` (expected at {}). DirectResponse and pure MachineCli routes remain available.",
                 evidence.display()
             ),
+        )),
+        Err(_) => findings.push(Finding::fail(
+            "skill-active-table-snapshot",
+            "machine-local Codex skill snapshot is stale",
+            "Run `ags capability snapshot --host codex --write` before routing a Skill target.",
         )),
     }
 

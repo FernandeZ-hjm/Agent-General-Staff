@@ -149,16 +149,18 @@ pub(crate) fn run_private_apply(
     // reaches here.
     report.add(write_ags_global_entry(&target));
     if report.passed() {
-        match crate::capability::refresh_skill_snapshot(&source_root, &target, "codex") {
-            Ok(path) => report.add(suite_doctor::Finding::pass(
-                "skill-active-table-snapshot",
-                format!("refreshed {}", path.display()),
-            )),
-            Err(error) => report.add(suite_doctor::Finding::fail(
-                "skill-active-table-snapshot",
-                "failed to refresh ActiveSkillTable snapshot",
-                error,
-            )),
+        for host in ["codex", "claude-code"] {
+            match crate::capability::refresh_skill_snapshot(&source_root, &target, host) {
+                Ok(path) => report.add(suite_doctor::Finding::pass(
+                    format!("skill-active-table-snapshot-{host}"),
+                    format!("refreshed {}", path.display()),
+                )),
+                Err(error) => report.add(suite_doctor::Finding::fail(
+                    format!("skill-active-table-snapshot-{host}"),
+                    "failed to refresh ActiveSkillTable snapshot",
+                    error,
+                )),
+            }
         }
     }
     (report, target, plan_text_before_apply)

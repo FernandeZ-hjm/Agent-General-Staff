@@ -52,7 +52,7 @@ fn capability_default_hosts() -> Vec<&'static str> {
     vec!["claude-code", "codex", "codebuddy-code"]
 }
 
-/// Rebuild and persist the single-host ActiveSkillTable snapshot after a
+/// Rebuild and persist one host-scoped ActiveSkillTable snapshot after a
 /// successful capability-affecting write. This is lifecycle maintenance, not a
 /// routing layer: the request router never calls it.
 pub(crate) fn refresh_skill_snapshot(
@@ -62,7 +62,7 @@ pub(crate) fn refresh_skill_snapshot(
 ) -> Result<PathBuf, String> {
     let snapshot = skill_resolver::build_capability_snapshot(authority_root, active_host)
         .map_err(|error| format!("skill snapshot build failed: {error:?}"))?;
-    let path = skill_resolver::snapshot_path(runtime_home);
+    let path = skill_resolver::snapshot_path(runtime_home, active_host);
     let parent = path
         .parent()
         .ok_or_else(|| "skill snapshot path has no parent".to_string())?;

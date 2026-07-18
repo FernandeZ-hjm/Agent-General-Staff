@@ -4,8 +4,9 @@ use skill_governance::console::{
     ManagedStatus, RegistryStatus, RouteState, RoutingMetadata,
 };
 use skill_resolver::{
-    build_active_skills, load_demand_routes, resolve_capability_authority_root, resolve_skill,
-    ActiveSkill, ActiveSkillTable, CapabilitySnapshot, DemandRoute, ResolveError, SnapshotError,
+    build_active_skills, build_capability_snapshot, load_demand_routes, load_validated_snapshot,
+    resolve_capability_authority_root, resolve_skill, snapshot_path, ActiveSkill, ActiveSkillTable,
+    CapabilitySnapshot, DemandRoute, ResolveError, SnapshotError,
     CAPABILITY_SNAPSHOT_SCHEMA_VERSION,
 };
 
@@ -163,6 +164,53 @@ fn tampered_snapshot_hash_is_rejected() {
             .unwrap_err(),
         SnapshotError::SnapshotIntegrityFailed
     );
+}
+
+#[test]
+fn host_scoped_snapshots_coexist_and_validate_independently() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let runtime =
+        std::env::temp_dir().join(format!("ags-host-scoped-snapshots-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&runtime);
+
+    for host in ["codex", "claude-code"] {
+        let snapshot = build_capability_snapshot(&root, host).unwrap();
+        let path = snapshot_path(&runtime, host);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, serde_json::to_string(&snapshot).unwrap()).unwrap();
+    }
+
+    assert_ne!(
+        snapshot_path(&runtime, "codex"),
+        snapshot_path(&runtime, "claude-code")
+    );
+    for host in ["codex", "claude-code"] {
+        let (snapshot, _) = load_validated_snapshot(&root, &runtime, host).unwrap();
+        assert_eq!(snapshot.active_host, host);
+    }
+
+    let _ = std::fs::remove_dir_all(runtime);
+}
+
+#[test]
+fn legacy_single_snapshot_is_read_during_host_scoped_migration() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let runtime = std::env::temp_dir().join(format!(
+        "ags-legacy-snapshot-migration-{}",
+        std::process::id()
+    ));
+    let legacy = runtime
+        .join("capability-snapshot")
+        .join("capability-snapshot.json");
+    let _ = std::fs::remove_dir_all(&runtime);
+    std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+    let snapshot = build_capability_snapshot(&root, "codex").unwrap();
+    std::fs::write(&legacy, serde_json::to_string(&snapshot).unwrap()).unwrap();
+
+    let (loaded, _) = load_validated_snapshot(&root, &runtime, "codex").unwrap();
+    assert_eq!(loaded.active_host, "codex");
+
+    let _ = std::fs::remove_dir_all(runtime);
 }
 
 fn managed_skill(name: &str, canonical_present: bool, healthy: bool) -> ManagedCapability {
