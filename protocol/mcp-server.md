@@ -89,7 +89,7 @@ ags mcp serve --transport stdio
 
 ### Skill snapshot
 
-Skill 目标要求 `<runtime_home>/capability-snapshot/capability-snapshot.json` 与当前 registry/runtime hash 一致。缺失或 stale 返回治理前置条件失败：
+Skill 目标要求 `<runtime_home>/capability-snapshot/<active-host>.json` 与当前 registry/runtime hash 一致。各宿主快照独立生成、独立校验；缺失或 stale 返回治理前置条件失败：
 
 ```text
 code: skill_snapshot_stale

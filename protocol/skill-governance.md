@@ -8,7 +8,7 @@
 - `manifests/suite.yaml`：套件 required / optional / personal 集合。
 - 受管外部源或宿主系统目录：canonical 技能本体；公开版不捆绑第三方技能正文。
 - host 目录：thin index 或宿主系统技能；不是第二份 canonical 本体。
-- `<runtime_home>/capability-snapshot/capability-snapshot.json`：单机、单 active host 的可用性快照；不入库、不进入 public projection。
+- `<runtime_home>/capability-snapshot/<host>.json`：按 active host 隔离的单机可用性快照；Codex、Claude Code 等宿主互不覆盖，不入库、不进入 public projection。
 
 ## 治理生命周期
 
