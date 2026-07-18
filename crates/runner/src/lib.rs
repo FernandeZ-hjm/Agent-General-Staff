@@ -120,17 +120,35 @@ pub fn run_task_card(
     // process cwd / runtime home; tests use `run_task_card_inner` to inject
     // hermetic roots.
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let manifest_root = skill_resolver::locate_manifest_root(&cwd);
     let runtime_home = skill_resolver::locate_runtime_home();
-    run_task_card_inner(
+    let authority_root = skill_resolver::resolve_capability_authority_root(
+        &cwd,
+        &runtime_home,
+        std::env::var_os("AGS_SOURCE_ROOT").map(PathBuf::from),
+    );
+    let manifest_root = authority_root.as_ref().unwrap_or(&cwd);
+    let mut plan = run_task_card_inner(
         task_card_path,
         check_only,
         dry_run,
         approve_writes,
         current_task_approval,
-        &manifest_root,
+        manifest_root,
         &runtime_home,
-    )
+    );
+    if let Err(error) = authority_root {
+        if plan.skill_tags_gate.is_some() {
+            plan.gate_decision = "stop".to_string();
+            plan.gate_error_kind = Some("capability_authority_unresolved".to_string());
+            plan.validation_errors.push(error.to_string());
+            plan.skill_tags_gate = None;
+            plan.receipt_plan.will_generate = false;
+            plan.receipt_plan.gate_result_for_receipt = "stop".to_string();
+            plan.delivery_report_ref =
+                "BLOCKED — capability authority root could not be resolved".to_string();
+        }
+    }
+    plan
 }
 
 /// Map a resolved runtime adapter to the host identifier the runtime skill-tag

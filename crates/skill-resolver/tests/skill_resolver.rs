@@ -4,8 +4,8 @@ use skill_governance::console::{
     ManagedStatus, RegistryStatus, RouteState, RoutingMetadata,
 };
 use skill_resolver::{
-    build_active_skills, load_demand_routes, resolve_skill, ActiveSkill, ActiveSkillTable,
-    CapabilitySnapshot, DemandRoute, ResolveError, SnapshotError,
+    build_active_skills, load_demand_routes, resolve_capability_authority_root, resolve_skill,
+    ActiveSkill, ActiveSkillTable, CapabilitySnapshot, DemandRoute, ResolveError, SnapshotError,
     CAPABILITY_SNAPSHOT_SCHEMA_VERSION,
 };
 
@@ -31,6 +31,35 @@ fn runtime_home_preserves_existing_environment_precedence() {
         Some(value) => std::env::set_var("AGS_HOME", value),
         None => std::env::remove_var("AGS_HOME"),
     }
+}
+
+#[test]
+fn integrated_sibling_project_uses_installed_suite_capability_authority() {
+    let base = std::env::temp_dir().join(format!(
+        "ags-sibling-capability-authority-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&base);
+    let suite = base.join("suite-authority");
+    let project = base.join("integrated-project");
+    let runtime = base.join("runtime");
+    std::fs::create_dir_all(suite.join("manifests")).unwrap();
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(&runtime).unwrap();
+    std::fs::write(suite.join("manifests/skills-registry.yaml"), "skills: []\n").unwrap();
+    std::fs::write(suite.join("manifests/mcp-registry.yaml"), "mcps: []\n").unwrap();
+    std::fs::write(
+        runtime.join("install-manifest.json"),
+        serde_json::json!({"source_root": suite.display().to_string()}).to_string(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        resolve_capability_authority_root(&project, &runtime, None).unwrap(),
+        std::fs::canonicalize(&suite).unwrap()
+    );
+
+    let _ = std::fs::remove_dir_all(&base);
 }
 
 fn architecture_skill() -> ActiveSkill {

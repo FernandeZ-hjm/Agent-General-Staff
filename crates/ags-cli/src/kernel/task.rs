@@ -34,7 +34,7 @@ fn cmd_task_compile(
         eprintln!(
             "  The user must explicitly issue a task-card instruction before an executable card can be generated."
         );
-        eprintln!("  Use --task-card-requested after receiving: \"生成任务卡\", \"按这个方案出任务卡\", \"交给 Claude Code 执行\", etc.");
+        eprintln!("  Use --task-card-requested after an explicit task-card request such as \"生成任务卡\" or \"按这个方案出任务卡\".");
         std::process::exit(1);
     }
 

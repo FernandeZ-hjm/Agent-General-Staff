@@ -227,7 +227,6 @@ route_targets:
       cost_class: network
       invoke_hint: "context7 MCP get-library-docs"
       route_priority: 28
-      is_compatibility_alias: false
       capability_group: [documentation-context]
       upstream_group: "upstash/context7"
       examples:

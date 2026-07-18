@@ -1178,7 +1178,7 @@ mod tests {
 
     #[test]
     fn skill_resolution_auth_boundary_no_false_positive_on_legit_keys() {
-        // authority / requires_auth / auth_kind / is_compatibility_alias are all
+        // authority / requires_auth / auth_kind are all
         // legitimate keys in the real manifests and must NOT trip the gate.
         let base = std::env::temp_dir().join(format!("ags-doctor-cr-legit-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);

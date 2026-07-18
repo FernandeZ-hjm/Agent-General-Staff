@@ -13,6 +13,7 @@ use skill_governance::console::{
     ManagedCapability, ManagedKind, RouteState,
 };
 use std::collections::HashMap;
+use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -41,21 +42,95 @@ pub enum RegistryError {
     Parse(serde_yaml::Error),
 }
 
-pub fn locate_manifest_root(start: &Path) -> PathBuf {
-    let mut current = if start.is_file() {
-        start.parent().unwrap_or(start)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityAuthorityError {
+    pub tried: Vec<String>,
+}
+
+impl fmt::Display for CapabilityAuthorityError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "no AGS capability authority root found; checked {}",
+            self.tried.join(", ")
+        )
+    }
+}
+
+impl std::error::Error for CapabilityAuthorityError {}
+
+fn is_capability_authority_root(path: &Path) -> bool {
+    path.join("manifests/skills-registry.yaml").is_file()
+        && path.join("manifests/mcp-registry.yaml").is_file()
+}
+
+fn normalized_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| {
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(path)
+        }
+    })
+}
+
+fn installed_source_root(runtime_home: &Path) -> Option<PathBuf> {
+    let content = std::fs::read_to_string(runtime_home.join("install-manifest.json")).ok()?;
+    let manifest: serde_json::Value = serde_json::from_str(&content).ok()?;
+    manifest
+        .get("source_root")
+        .and_then(serde_json::Value::as_str)
+        .map(PathBuf::from)
+}
+
+/// Resolve the one canonical capability authority used by MCP, CLI, Runner,
+/// and Gate. Integrated projects do not own Suite registries, so target-parent
+/// discovery is only the final fallback after explicit/runtime authority.
+pub fn resolve_capability_authority_root(
+    target: &Path,
+    runtime_home: &Path,
+    explicit: Option<PathBuf>,
+) -> Result<PathBuf, CapabilityAuthorityError> {
+    let mut tried = Vec::new();
+    let mut candidates = Vec::new();
+    if let Some(path) = explicit {
+        candidates.push(("AGS_SOURCE_ROOT", path));
+    }
+    if let Some(path) = installed_source_root(runtime_home) {
+        candidates.push(("runtime install manifest", path));
+    }
+
+    for (origin, candidate) in candidates {
+        let candidate = normalized_path(&candidate);
+        if is_capability_authority_root(&candidate) {
+            return Ok(candidate);
+        }
+        tried.push(format!("{origin}: {}", candidate.display()));
+    }
+
+    let normalized_target = normalized_path(target);
+    let mut current = if normalized_target.is_file() {
+        normalized_target
+            .parent()
+            .unwrap_or(&normalized_target)
+            .to_path_buf()
     } else {
-        start
+        normalized_target.clone()
     };
     loop {
-        if current.join("manifests/skills-registry.yaml").is_file() {
-            return current.to_path_buf();
+        if is_capability_authority_root(&current) {
+            return Ok(current);
         }
         let Some(parent) = current.parent() else {
-            return start.to_path_buf();
+            break;
         };
-        current = parent;
+        current = parent.to_path_buf();
     }
+    tried.push(format!("target ancestry: {}", normalized_target.display()));
+
+    Err(CapabilityAuthorityError { tried })
 }
 
 pub fn locate_runtime_home() -> PathBuf {

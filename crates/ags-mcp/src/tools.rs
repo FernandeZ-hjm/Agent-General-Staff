@@ -96,8 +96,10 @@ pub fn list_tools() -> ToolListResult {
                     "type": "object",
                     "properties": {
                         "request": { "type": "string" },
-                        "approved_contract": { "type": "boolean", "default": false },
-                        "confirmed_handoff_contract": { "type": "boolean", "default": false },
+                        "handoff_contract": {
+                            "type": "string",
+                            "description": "Confirmed structured handoff contract in task-compiler field format. Required only for task-card compilation requests."
+                        },
                         "active_host": { "type": "string" },
                         "target": { "type": "string" }
                     },
@@ -272,11 +274,11 @@ fn tool_route_request_with_runtime_home(
         .and_then(|value| value.as_str())
         .unwrap_or("");
     let target = get_target(args);
-    let manifest_root = skill_resolver::locate_manifest_root(&target);
     let decision = route_request(RequestContext {
         request: &request,
-        approved_contract: bool_arg(args, "approved_contract"),
-        confirmed_handoff_contract: bool_arg(args, "confirmed_handoff_contract"),
+        handoff_contract: args
+            .get("handoff_contract")
+            .and_then(serde_json::Value::as_str),
     });
 
     let mut skill_results = Vec::new();
@@ -285,11 +287,22 @@ fn tool_route_request_with_runtime_home(
         match target_route {
             RouteTarget::DirectResponse => {}
             RouteTarget::Skill { demand } => {
-                match skill_resolver::load_validated_snapshot(
-                    &manifest_root,
+                let authority_root = skill_resolver::resolve_capability_authority_root(
+                    &target,
                     runtime_home,
-                    active_host,
-                ) {
+                    std::env::var_os("AGS_SOURCE_ROOT").map(PathBuf::from),
+                );
+                let manifest_root = match &authority_root {
+                    Ok(root) => root,
+                    Err(error) => {
+                        skill_results.push(SkillRouteResult::GovernancePrecondition {
+                            code: "capability_authority_unresolved",
+                            message: error.to_string(),
+                        });
+                        continue;
+                    }
+                };
+                match skill_resolver::load_validated_snapshot(manifest_root, runtime_home, active_host) {
                     Err(_) => skill_results.push(SkillRouteResult::GovernancePrecondition {
                         code: "skill_snapshot_stale",
                         message: "Skill routing requires a current machine snapshot; run `ags capability snapshot --host <host> --write`.".to_string(),
@@ -359,8 +372,9 @@ fn machine_invocation(
     target: &Path,
 ) -> Result<(Vec<String>, String), String> {
     let stdin = match input {
-        TypedCliInput::RequestText { text } => text.clone(),
-        TypedCliInput::TaskCard { content } => content.clone(),
+        TypedCliInput::ConfirmedHandoffContract { content }
+        | TypedCliInput::TaskCard { content }
+        | TypedCliInput::Receipt { content } => content.clone(),
         TypedCliInput::Target { .. } | TypedCliInput::Empty => String::new(),
     };
     let args = match capability {
@@ -480,17 +494,62 @@ mod tests {
     }
 
     #[test]
+    fn integrated_project_uses_runtime_suite_authority_for_skill_routing() {
+        let base = std::env::temp_dir().join(format!(
+            "ags-mcp-integrated-authority-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let suite = base.join("suite");
+        let project = base.join("integrated-project");
+        let runtime = base.join("runtime");
+        std::fs::create_dir_all(suite.join("manifests")).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&runtime).unwrap();
+        std::fs::write(
+            suite.join("manifests/skills-registry.yaml"),
+            "skills: []\ndemand_routes:\n  - demand: { category: engineering, demand: system_architecture }\n    skill_id: superpowers\n",
+        )
+        .unwrap();
+        std::fs::write(suite.join("manifests/mcp-registry.yaml"), "mcps: []\n").unwrap();
+        std::fs::write(
+            runtime.join("install-manifest.json"),
+            serde_json::json!({"source_root": suite.display().to_string()}).to_string(),
+        )
+        .unwrap();
+        let snapshot = skill_resolver::build_capability_snapshot(&suite, "codex").unwrap();
+        let snapshot_path = skill_resolver::snapshot_path(&runtime);
+        std::fs::create_dir_all(snapshot_path.parent().unwrap()).unwrap();
+        std::fs::write(&snapshot_path, serde_json::to_string(&snapshot).unwrap()).unwrap();
+
+        let output = tool_route_request_with_runtime_home(
+            &serde_json::json!({
+                "request": "设计跨模块的新系统架构和架构边界",
+                "active_host": "codex",
+                "target": project
+            }),
+            &runtime,
+        )
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(value["skill_results"][0]["code"], "skill_demand_missing");
+        assert_ne!(value["skill_results"][0]["code"], "skill_snapshot_stale");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn machine_cli_mapping_is_fixed_and_shell_free() {
         let (args, stdin) = machine_invocation(
             CliCapabilityId::TaskCompile,
-            &TypedCliInput::RequestText {
-                text: "contract".to_string(),
+            &TypedCliInput::ConfirmedHandoffContract {
+                content: "任务：contract".to_string(),
             },
             Path::new("."),
         )
         .unwrap();
         assert_eq!(args[0..3], ["task", "compile", "-"]);
-        assert_eq!(stdin, "contract");
+        assert_eq!(stdin, "任务：contract");
     }
 
     #[test]

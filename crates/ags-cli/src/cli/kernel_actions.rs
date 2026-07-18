@@ -13,7 +13,7 @@ pub(crate) enum TaskAction {
     },
     /// Compile a task intent into a canonical task card (M4).
     ///
-    /// Reads a flexible intent file (or stdin with "-") and deterministically
+    /// Reads a field-structured confirmed handoff contract (or stdin with "-") and deterministically
     /// compiles it into the canonical task-card skeleton (the classic fixed
     /// skeleton in protocol/task-card-template.md; the compact format has been
     /// removed).  This is a rule engine only — no AI calls, no free-form
@@ -23,7 +23,7 @@ pub(crate) enum TaskAction {
     /// files, known workspace identity, and local memory paths).  Slots that
     /// cannot be filled are reported as missing and the command exits 1.
     Compile {
-        /// Intent file (use "-" for stdin)
+        /// Confirmed handoff contract file (use "-" for stdin)
         path: String,
         /// Output format: text (human-readable) or json (machine-readable)
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]

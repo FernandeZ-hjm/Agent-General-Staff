@@ -135,54 +135,13 @@ pub(crate) fn source_root_or_exit(command: &str) -> PathBuf {
     root
 }
 
-fn is_complete_source_root(root: &Path) -> bool {
-    let required = [
-        "protocol/agent-task-protocol.md",
-        "protocol/task-card-template.md",
-        "protocol/runtime-adapters.md",
-        "protocol/task-routing.md",
-        "scripts/validate.sh",
-        "scripts/run-task-card.sh",
-        "crates/ags-cli/Cargo.toml",
-    ];
-    required.iter().all(|rel| root.join(rel).is_file())
-}
-
-fn installed_source_root(runtime_home: &Path) -> Option<PathBuf> {
-    let manifest = std::fs::read_to_string(runtime_home.join("install-manifest.json")).ok()?;
-    let value: serde_json::Value = serde_json::from_str(&manifest).ok()?;
-    value
-        .get("source_root")
-        .and_then(|value| value.as_str())
-        .map(PathBuf::from)
-}
-
 pub(crate) fn resolve_capability_authority_root(
     cwd: &Path,
     runtime_home: &Path,
     explicit: Option<PathBuf>,
 ) -> Result<PathBuf, String> {
-    let mut candidates = Vec::new();
-    if let Some(path) = explicit {
-        candidates.push(("AGS_SOURCE_ROOT", path));
-    }
-    if let Some(path) = installed_source_root(runtime_home) {
-        candidates.push(("runtime install manifest", path));
-    }
-    candidates.push(("current directory fallback", cwd.to_path_buf()));
-
-    let mut tried = Vec::new();
-    for (origin, candidate) in candidates {
-        let candidate = guard_path(&candidate);
-        if is_complete_source_root(&candidate) {
-            return Ok(candidate);
-        }
-        tried.push(format!("{origin}: {}", candidate.display()));
-    }
-    Err(format!(
-        "no complete AGS capability authority root found; checked {}",
-        tried.join(", ")
-    ))
+    skill_resolver::resolve_capability_authority_root(cwd, runtime_home, explicit)
+        .map_err(|error| error.to_string())
 }
 
 pub(crate) fn capability_authority_root_or_exit(command: &str) -> PathBuf {
@@ -219,6 +178,8 @@ mod capability_authority_tests {
 
     fn seed_suite(root: &Path) {
         for rel in [
+            "manifests/skills-registry.yaml",
+            "manifests/mcp-registry.yaml",
             "protocol/agent-task-protocol.md",
             "protocol/task-card-template.md",
             "protocol/runtime-adapters.md",

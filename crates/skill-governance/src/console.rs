@@ -340,10 +340,6 @@ pub struct RoutingMetadata {
     /// Routing priority — lower is preferred.
     #[serde(default = "default_route_priority")]
     pub route_priority: i32,
-    /// `true` for compatibility aliases (the `auto-*` skills) that should win
-    /// their demand ahead of their canonical successors.
-    #[serde(default)]
-    pub is_compatibility_alias: bool,
     /// Explicit routing participation state. Fail-closed default `not-routable`:
     /// a member is a routing candidate only when this is `routable`.
     #[serde(default)]
@@ -389,7 +385,6 @@ impl Default for RoutingMetadata {
             cost_class: CostClass::default(),
             invoke_hint: String::new(),
             route_priority: default_route_priority(),
-            is_compatibility_alias: false,
             route_state: RouteState::default(),
             capability_group: Vec::new(),
             upstream_group: None,
@@ -5207,7 +5202,7 @@ mod tests {
         write_file(
             &repo.join("manifests/skills-registry.yaml"),
             "skills:\n\
-             \x20 - name: legacy-compat-skill\n    routing:\n      intent_tags: [debug, diagnosing-bugs]\n      mutation_surface: read-only\n      requires_auth: false\n      cost_class: free\n      invoke_hint: \"[skill: legacy-compat-skill]\"\n      route_priority: 10\n      is_compatibility_alias: true\n\
+             \x20 - name: current-skill\n    routing:\n      route_state: routable\n      intent_tags: [debug, diagnosing-bugs]\n      mutation_surface: read-only\n      requires_auth: false\n      cost_class: free\n      invoke_hint: \"[skill: current-skill]\"\n      route_priority: 10\n\
              \x20 - name: no-routing-skill\n    description: has no routing block\n\
              \x20 - name: broken-skill\n    routing: \"not-a-mapping\"\n",
         );
@@ -5220,15 +5215,14 @@ mod tests {
         let read = read_routing_metadata(&repo);
         let map = &read.map;
 
-        // Well-formed skill block: stable facts + alias flag parsed.
+        // Well-formed skill block: stable routing facts parsed.
         let ad = map
-            .get("legacy-compat-skill")
-            .expect("legacy-compat-skill routing present");
+            .get("current-skill")
+            .expect("current-skill routing present");
         assert_eq!(
             ad.intent_tags,
             vec!["debug".to_string(), "diagnosing-bugs".to_string()]
         );
-        assert!(ad.is_compatibility_alias);
         assert_eq!(ad.route_priority, 10);
         assert_eq!(ad.mutation_surface, MutationSurface::ReadOnly);
 
@@ -5245,30 +5239,6 @@ mod tests {
         assert!(read.parse_failures.contains(&"broken-skill".to_string()));
 
         let _ = std::fs::remove_dir_all(&base);
-    }
-
-    /// Backward-compat: existing routing blocks carry NONE of the new fields
-    /// (route_state / capability_group / upstream_group / examples). They must
-    /// still deserialize, and the new fields must take their fail-closed / empty
-    /// defaults — guarding the silent-drop regression where a non-`default` new
-    /// field would make every existing block fail to parse.
-    #[test]
-    fn routing_metadata_legacy_block_round_trips_with_defaults() {
-        let legacy = "intent_tags: [debug, diagnosing-bugs]\nscope_tags: [\"*\"]\nmutation_surface: read-only\nrequires_auth: false\ncost_class: free\ninvoke_hint: \"[skill: legacy-compat-skill]\"\nroute_priority: 10\nis_compatibility_alias: true\n";
-        let meta: RoutingMetadata =
-            serde_yaml::from_str(legacy).expect("legacy routing block must still parse");
-        assert_eq!(
-            meta.intent_tags,
-            vec!["debug".to_string(), "diagnosing-bugs".to_string()]
-        );
-        assert!(meta.is_compatibility_alias);
-        assert_eq!(meta.route_priority, 10);
-        // New fields fail-closed / empty by default.
-        assert_eq!(meta.route_state, RouteState::NotRoutable);
-        assert!(meta.capability_group.is_empty());
-        assert!(meta.upstream_group.is_none());
-        assert!(meta.examples.positive.is_empty());
-        assert!(meta.examples.negative.is_empty());
     }
 
     /// `route_state` parses all three explicit values, and absence defaults to

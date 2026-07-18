@@ -14,11 +14,9 @@
 //!   compiler never emits the removed compact format and never invents a
 //!   third task-card format. Output is validated by the real
 //!   `task_card_validator` (see tests), not just a heuristic self-check.
-//! - **Input semantics** — the canonical input is an approved execution
-//!   contract (the confirmed solution), not raw user chat. The compiler
-//!   accepts flexible intent files for backward compatibility, but executable
-//!   output requires structured evidence that the handoff contract is
-//!   confirmed. Raw natural-language requests can only produce diagnostics.
+//! - **Input semantics** — the only input is a confirmed, field-structured
+//!   execution contract, never raw user chat. Executable output requires both
+//!   a `任务：` field and no unscoped free text.
 //! - **Task-card request gate** — the compiler enforces a hard gate between
 //!   "solution OK" and "task card generation". Without an explicit user
 //!   task-card instruction (`task_card_requested = true`) AND a confirmed
@@ -49,8 +47,8 @@
 //! - non_goal_1
 //! ```
 //!
-//! Unrecognised lines are accumulated as free text and used to fill
-//! `任务：` when that field is absent from explicit key-value pairs.
+//! Unrecognised lines are rejected as unscoped free text at the executable
+//! compiler gate.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -166,8 +164,8 @@ fn normalise_key(raw: &str) -> Option<&'static str> {
 
 // ── Intent parsing ──────────────────────────────────────────────────────
 
-/// Parsed intent: the key-value map from explicit headers, plus accumulated
-/// free-text lines for fallback task description.
+/// Parsed compiler input: the key-value map from explicit contract headers,
+/// plus any unscoped narrative retained so the contract gate can reject it.
 #[derive(Debug, Clone)]
 pub struct ParsedIntent {
     /// Map from canonical field header (e.g. `"任务："`) to its value.
@@ -246,11 +244,11 @@ pub fn parse_intent(input: &str) -> ParsedIntent {
     ParsedIntent { fields, free_text }
 }
 
-/// Whether the input uses at least one recognized task-card/contract field.
-/// Callers that receive a split context field can use this to distinguish a
-/// structured contract from unstructured narrative summary.
+/// Whether the input is a structured handoff contract: it must carry an
+/// explicit task field and contain no unscoped narrative fallback.
 pub fn is_structured_contract_intent(intent: &str) -> bool {
-    !parse_intent(intent).fields.is_empty()
+    let parsed = parse_intent(intent);
+    parsed.fields.contains_key("任务：") && parsed.free_text.trim().is_empty()
 }
 
 /// Check if a trimmed line starts with a known field header.
@@ -624,6 +622,7 @@ pub fn compile_with_contract(
 ) -> (String, CompileReport) {
     let ctx = gather_project_context(project_root);
     let parsed = parse_intent(intent);
+    let contract_is_structured = is_structured_contract_intent(intent);
 
     let mut slot_sources: Vec<SlotEntry> = Vec::new();
     let mut assumptions: Vec<String> = Vec::new();
@@ -740,16 +739,6 @@ pub fn compile_with_contract(
             field: "Review gate:".to_string(),
             value: rg,
             source: SlotSource::Default,
-        });
-    }
-
-    // 任务：— from intent free text if not in fields
-    if !has_field(&fields, "任务：") && !parsed.free_text.is_empty() {
-        fields.insert("任务：".to_string(), parsed.free_text.clone());
-        slot_sources.push(SlotEntry {
-            field: "任务：".to_string(),
-            value: parsed.free_text.clone(),
-            source: SlotSource::Intent,
         });
     }
 
@@ -981,6 +970,8 @@ pub fn compile_with_contract(
         (false, Some("task_card_not_requested".to_string()))
     } else if !confirmed_handoff_contract {
         (false, Some("handoff_contract_not_confirmed".to_string()))
+    } else if !contract_is_structured {
+        (false, Some("handoff_contract_not_structured".to_string()))
     } else if check_only {
         (false, Some("check_only".to_string()))
     } else if !missing_slots.is_empty() {
@@ -1014,6 +1005,7 @@ pub fn compile_with_contract(
                     "task card not requested (use --task-card-requested only after an explicit handoff instruction)"
                 }
                 "handoff_contract_not_confirmed" => "handoff contract not confirmed (supply structured --confirmed-handoff-contract evidence)",
+                "handoff_contract_not_structured" => "handoff contract must contain a `任务：` field and no unscoped free text",
                 "check_only" => "check-only mode",
                 "missing_slots" => "missing required slots",
                 other => other,
@@ -1049,19 +1041,6 @@ pub fn compile_with_contract(
     };
 
     (gated_card, report)
-}
-
-/// Backward-compatible diagnostic compiler. The legacy signature has no way to
-/// carry structured confirmation, so it deliberately fails closed and never
-/// emits executable task-card text. Call [`compile_with_contract`] at a governed
-/// handoff boundary.
-pub fn compile(
-    intent: &str,
-    project_root: &Path,
-    check_only: bool,
-    task_card_requested: bool,
-) -> (String, CompileReport) {
-    compile_with_contract(intent, project_root, check_only, task_card_requested, false)
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -1260,23 +1239,6 @@ fn is_inline_field(header: &str) -> bool {
 }
 
 // ── Public API ──────────────────────────────────────────────────────────
-
-/// Compile an intent and return only the compiled card text.
-/// Returns an error message if required slots are missing or if
-/// the task card was not requested.
-#[allow(clippy::result_large_err)] // CompileReport carries full diagnostics; boxing it would complicate the public API
-pub fn compile_simple(
-    intent: &str,
-    project_root: &Path,
-    task_card_requested: bool,
-) -> Result<String, CompileReport> {
-    let (card, report) = compile(intent, project_root, false, task_card_requested);
-    if report.executable_allowed && report.missing_slots.is_empty() {
-        Ok(card)
-    } else {
-        Err(report)
-    }
-}
 
 /// Governed convenience compiler with explicit structured handoff state.
 #[allow(clippy::result_large_err)]
@@ -1650,18 +1612,16 @@ mod tests {
     }
 
     #[test]
-    fn legacy_compile_signature_fails_closed_without_structured_contract() {
-        let intent = "任务：legacy bypass test\n目标：verify contract gate";
+    fn raw_chat_is_not_a_compiler_contract() {
+        let intent = "请把已确认方案整理成任务卡并交给 Claude Code";
         let project_root = Path::new(".");
-        let (card, report) = super::compile(intent, project_root, false, true);
+        let (card, report) = super::compile_with_contract(intent, project_root, false, true, true);
 
         assert!(card.is_empty());
-        assert!(report.task_card_requested);
-        assert!(!report.confirmed_handoff_contract);
         assert!(!report.executable_allowed);
         assert_eq!(
             report.block_reason,
-            Some("handoff_contract_not_confirmed".to_string())
+            Some("handoff_contract_not_structured".to_string())
         );
     }
 
@@ -1749,7 +1709,7 @@ mod tests {
     #[test]
     fn test_missing_slots_blocks_executable_even_when_requested() {
         // Even with task_card_requested=true, missing slots block executable output.
-        let intent = "Executor: Claude Code";
+        let intent = "Executor: Claude Code\n任务：structured but incomplete contract";
         let project_root = Path::new(".");
         let (_card, report) = compile(intent, project_root, false, true);
 

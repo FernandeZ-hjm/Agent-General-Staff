@@ -28,7 +28,7 @@ pub(crate) const VALID_TASK_LEVELS: &[&str] = &["Light", "Medium", "Heavy"];
 /// are the NEUTRAL canonical execution-intensity values that the front-stage
 /// task-card generation path uses. `ultracode` is retained ONLY as a
 /// parse-compatible legacy alias (a host-private trigger word) that maps to the
-/// same exhaustive semantics; prompt-maker must not generate it. `unknown` is the
+/// same exhaustive semantics; task compiler must not generate it. `unknown` is the
 /// absent default.
 pub(crate) const VALID_EXECUTION_EFFORT: &[&str] = &[
     "low",

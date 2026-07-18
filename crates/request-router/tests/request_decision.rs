@@ -6,8 +6,7 @@ use request_router::{
 fn route(request: &str) -> request_router::RequestDecision {
     route_request(RequestContext {
         request,
-        approved_contract: false,
-        confirmed_handoff_contract: false,
+        handoff_contract: None,
     })
 }
 
@@ -43,8 +42,7 @@ fn new_cross_module_architecture_routes_to_system_architecture() {
 fn task_card_handoff_routes_to_one_business_cli_capability() {
     let decision = route_request(RequestContext {
         request: "按已确认方案生成任务卡交给 Claude Code",
-        approved_contract: true,
-        confirmed_handoff_contract: true,
+        handoff_contract: Some("任务：实现已确认方案\n目标：完成并验证"),
     });
 
     assert_eq!(decision.status, DecisionStatus::Ready);
@@ -53,9 +51,55 @@ fn task_card_handoff_routes_to_one_business_cli_capability() {
         &decision.targets[0],
         RouteTarget::MachineCli {
             capability: CliCapabilityId::TaskCompile,
-            input: TypedCliInput::RequestText { .. },
+            input: TypedCliInput::ConfirmedHandoffContract { content },
         }
+        if content == "任务：实现已确认方案\n目标：完成并验证"
     ));
+}
+
+#[test]
+fn natural_task_card_delivery_phrases_route_to_compile() {
+    for request in [
+        "给我任务卡",
+        "给我一张任务卡",
+        "给我你执行的任务卡吧",
+        "请提供这个方案的任务卡",
+    ] {
+        let decision = route_request(RequestContext {
+            request,
+            handoff_contract: Some("任务：实现已确认方案\n目标：完成并验证"),
+        });
+
+        assert_eq!(decision.status, DecisionStatus::Ready, "request: {request}");
+        assert!(
+            matches!(
+                &decision.targets[..],
+                [RouteTarget::MachineCli {
+                    capability: CliCapabilityId::TaskCompile,
+                    ..
+                }]
+            ),
+            "request should route only to TaskCompile: {request}; got {:?}",
+            decision.targets
+        );
+    }
+}
+
+#[test]
+fn task_card_discussion_and_validation_do_not_route_to_compile() {
+    for request in ["解释任务卡协议", "检查任务卡格式", "验证任务卡"] {
+        let decision = route(request);
+        assert!(
+            !decision.targets.iter().any(|target| matches!(
+                target,
+                RouteTarget::MachineCli {
+                    capability: CliCapabilityId::TaskCompile,
+                    ..
+                }
+            )),
+            "request must not compile a task card: {request}"
+        );
+    }
 }
 
 #[test]
@@ -118,10 +162,7 @@ fn task_card_request_without_confirmed_contract_is_insufficient() {
     assert_eq!(
         decision.status,
         DecisionStatus::InsufficientContext {
-            missing: vec![
-                RequiredInput::ApprovedContract,
-                RequiredInput::ConfirmedHandoffContract,
-            ],
+            missing: vec![RequiredInput::ConfirmedHandoffContract],
         }
     );
     assert!(decision.targets.is_empty());

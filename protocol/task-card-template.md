@@ -169,7 +169,7 @@ Verification gate:
 - 任务级别按 `protocol/task-routing.md` 定义。
 - **Task-card handoff gate**：`ags task compile` 需要 `--task-card-requested` 与 `--confirmed-handoff-contract` 两个结构化信号；缺少时分别以 `task_card_not_requested` 或 `handoff_contract_not_confirmed` 拒绝，输入重开 solution work 时以 `solution_formation_required` 拒绝。此规则不限制已授权的同会话 `direct-edit`。参见 `protocol/agent-task-protocol.md` 生命周期阶段 3.5。
 - Executor、Runtime adapter、Execution surface、Permission mode、Parallelism、Verification gate 按 `protocol/runtime-adapters.md` 定义；Review gate 的唯一规则表在 `protocol/agent-task-protocol.md`。
-- `Execution effort` 使用中性执行强度语义（`low` / `normal` / `high` / `exhaustive`），默认 `normal`；它只表示思考强度，绝不映射为权限、并行或 review 豁免。宿主私有深度/工作流触发词（如 `ultracode`）不得写进任务卡前台生成路径，只能由 claude-code adapter / runner 按 resolved policy 在执行层翻译；`ultracode` 仅作为旧值解析兼容保留，prompt-maker 不再生成。
+- `Execution effort` 使用中性执行强度语义（`low` / `normal` / `high` / `exhaustive`），默认 `normal`；它只表示思考强度，绝不映射为权限、并行或 review 豁免。宿主私有深度/工作流触发词（如 `ultracode`）不得写进任务卡前台生成路径，只能由 claude-code adapter / runner 按 resolved policy 在执行层翻译；`ultracode` 仅作为旧值解析兼容保留，task compiler 不再生成。
 - `Workflow authority` 声明是否允许 subagent / workflow（`none` / `within-card` / `plan-only` / `allowed`），默认 `none`；它只声明授权，不直接点火。
 - `子任务编排` 是可选槽位，`mode` 取 `none` / `optional` / `required`，默认 `none`（省略即 `none`）。`mode != none` 时 validator 要求 `Workflow authority` 非 none 且 `Parallelism` 为 subagent/worktree/multi-session/agent-team；该槽位只声明可拆分结构、子任务边界与回收要求，真正 subagent / workflow 点火仍由 claude-code adapter / runner 按 resolved policy 翻译，不由任务卡正文触发。子任务只能装可并行工作（只读审计 / 实现 / 文档同步 / 测试补充）；最终验证、交付报告、commit、push、release gate 必须由主 executor 独做，子任务结果合并为单一 diff 后由主 executor 统一验证与交付（见 `protocol/runtime-adapters.md` §Subtask Scope Rules）。
 - `scripts/run-task-card.sh` 是薄包装层，把校验 / gate / policy / adapter / 收据规划全部委托给 Rust runner（`ags run`）。它实际只支持 `--check-only`（gate 预览后停止）、`--dry-run`（输出完整 launch plan 不执行）、`--current-task-approval`（向 resolver 传递 audit/hint 信号，不解锁执行权限，级别不因此降级或提权）、`--approve-writes`（audit/hint 信号；仍可作为 M9 generic-adapter 能力上限 override）、`--format text|json`（透传给 `ags run`）。包装层本身不实现执行层自动选择，不会提高任务卡声明的权限。
@@ -178,7 +178,7 @@ Verification gate:
 
 ## 与全局提示词生成器的关系
 
-全局 `prompt-maker` 在本项目中必须生成本文件定义的唯一 canonical 任务卡骨架，不另立第二套格式。
+`ags task compile` 必须生成本文件定义的唯一 canonical 任务卡骨架，不另立第二套格式。
 
 ### 硬约束：唯一合法模板
 

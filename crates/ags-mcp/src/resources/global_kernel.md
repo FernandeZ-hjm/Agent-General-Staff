@@ -26,7 +26,7 @@ human request
 - Bounded transformations and already-approved formatting work use DirectResponse.
 - Large, boundary-uncertain architecture requests may select a system-architecture SkillDemand.
 - Existing canonical task cards use `MachineCli::TaskExecute`.
-- Task-card generation requires explicit handoff intent and `confirmed_handoff_contract=true`.
+- Task-card generation requires explicit handoff intent and a non-empty, field-structured `handoff_contract` payload.
 - Missing information returns `InsufficientContext { missing }`; AGS does not maintain a conversation state machine.
 
 ## Skill Resolution

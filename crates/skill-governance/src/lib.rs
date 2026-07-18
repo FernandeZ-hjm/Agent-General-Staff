@@ -1744,10 +1744,6 @@ mod tests {
             .watched_skills
             .iter()
             .any(|s| s.name == "diagnosing-bugs"));
-        assert!(!result
-            .watched_skills
-            .iter()
-            .any(|s| s.name == "prompt-maker"));
         // Candidates are declared but not adopted.
         assert!(result
             .candidates

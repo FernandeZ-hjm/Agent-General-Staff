@@ -12,8 +12,10 @@ pub const REQUEST_DECISION_SCHEMA_VERSION: &str = "0.2.8-request-decision";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestContext<'a> {
     pub request: &'a str,
-    pub approved_contract: bool,
-    pub confirmed_handoff_contract: bool,
+    /// Confirmed, structured compiler input supplied by the host. Presence of
+    /// this payload is the handoff evidence; the router never reconstructs it
+    /// from raw chat or a boolean claim.
+    pub handoff_contract: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,7 +36,6 @@ pub enum DecisionStatus {
 #[serde(rename_all = "snake_case")]
 pub enum RequiredInput {
     UserRequest,
-    ApprovedContract,
     ConfirmedHandoffContract,
     ContentKind,
     DivinationMethod,
@@ -70,8 +71,9 @@ pub enum CliCapabilityId {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TypedCliInput {
-    RequestText { text: String },
+    ConfirmedHandoffContract { content: String },
     TaskCard { content: String },
+    Receipt { content: String },
     Target { path: String },
     Empty,
 }
@@ -257,20 +259,17 @@ pub fn route_request(context: RequestContext<'_>) -> RequestDecision {
     }
 
     if is_task_card_handoff(request) {
-        let mut missing = Vec::new();
-        if !context.approved_contract {
-            missing.push(RequiredInput::ApprovedContract);
-        }
-        if !context.confirmed_handoff_contract {
-            missing.push(RequiredInput::ConfirmedHandoffContract);
-        }
-        if !missing.is_empty() {
-            return insufficient(missing);
-        }
+        let Some(contract) = context
+            .handoff_contract
+            .map(str::trim)
+            .filter(|contract| !contract.is_empty())
+        else {
+            return insufficient(vec![RequiredInput::ConfirmedHandoffContract]);
+        };
         return ready(vec![RouteTarget::MachineCli {
             capability: CliCapabilityId::TaskCompile,
-            input: TypedCliInput::RequestText {
-                text: request.to_string(),
+            input: TypedCliInput::ConfirmedHandoffContract {
+                content: contract.to_string(),
             },
         }]);
     }
@@ -380,17 +379,24 @@ fn is_bounded_content_transform(request: &str) -> bool {
 
 fn is_task_card_handoff(request: &str) -> bool {
     let text = normalized(request);
-    contains_any(
-        &text,
-        &[
-            "生成任务卡",
-            "出任务卡",
-            "交给claudecode",
-            "给claudecode执行",
-            "taskcard",
-            "handoffcontract",
-        ],
-    )
+    let object = ["任务卡", "taskcard", "handoffcontract"];
+    let delivery_action = [
+        "生成",
+        "出",
+        "给我",
+        "提供",
+        "整理",
+        "编译",
+        "交给claudecode",
+        "给claudecode执行",
+        "generate",
+        "create",
+        "give",
+        "provide",
+        "compile",
+        "handoff",
+    ];
+    contains_pair(&text, &object, &delivery_action)
 }
 
 fn is_ambiguous_content_request(request: &str) -> bool {
@@ -619,8 +625,8 @@ fn classify_cli_target(request: &str) -> Result<Option<RouteTarget>, RequiredInp
             .ok_or(RequiredInput::Receipt)?;
         RouteTarget::MachineCli {
             capability: CliCapabilityId::ReceiptVerify,
-            input: TypedCliInput::RequestText {
-                text: receipt.to_string(),
+            input: TypedCliInput::Receipt {
+                content: receipt.to_string(),
             },
         }
     } else {

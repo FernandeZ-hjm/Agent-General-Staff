@@ -136,7 +136,15 @@ fn cmd_gate_skill_tags(path: &str, target: &Path, for_agent: &str, format: &str)
         std::process::exit(1);
     });
     let tags = task_card_validator::extract_skill_tags(&content);
-    let root = skill_resolver::locate_manifest_root(&crate::context::guard_path(target));
+    let root = crate::context::resolve_capability_authority_root(
+        &crate::context::guard_path(target),
+        &skill_resolver::locate_runtime_home(),
+        std::env::var_os("AGS_SOURCE_ROOT").map(std::path::PathBuf::from),
+    )
+    .unwrap_or_else(|error| {
+        eprintln!("gate skill-tags: capability_authority_unresolved: {error}");
+        std::process::exit(1);
+    });
     let gate = skill_resolver::verify_skill_tags(&tags, &root, for_agent);
     let decision = if gate.all_accepted { "allow" } else { "stop" };
     if format == "json" {

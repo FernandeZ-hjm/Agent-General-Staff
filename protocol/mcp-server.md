@@ -52,8 +52,6 @@ ags mcp serve --transport stdio
 | `ags_verify_local` | 执行固定 local verification scope |
 | `ags_route_request` | 唯一自然语言需求路由入口 |
 
-旧的 phase classifier 与独立 capability classifier 已删除；不存在并行调试入口。
-
 ### `ags_route_request`
 
 输入：
@@ -61,14 +59,13 @@ ags mcp serve --transport stdio
 ```json
 {
   "request": "...",
-  "approved_contract": false,
-  "confirmed_handoff_contract": false,
+  "handoff_contract": "任务：...\n目标：...\n非目标：...\n验证：...",
   "active_host": "codex",
   "target": "."
 }
 ```
 
-宿主负责把对话上下文整理进 `request` 和两个结构化证据字段。AGS 路由器无状态。
+宿主负责把当前请求放入 `request`；仅在任务卡 handoff 已确认时，另外提供字段化的 `handoff_contract`。布尔值不能代替 contract 内容，AGS 路由器无状态。
 
 输出包含 canonical `RequestDecision`，以及按 target 类型产生的消费结果：
 

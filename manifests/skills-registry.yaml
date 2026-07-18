@@ -45,15 +45,6 @@ registry:
         when the CLI contract, install flow, or output structure changes.
 
 skills:
-  - name: prompt-maker
-    profile: required
-    local_path: global-skills/prompt-maker
-    description: Execution task-card and agent handoff prompt generator
-    source:
-      type: local
-      relationship: suite_local
-      update_policy: local_canonical_no_upstream
-
   - name: claude-delivery-report
     profile: required
     local_path: global-skills/claude-delivery-report
@@ -81,7 +72,6 @@ skills:
       cost_class: free
       invoke_hint: "[skill: diagnosing-bugs]"
       route_priority: 50
-      is_compatibility_alias: false
       capability_group: [engineering-process]
       upstream_group: "mattpocock/skills:diagnosing-bugs"
       examples:
@@ -178,7 +168,6 @@ skills:
       cost_class: free
       invoke_hint: "[skill: grill-with-docs]"
       route_priority: 50
-      is_compatibility_alias: false
       capability_group: [engineering-process]
       upstream_group: "mattpocock/skills:grill-with-docs"
       examples:
@@ -255,7 +244,6 @@ skills:
       cost_class: free
       invoke_hint: "[skill: skill-creator]"
       route_priority: 30
-      is_compatibility_alias: false
       capability_group: [skill-authoring]
       upstream_group: "host-system"
       examples:

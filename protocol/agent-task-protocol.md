@@ -52,7 +52,7 @@ targets:
 - 普通压缩、翻译、格式转换、字段统一、已批准结构执行直接返回 `DirectResponse`。
 - 只有明确的大型设计信号（新系统架构、跨模块架构、架构边界、跨 MCP/CLI/Vault 等）才返回系统架构类 `SkillDemand`。
 - 现有 `## 任务卡` 首行输入返回 `MachineCli::TaskExecute`，不得重新进入方案形成。
-- 明确任务卡交接请求只有在 `confirmed_handoff_contract=true` 时返回 `TaskCompile`；否则返回 `InsufficientContext`。
+- 明确任务卡交接请求只有在宿主同时提供非空、字段化的 `handoff_contract` payload 时返回 `TaskCompile`；否则返回 `InsufficientContext`。
 
 ### 3. Solution Formation（按需）
 

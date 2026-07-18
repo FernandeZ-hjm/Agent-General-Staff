@@ -16,10 +16,10 @@ Generate a task card only after an explicit handoff instruction such as:
 
 - `生成任务卡`
 - `按这个方案出任务卡`
-- `交给 Claude Code 执行`
+- `给我你执行的任务卡`
 
 The solution/diagnosis, scope, verification, and handoff boundaries must also be
-confirmed through structured host state. The router/compiler blocks card output when:
+provided as a field-structured `handoff_contract` payload. The router/compiler blocks card output when:
 
 - the instruction is missing: `block_reason: task_card_not_requested`
 - the confirmed contract is missing: `block_reason: handoff_contract_not_confirmed`
