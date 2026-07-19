@@ -1873,12 +1873,12 @@ fn validate_usage_identifier(field: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn set_private_permissions(path: &Path) -> Result<(), String> {
+fn set_private_permissions(_path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .map_err(|error| format!("cannot chmod {}: {error}", path.display()))?;
+        std::fs::set_permissions(_path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|error| format!("cannot chmod {}: {error}", _path.display()))?;
     }
     Ok(())
 }

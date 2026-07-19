@@ -404,12 +404,18 @@ echo "--- Resolver Hardening Smoke Tests (F1-F7) ---"
 
 echo -n "[....] retired task-card permission/scheduler semantics are absent "
 retired_permission_pattern='edit-with-''confirmation|autonomous-low-''risk|requires_''confirmation_gate|GateDecision::''Confirm|PermissionMode::''ReadOnly|Permission mode: read-''only|resolver adds a ''confirmation gate'
-deprecated_permission_hits="$(rg -n \
-    --glob '!target/**' \
-    --glob '!graphify-out/**' \
-    --glob '!scripts/verify.sh' \
-    "$retired_permission_pattern" \
-    "$REPO_ROOT" || true)"
+if command -v rg >/dev/null 2>&1; then
+    deprecated_permission_hits="$(rg -n \
+        --glob '!target/**' \
+        --glob '!graphify-out/**' \
+        --glob '!scripts/verify.sh' \
+        "$retired_permission_pattern" \
+        "$REPO_ROOT" || true)"
+else
+    deprecated_permission_hits="$(git -C "$REPO_ROOT" grep -n -E \
+        "$retired_permission_pattern" \
+        -- . ':(exclude)scripts/verify.sh' || true)"
+fi
 if [ -z "$deprecated_permission_hits" ]; then
     echo "OK"
 else
@@ -1227,12 +1233,12 @@ else
 fi
 
 echo -n "[....] ags agents govern --apply remains dialog-only (no receipt) "
-receipt_count_before=$(find "$HOME/.ags/runtime/receipts" -maxdepth 1 -type f -name 'ar-agents-govern-*.json' 2>/dev/null | wc -l | tr -d ' ')
+receipt_count_before=$(find "$HOME/.ags/runtime/receipts" -maxdepth 1 -type f -name 'ar-agents-govern-*.json' 2>/dev/null | wc -l | tr -d ' ' || true)
 if cargo run -q -p ags-cli -- agents govern --apply --format json > /tmp/verify-agents-govern-apply.json 2>&1 \
     && grep -q '"apply_status": "advice-only-no-write"' /tmp/verify-agents-govern-apply.json \
     && grep -q '"selection_required": true' /tmp/verify-agents-govern-apply.json \
     && ! grep -q '"receipt_ref"' /tmp/verify-agents-govern-apply.json; then
-    receipt_count_after=$(find "$HOME/.ags/runtime/receipts" -maxdepth 1 -type f -name 'ar-agents-govern-*.json' 2>/dev/null | wc -l | tr -d ' ')
+    receipt_count_after=$(find "$HOME/.ags/runtime/receipts" -maxdepth 1 -type f -name 'ar-agents-govern-*.json' 2>/dev/null | wc -l | tr -d ' ' || true)
     if [ "$receipt_count_before" = "$receipt_count_after" ]; then
         echo "OK"
     else
