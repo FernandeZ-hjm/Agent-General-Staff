@@ -1397,6 +1397,7 @@ mod tests {
         ExecutionAuthority, ProposalPhase, SolutionState, HOST_ROUTE_PROPOSAL_SCHEMA_VERSION,
     };
 
+    #[cfg(unix)]
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn binding() -> PreflightBinding {
@@ -1526,6 +1527,7 @@ Verification gate:\n- commands: cargo test -p ags-mcp\n\
         (lease_id, action_id)
     }
 
+    #[cfg(unix)]
     fn tree_digest(root: &Path) -> String {
         fn visit(root: &Path, path: &Path, rows: &mut Vec<Vec<u8>>) {
             let Ok(entries) = std::fs::read_dir(path) else {
