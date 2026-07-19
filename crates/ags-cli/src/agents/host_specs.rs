@@ -52,7 +52,9 @@ pub(in crate::agents) fn agents_scan_rows(
 pub(in crate::agents) fn agents_governance_chain() -> Vec<&'static str> {
     vec![
         "ags_preflight (host initialization gate)",
-        "ags_route_request (canonical RequestDecision)",
+        "ags://capabilities/current-host (preflight-bound catalog)",
+        "ags_route_request (read-only typed RouteResolution)",
+        "ags_apply_action (one-shot held action)",
         "ags_task_validate (task-card format gate)",
         "ags_policy_resolve (execution policy)",
         "review gate + verification gate (delivery)",
@@ -70,6 +72,7 @@ pub(in crate::agents) fn ags_mcp_tool_surface() -> Vec<&'static str> {
         "ags_task_validate",
         "ags_policy_resolve",
         "ags_route_request",
+        "ags_apply_action",
         "ags_verify_local",
     ]
 }
@@ -94,7 +97,7 @@ pub(in crate::agents) fn default_agents_probe(host_id: &str) -> Option<(bool, St
 #[cfg(test)]
 mod agents_scan_tests {
     use super::*;
-    use crate::host_platforms::cross_platform_init_plan;
+    use crate::host_platforms::cross_platform_init_plan_with_detectors;
     use std::path::PathBuf;
 
     fn temp_home(tag: &str) -> PathBuf {
@@ -108,7 +111,7 @@ mod agents_scan_tests {
     fn agents_scan_rows_probe_supported_and_advise_unprobeable() {
         let home = temp_home("agents-scan");
         std::fs::create_dir_all(home.join(".claude")).unwrap();
-        let plan = cross_platform_init_plan(&home, &|c| c == "claude");
+        let plan = cross_platform_init_plan_with_detectors(&home, &|c| c == "claude", &|_| false);
         let probe = |id: &str| -> Option<(bool, String)> {
             if id == "claude-code" {
                 Some((true, "ags: connected".to_string()))

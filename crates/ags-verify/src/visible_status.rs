@@ -9,39 +9,11 @@
 //! **Quiet only affects the foreground.** It never suppresses trace, receipt, or
 //! archive writes — "可审计不等于过程直播". Auditable ≠ livestreamed.
 
-use serde::Serialize;
+pub use request_governance::GovernanceStatus;
 
-/// The single foreground decision state for a governance step.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum VisibleStatus {
-    /// No action needed — proceed.
-    Ok,
-    /// Waiting for a human decision (e.g. task-card instruction or hard-stop approval).
-    NeedsUserDecision,
-    /// A policy gate stopped execution.
-    BlockedByPolicy,
-    /// Risk escalated beyond what the task card declared.
-    RiskEscalated,
-    /// Completed; a receipt is available.
-    DoneWithReceipt,
-    /// Advisory/consultation intent detected — mutation is blocked.
-    AdvisoryNoMutation,
-}
-
-impl VisibleStatus {
-    /// Stable SCREAMING_SNAKE_CASE identifier, also used in JSON output.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            VisibleStatus::Ok => "OK",
-            VisibleStatus::NeedsUserDecision => "NEEDS_USER_DECISION",
-            VisibleStatus::BlockedByPolicy => "BLOCKED_BY_POLICY",
-            VisibleStatus::RiskEscalated => "RISK_ESCALATED",
-            VisibleStatus::DoneWithReceipt => "DONE_WITH_RECEIPT",
-            VisibleStatus::AdvisoryNoMutation => "ADVISORY_NO_MUTATION",
-        }
-    }
-}
+/// Compatibility alias. New contracts should use `GovernanceStatus`.
+#[deprecated(note = "use GovernanceStatus")]
+pub type VisibleStatus = GovernanceStatus;
 
 /// Raw signals a caller collects from its own state, fed into the deterministic
 /// status derivation. Each field is a plain bool so callers don't need to share
@@ -63,20 +35,25 @@ pub struct StatusSignals {
 /// Derive the single foreground status from raw signals, by descending severity:
 /// BlockedByPolicy → RiskEscalated → AdvisoryNoMutation → NeedsUserDecision →
 /// DoneWithReceipt → Ok.
-pub fn derive_visible_status(s: &StatusSignals) -> VisibleStatus {
+pub fn derive_governance_status(s: &StatusSignals) -> GovernanceStatus {
     if s.blocked_by_policy {
-        VisibleStatus::BlockedByPolicy
+        GovernanceStatus::BlockedByPolicy
     } else if s.risk_escalated {
-        VisibleStatus::RiskEscalated
+        GovernanceStatus::RiskEscalated
     } else if s.advisory_no_mutation {
-        VisibleStatus::AdvisoryNoMutation
+        GovernanceStatus::AdvisoryNoMutation
     } else if s.needs_user_decision {
-        VisibleStatus::NeedsUserDecision
+        GovernanceStatus::NeedsUserDecision
     } else if s.done_with_receipt {
-        VisibleStatus::DoneWithReceipt
+        GovernanceStatus::DoneWithReceipt
     } else {
-        VisibleStatus::Ok
+        GovernanceStatus::Ok
     }
+}
+
+#[allow(deprecated)]
+pub fn derive_visible_status(s: &StatusSignals) -> VisibleStatus {
+    derive_governance_status(s)
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
@@ -88,7 +65,7 @@ mod tests {
     #[test]
     fn default_signals_are_ok() {
         let s = StatusSignals::default();
-        assert_eq!(derive_visible_status(&s), VisibleStatus::Ok);
+        assert_eq!(derive_governance_status(&s), GovernanceStatus::Ok);
     }
 
     #[test]
@@ -100,7 +77,10 @@ mod tests {
             needs_user_decision: true,
             done_with_receipt: true,
         };
-        assert_eq!(derive_visible_status(&s), VisibleStatus::BlockedByPolicy);
+        assert_eq!(
+            derive_governance_status(&s),
+            GovernanceStatus::BlockedByPolicy
+        );
     }
 
     #[test]
@@ -112,7 +92,10 @@ mod tests {
             done_with_receipt: true,
             ..Default::default()
         };
-        assert_eq!(derive_visible_status(&s), VisibleStatus::RiskEscalated);
+        assert_eq!(
+            derive_governance_status(&s),
+            GovernanceStatus::RiskEscalated
+        );
     }
 
     #[test]
@@ -123,7 +106,10 @@ mod tests {
             done_with_receipt: true,
             ..Default::default()
         };
-        assert_eq!(derive_visible_status(&s), VisibleStatus::AdvisoryNoMutation);
+        assert_eq!(
+            derive_governance_status(&s),
+            GovernanceStatus::AdvisoryNoMutation
+        );
     }
 
     #[test]
@@ -133,7 +119,10 @@ mod tests {
             done_with_receipt: true,
             ..Default::default()
         };
-        assert_eq!(derive_visible_status(&s), VisibleStatus::NeedsUserDecision);
+        assert_eq!(
+            derive_governance_status(&s),
+            GovernanceStatus::NeedsUserDecision
+        );
     }
 
     #[test]
@@ -142,17 +131,20 @@ mod tests {
             done_with_receipt: true,
             ..Default::default()
         };
-        assert_eq!(derive_visible_status(&s), VisibleStatus::DoneWithReceipt);
+        assert_eq!(
+            derive_governance_status(&s),
+            GovernanceStatus::DoneWithReceipt
+        );
     }
 
     #[test]
     fn json_is_screaming_snake_case() {
-        let v = serde_json::to_value(VisibleStatus::NeedsUserDecision).expect("serialize");
+        let v = serde_json::to_value(GovernanceStatus::NeedsUserDecision).expect("serialize");
         assert_eq!(v, "NEEDS_USER_DECISION");
         assert_eq!(
-            VisibleStatus::AdvisoryNoMutation.as_str(),
+            GovernanceStatus::AdvisoryNoMutation.as_str(),
             "ADVISORY_NO_MUTATION"
         );
-        assert_eq!(VisibleStatus::Ok.as_str(), "OK");
+        assert_eq!(GovernanceStatus::Ok.as_str(), "OK");
     }
 }

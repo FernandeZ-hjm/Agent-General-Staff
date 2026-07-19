@@ -902,7 +902,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
     let (role_description, permissions, stop_conditions, required_reads) =
         match agent_type {
             AgentType::Codex => (
-                "Codex owns ambient preflight, host conversation context, conditional solution formation, execution decision, task routing, and review. MCP `ags_route_request` is the only natural-language routing node and returns one structured RequestDecision. DirectResponse delivers and stops; SkillDemand is resolved against ActiveSkillTable; MachineCli is invoked through fixed argv on the real AGS CLI. An already approved contract plus an explicit same-session modification instruction enters host-native direct execution without repeating solution formation or compiling a task card. New unresolved solutions require confirmation. Task-card generation requires both an explicit handoff instruction and a confirmed handoff contract; reopened solution work stays in solution formation. `方案 OK` alone authorizes neither mutation path."
+                "Codex owns ambient preflight, complete conversation context, the only natural-language semantic decision, conditional solution formation, execution decision, and review. It reads `ags://capabilities/current-host` and submits a typed HostRouteProposal to read-only MCP `ags_route_request`. DirectResponse delivers and stops; exact SkillTarget is checked against ActiveSkillTable; MachineCli becomes a connection-held action and only `ags_apply_action` may consume it. An approved contract plus explicit same-session modification instruction enters host-native direct execution without repeating solution formation or compiling a task card. New unresolved solutions require confirmation. Task-card generation requires both an explicit handoff instruction and a confirmed handoff contract; reopened solution work stays in solution formation. `方案 OK` alone authorizes neither mutation path."
                     .to_string(),
                 AgentPermissions {
                     default_permission_mode: "execute-and-verify".to_string(),
@@ -922,7 +922,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
                         .to_string(),
                     "Do not change public-full sanitized payload boundary, canonical task-card skeleton, or execution-policy M1-M10 rules without explicit approval."
                         .to_string(),
-                    "Do not generate task cards or call `ags task compile --task-card-requested --confirmed-handoff-contract` until the RequestDecision selects task compilation and the handoff contract is confirmed. This compiler gate does not restrict authorized same-session direct execution."
+                    "Do not generate task cards or call `ags task compile --task-card-requested --confirmed-handoff-contract` until there is an explicit handoff request and a confirmed contract. This compiler gate does not restrict authorized same-session direct execution."
                         .to_string(),
                 ],
                 vec![
@@ -1027,7 +1027,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
                 ],
             ),
             AgentType::Cursor => (
-                "Cursor owns ambient preflight, host conversation context, conditional solution formation, execution decision, task routing, and review inside its IDE workflow. MCP `ags_route_request` is the only natural-language routing node and returns one structured RequestDecision. DirectResponse delivers and stops; SkillDemand is resolved against ActiveSkillTable; MachineCli uses fixed argv on the real AGS CLI. Explicit same-session modification authorization enters direct execution; task compilation requires both the MachineCli decision and a confirmed handoff contract. `方案 OK` alone authorizes neither mutation path."
+                "Cursor owns ambient preflight, complete conversation context, the only natural-language semantic decision, conditional solution formation, execution decision, and review inside its IDE workflow. It reads `ags://capabilities/current-host` and submits a typed HostRouteProposal to read-only MCP `ags_route_request`. DirectResponse delivers and stops; exact SkillTarget is checked against ActiveSkillTable; MachineCli is only consumed by explicit `ags_apply_action`. Explicit same-session modification authorization enters host-native direct execution; task compilation requires a confirmed handoff contract and explicit handoff request. `方案 OK` alone authorizes neither mutation path."
                     .to_string(),
                 AgentPermissions {
                     default_permission_mode: "execute-and-verify".to_string(),
@@ -1106,7 +1106,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
                     "Use the explicit `target` project path supplied by the host; do not assume the desktop workspace folder is the governed project.".to_string(),
                     "Do not perform Light/Medium/Heavy task classification from raw user requests.".to_string(),
                     "Do not install hooks, runner adapters, dependencies, or production wiring without explicit protected-operation authorization.".to_string(),
-                    "Do not generate task cards or call `ags task compile --task-card-requested --confirmed-handoff-contract` until the RequestDecision selects task compilation and the handoff contract is confirmed.".to_string(),
+                    "Do not generate task cards or call `ags task compile --task-card-requested --confirmed-handoff-contract` until there is an explicit handoff request and a confirmed contract.".to_string(),
                     "If the host cannot identify the target project, stop and ask for the repository path instead of running `ags init` in the current desktop workspace.".to_string(),
                 ],
                 vec![
@@ -1517,6 +1517,7 @@ pub struct SessionPreflight {
     pub default_permission_mode: String,
 
     // Aggregated diagnostics
+    pub governance_status: request_governance::GovernanceStatus,
     pub overall_status: PreflightStatus,
     pub warnings: Vec<String>,
     pub failures: Vec<String>,
@@ -1668,6 +1669,11 @@ pub fn run_session_preflight(target: &Path, agent_type: &AgentType) -> SessionPr
         verification_commands: instructions.verification_commands.clone(),
         default_permission_mode: instructions.permissions.default_permission_mode.clone(),
 
+        governance_status: if overall_status == PreflightStatus::Stop {
+            request_governance::GovernanceStatus::BlockedByPolicy
+        } else {
+            request_governance::GovernanceStatus::Ok
+        },
         overall_status,
         warnings,
         failures,
@@ -2470,7 +2476,8 @@ Some other text here.
             .instructions_text
             .contains("same-session modification instruction"));
         assert!(instructions.instructions_text.contains("ags_route_request"));
-        assert!(instructions.instructions_text.contains("RequestDecision"));
+        assert!(instructions.instructions_text.contains("HostRouteProposal"));
+        assert!(instructions.instructions_text.contains("ags_apply_action"));
         assert!(instructions
             .instructions_text
             .contains("confirmed handoff contract"));
@@ -2509,10 +2516,11 @@ Some other text here.
             .instructions_text
             .contains("same-session modification authorization"));
         assert!(instructions.instructions_text.contains("ags_route_request"));
-        assert!(instructions.instructions_text.contains("RequestDecision"));
+        assert!(instructions.instructions_text.contains("HostRouteProposal"));
+        assert!(instructions.instructions_text.contains("ags_apply_action"));
         assert!(instructions
             .instructions_text
-            .contains("MachineCli decision"));
+            .contains("MachineCli is only consumed"));
         assert!(instructions
             .instructions_text
             .contains("confirmed handoff contract"));

@@ -16,17 +16,18 @@
 schema_version: "2.0-skill"
 suite:
   name: "agent-general-staff"
-  version: "0.2.8-public"
+  version: "0.3.0-public"
   description: >
-    Agent General Staff 0.2.8 public edition — Rust-native governance
+    Agent General Staff 0.3.0 public edition — Rust-native governance
     kernel and CLI for multi-agent engineering workflows. All core governance
     capabilities included. Optional third-party development skills available
     for confirmed install only.
   required: []
   optional:
-    # Request Router emits a closed SkillDemand; Skill Resolver maps it through
-    # demand_routes and the machine-local ActiveSkillTable. Internal Superpowers
-    # playbooks remain route targets of the single host-visible parent skill.
+    # The host submits a typed HostRouteProposal. Skill Resolver validates exact
+    # SkillTarget identifiers against the machine-local HostCapabilitySnapshot;
+    # it does not interpret natural language or select fallbacks. Internal
+    # Superpowers playbooks remain entrypoints of the host-visible parent skill.
     # ags-capability is also retired as a Codex front-stage command skill; the
     # public `ags capability ...` CLI remains available for Cross-Agent
     # visibility/sync and is not exposed as a `$ags-capability` skill.

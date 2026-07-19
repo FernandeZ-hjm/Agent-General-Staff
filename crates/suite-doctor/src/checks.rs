@@ -750,7 +750,6 @@ fn scan_yaml_credentials(value: &YamlValue, path: &str, out: &mut Vec<String>) {
 ///     skill-resolution FAIL: runtime auth posture is runtime-derived only and
 ///     must never be tracked. Mirrors the credential grep in the verification gate.
 ///  2. **ActiveSkillTable snapshot** — machine-local presence and freshness.
-
 pub fn skill_resolution_drift_check(repo_root: &Path) -> Vec<Finding> {
     let mut findings = Vec::new();
 

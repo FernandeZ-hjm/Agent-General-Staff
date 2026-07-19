@@ -40,7 +40,7 @@ counterparts live in `crates/skill-governance/src/console.rs`
 
 ```
 ags skill --format json                                      # inventory: canonical + claude-code/codex thin-index visibility
-ags skill propose --action adopt --skill lark-calendar       # dry-run: plans a symlink thin index per host → canonical (references travel with it)
+ags skill adopt <external-skill-id>                          # dry-run: proposes only a machine-private overlay entry
 ags skill verify  --host claude-code --format json           # thin-index visibility evidence
 ags skill verify  --host codex       --format json
 ```

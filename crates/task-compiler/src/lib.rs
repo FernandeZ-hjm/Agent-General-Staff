@@ -174,6 +174,40 @@ pub struct ParsedIntent {
     pub free_text: String,
 }
 
+pub const HANDOFF_CONTRACT_SCHEMA_VERSION: &str = "0.3.0-handoff-contract";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TaskLevel {
+    #[serde(alias = "light", alias = "LIGHT")]
+    Light,
+    #[serde(alias = "medium", alias = "MEDIUM")]
+    Medium,
+    #[serde(alias = "heavy", alias = "HEAVY")]
+    Heavy,
+}
+
+impl TaskLevel {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Light => "Light",
+            Self::Medium => "Medium",
+            Self::Heavy => "Heavy",
+        }
+    }
+}
+
+/// Typed, closed handoff seam for 0.3.0. `task_level` and `task` are mandatory;
+/// callers cannot omit the level and ask the compiler to infer it from prose.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HandoffContract {
+    pub schema_version: String,
+    pub task_level: TaskLevel,
+    pub task: String,
+    #[serde(default)]
+    pub fields: HashMap<String, String>,
+}
+
 /// Parse an intent string into a field map.
 ///
 /// Lines that start with a recognised key followed by `:` or `：` are treated
@@ -269,8 +303,15 @@ fn find_header_start(line: &str) -> Option<(&'static str, usize, bool)> {
         if let Some(canonical) = normalise_key(key) {
             for (fh, is_inline) in FIELD_HEADERS {
                 if *fh == canonical {
-                    // matched_len = position after the colon
-                    return Some((fh, colon_pos + 1, *is_inline));
+                    // `str::find` returns a BYTE offset. Fullwidth `：` is
+                    // three UTF-8 bytes, so advancing by one would slice in the
+                    // middle of the scalar and panic.
+                    let colon_len = line[colon_pos..]
+                        .chars()
+                        .next()
+                        .map(char::len_utf8)
+                        .unwrap_or(0);
+                    return Some((fh, colon_pos + colon_len, *is_inline));
                 }
             }
         }
@@ -365,10 +406,12 @@ pub fn gather_project_context(root: &Path) -> ProjectContext {
     // Memory paths
     let memory_slug = detect_memory_slug(&root);
     let capsule_path = memory_slug.as_ref().and_then(|slug| {
-        let p = PathBuf::from(format!(
-            "~/.agents/memory/projects/{}/context-capsule.md",
-            slug
-        ));
+        let p = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".agents/memory/projects")
+            .join(slug)
+            .join("context-capsule.md");
         if p.exists() {
             Some(p)
         } else {
@@ -376,7 +419,12 @@ pub fn gather_project_context(root: &Path) -> ProjectContext {
         }
     });
     let task_memory_path = memory_slug.as_ref().and_then(|slug| {
-        let p = PathBuf::from(format!("~/.agents/memory/projects/{}/task-memory.md", slug));
+        let p = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".agents/memory/projects")
+            .join(slug)
+            .join("task-memory.md");
         if p.exists() {
             Some(p)
         } else {
@@ -514,9 +562,6 @@ fn detect_memory_slug(root: &Path) -> Option<String> {
     if s.contains("ai-dev-env-bootstrap") {
         return Some("ai-dev-env-bootstrap".to_string());
     }
-    if s.contains("Agent-General-Staff") {
-        return Some("agent-general-staff".to_string());
-    }
 
     // Fallback: derive from directory name
     root.file_name()
@@ -571,6 +616,10 @@ pub struct CompileReport {
     pub missing_slots: Vec<String>,
     /// Assumptions made during compilation.
     pub assumptions: Vec<String>,
+    /// Compatibility notices for legacy loose contracts.
+    pub deprecations: Vec<String>,
+    /// `typed` for [`HandoffContract`], otherwise `legacy_loose`.
+    pub contract_format: String,
     /// Whether the compiled card passes `ags task validate`.
     pub validation_passed: bool,
     /// Validation errors, if any.
@@ -620,12 +669,148 @@ pub fn compile_with_contract(
     task_card_requested: bool,
     confirmed_handoff_contract: bool,
 ) -> (String, CompileReport) {
+    if intent.trim_start().starts_with('{') {
+        return match serde_json::from_str::<HandoffContract>(intent) {
+            Ok(contract) => match compile_typed_handoff_contract(
+                &contract,
+                project_root,
+                check_only,
+                task_card_requested,
+                confirmed_handoff_contract,
+            ) {
+                Ok(result) => result,
+                Err(errors) => invalid_typed_contract_report(
+                    errors,
+                    check_only,
+                    task_card_requested,
+                    confirmed_handoff_contract,
+                ),
+            },
+            Err(error) => invalid_typed_contract_report(
+                vec![format!("invalid typed handoff contract: {error}")],
+                check_only,
+                task_card_requested,
+                confirmed_handoff_contract,
+            ),
+        };
+    }
+    compile_legacy_contract(
+        intent,
+        project_root,
+        check_only,
+        task_card_requested,
+        confirmed_handoff_contract,
+    )
+}
+
+fn invalid_typed_contract_report(
+    errors: Vec<String>,
+    check_only: bool,
+    task_card_requested: bool,
+    confirmed_handoff_contract: bool,
+) -> (String, CompileReport) {
+    (
+        String::new(),
+        CompileReport {
+            schema_version: SCHEMA_VERSION.to_string(),
+            compiled_task_card: String::new(),
+            slot_sources: Vec::new(),
+            missing_slots: Vec::new(),
+            assumptions: Vec::new(),
+            deprecations: Vec::new(),
+            contract_format: "typed_invalid".to_string(),
+            validation_passed: false,
+            validation_errors: errors,
+            check_only,
+            task_card_requested,
+            confirmed_handoff_contract,
+            executable_allowed: false,
+            block_reason: Some("invalid_typed_handoff_contract".to_string()),
+        },
+    )
+}
+
+pub fn compile_typed_handoff_contract(
+    contract: &HandoffContract,
+    project_root: &Path,
+    check_only: bool,
+    task_card_requested: bool,
+    confirmed_handoff_contract: bool,
+) -> Result<(String, CompileReport), Vec<String>> {
+    let intent = render_typed_handoff_contract(contract)?;
+    let (card, mut report) = compile_legacy_contract(
+        &intent,
+        project_root,
+        check_only,
+        task_card_requested,
+        confirmed_handoff_contract,
+    );
+    report.contract_format = "typed".to_string();
+    report
+        .deprecations
+        .retain(|notice| notice != "legacy_loose_contract_missing_task_level_defaulted_to_medium");
+    Ok((card, report))
+}
+
+fn render_typed_handoff_contract(contract: &HandoffContract) -> Result<String, Vec<String>> {
+    let mut errors = Vec::new();
+    if contract.schema_version != HANDOFF_CONTRACT_SCHEMA_VERSION {
+        errors.push(format!(
+            "unsupported handoff contract schema {}; expected {HANDOFF_CONTRACT_SCHEMA_VERSION}",
+            contract.schema_version
+        ));
+    }
+    if contract.task.trim().is_empty() {
+        errors.push("typed handoff contract task must not be empty".to_string());
+    }
+    for key in contract.fields.keys() {
+        if key == "任务：" || key == "任务级别：" {
+            errors.push(format!(
+                "typed field {key} cannot override a required typed member"
+            ));
+        } else if !FIELD_HEADERS.iter().any(|(header, _)| key == header) {
+            errors.push(format!("unknown typed handoff field: {key}"));
+        }
+    }
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+
+    let mut lines = vec![
+        format!("任务级别：{}", contract.task_level.as_str()),
+        format!("任务：{}", contract.task.trim()),
+    ];
+    let mut fields = contract.fields.iter().collect::<Vec<_>>();
+    fields.sort_by(|left, right| left.0.cmp(right.0));
+    for (header, value) in fields {
+        let inline = FIELD_HEADERS
+            .iter()
+            .find(|(known, _)| header == known)
+            .map(|(_, inline)| *inline)
+            .unwrap_or(false);
+        if inline {
+            lines.push(format!("{header} {}", value.trim()));
+        } else {
+            lines.push(format!("{header}\n{}", value.trim()));
+        }
+    }
+    Ok(lines.join("\n"))
+}
+
+fn compile_legacy_contract(
+    intent: &str,
+    project_root: &Path,
+    check_only: bool,
+    task_card_requested: bool,
+    confirmed_handoff_contract: bool,
+) -> (String, CompileReport) {
     let ctx = gather_project_context(project_root);
     let parsed = parse_intent(intent);
     let contract_is_structured = is_structured_contract_intent(intent);
 
     let mut slot_sources: Vec<SlotEntry> = Vec::new();
     let mut assumptions: Vec<String> = Vec::new();
+    let mut deprecations: Vec<String> = Vec::new();
     let mut fields: HashMap<String, String> = HashMap::new();
 
     // ── Phase 1: fill fields from intent ────────────────────────────
@@ -719,10 +904,15 @@ pub fn compile_with_contract(
         });
     }
 
-    // 任务级别：— from intent, or infer from content
+    // 任务级别：— typed contracts always provide it. A legacy loose contract
+    // may omit it for one compatibility window; the only allowed fallback is
+    // Medium plus an explicit deprecation. Natural-language keywords are never
+    // a task-level authority.
     if !has_field(&fields, "任务级别：") {
-        let level = infer_task_level(&parsed, &fields);
+        let level = "Medium".to_string();
         fields.insert("任务级别：".to_string(), level.clone());
+        deprecations
+            .push("legacy_loose_contract_missing_task_level_defaulted_to_medium".to_string());
         slot_sources.push(SlotEntry {
             field: "任务级别：".to_string(),
             value: level,
@@ -1021,6 +1211,8 @@ pub fn compile_with_contract(
         slot_sources,
         missing_slots,
         assumptions,
+        deprecations,
+        contract_format: "legacy_loose".to_string(),
         validation_passed: effective_validation_passed,
         validation_errors: effective_validation_errors,
         check_only,
@@ -1065,66 +1257,6 @@ fn executor_to_adapter(executor: &str) -> &'static str {
         "Claude Code" => "claude-code",
         "Cursor" => "cursor",
         _ => "generic",
-    }
-}
-
-/// Infer task level from intent content.
-#[allow(clippy::if_same_then_else)] // "medium signals" and "default to Medium for safety" intentionally share a branch value
-fn infer_task_level(parsed: &ParsedIntent, fields: &HashMap<String, String>) -> String {
-    let combined = format!(
-        "{} {}",
-        parsed.free_text,
-        fields.values().cloned().collect::<Vec<_>>().join(" ")
-    );
-
-    let heavy_markers = [
-        "数据",
-        "向量库",
-        "迁移",
-        "migration",
-        "不可逆",
-        "baseline",
-        "历史产物",
-        "数据库",
-        "database",
-        "删除",
-        "覆盖",
-        "发布",
-        "基线保护",
-        "dry-run",
-        "staged",
-    ];
-    let medium_markers = [
-        "跨文件",
-        "multi-file",
-        "模块",
-        "重构",
-        "refactor",
-        "配置",
-        "config",
-        "CLI",
-        "API",
-        "新增",
-        "实现",
-        "implement",
-        "feature",
-    ];
-
-    let heavy_count = heavy_markers
-        .iter()
-        .filter(|m| combined.contains(*m))
-        .count();
-    let medium_count = medium_markers
-        .iter()
-        .filter(|m| combined.contains(*m))
-        .count();
-
-    if heavy_count >= 2 {
-        "Heavy".to_string()
-    } else if medium_count >= 1 || heavy_count >= 1 {
-        "Medium".to_string()
-    } else {
-        "Medium".to_string() // default to Medium for safety
     }
 }
 
@@ -1275,6 +1407,7 @@ pub fn render_report_text(report: &CompileReport) -> String {
     lines.push("M4 Task Compiler Report".to_string());
     lines.push("========================".to_string());
     lines.push(format!("Schema version: {}", report.schema_version));
+    lines.push(format!("Contract format: {}", report.contract_format));
     lines.push(format!("Check only:     {}", report.check_only));
     lines.push(format!(
         "Task card requested: {}",
@@ -1325,6 +1458,14 @@ pub fn render_report_text(report: &CompileReport) -> String {
         lines.push("Assumptions:".to_string());
         for a in &report.assumptions {
             lines.push(format!("  - {}", a));
+        }
+        lines.push(String::new());
+    }
+
+    if !report.deprecations.is_empty() {
+        lines.push("Deprecations:".to_string());
+        for notice in &report.deprecations {
+            lines.push(format!("  - {notice}"));
         }
         lines.push(String::new());
     }
@@ -1390,8 +1531,9 @@ mod tests {
         intent: &str,
         project_root: &Path,
         task_card_requested: bool,
-    ) -> Result<String, CompileReport> {
+    ) -> Result<String, Box<CompileReport>> {
         super::compile_simple_with_contract(intent, project_root, task_card_requested, true)
+            .map_err(Box::new)
     }
 
     #[test]
@@ -1525,17 +1667,26 @@ mod tests {
     }
 
     #[test]
-    fn test_infer_task_level_medium() {
-        let parsed = parse_intent("implement new feature\n跨文件改动");
-        let fields = HashMap::new();
-        assert_eq!(infer_task_level(&parsed, &fields), "Medium");
-    }
-
-    #[test]
-    fn test_infer_task_level_heavy() {
-        let parsed = parse_intent("数据迁移和向量库重建\n涉及历史数据baseline保护");
-        let fields = HashMap::new();
-        assert_eq!(infer_task_level(&parsed, &fields), "Heavy");
+    fn test_legacy_missing_task_level_defaults_medium_with_deprecation() {
+        let (_card, report) = compile(
+            "任务：数据迁移和向量库重建\n目标：保护 baseline",
+            Path::new("."),
+            false,
+            true,
+        );
+        let level = report
+            .slot_sources
+            .iter()
+            .find(|slot| slot.field == "任务级别：")
+            .unwrap();
+        assert_eq!(level.value, "Medium");
+        assert!(
+            report
+                .deprecations
+                .iter()
+                .any(|notice| notice
+                    == "legacy_loose_contract_missing_task_level_defaulted_to_medium")
+        );
     }
 
     #[test]
@@ -1623,6 +1774,27 @@ mod tests {
             report.block_reason,
             Some("handoff_contract_not_structured".to_string())
         );
+    }
+
+    #[test]
+    fn malformed_typed_contract_fails_closed_without_legacy_fallback() {
+        for intent in [
+            r#"{"schema_version":"0.3.0-handoff-contract","task":"missing level"}"#,
+            r#"{"schema_version":"0.2.8-handoff-contract","task_level":"Medium","task":"old schema"}"#,
+            r#"{"schema_version":"0.3.0-handoff-contract","task_level":"Medium","task":"unknown field","surprise":true}"#,
+        ] {
+            let (card, report) =
+                super::compile_with_contract(intent, Path::new("."), false, true, true);
+            assert!(card.is_empty());
+            assert_eq!(report.contract_format, "typed_invalid");
+            assert!(!report.executable_allowed);
+            assert_eq!(
+                report.block_reason.as_deref(),
+                Some("invalid_typed_handoff_contract")
+            );
+            assert!(!report.validation_errors.is_empty());
+            assert!(report.deprecations.is_empty());
+        }
     }
 
     #[test]
@@ -1805,6 +1977,38 @@ mod tests {
             "Heavy",
             "English alias 'Task level:' with ASCII colon must map to 任务级别："
         );
+    }
+
+    #[test]
+    fn test_parse_intent_english_key_fullwidth_colon_does_not_panic() {
+        let parsed = parse_intent("Task level：Heavy\n任务：fullwidth colon regression");
+        assert_eq!(parsed.fields.get("任务级别：").unwrap(), "Heavy");
+        assert_eq!(
+            parsed.fields.get("任务：").unwrap(),
+            "fullwidth colon regression"
+        );
+    }
+
+    #[test]
+    fn typed_handoff_requires_explicit_task_level_and_preserves_it() {
+        let json = serde_json::json!({
+            "schema_version": HANDOFF_CONTRACT_SCHEMA_VERSION,
+            "task_level": "Heavy",
+            "task": "typed contract",
+            "fields": {"目标：": "verify typed path"}
+        })
+        .to_string();
+        let (card, report) = compile(&json, Path::new("."), false, true);
+        assert!(card.contains("任务级别： Heavy"));
+        assert_eq!(report.contract_format, "typed");
+        assert!(report.deprecations.is_empty());
+
+        let missing_level = serde_json::json!({
+            "schema_version": HANDOFF_CONTRACT_SCHEMA_VERSION,
+            "task": "missing level",
+            "fields": {}
+        });
+        assert!(serde_json::from_value::<HandoffContract>(missing_level).is_err());
     }
 
     #[test]

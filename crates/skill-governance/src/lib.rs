@@ -447,15 +447,9 @@ pub fn check_skills(root: &Path) -> SkillCheckResult {
                     }
                 }
 
-                if let Some(optional) = suite.optional {
-                    for entry in &optional {
-                        if let Some(ref name) = entry.name {
-                            manifest_skill_names.push(name.clone());
-                        }
-                    }
-                }
-
-                // Cross-reference: adoption log should contain all manifest skills
+                // Cross-reference: adoption log must cover required skills.
+                // Optional entries are public recommendations and are expected
+                // to remain unadopted until a maintainer explicitly records one.
                 if let Ok(adoption_content) = std::fs::read_to_string(&adoption_path) {
                     if let Ok(adoption) = serde_yaml::from_str::<AdoptionLog>(&adoption_content) {
                         if let Some(entries) = adoption.entries {
@@ -473,10 +467,11 @@ pub fn check_skills(root: &Path) -> SkillCheckResult {
                                 name: "manifest-to-adoption-log".to_string(),
                                 passed: missing_from_adoption.is_empty(),
                                 detail: if missing_from_adoption.is_empty() {
-                                    "All manifest skills have adoption log entries".to_string()
+                                    "All required manifest skills have adoption log entries"
+                                        .to_string()
                                 } else {
                                     format!(
-                                        "{} manifest skill(s) missing from adoption log: {}",
+                                        "{} required manifest skill(s) missing from adoption log: {}",
                                         missing_from_adoption.len(),
                                         missing_from_adoption
                                             .iter()
@@ -711,7 +706,7 @@ pub fn propose_skills(root: &Path, action: &str, skill_name: &str) -> SkillPropo
         target_skills,
         proposed_changes,
         blocked_reasons,
-        note: "DRY-RUN ONLY — this evaluate-only proposal path always returns dry_run and never modifies files. Real AGS-owned thin-index writes happen elsewhere via the console module (skill propose --apply / capability sync --apply) using transactional replace with receipt; dedupe quarantines still use governance backups. External installers/registrars are always advised, never run by AGS. Human confirmation + explicit task-card authorization required before any apply.".to_string(),
+        note: "LEGACY DRY-RUN EVALUATION ONLY — this proposal path always returns dry_run and never modifies files. Foreground candidate lifecycle uses `ags skill adopt|ignore|rollback` and the machine-private overlay; AGS-owned thin-index distribution is a separate `skill sync` / `capability sync` operation. External installers/registrars are always advised, never run by AGS.".to_string(),
     }
 }
 

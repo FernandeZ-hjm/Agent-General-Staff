@@ -264,6 +264,18 @@ fn cmd_release_package(profile: &str, dry_run: bool, format: &str) {
         std::process::exit(1);
     }
 }
+
+pub(crate) fn run(action: ReleaseAction) {
+    match action {
+        ReleaseAction::Verify { target, format } => cmd_release_verify(&target, &format),
+        ReleaseAction::Package {
+            profile,
+            dry_run,
+            format,
+        } => cmd_release_package(&profile, dry_run, &format),
+    }
+}
+
 #[cfg(test)]
 mod release_package_tests {
     use super::{is_public_release_profile, matches_path_boundary, release_package_plan};
@@ -383,16 +395,5 @@ mod release_package_tests {
         assert!(!included.contains(&"notes/untracked.txt"));
 
         let _ = fs::remove_dir_all(root);
-    }
-}
-
-pub(crate) fn run(action: ReleaseAction) {
-    match action {
-        ReleaseAction::Verify { target, format } => cmd_release_verify(&target, &format),
-        ReleaseAction::Package {
-            profile,
-            dry_run,
-            format,
-        } => cmd_release_package(&profile, dry_run, &format),
     }
 }

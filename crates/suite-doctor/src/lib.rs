@@ -13,7 +13,7 @@
 //!     render_json, render_text, CheckStatus, Finding, HealthReport, Severity,
 //! };
 //!
-//! let mut report = HealthReport::new("Suite Doctor v2.7.0");
+//! let mut report = HealthReport::new("Suite Doctor v0.3.0");
 //! report.add(Finding::pass("kernel-runtime", "runtime assets present"));
 //! report.add(Finding::fail("project-protocol", "validator missing",
 //!     "Run `ags init --target <project>` to refresh the projection."));
@@ -39,7 +39,7 @@ use std::path::Path;
 /// Suite-only policy checks run only when the target is the AGS suite. Managed
 /// projects never inherit Rust/Cargo or suite workspace structure requirements.
 pub fn run(repo_root: &Path) -> HealthReport {
-    let mut report = HealthReport::new("suite-doctor");
+    let mut report = HealthReport::new(format!("Suite Diagnostics v{}", env!("CARGO_PKG_VERSION")));
     run_checks(&mut report, repo_root);
     report
 }
@@ -207,6 +207,7 @@ pub fn repair(target: &Path) -> RepairResult {
                     continue;
                 }
                 let script_path = Path::new(path_str);
+                // Use std::fs::set_permissions to set executable bit on unix
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
@@ -232,7 +233,6 @@ pub fn repair(target: &Path) -> RepairResult {
                 }
                 #[cfg(not(unix))]
                 {
-                    let _ = script_path;
                     skipped.push(format!(
                         "{}: chmod not supported on this platform",
                         item.check_name

@@ -92,6 +92,18 @@ fn all_assertions() -> Vec<Assertion> {
                 "should derive flags directly from",
             ],
         },
+        // ── A5: Runner prepares a plan; the host executes ───────────
+        Assertion {
+            id: "runner-is-non-executing-plan-preparer",
+            description: "AGS Runner never launches or executes an executor; an allowed plan returns HOST_EXECUTION_REQUIRED",
+            file: "protocol/runtime-adapters.md",
+            required_phrases: &["runner never launches", "host_execution_required"],
+            contradiction_phrases: &[
+                "runner launches the executor",
+                "ags run executes the task",
+                "runner writes the final receipt",
+            ],
+        },
     ]
 }
 
@@ -262,9 +274,11 @@ does not enable parallelism, and does not add launch args.
 Task level does not change the permission mode; the task level is a risk/review
 tier and the permission mode is the execution authority. Permission modes are
 plan-only and execute-and-verify; execute-and-verify runs directly. The
-runner must consume the resolved execution policy JSON and use allowed_launch_args
-and effective_permission_mode. Runners must not derive launch flags directly from
-raw task-card fields.
+runner must consume the resolved execution policy JSON and copy allowed_launch_args
+and effective_permission_mode into a non-executing LaunchPlan. Runners must not
+derive launch flags directly from raw task-card fields or launch a process.
+
+Runner never launches. An allowed LaunchPlan returns HOST_EXECUTION_REQUIRED.
 
 plan-only must never produce
 write-type launch args. Active parallelism flags and headless/background-agent
@@ -334,8 +348,10 @@ must be stripped or stopped when the effective permission mode forbids writes.
 does not enable parallelism, and does not add launch args.
 Task level does **not** change the permission mode. Permission modes are **plan-only and execute-and-verify**; **execute-and-verify runs directly**.
 plan-only must never produce write-type launch args and must strip active parallelism.
-The runner must consume allowed_launch_args and effective_permission_mode.
-It must NOT derive flags directly from raw task-card fields.
+The runner must consume allowed_launch_args and effective_permission_mode into
+a non-executing LaunchPlan. It must NOT derive flags directly from raw task-card
+fields or launch a process.
+Runner never launches; an allowed plan returns HOST_EXECUTION_REQUIRED.
 ";
         write_protocol(&target, "protocol/runtime-adapters.md", content);
 
@@ -458,8 +474,8 @@ It must NOT derive flags directly from raw task-card fields.
 
         let drifts = check_assertions(&target, "stable", &ProjectKind::Stable);
 
-        // All 4 assertions live in runtime-adapters.md, so all 4 should fail
-        assert_eq!(drifts.len(), 4);
+        // All 5 assertions live in runtime-adapters.md, so all 5 should fail
+        assert_eq!(drifts.len(), 5);
         for d in &drifts {
             assert_eq!(d.severity, Severity::Fail);
             assert_eq!(d.kind, DriftKind::InvariantMissing);
@@ -555,6 +571,7 @@ Active parallelism and headless must be stripped.
 Runners must consume allowed_launch_args and effective_permission_mode
 from the resolved policy JSON. Runners must not derive flags directly
 from raw task-card fields.
+Runner never launches. An allowed LaunchPlan returns HOST_EXECUTION_REQUIRED.
 ";
         write_protocol(&target, "protocol/runtime-adapters.md", content);
 

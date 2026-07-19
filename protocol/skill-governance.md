@@ -1,142 +1,96 @@
 # Skill Governance Protocol
 
-> AGS 0.2.8 技能本体、可见性与确定性解析协议。
+> AGS 0.3.0 的机器私有技能生命周期、统一目录与确定性解析协议。
 
 ## Source of Truth
 
-- `manifests/skills-registry.yaml`：技能身份、canonical source、routing metadata、`demand_routes`。
-- `manifests/suite.yaml`：套件 required / optional / personal 集合。
-- 受管外部源或宿主系统目录：canonical 技能本体；公开版不捆绑第三方技能正文。
-- host 目录：thin index 或宿主系统技能；不是第二份 canonical 本体。
-- `<runtime_home>/capability-snapshot/<host>.json`：按 active host 隔离的单机可用性快照；Codex、Claude Code 等宿主互不覆盖，不入库、不进入 public projection。
+- `manifests/skills-registry.yaml`：官方/团队技能身份、canonical source、routing/auth metadata；优先级最高。
+- `manifests/suite.yaml`：suite required / optional / personal 集合。
+- `<runtime_home>/skill-registry/user-overlay.yaml`：机器私有 adopt/ignore/rollback overlay，不入库。
+- `<runtime_home>/capability-snapshot/<host>.json`：每宿主单一能力快照，不入库。
+- `<runtime_home>/skill-usage/<host>.ndjson`：非敏感、append-only outcome ledger，不入库。
 
-## 治理生命周期
+## 统一候选目录
 
-### 1. Discover（发现）
+`HostCapabilitySnapshot` 统一发现：
 
-发现 suite、用户、宿主系统、project-local 和外部技能，但被发现不等于可路由。
+- suite roots；
+- 宿主 `.system` 技能；
+- `~/.agents/skills` 等用户安装技能；
+- project-local 技能；
+- 宿主配置明确证明 enabled 的 plugin roots。
 
-### 2. Scan（扫描）
+不得遍历整棵 disabled plugin cache。候选技能也进入 `catalog`，但只有 `governance=Active` 且 `availability=Ready` 的技能进入 `active_skills`。
 
-检查名称、canonical body、hash、重复实现、健康状态和 host visibility。
+## SkillCard 与 ActiveSkill
 
-### 3. Proposal（提案）
+薄 `SkillCard` 至少包含：`skill_id`、展示名、summary、`intent_tags`、entrypoints、source kind、governance、availability/reason codes、requires_auth/AuthState、version/source hash 和 activity。
 
-所有变更先输出 dry-run proposal；外部 installer、registrar 和登录动作只给建议。
+`ActiveSkill` 以 `skill_id + allowed entrypoints + invoke_hint` 精确索引。Resolver 只接受精确 `SkillTarget`，不读取自然语言、不做关键词/相似度/fallback。旧 `SkillDemand` 与 `demand_routes` 只保留为 intent metadata 与旧序列化兼容输入。
 
-### 4. Apply（写入）
+## 正交状态
 
-只有显式 `--apply` 才能写 AGS-owned thin index、受管 metadata 或可逆 quarantine。禁止静默覆盖 canonical 本体。
+以下事实保持正交，不压成一个互斥大状态机：ManagedStatus、RegistryStatus、RouteState、HealthStatus、HostVisibility、AuthState。
 
-### 5. Verify（验证）
+派生状态：
 
-验证 canonical 单例、宿主可见性、registry 路由字段和快照 freshness。
+- governance：`Discovered | Candidate | ManagedInactive | Active | Ignored | Retired`
+- availability：`Ready | Degraded(reason_codes) | Unavailable(reason_codes)`
+- activity：`Unobserved | Warm | Cold`
 
-## 写入规则（硬门禁）
+reason codes 至少覆盖：`candidate_requires_adoption`、`registry_not_routable`、`retired`、`canonical_missing`、`host_not_visible`、`health_degraded`、`auth_required`、`metadata_incomplete`、`snapshot_stale`。
 
-- 用户未确认时不写。
-- 写前检查 symlink/path traversal/canonical 边界。
-- 批量写入必须事务化或可回滚。
-- 不读取或写入凭据；tracked manifest 不得声称 auth 已配置。
-- 外部 MCP/CLI 注册保持 advice-only，除非另有明确授权的专用命令面。
+requires_auth 的技能只有在不含 secret 的 runtime `AuthState=satisfied` 时才可 Ready。tracked registry 不得保存凭据或伪造认证完成状态。
 
-## 与 AGS 任务卡系统的关系
+## Snapshot determinism
 
-Request Router 返回闭集 `SkillDemand`；Skill Resolver 再把 demand 映射为 `SkillSelection`。任务卡 compiler 不参与自然语言技能选择。
-
-任务卡 `[skill: name]` 需要三闸：
-
-1. registry 中 `route_state: routable`；
-2. `invoke_hint` 合法且与父技能身份一致；
-3. 当前 ActiveSkillTable 中可用。
-
-任何一闸失败都停止。不得自动换成职责相似技能。
-
-## 技能边界
-
-技能是方法能力，不是权限层。它不能改变 task level、permission mode、review gate、verification gate、protected-path 或 release boundary。
-
-Superpowers 等技能族只向宿主暴露父技能。内部 playbook 通过 `demand_routes.entrypoint` 选择，但不作为独立 host skill 或任务卡 tag。
-
-## 第三方技能与 MCP 纳管控制台（`ags skill` console）
-
-`ags skill` 是人类前台命令面；`ags capability` 是跨宿主可见性和快照的底层命令面。两者不承担自然语言需求路由。
-
-### Canonical 本体 + per-host thin index（核心心智模型）
-
-一个技能只有一个 canonical body。宿主入口可以是符号链接、插件入口或系统技能，但不得复制并分叉实现。
-
-### 统一能力模型
-
-inventory 可以包含 Skill、MCP、Suite Interface、CLI-backed capability。只有 `kind=Skill` 能进入 ActiveSkillTable。
-
-### 路由纳管契约（Skill Resolver metadata）
-
-技能 registry 的 routing block 至少声明：
-
-```yaml
-routing:
-  route_state: routable | not-routable | retired
-  invoke_hint: "[skill: canonical-name]"
-```
-
-顶层 `demand_routes` 必须覆盖 `SkillDemand::all()`，且 demand 唯一：
-
-```yaml
-demand_routes:
-  - demand:
-      category: engineering
-      demand: debugging
-    skill_id: diagnosing-bugs
-```
-
-### Host visibility 与 runtime health 分层
-
-registry 说明“允许路由什么”；机器 inventory 说明“当前真的有什么”。两者不能互相代替。
-
-## ActiveSkillTable 与快照
-
-ActiveSkillTable 的集合定义：
+每个宿主只有一个 `HostCapabilitySnapshot`：
 
 ```text
-Skill
-∩ canonical_present
-∩ healthy
-∩ routable
-∩ active_host visible
+schema_version + host
++ registry_hash + overlay_hash + runtime_hash
++ catalog_hash + active_table_hash
+→ snapshot_hash
 ```
 
-快照字段至少包括：schema version、active host、registry hash、runtime hash、active-table hash、snapshot hash、active skills。
+时间戳和 activity 不参与 catalog/snapshot/lease hash。快照缺失、篡改或任一绑定 hash 漂移时 fail closed；显式刷新使用 `ags capability snapshot --host <host> --write`。
 
-路由调用只读取并校验快照；不一致时返回 `skill_snapshot_stale`。刷新必须是显式命令或已授权写入动作的收尾步骤，不允许在路由途中静默刷新。
+## 私有 Overlay 生命周期
 
-系统不再使用额外的机器加入模式。是否可路由由 registry + 真实机器状态的交集直接决定。
+前台命令：
 
-## 写入与验证的失败语义
+```bash
+ags skill adopt <skill-id> [--apply]
+ags skill ignore <skill-id> [--apply]
+ags skill rollback <skill-id> --to <revision> [--apply]
+```
 
-- dry-run：报告 blocked/needs-action，但不因未写而失败。
-- `--apply`：写入失败或被阻止时非零退出。
-- advised-only 外部动作不得伪装成 applied。
-- snapshot stale 是 Skill 目标的治理前置条件失败，不影响纯 DirectResponse 或纯 MachineCli。
+默认 dry-run。`--apply` 使用 0600、同目录原子替换，并追加 mutation receipt；记录 revision、source_hash、metadata_version 与 before/after。隐藏 `propose` 只作 deprecated wrapper，并调用同一服务。
 
-## 当前实现状态
+硬规则：
 
-0.2.8 已实现：
+- overlay 只能纳管 external/user/project/enabled-plugin 候选；
+- suite tracked registry 对官方/团队 ID 永远优先；
+- overlay 不能 shadow 官方 ID、覆盖 retired 条目或改写官方 routing/auth；
+- 写失败必须保持或恢复到前一 revision；
+- 所有测试使用临时 HOME/runtime/host roots。
 
-- 唯一 Request Router；
-- 闭集 SkillDemand；
-- registry 固定 demand 映射；
-- 单 host ActiveSkillTable 快照与 hash 校验；
-- 写入动作自动刷新 Codex 快照；
-- 无额外加入层、无相似技能 fallback、无自然语言二次分类。
+## Usage 与冷技能闭环
 
-## Public / stable 投影边界
+只有 `ags_apply_action` 可以为受控技能动作追加 outcome。ledger 仅记录：event id、timestamp、request fingerprint、proposal/decision/lease id、skill id、entrypoint、`succeeded|failed|abandoned` 和非敏感质量字段；禁止 raw prompt、凭据和绝对路径。
 
-registry 和协议可投影；机器 snapshot、runtime path、host inventory、credential/auth 状态不得进入公开投影。
+activity：
 
-## 协议引用
+- 从未有 outcome：`Unobserved`；
+- Active 连续 30 天无 outcome，或最后 outcome 超过 90 天：`Cold`；
+- 其他：`Warm`。
 
-- `protocol/agent-task-protocol.md`
-- `protocol/task-routing.md`
-- `protocol/mcp-server.md`
-- `protocol/task-card-template.md`
+Cold 只提示，不影响 snapshot hash/lease，不自动 ignore/retire。每个不与 MachineCli 共存的精确 SkillTarget 都会得到一个连接内受控 outcome action，solution formation 与 direct-edit 使用同一记录路径。route correction 用旧 decision 的 `outcome=abandoned` 表示，宿主须在提交新 route 前消费旧 outcome action；离线评估按相同 `request_fingerprint` 关联前后 decision。correction 与 outcome 都不得自动改 registry、overlay 或生产路由。
+
+## Task Card Gate
+
+任务卡 `[skill: name]` 仍必须同时满足：registry routable、合法 invoke_hint、机器快照 Active+Ready。任一失败即停止；不得替换成职责相似技能。技能永远不能改变 task level、permission、review、verification、protected path 或 release boundary。
+
+## Public / Stable Projection
+
+只投影协议、schema 与官方 registry。真实 catalog snapshot、user overlay、usage ledger、lease、auth state、runtime receipt 和机器绝对路径必须排除在 tracked diff、stable/public fixture 与 release payload 之外。

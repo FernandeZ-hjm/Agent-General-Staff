@@ -7,7 +7,7 @@ description = "AGS MCP Server — governance kernel exposed as MCP tools/resourc
 
 [dependencies]
 task-card-validator = { path = "../task-card-validator" }
-request-router = { path = "../request-router" }
+request-governance = { path = "../request-governance" }
 skill-resolver = { path = "../skill-resolver" }
 execution-policy = { path = "../execution-policy" }
 project-discovery = { path = "../project-discovery" }

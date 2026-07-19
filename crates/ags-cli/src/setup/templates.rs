@@ -47,7 +47,7 @@ Aliases: `/ags onboard`, `/ags manage`, `/ags 纳管`.
 - Empty or `preflight`: report the AGS preflight result and next allowed actions.
 - `doctor`: run `ags doctor --target .` and summarize the findings.
 - `verify`: run `ags verify --scope local --target .` and summarize the check results.
-- Any other text: treat it as the user request. Prefer MCP `ags_preflight` first; if MCP is unavailable, run `ags session preflight --for claude-code --target .`. Send complete conversation context to MCP `ags_route_request` and consume its structured `RequestDecision`; do not reclassify natural language in Compiler, Policy, Gate, or Runner. Generate an executable task card only when the decision selects task compilation, the handoff contract is independently confirmed, and no unresolved/reopened solution work remains.
+- Any other text: treat it as the user request. Prefer MCP `ags_preflight` first; if MCP is unavailable, run `ags session preflight --for claude-code --target .`. Read the preflight-bound current-host capability resource, use complete conversation context to create a typed `HostRouteProposal`, and submit it to strictly read-only `ags_route_request`. Never send raw request text or reclassify it in Compiler, Policy, Gate, Runner, or Skill Resolver. Only `ags_apply_action` may consume a returned connection-held action. A confirmed same-session direct edit stays host-native and does not regenerate a plan or task card; an existing canonical task card validates first. Generate a task card only when the explicit handoff request and independently confirmed contract gates are both closed. If solution work is unresolved or reopened, remain in solution formation and do not compile.
 
 Current AGS version expected by this command: {AGS_VERSION}.
 "#
@@ -85,7 +85,7 @@ pub(in crate::setup) fn codex_ags_command_skill_specs() -> &'static [(
             "AGS Skill",
             "管理第三方技能",
             "用 $ags-skill 管理第三方技能。",
-            "管理第三方技能：运行 `ags skill` 查看概览，或运行 `ags skill --fix`、`ags skill scan`、`ags skill check`、`ags skill propose --action adopt --skill <name>` 生成纳管建议",
+            "管理第三方技能：运行 `ags skill inventory` 查看统一目录；用 `ags skill adopt <skill-id>`、`ignore <skill-id>`、`rollback <skill-id> --to <revision>` 先 dry-run，确认后追加 `--apply` 写机器私有 overlay",
         ),
         (
             "ags-init",

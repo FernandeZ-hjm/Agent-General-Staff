@@ -1,105 +1,83 @@
 # Agent Task Routing
 
-> AGS 0.2.8 路由细则。权威生命周期见 `protocol/agent-task-protocol.md`。
+> AGS 0.3.0 的需求治理协议。自然语言语义判断属于宿主；AGS 只校验 typed proposal 和确定性准入。
 
-## Lifecycle Order
+## 唯一链路
 
 ```text
 preflight
-→ 宿主提供完整对话上下文
-→ ags_route_request
-→ RequestDecision
-→ DirectResponse | SkillDemand | MachineCli
-→ 对应消费端
+→ 读取 ags://capabilities/current-host（按 snapshot_hash 缓存薄目录）
+→ 宿主结合完整对话做语义判断
+→ HostRouteProposal
+→ ags_route_request（严格只读）
+→ RouteResolution
+→ DirectResponse | 精确 SkillSelection | HostNativeDirectEdit | ServerHeldAction
+→ 若且仅若存在 ServerHeldAction：ags_apply_action(lease_id, action_id)
 ```
 
-自然语言只在 Request Router 解释一次。Skill Resolver、Compiler、Policy、Gate、Runner 和 CLI capability 均不得再次解析自然语言。
+AGS 0.3.0 没有原始文本关键词路由。`ags_route_request` 不接受 `{request: ...}`，不启动进程、不写文件，也不在失败时回退到 substring、BM25、embedding、`SkillDemand` 或第二套路由器。
 
-## RequestDecision
+## HostRouteProposal
 
-`DirectResponse` 是独占终止目标。一个决定也可以同时包含一个 `Skill` 与一个 `MachineCli`；两者是自然语言需求的平级目标，不存在“需求路由优先于技能路由”的第二套路由。
+宿主提交的 proposal 必须显式包含：
 
-`InsufficientContext` 描述路由判断状态，不是 AGS 持有的会话状态。宿主保留上下文并在下一轮重新提交完整输入。
+- `schema_version`
+- `request_fingerprint`（非原始提示词）
+- `phase`
+- `solution_state`
+- `execution_authority`
+- `scope_hash`
+- `targets`
 
-## DirectResponse
+`targets` 只有两种合法形态：
 
-下列任务直接回复并停止：
+1. 独占的 `DirectResponse`；
+2. 至多一个精确 `SkillTarget`，再加至多一个 `MachineCliTarget`。
 
-- 按已确认结构压缩或改写内容；
-- 翻译、摘要、重排、格式转换；
-- 统一已批准 JSON 字段；
-- 不需要机器状态的普通解释。
+`SkillTarget` 只含 `skill_id`、可选 `entrypoint` 与 `snapshot_hash`。`MachineCliTarget` 只含闭集 `CliCapabilityId` 与 `TypedCliInput`。两者都不接受自然语言。
 
-它们不触发 brainstorming、writing-plans、任务分级、task-card compiler 或技能快照读取。
+## 阶段与授权
 
-## SkillDemand
+- `direct_response`：`solution_state=not_required`、`execution_authority=none`，直接交付并停止。
+- `solution_formation`：`solution_state=open`、无执行授权；可以选精确方法技能，但不能申请机器动作。
+- `execution + direct_edit`：必须是已确认方案与同会话明确修改授权；返回宿主原生动作，不编译任务卡、不经 MCP 代写仓库、不重复规划。
+- `execution + task_card_handoff`：仅用于明确交接；编译仍要求 task-card request 与 confirmed handoff contract 双门槛。
+- 首个非空行是 `## 任务卡`：先 validate；合法卡进入 policy/gate/LaunchPlan，非法卡停止，绝不回落到需求路由或任务卡生成。
 
-`SkillDemand` 是闭集 enum，按领域分组：Engineering、Knowledge、Lark、Content、Personal。Router 只返回 demand，不返回技能名。
+“方案 OK”只确认设计，不单独授权修改或交接。已经确认的方案不得因为出现“架构”“实现”等词再次进入 brainstorming、writing-plans 或任务卡生成。
 
-系统架构 demand 必须出现明确的大型设计信号。普通“实现”“创作”“压缩”“格式转换”“按已批准方案执行”不得仅凭主题词命中 brainstorming。
+## 精确技能解析
 
-`manifests/skills-registry.yaml` 的 `demand_routes` 是 demand-to-skill 唯一映射表。每个 demand 恰好一条映射；Resolver 不做相似度搜索和 fallback。
+宿主从 `HostCapabilitySnapshot.catalog` 读取薄 `SkillCard`，按完整语义选择精确技能。AGS Resolver 仅校验：
 
-Superpowers 是宿主可发现的父技能。内部 brainstorming、TDD、executing-plans、verification 等由明确 entrypoint 表达，但任务卡 tag 仍使用父技能 `[skill: superpowers]`。
-
-## ActiveSkillTable
-
-路由前由 MCP 读取机器本地快照。快照是持久化缓存，同时带 registry/runtime/hash 完整性校验；不一致即 `skill_snapshot_stale`，不得边路由边静默重建。
-
-成功的以下写入动作刷新 Codex 快照：
-
-- `ags setup --yes`
-- `ags skill propose ... --apply`
-- `ags skill sync --apply`
-- `ags capability install ... --apply`
-- `ags capability sync --apply`
-- `ags update apply --apply`
-- `ags update repair-local --apply`
-
-人类也可显式刷新：
-
-```bash
-ags capability snapshot --host codex --write
+```text
+skill_id + entrypoint + snapshot_hash → ActiveSkill
 ```
+
+缺失、歧义、entrypoint 不允许或快照 stale 均 fail closed；不做关键词、相似度、候选 fallback 或自动替代。旧 `SkillDemand` / `demand_routes` 只作为 `intent_tags` 与旧序列化迁移信息，不再决定技能。
+
+## DecisionLease 与显式 Apply
+
+机器动作内容保存在当前 MCP 连接中。`ags_route_request` 只返回 `action_id` 与绑定证据；调用方只能提交 `lease_id`、`action_id` 和可选 outcome，不能重传 capability、input、argv 或路径。
+
+租约绑定 host、target、proposal、scope、registry、snapshot 与 policy hash。新 preflight、新 route、连接重置、任一绑定变化，或一次成功/失败消费都会使旧租约失效。租约没有 TTL；重放、跨连接、篡改和 host/target 冲突一律 fail closed。
+
+不与 MachineCli 共存的精确 SkillTarget 同时得到一个受控 outcome action。宿主只能通过 apply 写入 `succeeded|failed|abandoned`；若用户纠正了技能选择，先把旧 decision 记为 `abandoned`，再提交同一 `request_fingerprint` 的新 proposal。该关联只进入离线质量评估，不触发在线改路由。
 
 ## Machine CLI
 
-`CliCapabilityId` 粒度是业务动作，不是子命令：例如 `TaskExecute` 表示执行任务卡完整链路，而不是让 Router 输出 validate、policy、run、verify 的命令序列。
+`TaskPrepareExecution` 是 canonical capability；旧 `task_execute` 只作为反序列化兼容别名。`ags run` 仅执行 validate → policy → gate → LaunchPlan，并返回 `HOST_EXECUTION_REQUIRED`；真实执行、验证和收据由宿主完成。
 
-MCP 调用固定 argv，输入经 stdin 或明确参数传递，禁止 shell。每次最多一个 Machine CLI 目标。
+## 任务级别与权限
 
-## Task Card Compiler v2
+需求路由不从原始文本直接推断 Light / Medium / Heavy。先确定或复用方案，再由结构化任务卡的显式字段进入 Policy/Gate：
 
-Compiler 只消费结构化、已确认 handoff contract。缺少 `task_card_requested` 或 `confirmed_handoff_contract` 时停止；它不读取原始聊天、不选择技能、不重新形成方案。
+- Light：默认 `execute-and-verify`；
+- Medium：默认 `execute-and-verify`；
+- Heavy：未声明时默认 `plan-only`；显式 `execute-and-verify` 可直接执行，但必须有独立 Heavy review。
 
-## Light Task
+技能不能改变 task level、permission mode、review gate、verification gate 或安全 stop condition。
 
-低风险、边界明确、验证快速。默认 `execute-and-verify`。
+## Handoff Compiler
 
-## Medium Task
-
-跨多个文件或需要更完整验证，但边界仍明确。默认 `execute-and-verify`。
-
-## Heavy Task
-
-跨系统、核心协议、迁移、发布或高回滚成本。默认 `plan-only`；若结构化任务卡明确授权 `execute-and-verify`，可执行并增加独立 review gate。
-
-## Escalation Rules
-
-安全边界、任务级别和 permission mode 由结构化 Policy/Gate 决定，不由 Skill Resolver 决定。技能选择不能降级或升级执行权限。
-
-## Review Gate Defaults
-
-Light 按风险选择 review；Medium 通常需要 review；Heavy 必须独立 review。release/destructive 等边界优先于默认规则。
-
-## Skill Tag Rules
-
-任务卡 skill tag 必须同时满足 registry、invoke hint 和 ActiveSkillTable 三闸。快照 stale 或 demand 不可用时停止，不自动替代。
-
-## Task Handoff Protocol
-
-明确交接请求 + 已确认 handoff contract 才能编译任务卡。方案确认本身不等于交接授权。
-
-## Prompt Generation Requirements
-
-生成给执行器的提示词时只引用已确认 contract，不把原始对话重新解释成新方案，也不添加未经选择的技能或 CLI 工作流。
+新 typed `HandoffContract` 必须显式给出 `task_level`。旧 loose contract 缺失时仅兼容为 Medium 并产生 deprecation，不得靠关键词猜级别。Compiler 不重新解释原始聊天，也不选择技能。

@@ -26,7 +26,10 @@ pub use change_lane::{
 };
 
 pub mod visible_status;
-pub use visible_status::{derive_visible_status, StatusSignals, VisibleStatus};
+#[allow(deprecated)]
+pub use visible_status::{
+    derive_governance_status, derive_visible_status, GovernanceStatus, StatusSignals, VisibleStatus,
+};
 
 // ── Core types ──────────────────────────────────────────────────────────────
 

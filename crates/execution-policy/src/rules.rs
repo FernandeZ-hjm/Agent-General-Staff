@@ -197,8 +197,8 @@ pub(crate) fn verify_downgrade_invariants(policy: &ResolvedExecutionPolicy) {
 /// was requested, set `stop_before_launch = true` with a clear reason.
 ///
 /// This is the "stop" complement to M5/M6: not only do we strip the launch
-/// args, we also tell the runner this task cannot safely launch with the
-/// requested parallelism.
+/// args, we also tell the LaunchPlan preparer that the host cannot safely
+/// launch with the requested parallelism.
 pub(crate) fn apply_stop_on_stripped_parallelism(
     input: &TaskPolicyInput,
     policy: &mut ResolvedExecutionPolicy,
@@ -225,7 +225,8 @@ pub(crate) fn apply_stop_on_stripped_parallelism(
         // be set to None — the resolution declares no parallelism is allowed,
         // even if the input requested it and M7 allowed it through.
         policy.effective_parallelism = Parallelism::None;
-        // Set stop — runner must not launch with the requested parallelism
+        // Set stop — the prepared plan must not authorize host launch with the
+        // requested parallelism.
         record_stop(
             policy,
             StopReason::WritableParallelismBlockedByPermission {
@@ -243,8 +244,8 @@ pub(crate) fn apply_stop_on_stripped_parallelism(
 /// clear reason.
 ///
 /// This is the "stop" complement to M5/M6: not only do we strip the
-/// `--headless` launch arg, we also tell the runner this task cannot safely
-/// launch with the requested surface.
+/// `--headless` launch arg, we also tell the LaunchPlan preparer that the host
+/// cannot safely launch with the requested surface.
 pub(crate) fn apply_stop_on_stripped_headless(
     input: &TaskPolicyInput,
     policy: &mut ResolvedExecutionPolicy,
@@ -265,7 +266,8 @@ pub(crate) fn apply_stop_on_stripped_headless(
     );
     // Downgrade the effective surface to cli — safe interactive fallback
     policy.effective_execution_surface = "cli".to_string();
-    // Set stop — runner must not launch headless in plan-only mode
+    // Set stop — the prepared plan must not authorize a headless host launch
+    // in plan-only mode.
     record_stop(
         policy,
         StopReason::BackgroundSurfaceBlockedByPermission {
@@ -279,8 +281,8 @@ pub(crate) fn apply_stop_on_stripped_headless(
 /// Enforce the machine contract that a stopped policy is not launchable.
 ///
 /// `allowed_launch_args` are only meaningful when `stop_before_launch=false`.
-/// When any stop gate fires, clear them so downstream runners cannot
-/// accidentally launch with "safe" args from an otherwise stopped policy.
+/// When any stop gate fires, clear them so downstream hosts cannot accidentally
+/// launch with "safe" args from an otherwise stopped policy.
 pub(crate) fn apply_stop_before_launch_arg_gate(policy: &mut ResolvedExecutionPolicy) {
     if policy.stop_before_launch {
         policy.allowed_launch_args.clear();

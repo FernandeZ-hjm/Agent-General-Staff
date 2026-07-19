@@ -780,32 +780,31 @@ fn reject_invalid_permission_mode() {
 
 #[test]
 fn reject_unsupported_permission_modes() {
-    for unsupported_mode in ["unsupported-permission-mode"] {
-        let input = card_body(&format!(
-            "路径：\n- .\n\
-             Executor: Claude Code\n\
-             Runtime adapter: claude-code\n\
-             Execution surface: cli\n\
-             Permission mode: {unsupported_mode}\n\
-             Parallelism: none\n\
-             任务级别：Medium\n\
-             读取：\n- .\n\
-             任务：查看校验器当前状态\n\
-             目标：确认校验器状态并返回观察结果\n\
-             非目标：不修改任何文件\n\
-             关键路径：\n- .\n\
-             验证：\n人工检查输出\n\
-             停止条件：\n发现需要编辑时停止并报告\n\
-             交付：\n返回观察结果\n"
-        ));
-        let errors = validate(&input);
-        assert!(
-            errors
-                .iter()
-                .any(|error| error.contains(error_code::INVALID_FIELD_VALUE)),
-            "unsupported Permission mode `{unsupported_mode}` must be rejected: {errors:?}"
-        );
-    }
+    let unsupported_mode = "unsupported-permission-mode";
+    let input = card_body(&format!(
+        "路径：\n- .\n\
+         Executor: Claude Code\n\
+         Runtime adapter: claude-code\n\
+         Execution surface: cli\n\
+         Permission mode: {unsupported_mode}\n\
+         Parallelism: none\n\
+         任务级别：Medium\n\
+         读取：\n- .\n\
+         任务：查看校验器当前状态\n\
+         目标：确认校验器状态并返回观察结果\n\
+         非目标：不修改任何文件\n\
+         关键路径：\n- .\n\
+         验证：\n人工检查输出\n\
+         停止条件：\n发现需要编辑时停止并报告\n\
+         交付：\n返回观察结果\n"
+    ));
+    let errors = validate(&input);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains(error_code::INVALID_FIELD_VALUE)),
+        "unsupported Permission mode `{unsupported_mode}` must be rejected: {errors:?}"
+    );
 }
 
 #[test]

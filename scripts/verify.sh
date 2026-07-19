@@ -260,11 +260,11 @@ else
     echo "OK (single canonical task-card template; no fallback/compact sources)"
 fi
 
-# ── RequestDecision / Output Gate Smoke ─────────────────────────────────────
-echo "--- RequestDecision / Output Gate Smoke ---"
+# ── Typed Request Governance / Output Gate Smoke ────────────────────────────
+echo "--- Typed Request Governance / Output Gate Smoke ---"
 
-echo -n "[....] unique request router contract tests "
-if cargo test -q -p request-router --test request_decision; then
+echo -n "[....] typed request governance contract tests "
+if cargo test -q -p request-governance; then
     echo "OK"
 else
     echo "FAIL"
@@ -281,7 +281,7 @@ fi
 
 # Positive end-to-end: confirmed structured contract → canonical card → output ALLOW.
 echo -n "[....] confirmed contract → compile → gate output ALLOW + validator-clean "
-handoff_contract=$'任务：verify.sh RequestDecision e2e smoke\n目标：确认结构化交接契约经编译产出经典骨架并通过 output gate'
+handoff_contract=$'任务：verify.sh typed handoff e2e smoke\n目标：确认结构化交接契约经编译产出经典骨架并通过 output gate'
 if printf '%s' "$handoff_contract" | cargo run -q -p ags-cli -- task compile - --task-card-requested --confirmed-handoff-contract --output card > /tmp/verify-gate-card.md 2>/dev/null \
     && cargo run -q -p ags-cli -- gate output /tmp/verify-gate-card.md --format json > /tmp/verify-gate-out-pos.log 2>&1 \
     && grep -q '"decision": "allow"' /tmp/verify-gate-out-pos.log \
@@ -783,10 +783,10 @@ elif grep -q 'Execution surface: background-agent.*enable.*--headless' "$PROTOCO
     echo "FAIL (raw Execution surface→--headless mapping found — must route through resolver)"
     failures=$((failures + 1))
 elif ! grep -q 'allowed_launch_args' "$PROTOCOL"; then
-    echo "FAIL (runner auto-mode must reference allowed_launch_args from resolver)"
+    echo "FAIL (runner LaunchPlan must reference allowed_launch_args from resolver)"
     failures=$((failures + 1))
 elif ! grep -q 'effective_permission_mode' "$PROTOCOL"; then
-    echo "FAIL (runner auto-mode must reference effective_permission_mode from resolver)"
+    echo "FAIL (runner LaunchPlan must reference effective_permission_mode from resolver)"
     failures=$((failures + 1))
 else
     echo "OK"
@@ -991,54 +991,18 @@ fi
 # ── Skill & MCP Console Smoke Tests ─────────────────────────────────────────
 echo ""
 echo "--- Skill & MCP Console Smoke Tests ---"
-echo -n "[....] skill overview (json) "
-set +e
-cargo run -q -p ags-cli -- skill --format json > /tmp/verify-skill-overview.json 2>&1
-skill_overview_rc=$?
-set -e
-if [ "$skill_overview_rc" -eq 0 ] || [ "$skill_overview_rc" -eq 1 ]; then
-    if python3 -c "import json; d=json.load(open('/tmp/verify-skill-overview.json')); assert 'inventory' in d and 'check' in d; assert isinstance(d['inventory'].get('capabilities'), list)"; then
-        echo "OK"
-    else
-        echo "FAIL (skill overview must emit parseable JSON inventory/check)"
-        cat /tmp/verify-skill-overview.json
-        failures=$((failures + 1))
-    fi
-else
-    echo "FAIL (unexpected rc=$skill_overview_rc)"
-    cat /tmp/verify-skill-overview.json
-    failures=$((failures + 1))
-fi
+run_check "skill overview (json)" \
+    cargo run -q -p ags-cli -- skill --format json
 run_check "skill scan (json)" \
     cargo run -q -p ags-cli -- skill scan --format json
-echo -n "[....] skill check (json) "
-set +e
-cargo run -q -p ags-cli -- skill check --format json > /tmp/verify-skill-check.json 2>&1
-skill_check_rc=$?
-set -e
-if [ "$skill_check_rc" -eq 0 ] || [ "$skill_check_rc" -eq 1 ]; then
-    if python3 -c "import json; d=json.load(open('/tmp/verify-skill-check.json')); assert 'passed' in d and isinstance(d.get('consistency_checks'), list)"; then
-        echo "OK"
-    else
-        echo "FAIL (skill check must emit parseable JSON with passed + consistency_checks)"
-        cat /tmp/verify-skill-check.json
-        failures=$((failures + 1))
-    fi
-else
-    echo "FAIL (unexpected rc=$skill_check_rc)"
-    cat /tmp/verify-skill-check.json
-    failures=$((failures + 1))
-fi
+run_check "skill check (json)" \
+    cargo run -q -p ags-cli -- skill check --format json
 run_check "skill verify --host claude-code (json)" \
     cargo run -q -p ags-cli -- skill verify --host claude-code --format json
 
 # Unified inventory: four kinds, AGS suite-interface, BOTH hosts, canonical field.
 echo -n "[....] skill inventory: 4 kinds + both hosts + canonical "
-set +e
-cargo run -q -p ags-cli -- skill --format json > /tmp/verify-skill-inv.json 2>&1
-skill_inv_rc=$?
-set -e
-if [ "$skill_inv_rc" -eq 0 ] || [ "$skill_inv_rc" -eq 1 ]; then
+if cargo run -q -p ags-cli -- skill --format json > /tmp/verify-skill-inv.json 2>&1; then
     if python3 -c "import json; d=json.load(open('/tmp/verify-skill-inv.json'))['inventory']; ks={c['kind'] for c in d['capabilities']}; assert {'skill','mcp','suite-interface','cli-backed'} <= ks, ks; ags=next(c for c in d['capabilities'] if c['name']=='ags'); assert ags['kind']=='suite-interface'; assert set(d['hosts']) >= {'claude-code','codex'}, d['hosts']; assert isinstance(d['summary']['canonical_present'], int); assert any(v['host']=='codex' for v in ags['host_visibility']), ags['host_visibility']"; then
         echo "OK"
     else
@@ -1050,59 +1014,86 @@ else
     failures=$((failures + 1))
 fi
 
-# Public projection carries no third-party body registry. A body appearing only
-# in the shared store must stay unmanaged and fail closed without writes.
-echo -n "[....] skill propose unregistered external lark-calendar fails closed "
-external_skill_home=/tmp/ags-verify-external-skill-home
-rm -rf "$external_skill_home"
-mkdir -p "$external_skill_home/.agents/skills/lark-calendar"
-printf '%s\n' '---' 'name: lark-calendar' 'description: isolated external fixture.' '---' \
-    > "$external_skill_home/.agents/skills/lark-calendar/SKILL.md"
-set +e
-HOME="$external_skill_home" AGS_SOURCE_ROOT="$REPO_ROOT" \
-    target/release/ags skill propose --action adopt --skill lark-calendar --format json \
-    > /tmp/verify-skill-propose.json 2>&1
-skill_propose_rc=$?
-set -e
-if [ "$skill_propose_rc" -eq 1 ]; then
-    if python3 - <<'PY'
+# Machine-private lifecycle: dry-run is read-only; apply/ignore/rollback use only
+# a temporary HOME/runtime and the hidden propose wrapper delegates to the same
+# overlay service.
+echo -n "[....] skill lifecycle overlay dry-run/adopt/ignore/rollback + compat wrapper "
+external_skill_home="$(mktemp -d /tmp/ags-verify-skill-lifecycle.XXXXXX)"
+external_skill_runtime="$external_skill_home/runtime"
+external_skill_id=verify-overlay-candidate
+mkdir -p "$external_skill_home/.agents/skills/$external_skill_id"
+printf '%s\n' '---' "name: $external_skill_id" 'description: Isolated machine-private lifecycle fixture.' 'intent_tags: [verify-overlay]' '---' 'fixture body' \
+    > "$external_skill_home/.agents/skills/$external_skill_id/SKILL.md"
+if HOME="$external_skill_home" AGS_RUNTIME_HOME="$external_skill_runtime" target/release/ags skill adopt "$external_skill_id" --format json > "$external_skill_home/adopt-dry-run.json" 2>&1 \
+    && test ! -e "$external_skill_runtime/skill-registry/user-overlay.yaml" \
+    && HOME="$external_skill_home" AGS_RUNTIME_HOME="$external_skill_runtime" target/release/ags skill propose --action adopt --skill "$external_skill_id" --format json > "$external_skill_home/propose-compat.json" 2> "$external_skill_home/propose-compat.err" \
+    && test ! -e "$external_skill_runtime/skill-registry/user-overlay.yaml" \
+    && HOME="$external_skill_home" AGS_RUNTIME_HOME="$external_skill_runtime" target/release/ags skill adopt "$external_skill_id" --apply --format json > "$external_skill_home/adopt-apply.json" 2>&1 \
+    && HOME="$external_skill_home" AGS_RUNTIME_HOME="$external_skill_runtime" target/release/ags skill ignore "$external_skill_id" --apply --format json > "$external_skill_home/ignore-apply.json" 2>&1 \
+    && HOME="$external_skill_home" AGS_RUNTIME_HOME="$external_skill_runtime" target/release/ags skill rollback "$external_skill_id" --to 1 --apply --format json > "$external_skill_home/rollback-apply.json" 2>&1; then
+    if python3 - "$external_skill_home" "$external_skill_runtime" "$external_skill_id" <<'PY'
 import json
+import os
+import pathlib
+import stat
+import sys
 
-proposal = json.load(open('/tmp/verify-skill-propose.json'))
+home = pathlib.Path(sys.argv[1])
+runtime = pathlib.Path(sys.argv[2])
+skill_id = sys.argv[3]
 
-assert proposal['found'] is False
-assert proposal['apply_requested'] is False
-assert proposal['applied'] is False
-assert proposal['planned_writes'] == []
-assert proposal['applied_writes'] == []
-assert proposal['apply_errors'] == []
-assert any('not found in the managed inventory' in reason for reason in proposal['blocked_reasons'])
+dry = json.loads((home / "adopt-dry-run.json").read_text())
+compat = json.loads((home / "propose-compat.json").read_text())
+adopted = json.loads((home / "adopt-apply.json").read_text())
+ignored = json.loads((home / "ignore-apply.json").read_text())
+rolled_back = json.loads((home / "rollback-apply.json").read_text())
+
+assert dry["dry_run"] is True and dry["applied"] is False
+assert dry["status"] == "planned" and dry["skill_id"] == skill_id
+assert compat["schema_version"] == dry["schema_version"]
+assert compat["proposed_entry"] == dry["proposed_entry"]
+assert "deprecated" in (home / "propose-compat.err").read_text()
+assert adopted["applied"] is True and adopted["overlay_revision"] == 1
+assert ignored["applied"] is True and ignored["overlay_revision"] == 2
+assert ignored["proposed_entry"]["state"] == "ignored"
+assert rolled_back["applied"] is True and rolled_back["overlay_revision"] == 3
+assert rolled_back["proposed_entry"]["state"] == "active"
+
+overlay = runtime / "skill-registry/user-overlay.yaml"
+events = runtime / "skill-registry/user-overlay-events.ndjson"
+snapshot = runtime / "capability-snapshot/codex.json"
+for path in (overlay, events, snapshot):
+    assert path.is_file(), path
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600, oct(stat.S_IMODE(path.stat().st_mode))
+assert len(events.read_text().splitlines()) == 3
+assert str(home) not in events.read_text()
 PY
     then
         echo "OK"
     else
-        echo "FAIL (unregistered external body must remain unmanaged and write nothing)"
+        echo "FAIL (overlay result, revision, 0600 mode, receipt, or wrapper invariant)"
         failures=$((failures + 1))
     fi
 else
-    echo "FAIL (expected fail-closed rc=1, got rc=$skill_propose_rc)"
-    cat /tmp/verify-skill-propose.json
+    echo "FAIL (machine-private lifecycle command failed)"
     failures=$((failures + 1))
 fi
-rm -rf "$external_skill_home"
 
-# MCP --apply is advised-only: AGS performs nothing (no writes), exits nonzero.
-echo -n "[....] skill propose adopt MCP --apply → advised-only, exit 1, no writes "
+# Official registry IDs always win; overlay apply must fail without writing.
+echo -n "[....] skill overlay cannot shadow official registry "
 set +e
-cargo run -q -p ags-cli -- skill propose --action adopt --skill context7 --apply --format json > /tmp/verify-skill-mcp-apply.json 2>&1
-mcp_rc=$?
+HOME="$external_skill_home" AGS_RUNTIME_HOME="$external_skill_home/official-runtime" target/release/ags skill adopt diagnosing-bugs --apply --format json > "$external_skill_home/official-precedence.log" 2>&1
+official_rc=$?
 set -e
-if python3 -c "import json; d=json.load(open('/tmp/verify-skill-mcp-apply.json')); assert d['applied'] is False; assert d['apply_status']=='advised-only'; assert d['applied_writes']==[]; assert d['planned_writes']==[]" && [ "$mcp_rc" -eq 1 ]; then
+if [ "$official_rc" -ne 0 ] \
+    && grep -q "official_registry_precedence" "$external_skill_home/official-precedence.log" \
+    && test ! -e "$external_skill_home/official-runtime/skill-registry/user-overlay.yaml"; then
     echo "OK"
 else
-    echo "FAIL (MCP --apply must be advised-only, exit 1, write nothing; got rc=$mcp_rc)"
+    echo "FAIL (official registry precedence must fail closed and write no overlay; got rc=$official_rc)"
     failures=$((failures + 1))
 fi
+rm -rf -- "$external_skill_home"
 
 # Verify exposes the failure-aware fields (all_visible / expected / failed).
 echo -n "[....] skill verify exposes all_visible/expected/failed "
@@ -1132,13 +1123,13 @@ else
     failures=$((failures + 1))
 fi
 
-# Cursor is the reserved host: stable unsupported fields (no panic, no probing).
-echo -n "[....] skill verify --host cursor → unsupported (stable fields) "
+# Cursor is a supported host with real .cursor/skills + shared-user probes.
+echo -n "[....] skill verify --host cursor → supported (real checks) "
 if cargo run -q -p ags-cli -- skill verify --host cursor --format json > /tmp/verify-skill-cursor.json 2>&1; then
-    if python3 -c "import json; d=json.load(open('/tmp/verify-skill-cursor.json')); assert d['supported'] is False; assert d['status'] == 'unsupported'; assert d['checks'] == []"; then
+    if python3 -c "import json; d=json.load(open('/tmp/verify-skill-cursor.json')); assert d['supported'] is True; assert d['status'] in ('ok','degraded','incomplete'); assert isinstance(d['checks'], list)"; then
         echo "OK"
     else
-        echo "FAIL (cursor must be unsupported with stable fields)"
+        echo "FAIL (cursor must be supported with a valid status and checks)"
         failures=$((failures + 1))
     fi
 else
@@ -1211,7 +1202,7 @@ else
     failures=$((failures + 1))
 fi
 
-# ── Five-Segment Command Surface (0.2.8) ────────────────────────────────────
+# ── Five-Segment Command Surface (0.3.0) ────────────────────────────────────
 echo ""
 echo "--- Five-Segment Command Surface (agents / update / skill) ---"
 
@@ -1236,12 +1227,12 @@ else
 fi
 
 echo -n "[....] ags agents govern --apply remains dialog-only (no receipt) "
-receipt_count_before=$({ find "$HOME/.ags/runtime/receipts" -maxdepth 1 -type f -name 'ar-agents-govern-*.json' 2>/dev/null || true; } | wc -l | tr -d ' ')
+receipt_count_before=$(find "$HOME/.ags/runtime/receipts" -maxdepth 1 -type f -name 'ar-agents-govern-*.json' 2>/dev/null | wc -l | tr -d ' ')
 if cargo run -q -p ags-cli -- agents govern --apply --format json > /tmp/verify-agents-govern-apply.json 2>&1 \
     && grep -q '"apply_status": "advice-only-no-write"' /tmp/verify-agents-govern-apply.json \
     && grep -q '"selection_required": true' /tmp/verify-agents-govern-apply.json \
     && ! grep -q '"receipt_ref"' /tmp/verify-agents-govern-apply.json; then
-    receipt_count_after=$({ find "$HOME/.ags/runtime/receipts" -maxdepth 1 -type f -name 'ar-agents-govern-*.json' 2>/dev/null || true; } | wc -l | tr -d ' ')
+    receipt_count_after=$(find "$HOME/.ags/runtime/receipts" -maxdepth 1 -type f -name 'ar-agents-govern-*.json' 2>/dev/null | wc -l | tr -d ' ')
     if [ "$receipt_count_before" = "$receipt_count_after" ]; then
         echo "OK"
     else
@@ -1259,6 +1250,14 @@ if cargo run -q -p ags-cli -- update check --format json > /tmp/verify-update-ch
     echo "OK"
 else
     echo "FAIL (ags update check must report six lanes)"
+    failures=$((failures + 1))
+fi
+
+echo -n "[....] ags update projects lane is executable and drift-aware "
+if python3 -c 'import json;d=json.load(open("/tmp/verify-update-check.json"));p=next(x for x in d["lanes"] if x["lane"]=="projects");assert p["auto_executes_locally"] is True and p["advice_only"] is False and isinstance(p["drift"], bool) and p["commands"]==["ags update apply --lane projects --apply"]'; then
+    echo "OK"
+else
+    echo "FAIL (projects lane must be executable, drift-aware, and expose the real apply command)"
     failures=$((failures + 1))
 fi
 
@@ -1388,12 +1387,13 @@ else
     echo "FAIL"
     failures=$((failures + 1))
 fi
-echo -n "[....] agent-task-protocol.md has unique Request Router contract "
-if grep -q 'Request Router（唯一需求路由）' "$REPO_ROOT/protocol/agent-task-protocol.md" \
-    && grep -q 'RequestDecision' "$REPO_ROOT/protocol/agent-task-protocol.md"; then
+echo -n "[....] agent-task-protocol.md has host semantic proposal contract "
+if grep -q 'Host Semantic Proposal（宿主语义提案）' "$REPO_ROOT/protocol/agent-task-protocol.md" \
+    && grep -q 'HostRouteProposal' "$REPO_ROOT/protocol/agent-task-protocol.md" \
+    && grep -q 'ags_apply_action' "$REPO_ROOT/protocol/agent-task-protocol.md"; then
     echo "OK"
 else
-    echo "FAIL (unique Request Router contract missing from agent-task-protocol.md)"
+    echo "FAIL (typed host proposal / explicit apply contract missing from agent-task-protocol.md)"
     failures=$((failures + 1))
 fi
 

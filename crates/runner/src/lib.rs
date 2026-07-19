@@ -1,24 +1,26 @@
-//! AGS runner — gate-first task card execution planner.
+//! AGS runner — gate-first task-card execution preparer.
 //!
-//! The runner orchestrates validate → gate → policy → adapter resolve →
+//! The runner orchestrates validate → policy → gate → adapter resolve →
 //! launch plan. It ONLY consumes the resolved execution policy from
 //! `execution-policy` — it never reads raw task-card fields to decide
-//! permissions, parallelism, or launch args.
+//! permissions, parallelism, or launch args. It never launches an executor,
+//! writes a receipt, runs verification, or claims that the task completed.
 //!
 //! ## Modes
 //!
 //! - `check_only`: validate + gate check, exit with decision code.
 //! - `dry_run`: full pipeline, output structured `LaunchPlan`, no execution.
-//! - default (no flags): same as dry_run — plan only, no actual launch.
+//! - default (no flags): prepare execution and return `host_execution_required`.
 //!
 //! ## Adapter support
 //!
-//! - `claude-code`: complete — generates verbatim CLI command from resolved policy.
-//! - `codex-local`: structured stub — reports launch plan, marks is_stub.
-//! - `cursor`: structured stub — reports launch plan, marks is_stub.
+//! - `claude-code`: produces a fixed command preview from resolved policy.
+//! - `codex-local`: structured host handoff preview.
+//! - `cursor`: structured host handoff preview.
 //! - `generic`: capped at plan-only, requires human handoff.
 
 use execution_policy::{GateCheckOutput, ResolvedExecutionPolicy};
+use request_governance::GovernanceStatus;
 use skill_resolver::SkillTagGate;
 use std::path::{Path, PathBuf};
 
@@ -30,6 +32,14 @@ pub struct LaunchPlan {
     pub schema_version: String,
     pub task_card_path: String,
     pub mode: String,
+    pub governance_status: GovernanceStatus,
+    /// True only when policy and runtime gates accepted the card and the host
+    /// must perform the actual execution outside this crate.
+    pub host_execution_required: bool,
+    /// Always false: the runner is a launch-plan preparer, not an executor.
+    pub execution_performed: bool,
+    /// Always false: verification belongs to the host after execution.
+    pub verification_performed: bool,
 
     // Validation
     pub validation_passed: bool,
@@ -77,21 +87,26 @@ pub struct AdapterPlan {
     pub stub_reason: Option<String>,
     /// Expected executor binary
     pub executor_binary: String,
+    /// Always false. The host owns process launch after consuming this plan.
+    pub dispatched: bool,
 }
 
 /// Plan for receipt generation after execution.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ReceiptPlan {
-    pub will_generate: bool,
+    /// Whether the host should generate a receipt after real execution.
+    pub host_should_generate: bool,
     pub receipt_id_prefix: String,
     pub task_card_hash: String,
     pub gate_result_for_receipt: String,
     pub suggested_verification_commands: Vec<String>,
+    /// Always false. This structure describes a future host obligation.
+    pub generated: bool,
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
-pub const SCHEMA_VERSION: &str = "2.0-runner";
+pub const SCHEMA_VERSION: &str = "0.3.0-launch-plan";
 
 // ── Main entry point ──────────────────────────────────────────────────────
 
@@ -105,9 +120,9 @@ pub const SCHEMA_VERSION: &str = "2.0-runner";
 /// instruction to the resolver as an audit/hint signal. Task level does not
 /// downgrade the permission mode, so neither signal is a Heavy execution unlock.
 ///
-/// Returns `LaunchPlan` on validation pass, or a minimal stop plan on
-/// validation failure. The caller checks `validation_passed` and
-/// `gate_decision` to determine the exit code.
+/// Returns a `LaunchPlan`; no branch launches a process or performs task work.
+/// The caller checks `governance_status` and `host_execution_required` before
+/// deciding whether the host should execute the prepared plan.
 pub fn run_task_card(
     task_card_path: &str,
     check_only: bool,
@@ -142,7 +157,9 @@ pub fn run_task_card(
             plan.gate_error_kind = Some("capability_authority_unresolved".to_string());
             plan.validation_errors.push(error.to_string());
             plan.skill_tags_gate = None;
-            plan.receipt_plan.will_generate = false;
+            plan.receipt_plan.host_should_generate = false;
+            plan.host_execution_required = false;
+            plan.governance_status = GovernanceStatus::BlockedByPolicy;
             plan.receipt_plan.gate_result_for_receipt = "stop".to_string();
             plan.delivery_report_ref =
                 "BLOCKED — capability authority root could not be resolved".to_string();
@@ -184,7 +201,7 @@ pub fn run_task_card_inner(
     } else if dry_run {
         "dry-run"
     } else {
-        "plan"
+        "prepare-execution"
     };
 
     let display_path = if task_card_path == "-" {
@@ -201,6 +218,10 @@ pub fn run_task_card_inner(
                 schema_version: SCHEMA_VERSION.to_string(),
                 task_card_path: display_path,
                 mode: mode.to_string(),
+                governance_status: GovernanceStatus::BlockedByPolicy,
+                host_execution_required: false,
+                execution_performed: false,
+                verification_performed: false,
                 validation_passed: false,
                 validation_errors: vec![e],
                 gate_decision: "stop".to_string(),
@@ -225,6 +246,10 @@ pub fn run_task_card_inner(
                 schema_version: SCHEMA_VERSION.to_string(),
                 task_card_path: display_path,
                 mode: mode.to_string(),
+                governance_status: GovernanceStatus::BlockedByPolicy,
+                host_execution_required: false,
+                execution_performed: false,
+                verification_performed: false,
                 validation_passed: false,
                 validation_errors: errors.clone(),
                 gate_decision: "stop".to_string(),
@@ -261,10 +286,19 @@ pub fn run_task_card_inner(
     // ── Phase 5: If check_only, stop here ──────────────────────────────
     if check_only {
         let gate_result_for_receipt = decision_str.clone();
+        let governance_status = if policy.stop_before_launch {
+            GovernanceStatus::BlockedByPolicy
+        } else {
+            GovernanceStatus::AdvisoryNoMutation
+        };
         return LaunchPlan {
             schema_version: SCHEMA_VERSION.to_string(),
             task_card_path: display_path,
             mode: mode.to_string(),
+            governance_status,
+            host_execution_required: false,
+            execution_performed: false,
+            verification_performed: false,
             validation_passed: true,
             validation_errors: vec![],
             gate_decision: decision_str,
@@ -277,12 +311,13 @@ pub fn run_task_card_inner(
                 is_stub: true,
                 stub_reason: Some("check-only mode — no adapter resolved".to_string()),
                 executor_binary: String::new(),
+                dispatched: false,
             },
             // check-only stops at the offline policy gate; the runtime skill-tag
             // gate belongs to the launch-plan path (dry-run / plan) below.
             skill_tags_gate: None,
             receipt_plan: ReceiptPlan {
-                will_generate: false,
+                host_should_generate: false,
                 receipt_id_prefix: format!(
                     "receipt-{}",
                     &task_card_hash[..12.min(task_card_hash.len())]
@@ -290,6 +325,7 @@ pub fn run_task_card_inner(
                 task_card_hash,
                 gate_result_for_receipt,
                 suggested_verification_commands: vec![],
+                generated: false,
             },
             verification_log_refs: vec![],
             delivery_report_ref: String::new(),
@@ -340,7 +376,7 @@ pub fn run_task_card_inner(
     // ── Phase 7: Receipt / verification / delivery planning ────────────
     let gate_result_for_receipt = decision_str.clone();
     let receipt_plan = ReceiptPlan {
-        will_generate: !launch_blocked,
+        host_should_generate: !launch_blocked,
         receipt_id_prefix: format!(
             "receipt-{}",
             &task_card_hash[..12.min(task_card_hash.len())]
@@ -353,6 +389,7 @@ pub fn run_task_card_inner(
             "cargo build --release".to_string(),
             "ags verify --scope local --format json".to_string(),
         ],
+        generated: false,
     };
 
     let verification_log_refs = vec![
@@ -366,13 +403,21 @@ pub fn run_task_card_inner(
     } else if policy.stop_before_launch {
         "BLOCKED — delivery report not applicable (stop_before_launch=true)".to_string()
     } else {
-        "delivery-report.md (generate after execution)".to_string()
+        "host must generate delivery-report.md after execution and verification".to_string()
     };
 
     LaunchPlan {
         schema_version: SCHEMA_VERSION.to_string(),
         task_card_path: display_path,
         mode: mode.to_string(),
+        governance_status: if launch_blocked {
+            GovernanceStatus::BlockedByPolicy
+        } else {
+            GovernanceStatus::HostExecutionRequired
+        },
+        host_execution_required: !launch_blocked,
+        execution_performed: false,
+        verification_performed: false,
         validation_passed: true,
         validation_errors: vec![],
         gate_decision: decision_str,
@@ -417,6 +462,7 @@ fn resolve_adapter(policy: &ResolvedExecutionPolicy, _task_card_path: &str) -> A
                 is_stub: false,
                 stub_reason: None,
                 executor_binary: binary,
+                dispatched: false,
             }
         }
 
@@ -434,6 +480,7 @@ fn resolve_adapter(policy: &ResolvedExecutionPolicy, _task_card_path: &str) -> A
                     .to_string(),
             ),
             executor_binary: "codex".to_string(),
+            dispatched: false,
         },
 
         "cursor" => AdapterPlan {
@@ -450,6 +497,7 @@ fn resolve_adapter(policy: &ResolvedExecutionPolicy, _task_card_path: &str) -> A
                     .to_string(),
             ),
             executor_binary: "cursor".to_string(),
+            dispatched: false,
         },
 
         _ => AdapterPlan {
@@ -462,6 +510,7 @@ fn resolve_adapter(policy: &ResolvedExecutionPolicy, _task_card_path: &str) -> A
                 adapter
             )),
             executor_binary: "human".to_string(),
+            dispatched: false,
         },
     }
 }
@@ -493,12 +542,13 @@ fn stub_adapter(adapter: &str, reason: &str) -> AdapterPlan {
         is_stub: true,
         stub_reason: Some(reason.to_string()),
         executor_binary: String::new(),
+        dispatched: false,
     }
 }
 
 fn empty_receipt_plan(hash: &str) -> ReceiptPlan {
     ReceiptPlan {
-        will_generate: false,
+        host_should_generate: false,
         receipt_id_prefix: if hash.is_empty() {
             String::new()
         } else {
@@ -507,6 +557,7 @@ fn empty_receipt_plan(hash: &str) -> ReceiptPlan {
         task_card_hash: hash.to_string(),
         gate_result_for_receipt: "stop".to_string(),
         suggested_verification_commands: vec![],
+        generated: false,
     }
 }
 
@@ -521,6 +572,13 @@ pub fn render_text(plan: &LaunchPlan) -> String {
     lines.push(format!("Schema version:  {}", plan.schema_version));
     lines.push(format!("Task card:       {}", plan.task_card_path));
     lines.push(format!("Mode:            {}", plan.mode));
+    lines.push(format!(
+        "Governance:      {}",
+        plan.governance_status.as_str()
+    ));
+    lines.push(format!("Host execution:  {}", plan.host_execution_required));
+    lines.push("Execution done:  false".to_string());
+    lines.push("Verification done: false".to_string());
     lines.push(String::new());
 
     // Validation
@@ -623,8 +681,8 @@ pub fn render_text(plan: &LaunchPlan) -> String {
     lines.push("─ Receipt / Verification / Delivery ─".to_string());
     lines.push(format!(
         "  Receipt:      {}",
-        if plan.receipt_plan.will_generate {
-            "will generate"
+        if plan.receipt_plan.host_should_generate {
+            "host should generate after execution"
         } else {
             "skipped (stopped or check-only)"
         }
@@ -647,15 +705,15 @@ pub fn render_text(plan: &LaunchPlan) -> String {
     // Summary
     lines.push("─ Summary ─".to_string());
     let verdict = match plan.gate_decision.as_str() {
-        "allow" => "PROCEED — gate passed, ready for execution",
-        "stop" => "STOP — blocked, cannot execute",
+        "allow" => "HOST EXECUTION REQUIRED — launch plan prepared; runner did not execute",
+        "stop" => "STOP — blocked; runner did not execute",
         _ => "UNKNOWN",
     };
     lines.push(format!("  Verdict:  {}", verdict));
 
-    if plan.adapter.is_stub && plan.gate_decision != "stop" {
+    if plan.gate_decision != "stop" {
         lines.push(
-            "  NOTE: Adapter is a stub. Real execution requires the shell wrapper.".to_string(),
+            "  NOTE: The host owns execution, verification, and receipt writing.".to_string(),
         );
     }
 
@@ -683,6 +741,10 @@ mod tests {
         assert!(plan.gate_error_kind.is_some());
         assert!(plan.resolved_policy.is_none());
         assert!(plan.adapter.is_stub);
+        assert_eq!(plan.governance_status, GovernanceStatus::BlockedByPolicy);
+        assert!(!plan.host_execution_required);
+        assert!(!plan.execution_performed);
+        assert!(!plan.verification_performed);
     }
 
     #[test]
@@ -699,14 +761,14 @@ mod tests {
     }
 
     #[test]
-    fn test_default_mode_is_plan() {
+    fn test_default_mode_prepares_execution() {
         let plan = run_task_card("/nonexistent/path/task-card.md", false, false, false, false);
-        assert_eq!(plan.mode, "plan");
+        assert_eq!(plan.mode, "prepare-execution");
     }
 
     #[test]
     fn test_schema_version_constant() {
-        assert_eq!(SCHEMA_VERSION, "2.0-runner");
+        assert_eq!(SCHEMA_VERSION, "0.3.0-launch-plan");
     }
 
     #[test]
@@ -809,7 +871,7 @@ mod tests {
     fn test_receipt_plan_skipped_on_stop() {
         // Simulate: validation failure, plan has no resolved_policy
         let plan = run_task_card("/nonexistent/path/task-card.md", false, true, false, false);
-        assert!(!plan.receipt_plan.will_generate);
+        assert!(!plan.receipt_plan.host_should_generate);
         assert_eq!(plan.receipt_plan.gate_result_for_receipt, "stop");
     }
 
@@ -1011,7 +1073,7 @@ mod tests {
         assert!(!gate.all_accepted);
         assert!(gate.rejected.iter().any(|t| t == "skill-creator"));
         assert!(
-            !plan.receipt_plan.will_generate,
+            !plan.receipt_plan.host_should_generate,
             "a blocked launch must not plan a receipt"
         );
 
@@ -1039,6 +1101,15 @@ mod tests {
         );
         assert!(plan.validation_passed);
         assert!(plan.skill_tags_gate.is_none());
+        assert_eq!(
+            plan.governance_status,
+            GovernanceStatus::HostExecutionRequired
+        );
+        assert!(plan.host_execution_required);
+        assert!(!plan.execution_performed);
+        assert!(!plan.verification_performed);
+        assert!(!plan.receipt_plan.generated);
+        assert!(plan.receipt_plan.host_should_generate);
         assert_ne!(
             plan.gate_error_kind.as_deref(),
             Some("skill_tags_unavailable")

@@ -27,47 +27,67 @@ fn cmd_skill_check(format: &str) {
         std::process::exit(1);
     }
 }
-/// Shared dispatch: `skill propose` — management console proposal.
-///
-/// Dry-run by default. `--apply` performs only AGS-owned host-entry writes
-/// through the console's transactional mutation guard; external
-/// installers/registrars are advised, never executed.
+/// Hidden 0.2 compatibility wrapper. Lifecycle actions delegate to the same
+/// private-overlay service as the 0.3 foreground commands.
 fn cmd_skill_propose(action: &str, skill_name: &str, apply: bool, format: &str) {
-    use skill_governance::console;
-    let root = crate::context::capability_authority_root_or_exit("ags skill propose");
-    let Some(parsed) = console::ConsoleAction::from_str(action) else {
-        eprintln!("skill propose: unknown action '{action}'");
-        std::process::exit(2);
+    eprintln!(
+        "ags skill propose is deprecated; use `ags skill adopt|ignore|rollback` for lifecycle changes"
+    );
+    let operation = match action {
+        "adopt" | "update" | "repair" => skill_resolver::OverlayMutationOperation::Adopt,
+        "remove" | "uninstall" => skill_resolver::OverlayMutationOperation::Ignore,
+        "verify" => {
+            eprintln!("use `ags skill verify --host codex` for verification");
+            std::process::exit(2);
+        }
+        _ => {
+            eprintln!("skill propose: unknown action '{action}'");
+            std::process::exit(2);
+        }
     };
-    let ctx = console::ConsoleContext::system(root);
-    let result = console::propose_action(&ctx, parsed, skill_name, apply);
+    cmd_skill_overlay(operation, skill_name, None, apply, "codex", format);
+}
 
-    let apply_unfulfilled = apply && matches!(result.apply_status.as_str(), "advised-only");
-    let failed =
-        !result.blocked_reasons.is_empty() || !result.apply_errors.is_empty() || apply_unfulfilled;
-    if apply && !failed {
-        crate::capability::refresh_skill_snapshot(
-            &ctx.repo_root,
-            &skill_resolver::locate_runtime_home(),
-            "codex",
-        )
-        .unwrap_or_else(|error| {
-            eprintln!("ags skill propose: {error}");
-            std::process::exit(1);
-        });
-    }
+fn cmd_skill_overlay(
+    operation: skill_resolver::OverlayMutationOperation,
+    skill_id: &str,
+    restored_from_revision: Option<u64>,
+    apply: bool,
+    host: &str,
+    format: &str,
+) {
+    let root = crate::context::capability_authority_root_or_exit("ags skill lifecycle");
+    let runtime_home = skill_resolver::locate_runtime_home();
+    let host_home = crate::context::home_dir();
+    let result = skill_resolver::mutate_user_overlay(
+        &root,
+        &runtime_home,
+        &host_home,
+        host,
+        skill_id,
+        operation,
+        restored_from_revision,
+        apply,
+    )
+    .unwrap_or_else(|error| {
+        eprintln!("ags skill lifecycle: refused — {error}");
+        std::process::exit(1);
+    });
 
     match format {
-        "json" => println!("{}", console::render_proposal_json(&result)),
-        _ => println!("{}", console::render_proposal_text(&result)),
-    }
-
-    // Exit nonzero when an `--apply` could not actually be carried out by AGS:
-    // blocked, a write failed, or the action is advised-only (AGS performed
-    // nothing and the user must run the advised command). A clean dry-run, a
-    // successful apply, and a genuine no-op all exit 0.
-    if failed {
-        std::process::exit(1);
+        "json" => println!(
+            "{}",
+            serde_json::to_string_pretty(&result).unwrap_or_default()
+        ),
+        _ => {
+            println!("Skill lifecycle — {:?}", result.operation);
+            println!("Skill: {}", result.skill_id);
+            println!("Status: {}", result.status);
+            println!("Overlay revision: {}", result.overlay_revision);
+            if result.dry_run && result.changed {
+                println!("Dry-run only — pass --apply to write the machine-private overlay.");
+            }
+        }
     }
 }
 /// Shared dispatch: `skill verify --host <host>` — read-only host visibility.
@@ -214,7 +234,7 @@ fn cmd_skill_overview(format: &str, fix: bool) {
     match format {
         "json" => {
             let output = serde_json::json!({
-                "schema_version": "2.6.0-skill-console-overview",
+                "schema_version": console::CONSOLE_SCHEMA_VERSION,
                 "inventory": inventory,
                 "scan": scan,
                 "check": check,
@@ -223,8 +243,9 @@ fn cmd_skill_overview(format: &str, fix: bool) {
                 "next_steps": if fix {
                     serde_json::json!([
                         "Review the inventory: managed_status, host_visibility, health_status, risk_notes.",
-                        "Dry-run a change: `ags skill propose --action <adopt|update|remove|uninstall|repair|verify> --skill <name>`.",
-                        "Confirm with `--apply` (writes only AGS-owned host entries; never runs external installers).",
+                        "Dry-run candidate adoption: `ags skill adopt <skill-id>`.",
+                        "Use `ags skill ignore <skill-id>` or `ags skill rollback <skill-id> --to <revision>` for the other lifecycle transitions.",
+                        "Confirm a lifecycle mutation with `--apply` (writes only the machine-private overlay, receipt ledger, and refreshed snapshot; never runs external installers).",
                         "After apply, restart the host and run `ags skill verify --host claude-code`.",
                         "Review upstream comparison sources with `ags skill upstream` (read-only stub; no crawl)."
                     ])
@@ -252,14 +273,16 @@ fn cmd_skill_overview(format: &str, fix: bool) {
                 println!("=====================");
                 println!("No skill files were modified.");
                 println!("Review the inventory above, then use:");
-                println!("  ags skill propose --action adopt --skill <name>          # dry-run");
-                println!("  ags skill propose --action adopt --skill <name> --apply  # confirm");
+                println!("  ags skill adopt <skill-id>                    # dry-run");
+                println!("  ags skill adopt <skill-id> --apply            # confirm");
+                println!("  ags skill ignore <skill-id> [--apply]");
+                println!("  ags skill rollback <skill-id> --to <revision> [--apply]");
                 println!(
                     "  ags skill verify  --host claude-code                     # host visibility"
                 );
                 println!("  ags skill upstream                                       # upstream comparison (stub)");
                 println!(
-                    "Apply writes only AGS-owned host entries via transactional replace and never runs external installers."
+                    "Apply writes only the machine-private overlay, append-only mutation receipt, and refreshed host snapshot; it never runs external installers."
                 );
             } else {
                 println!(
@@ -278,6 +301,46 @@ fn cmd_skill_overview(format: &str, fix: bool) {
 
 pub(crate) fn run(action: Option<SkillAction>, format: &str, fix: bool) {
     match action {
+        Some(SkillAction::Adopt {
+            skill_id,
+            apply,
+            host,
+            format,
+        }) => cmd_skill_overlay(
+            skill_resolver::OverlayMutationOperation::Adopt,
+            &skill_id,
+            None,
+            apply,
+            &host,
+            &format,
+        ),
+        Some(SkillAction::Ignore {
+            skill_id,
+            apply,
+            host,
+            format,
+        }) => cmd_skill_overlay(
+            skill_resolver::OverlayMutationOperation::Ignore,
+            &skill_id,
+            None,
+            apply,
+            &host,
+            &format,
+        ),
+        Some(SkillAction::Rollback {
+            skill_id,
+            to_revision,
+            apply,
+            host,
+            format,
+        }) => cmd_skill_overlay(
+            skill_resolver::OverlayMutationOperation::Rollback,
+            &skill_id,
+            Some(to_revision),
+            apply,
+            &host,
+            &format,
+        ),
         Some(SkillAction::Scan { format }) => cmd_skill_scan(&format),
         Some(SkillAction::Check { format }) => cmd_skill_check(&format),
         Some(SkillAction::Propose {

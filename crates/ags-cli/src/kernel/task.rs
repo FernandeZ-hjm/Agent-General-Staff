@@ -106,6 +106,8 @@ fn cmd_task_compile(
         slot_sources: report.slot_sources,
         missing_slots: report.missing_slots,
         assumptions: report.assumptions,
+        deprecations: report.deprecations,
+        contract_format: report.contract_format,
         validation_passed: if report.executable_allowed {
             validation_passed
         } else {

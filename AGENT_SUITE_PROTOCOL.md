@@ -29,10 +29,11 @@ AGS 定位为开发相关工作中的**常驻工程中枢**，不是需要用户
 `$ags-skill` / `$ags-doctor` 命令技能，以及 `ags mcp serve` 提供的 MCP 内核桥。
 凡是 AGS 相关任务，都必须优先通过 AGS MCP 显式调用 `ags_preflight`；CLI 预检只作为
 MCP 不可用时的降级路径。
-开发请求到达时，宿主在 preflight 后把完整对话上下文交给 MCP
-`ags_route_request`。Request Router 是唯一自然语言路由节点，返回结构化
-`RequestDecision`；Skill Resolver 只做闭集技能映射，MCP 用固定 argv 调用
-真实 `ags` CLI。不得从原始用户请求直接跳到 Light / Medium / Heavy
+开发请求到达时，宿主在 preflight 后读取当前宿主能力薄目录，结合完整对话形成
+typed `HostRouteProposal` 并交给严格只读的 `ags_route_request`。自然语言语义判断只在
+宿主发生；Skill Resolver 只按 snapshot 精确校验 skill/entrypoint，不做关键词或
+fallback。只有 `ags_apply_action` 能以一次性 lease/action 引用消费固定机器动作。
+不得从原始用户请求直接跳到 Light / Medium / Heavy
 分级。"方案 OK" 只确认方案，不授权写入；
 用户明确授权同会话修改时进入 `direct-edit`，明确要求任务卡或跨 Agent 交接时才进入
 task-card handoff。`ags task compile --task-card-requested
@@ -40,7 +41,7 @@ task-card handoff。`ags task compile --task-card-requested
 本地执行的前置门槛。
 
 首个非空行已经是 `## 任务卡` 的输入属于 existing task card。入口必须先校验：
-合法卡直接进入 policy / runner，非法卡 fail closed；两者都不得回落到新任务卡生成。
+合法卡直接进入 policy / gate / LaunchPlan，非法卡 fail closed；两者都不得回落到新任务卡生成。Runner 返回 `HOST_EXECUTION_REQUIRED`，不声称已经执行或验证。
 任务卡 Permission mode 只有 `plan-only` 和 `execute-and-verify`。Light / Medium
 默认直接执行；Heavy 未声明时默认 `plan-only`，显式
 `execute-and-verify` 时直接执行并验证。Heavy 只追加独立 review gate，

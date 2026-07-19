@@ -40,7 +40,7 @@ pub(crate) enum CapabilityAction {
     /// Unified view of skills + governed MCPs + CLI-backed capabilities and
     /// whether each is visible to each host. Read-only.
     Inventory {
-        /// Host to scope visibility to (repeatable). Default: claude-code + codex.
+        /// Host to scope visibility to (repeatable). Default: claude-code + codex + codebuddy-code.
         #[arg(long = "host")]
         host: Vec<String>,
         /// Output format: text (default) or json
@@ -52,9 +52,10 @@ pub(crate) enum CapabilityAction {
     /// Resolves the installed AGS capability authority independently of the
     /// current project directory. Missing required registry parents remain in
     /// the expected set and fail closed. `ags skill verify` remains a
-    /// compatibility alias. Claude Code / Codex supported; Cursor reserved.
+    /// compatibility alias. Claude Code / Codex / CodeBuddy-Code supported;
+    /// Cursor reserved.
     Verify {
-        /// Host to verify: claude-code | codex (cursor reserved)
+        /// Host to verify: claude-code | codex | codebuddy-code (cursor reserved)
         #[arg(long, default_value = "claude-code")]
         host: String,
         /// Gate mode: exit nonzero unless status is "ok" (post-apply gate).
@@ -65,6 +66,12 @@ pub(crate) enum CapabilityAction {
         format: String,
     },
     /// Derive the machine-local ActiveSkillTable snapshot + attestation hash.
+    ///
+    /// Captures the strict intersection of governed routable skills that are
+    /// healthy and visible to one active host, plus a deterministic
+    /// `snapshot_hash`. The registry stays authoritative for what MAY route.
+    /// With `--write` the snapshot is written to the machine-local runtime home
+    /// (never tracked, never published).
     Snapshot {
         /// Active host whose routable skill table is captured.
         #[arg(long = "host", default_value = "codex")]
@@ -75,7 +82,7 @@ pub(crate) enum CapabilityAction {
         /// Write the snapshot JSON to the machine-local runtime home.
         #[arg(long)]
         write: bool,
-        /// Output format: text (default) or json.
+        /// Output format: text (default) or json
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
     },
@@ -111,13 +118,59 @@ pub(crate) enum CapabilityAction {
 /// Skill-body governance subcommands.
 ///
 /// `ags skill` is the skill-body governance face. `scan` / `check` /
-/// `inventory` / `upstream` are read-only; `propose --apply` writes ONLY
-/// AGS-owned per-host thin-index entries through the console's transactional
-/// mutation guard and never runs external installers. `verify --host`
+/// `inventory` / `upstream` are read-only; adopt/ignore/rollback use the
+/// versioned machine-private overlay and are dry-run unless `--apply`.
+/// The hidden `propose` command delegates lifecycle changes to that same
+/// service. No lifecycle command runs external installers. `verify --host`
 /// reports cross-Agent host visibility and is the seam slated to move under
 /// the `ags capability` command layer in a future release.
 #[derive(Subcommand)]
 pub(crate) enum SkillAction {
+    /// Adopt an external/user/project candidate into the machine-private overlay.
+    Adopt {
+        /// Exact skill identifier from the current host capability catalog.
+        skill_id: String,
+        /// Confirm the overlay mutation. Without it, emit a dry-run plan.
+        #[arg(long)]
+        apply: bool,
+        /// Host whose catalog supplies the candidate metadata.
+        #[arg(long, default_value = "codex")]
+        host: String,
+        /// Output format: text (default) or json.
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Ignore a candidate or adopted personal skill in the private overlay.
+    Ignore {
+        /// Exact skill identifier from the current host capability catalog.
+        skill_id: String,
+        /// Confirm the overlay mutation. Without it, emit a dry-run plan.
+        #[arg(long)]
+        apply: bool,
+        /// Host whose catalog supplies the candidate metadata.
+        #[arg(long, default_value = "codex")]
+        host: String,
+        /// Output format: text (default) or json.
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Restore one skill's overlay metadata/state from an earlier revision.
+    Rollback {
+        /// Exact skill identifier in private overlay history.
+        skill_id: String,
+        /// Historical per-skill revision to restore (0 removes the overlay entry).
+        #[arg(long = "to")]
+        to_revision: u64,
+        /// Confirm the overlay mutation. Without it, emit a dry-run plan.
+        #[arg(long)]
+        apply: bool,
+        /// Host whose snapshot is refreshed after apply.
+        #[arg(long, default_value = "codex")]
+        host: String,
+        /// Output format: text (default) or json.
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
     /// (hidden compat) Scan the suite manifest and governance files for status.
     ///
     /// Reports available, missing, disabled, and degraded skills with
@@ -140,11 +193,9 @@ pub(crate) enum SkillAction {
     },
     /// (hidden compat) Propose a management action — dry-run unless `--apply`.
     ///
-    /// Actions: adopt, update, remove, uninstall, repair, verify. Without
-    /// `--apply` nothing is written and no external installer runs. With
-    /// `--apply` only AGS-owned host entry files are written via transactional replace;
-    /// external installers/registrars (npx skills, lark-cli, claude mcp) are
-    /// advised, never executed.
+    /// Legacy actions are mapped onto foreground overlay adopt/ignore. Without
+    /// `--apply` nothing is written; with it, the same private-overlay service
+    /// is used. External installers/registrars are never executed.
     #[command(hide = true)]
     Propose {
         /// Action: adopt, update, remove, uninstall, repair, or verify
@@ -162,8 +213,8 @@ pub(crate) enum SkillAction {
     },
     /// Verify cross-Agent host visibility for a host (read-only).
     ///
-    /// Claude Code and Codex: check `~/.claude/skills` / `~/.codex/skills`
-    /// `SKILL.md` (symlink-aware) and `claude mcp list` / `codex mcp list`.
+    /// Claude Code, Codex, and CodeBuddy-Code: check their host skill roots
+    /// (`SKILL.md`, symlink-aware); Claude/Codex MCP registries are also probed.
     /// Cursor is reserved (unsupported in this version; model fields are
     /// stable). Degrades, never panics, when a host CLI is unavailable.
     ///
@@ -171,7 +222,7 @@ pub(crate) enum SkillAction {
     /// `ags capability verify` (the canonical home). It remains here as a
     /// compatibility entry.
     Verify {
-        /// Host to verify: claude-code | codex (cursor reserved)
+        /// Host to verify: claude-code | codex | codebuddy-code (cursor reserved)
         #[arg(long, default_value = "claude-code")]
         host: String,
         /// Gate mode: exit nonzero unless status is "ok" (use as a post-apply
@@ -269,7 +320,7 @@ pub(crate) enum AgentsAction {
     /// Verify a host's AGS visibility (thin-index + AGS MCP).
     /// 校验某宿主的 AGS 可见性（thin-index + AGS MCP）。
     Verify {
-        /// Host to verify: claude-code | codex (cursor reserved)
+        /// Host to verify: claude-code | codex | codebuddy-code (cursor reserved)
         #[arg(long, default_value = "claude-code")]
         host: String,
         /// Gate mode: exit nonzero unless status is "ok" (post-apply gate).
@@ -306,15 +357,18 @@ impl UpdateLane {
             UpdateLane::Public => "public",
         }
     }
-    /// True only for lanes AGS may auto-execute locally (core / runtime).
+    /// True only for lanes AGS may execute locally under explicit --apply.
     pub(crate) fn auto_executes_locally(&self) -> bool {
-        matches!(self, UpdateLane::Core | UpdateLane::Runtime)
+        matches!(
+            self,
+            UpdateLane::Core | UpdateLane::Runtime | UpdateLane::Projects
+        )
     }
     pub(crate) fn risk_tier(&self) -> &'static str {
         match self {
             UpdateLane::Core | UpdateLane::Public => "heavy",
-            UpdateLane::Runtime | UpdateLane::Skills => "medium",
-            UpdateLane::Agents | UpdateLane::Projects => "advice",
+            UpdateLane::Runtime | UpdateLane::Skills | UpdateLane::Projects => "medium",
+            UpdateLane::Agents => "advice",
         }
     }
 }
@@ -330,7 +384,7 @@ pub(crate) enum UpdateAction {
     /// Lazy, post-task, calendar-throttled update notifier. Reads runtime state,
     /// checks a public release/tag source at most once per 7 local days, and
     /// reports whether a newer AGS exists. Fails silently; never auto-updates.
-    /// JSON is the hook/runner authority. 任务结束后懒检查更新。
+    /// JSON is the hook/manual authority. Runner does not call this command.
     Notify {
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
@@ -343,9 +397,10 @@ pub(crate) enum UpdateAction {
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
     },
-    /// Execute local lanes (git pull + cargo build + rewrite AGS-owned runtime);
-    /// agents/projects/public stay plan+advice. Requires --apply (Heavy).
-    /// 执行本机 lane；其余仅出计划+建议。需 --apply（Heavy 批准）。
+    /// Execute local lanes (core build, runtime rewrite, managed-project AGS
+    /// projection refresh); agents/skills/public stay plan+advice. Requires
+    /// --apply; risk follows the selected lane.
+    /// 执行本机 lane；其余仅出计划+建议。需显式 --apply。
     Apply {
         #[arg(long, value_enum)]
         lane: Option<UpdateLane>,

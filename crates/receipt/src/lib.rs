@@ -21,6 +21,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
+pub const RECEIPT_SCHEMA_VERSION: &str = "2.1-m6";
+pub const LEGACY_RECEIPT_SCHEMA_VERSION: &str = "2.0-m6";
+
 // ── Data model ──────────────────────────────────────────────────────────────
 
 /// A verification result entry.
@@ -39,6 +42,38 @@ pub struct GateResult {
     pub reason: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReceiptSkillSelection {
+    pub skill_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entrypoint: Option<String>,
+}
+
+/// Optional governance evidence added by the 2.1 writer. It deliberately
+/// contains only identifiers/hashes and never the raw request or credentials.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct GovernanceEvidence {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decision_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lease_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proposal_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub solution_state: Option<request_governance::SolutionState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill_selection: Option<ReceiptSkillSelection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outcome_event_id: Option<String>,
+}
+
 /// A task run receipt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Receipt {
@@ -54,6 +89,10 @@ pub struct Receipt {
     pub delivery_report_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub governance_status: Option<request_governance::GovernanceStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub governance_evidence: Option<GovernanceEvidence>,
 }
 
 /// A single compliance / verification check item.
@@ -136,7 +175,7 @@ pub fn generate_receipt(
     let timestamp = iso8601_now();
 
     Ok(Receipt {
-        schema_version: "2.0-m6".to_string(),
+        schema_version: RECEIPT_SCHEMA_VERSION.to_string(),
         receipt_id,
         timestamp,
         task_card_hash,
@@ -148,7 +187,35 @@ pub fn generate_receipt(
         verification_results,
         delivery_report_hash,
         exit_code: None,
+        governance_status: Some(if gate_decision == "stop" {
+            request_governance::GovernanceStatus::BlockedByPolicy
+        } else {
+            request_governance::GovernanceStatus::DoneWithReceipt
+        }),
+        governance_evidence: None,
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn generate_receipt_with_governance(
+    task_card_path: &Path,
+    gate_decision: &str,
+    gate_reason: Option<&str>,
+    verification_results: Vec<VerificationResult>,
+    delivery_report_path: Option<&Path>,
+    governance_status: request_governance::GovernanceStatus,
+    governance_evidence: GovernanceEvidence,
+) -> Result<Receipt, String> {
+    let mut receipt = generate_receipt(
+        task_card_path,
+        gate_decision,
+        gate_reason,
+        verification_results,
+        delivery_report_path,
+    )?;
+    receipt.governance_status = Some(governance_status);
+    receipt.governance_evidence = Some(governance_evidence);
+    Ok(receipt)
 }
 
 /// Generate an ISO 8601 timestamp using std only.
@@ -180,18 +247,21 @@ pub fn verify_receipt(receipt: &Receipt) -> VerifyResult {
     let mut checks: Vec<CheckItem> = Vec::new();
 
     // Check 1: schema version
-    if receipt.schema_version == "2.0-m6" {
+    if matches!(
+        receipt.schema_version.as_str(),
+        LEGACY_RECEIPT_SCHEMA_VERSION | RECEIPT_SCHEMA_VERSION
+    ) {
         checks.push(CheckItem {
             name: "schema_version".to_string(),
             passed: true,
-            detail: "schema_version is 2.0-m6".to_string(),
+            detail: format!("schema_version {} is supported", receipt.schema_version),
         });
     } else {
         checks.push(CheckItem {
             name: "schema_version".to_string(),
             passed: false,
             detail: format!(
-                "expected schema_version 2.0-m6, got {}",
+                "expected schema_version 2.0-m6 or 2.1-m6, got {}",
                 receipt.schema_version
             ),
         });
@@ -295,7 +365,7 @@ pub fn verify_receipt(receipt: &Receipt) -> VerifyResult {
     let valid = checks.iter().all(|c| c.passed);
 
     VerifyResult {
-        schema_version: "2.0-m6".to_string(),
+        schema_version: RECEIPT_SCHEMA_VERSION.to_string(),
         receipt_id: receipt.receipt_id.clone(),
         valid,
         checks,
@@ -382,7 +452,7 @@ pub fn check_compliance(receipt: &Receipt) -> ComplianceResult {
     }
 
     let compliant = checks.iter().all(|c| c.passed);
-    let schema_version = "2.0-m6".to_string();
+    let schema_version = RECEIPT_SCHEMA_VERSION.to_string();
 
     ComplianceResult {
         schema_version,
@@ -457,7 +527,7 @@ pub fn render_receipt_json(receipt: &Receipt) -> String {
 // emit an `ActionReceipt` so every mutation leaves machine-readable evidence
 // plus a plan-only rollback. `receipt_id` is prefixed `ar-` and `schema_version`
 // is `2.0-action-receipt`, so action receipts never collide with task-card
-// receipts (`receipt-` / `2.0-m6`) and verifiers can dispatch by schema.
+// receipts (`receipt-` / `2.0-m6` or `2.1-m6`) and verifiers can dispatch by schema.
 //
 // Pure advised-only surfaces such as `ags agents govern` do NOT emit receipts:
 // the operator must see and choose the advised host/tool registrations in the
@@ -778,7 +848,11 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(receipt.schema_version, "2.0-m6");
+        assert_eq!(receipt.schema_version, RECEIPT_SCHEMA_VERSION);
+        assert_eq!(
+            receipt.governance_status,
+            Some(request_governance::GovernanceStatus::DoneWithReceipt)
+        );
         assert!(receipt.receipt_id.starts_with("receipt-"));
         assert!(!receipt.task_card_hash.is_empty());
         assert_eq!(receipt.gate_result.decision, "allow");
@@ -806,6 +880,67 @@ mod tests {
             receipt.gate_result.reason.as_deref(),
             Some("writable-parallelism-blocked-by-permission")
         );
+    }
+
+    #[test]
+    fn writer_adds_typed_governance_evidence_without_raw_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let task_card = write_temp_file(&dir, "task.md", "## 任务卡\n任务：test\n");
+        let receipt = generate_receipt_with_governance(
+            &task_card,
+            "allow",
+            None,
+            vec![],
+            None,
+            request_governance::GovernanceStatus::DoneWithReceipt,
+            GovernanceEvidence {
+                decision_id: Some("decision-1".to_string()),
+                lease_id: Some("lease-1".to_string()),
+                proposal_hash: Some("sha256:proposal".to_string()),
+                solution_state: Some(request_governance::SolutionState::Confirmed),
+                scope_hash: Some("sha256:scope".to_string()),
+                snapshot_hash: Some("sha256:snapshot".to_string()),
+                policy_hash: Some("sha256:policy".to_string()),
+                skill_selection: Some(ReceiptSkillSelection {
+                    skill_id: "codebase-design".to_string(),
+                    entrypoint: Some("module-design".to_string()),
+                }),
+                outcome_event_id: Some("outcome-1".to_string()),
+            },
+        )
+        .unwrap();
+        let json = render_receipt_json(&receipt);
+        assert_eq!(receipt.schema_version, RECEIPT_SCHEMA_VERSION);
+        assert!(!json.contains("raw_request"));
+        assert_eq!(
+            receipt
+                .governance_evidence
+                .as_ref()
+                .and_then(|evidence| evidence.skill_selection.as_ref())
+                .map(|selection| selection.skill_id.as_str()),
+            Some("codebase-design")
+        );
+
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        value["governance_evidence"]["raw_request"] = serde_json::json!("secret prompt");
+        assert!(serde_json::from_value::<Receipt>(value).is_err());
+    }
+
+    #[test]
+    fn legacy_2_0_receipt_remains_readable_and_valid() {
+        let receipt: Receipt = serde_json::from_str(
+            r#"{
+                "schema_version":"2.0-m6",
+                "receipt_id":"receipt-legacy",
+                "timestamp":"unix-0",
+                "task_card_hash":"abc123",
+                "gate_result":{"decision":"allow"},
+                "verification_results":[]
+            }"#,
+        )
+        .unwrap();
+        assert!(receipt.governance_evidence.is_none());
+        assert!(verify_receipt(&receipt).valid);
     }
 
     #[test]
@@ -838,6 +973,8 @@ mod tests {
             }],
             delivery_report_hash: None,
             exit_code: Some(0),
+            governance_status: None,
+            governance_evidence: None,
         };
 
         let result = verify_receipt(&receipt);
@@ -879,6 +1016,8 @@ mod tests {
             verification_results: vec![],
             delivery_report_hash: None,
             exit_code: None,
+            governance_status: None,
+            governance_evidence: None,
         };
 
         let result = verify_receipt(&receipt);
@@ -907,6 +1046,8 @@ mod tests {
             verification_results: vec![],
             delivery_report_hash: None,
             exit_code: None,
+            governance_status: None,
+            governance_evidence: None,
         };
 
         let result = verify_receipt(&receipt);
@@ -946,6 +1087,8 @@ mod tests {
             ],
             delivery_report_hash: None,
             exit_code: Some(0),
+            governance_status: None,
+            governance_evidence: None,
         };
 
         let result = check_compliance(&receipt);
@@ -981,6 +1124,8 @@ mod tests {
             verification_results: vec![],
             delivery_report_hash: None,
             exit_code: None,
+            governance_status: None,
+            governance_evidence: None,
         };
 
         let result = check_compliance(&receipt);
@@ -1017,6 +1162,8 @@ mod tests {
             }],
             delivery_report_hash: None,
             exit_code: Some(1),
+            governance_status: None,
+            governance_evidence: None,
         };
 
         let result = check_compliance(&receipt);
@@ -1053,6 +1200,8 @@ mod tests {
             }],
             delivery_report_hash: None,
             exit_code: None,
+            governance_status: None,
+            governance_evidence: None,
         };
 
         let result = check_compliance(&receipt);
@@ -1082,6 +1231,8 @@ mod tests {
             verification_results: vec![],
             delivery_report_hash: None,
             exit_code: Some(0),
+            governance_status: None,
+            governance_evidence: None,
         };
 
         let json = render_receipt_json(&receipt);
@@ -1211,7 +1362,7 @@ mod tests {
     fn emit_refuses_secret_in_receipt() {
         let dir = tempfile::tempdir().unwrap();
         let mut w = sample_write();
-        w.detail = "sk-".to_string() + "abcdefghijklmnopqrst";
+        w.detail = format!("Bearer {}", "a".repeat(24));
         let r = build_action_receipt(
             "agents-govern",
             None,

@@ -190,7 +190,8 @@ mod tests {
             ultracode is thinking intensity only — it does not change permission mode.\n\
             Task level does not change the permission mode; permission modes are plan-only and execute-and-verify; execute-and-verify runs directly.\n\
             plan-only must not produce write-type launch args and must strip parallelism.\n\
-            Runners must consume allowed_launch_args and effective_permission_mode.\n";
+            Runners must consume allowed_launch_args and effective_permission_mode.\n\
+            Runner never launches. An allowed LaunchPlan returns HOST_EXECUTION_REQUIRED.\n";
         let default_fmt = |rel: &str| format!("{rel}\n# Test\n\ncontent\n");
 
         for relative in manifest::FULL_MANIFEST.required_files {

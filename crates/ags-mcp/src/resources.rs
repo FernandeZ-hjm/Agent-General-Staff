@@ -13,14 +13,23 @@ pub fn list_resources() -> ResourceListResult {
     ResourceListResult {
         resources: vec![
             ResourceDef {
+                uri: crate::tools::CURRENT_HOST_CAPABILITIES_URI.to_string(),
+                name: "Current Host Capability Catalog".to_string(),
+                description: Some(
+                    "Preflight-bound, read-only HostCapabilitySnapshot. Hosts cache this thin catalog by snapshot_hash and submit exact skill identifiers."
+                        .to_string(),
+                ),
+                mimeType: Some("application/json".to_string()),
+            },
+            ResourceDef {
                 uri: "ags://global-kernel".to_string(),
                 name: "AGS Global Kernel".to_string(),
                 description: Some(
-                    "AGS global governance kernel summary — lifecycle, rules, and host boundaries. \
+                    "AGS global governance kernel summary — lifecycle, rules, and host boundary. \
                      Applicable to any project; does NOT assume the target is an AGS repo. \
-                     Includes: ambient preflight → one structured RequestDecision; \
-                     DirectResponse is exclusive, while SkillDemand and one MachineCli may \
-                     coexist; structured consumers handle execution and verification. \
+                     Includes: ambient preflight → current-host catalog → typed host proposal \
+                     → read-only resolution → optional explicit apply. DirectResponse is \
+                     exclusive, while one exact SkillTarget and one MachineCliTarget may coexist. \
                      Critical: do NOT jump from raw user requests to Light/Medium/Heavy; \
                      \"方案 OK\" authorizes neither mutation nor task-card generation."
                         .to_string(),
@@ -55,7 +64,10 @@ pub fn list_resources() -> ResourceListResult {
             ResourceDef {
                 uri: "ags://protocol/task-routing".to_string(),
                 name: "Task Routing".to_string(),
-                description: Some("Light/Medium/Heavy task routing criteria and escalation rules.".to_string()),
+                description: Some(
+                    "Typed host proposal, exact target admission, phase/authority boundaries, and DecisionLease rules."
+                        .to_string(),
+                ),
                 mimeType: Some("text/markdown".to_string()),
             },
         ],

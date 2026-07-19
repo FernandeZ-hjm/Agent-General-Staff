@@ -8,6 +8,12 @@ benchmarks/
 /config/
 /memory/
 /.ags/
+/capability-snapshot/
+/skill-registry/
+/skill-usage/
+/decision-leases/
+/auth-state/
+/receipts/
 
 # Maintainer-private sync tool — not part of the public edition
 /scripts/sync-public.sh

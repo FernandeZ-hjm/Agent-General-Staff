@@ -1,15 +1,19 @@
-# Skills Registry (Public Edition)
-# Source-of-truth index for suite-managed skills and their upstream crawl seeds.
+# Skills Registry (Private Edition)
+# Source-of-truth index for skill routing, body ownership, and upstream crawl seeds.
 #
-# Local suite files remain canonical. Upstreams are read-only comparison sources:
-# crawl remote -> generate diff proposal -> human accepts or rejects.
+# Suite-owned files and declared external-manager bodies keep separate canonical
+# ownership. Upstreams remain read-only comparison sources: crawl remote ->
+# generate diff proposal -> human accepts or rejects.
+# `route_priority`, examples, and demand_routes remain 0.2.x compatibility
+# metadata only. The 0.3.0 resolver never consumes them as selection authority;
+# hosts choose exact SkillTargets from the thin SkillCard catalog.
 
 registry:
-  version: 1.1.0
+  version: 1.2.0
   description: >
-    Public skills registry for the Agent Governance Suite. This indexes the
-    suite skill surface and records which existing skills should watch
-    mattpocock/skills for future upstream changes.
+    Private skills registry for the Agent Governance Suite. This indexes the
+    required global skills and records which existing skills should watch
+    upstream skill repositories for future changes.
   update_policy: read_only_crawl_then_diff_proposal
   upstreams:
     mattpocock_skills:
@@ -28,9 +32,10 @@ registry:
       ref: main
       crawl: true
       notes: >
-        Crawl as an upstream comparison source only (obra/superpowers, MIT).
-        Do not run npx skills, auto-install, or overwrite local suite skills
-        from this repository.
+        Crawl as an upstream comparison source only. AGS bundles the reviewed
+        playbooks beneath one suite-owned Superpowers parent; upstream names
+        remain internal route-target entrypoints rather than standalone host
+        bodies.
     graphify:
       type: git
       url: https://github.com/safishamsi/graphify.git
@@ -51,8 +56,12 @@ skills:
     description: Claude Code delivery report template
     routing:
       route_state: routable
-      invoke_hint: "[skill: claude-delivery-report]"
+      intent_tags: [task-card-handoff]
+      scope_tags: ["*"]
       mutation_surface: read-only
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: claude-delivery-report]"
       route_priority: 60
     source:
       type: local
@@ -62,7 +71,7 @@ skills:
   - name: diagnosing-bugs
     profile: required
     local_path: global-skills/diagnosing-bugs
-    description: Disciplined diagnosis loop for hard bugs
+    description: Diagnosis loop for hard bugs and performance regressions
     routing:
       route_state: routable
       intent_tags: [debug, root-cause]
@@ -81,17 +90,17 @@ skills:
       type: upstream_git
       upstream: mattpocock_skills
       path: skills/engineering/diagnosing-bugs
-      relationship: local_enriched_from_upstream
+      relationship: upstream_aligned
       update_policy: crawl_then_diff_proposal
 
   - name: codebase-design
     profile: required
     local_path: global-skills/codebase-design
-    description: Architecture, boundary, and context pullback for deep-module design
+    description: Shared discipline and vocabulary for deep module design
     routing:
       route_state: routable
-      intent_tags: [architecture, testability]
-      scope_tags: ["*"]
+      intent_tags: [module-design]
+      scope_tags: ["模块接口", "模块设计", "接口设计", "可测试性", "module interface", "module design", "interface design", "testability"]
       mutation_surface: read-only
       requires_auth: false
       cost_class: free
@@ -99,54 +108,46 @@ skills:
       route_priority: 55
       capability_group: [engineering-process, architecture]
       upstream_group: "mattpocock/skills:codebase-design"
+      examples:
+        positive: ["设计一个模块接口并提高可测试性"]
+        negative: ["设计跨模块系统架构并明确架构边界", "模块接口是什么意思"]
     source:
       type: upstream_git
       upstream: mattpocock_skills
       path: skills/engineering/codebase-design
-      relationship: local_enriched_from_upstream
+      relationship: upstream_aligned
       update_policy: crawl_then_diff_proposal
 
-  - name: review
+  - name: domain-modeling
     profile: required
-    local_path: global-skills/review
-    description: Two-axis Standards and Spec review of changes since a fixed point
+    local_path: global-skills/domain-modeling
+    description: Build and sharpen a project's domain model
     routing:
       route_state: routable
-      intent_tags: [review]
-      scope_tags: ["*"]
-      mutation_surface: read-only
+      intent_tags: [domain-modeling]
+      scope_tags: ["领域建模", "领域模型", "领域术语", "通用语言", "domain modeling", "domain model", "domain terminology", "ubiquitous language"]
+      mutation_surface: local-write
       requires_auth: false
       cost_class: free
-      invoke_hint: "[skill: review]"
-      route_priority: 45
-      capability_group: [code-review, engineering-process]
-      upstream_group: "mattpocock/skills:review"
+      invoke_hint: "[skill: domain-modeling]"
+      route_priority: 55
+      capability_group: [engineering-process, architecture]
+      upstream_group: "mattpocock/skills:domain-modeling"
+      examples:
+        positive: ["梳理并统一订单领域模型和术语"]
+        negative: ["统一已批准的 JSON 字段", "解释领域模型是什么"]
     source:
       type: upstream_git
       upstream: mattpocock_skills
-      path: skills/engineering/review
-      relationship: public_registry_reference
+      path: skills/engineering/domain-modeling
+      relationship: upstream_aligned
       update_policy: crawl_then_diff_proposal
 
-  - name: finishing-a-development-branch
-    profile: required
-    local_path: global-skills/finishing-a-development-branch
-    description: Development branch finishing workflow
-    source:
-      type: local
-      relationship: suite_local
-      update_policy: local_canonical_no_upstream
-
-  - name: using-git-worktrees
-    profile: required
-    local_path: global-skills/using-git-worktrees
-    description: Git worktree isolation workflow
-    source:
-      type: local
-      relationship: suite_local
-      update_policy: local_canonical_no_upstream
-
   - name: webapp-testing
+    routing:
+      route_state: not-routable
+      capability_group: [testing]
+      upstream_group: "suite-local"
     profile: required
     local_path: global-skills/webapp-testing
     description: Browser testing for local web applications
@@ -161,23 +162,155 @@ skills:
     description: Requirements alignment interview grounded in project docs
     routing:
       route_state: routable
-      intent_tags: [brainstorm, design]
-      scope_tags: ["*"]
-      mutation_surface: read-only
+      mutation_surface: local-write
       requires_auth: false
       cost_class: free
       invoke_hint: "[skill: grill-with-docs]"
-      route_priority: 50
       capability_group: [engineering-process]
       upstream_group: "mattpocock/skills:grill-with-docs"
-      examples:
-        positive: ["帮我 brainstorm 一个方案"]
-        negative: ["帮我修复这个报错"]
     source:
       type: upstream_git
       upstream: mattpocock_skills
       path: skills/engineering/grill-with-docs
-      relationship: local_enriched_from_upstream
+      relationship: upstream_aligned
+      update_policy: crawl_then_diff_proposal
+
+  - name: grilling
+    profile: required
+    local_path: global-skills/grilling
+    description: Relentless interview loop for sharpening a plan or design
+    routing:
+      route_state: routable
+      intent_tags: [plan-grilling]
+      scope_tags: ["方案拷问", "拷问方案", "压力测试方案", "压力测试一下这个方案", "grill me", "grill-me", "stress-test this plan", "stress test this plan"]
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: grilling]"
+      route_priority: 45
+      capability_group: [engineering-process]
+      upstream_group: "mattpocock/skills:grilling"
+      examples:
+        positive: ["压力测试一下这个方案", "grill me on this plan"]
+        negative: ["按已批准方案开始实现"]
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/productivity/grilling
+      relationship: upstream_aligned
+      update_policy: crawl_then_diff_proposal
+
+  - name: grill-me
+    description: Stateless plan/design grilling for work that does not live in a repo
+    routing:
+      route_state: retired
+      capability_group: [engineering-process, mattpocock-flow]
+      upstream_group: "mattpocock/skills:grill-me"
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/productivity/grill-me
+      relationship: upstream_aligned
+      update_policy: crawl_then_diff_proposal
+
+  - name: to-prd
+    profile: required
+    local_path: global-skills/to-prd
+    description: Synthesize the current conversation into a project PRD
+    routing:
+      route_state: routable
+      intent_tags: [matt-superpowers]
+      scope_tags: ["prd", "product requirements", "需求文档", "产品需求"]
+      mutation_surface: external-write
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: to-prd]"
+      route_priority: 40
+      capability_group: [engineering-process, product-planning, mattpocock-flow]
+      upstream_group: "mattpocock/skills:to-prd"
+      examples:
+        positive: ["turn this conversation into a PRD"]
+        negative: ["查一下 React 文档"]
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/engineering/to-prd
+      relationship: upstream_aligned
+      update_policy: crawl_then_diff_proposal
+
+  - name: to-issues
+    profile: required
+    local_path: global-skills/to-issues
+    description: Break a PRD or plan into independently-grabbable issue slices
+    routing:
+      route_state: routable
+      intent_tags: [matt-superpowers]
+      scope_tags: ["issues", "issue slices", "tracer bullet", "拆成 issues", "拆成issues", "任务拆分"]
+      mutation_surface: external-write
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: to-issues]"
+      route_priority: 60
+      capability_group: [engineering-process, issue-planning, mattpocock-flow]
+      upstream_group: "mattpocock/skills:to-issues"
+      examples:
+        positive: ["break this PRD into issues"]
+        negative: ["帮我写个 commit"]
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/engineering/to-issues
+      relationship: upstream_aligned
+      update_policy: crawl_then_diff_proposal
+
+  - name: triage
+    profile: required
+    local_path: global-skills/triage
+    description: Triage issues and external PRs into agent-ready briefs
+    routing:
+      route_state: routable
+      intent_tags: [matt-superpowers]
+      scope_tags: ["triage issue", "ready-for-agent", "needs-triage", "工单分诊", "问题分诊"]
+      mutation_surface: external-write
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: triage]"
+      route_priority: 40
+      capability_group: [engineering-process, issue-triage, mattpocock-flow]
+      upstream_group: "mattpocock/skills:triage"
+      examples:
+        positive: ["triage issue #42 into ready-for-agent"]
+        negative: ["测试挂了，帮我看下"]
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/engineering/triage
+      relationship: upstream_aligned
+      update_policy: crawl_then_diff_proposal
+
+  - name: handoff
+    profile: required
+    local_path: global-skills/handoff
+    description: Compact the current conversation into a fresh-session handoff document
+    routing:
+      route_state: routable
+      intent_tags: [matt-superpowers]
+      scope_tags: ["handoff document", "handoff doc", "handoff note", "上下文交接", "交接文档", "交接说明"]
+      mutation_surface: local-write
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: handoff]"
+      route_priority: 40
+      capability_group: [engineering-process, context-handoff, mattpocock-flow]
+      upstream_group: "mattpocock/skills:handoff"
+      examples:
+        positive: ["write a handoff document for the next agent"]
+        negative: ["交给 Claude Code 执行"]
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/productivity/handoff
+      relationship: upstream_aligned
       update_policy: crawl_then_diff_proposal
 
   - name: improve-codebase-architecture
@@ -186,14 +319,21 @@ skills:
     description: Architecture improvement for tangled or hard-to-test code
     routing:
       route_state: routable
-      invoke_hint: "[skill: improve-codebase-architecture]"
+      intent_tags: [architecture-improvement]
+      scope_tags: ["重构", "技术债", "边界混乱", "难维护", "refactor", "tech debt", "technical debt", "simplify architecture"]
       mutation_surface: local-write
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: improve-codebase-architecture]"
       route_priority: 40
+      examples:
+        positive: ["治理这个模块的架构技术债"]
+        negative: ["设计跨模块系统架构并明确架构边界", "什么是 tech debt"]
     source:
       type: upstream_git
       upstream: mattpocock_skills
       path: skills/engineering/improve-codebase-architecture
-      relationship: local_enriched_from_upstream
+      relationship: upstream_aligned
       update_policy: crawl_then_diff_proposal
 
   - name: prototype
@@ -202,21 +342,103 @@ skills:
     description: Throwaway prototype workflow for uncertain designs
     routing:
       route_state: routable
-      intent_tags: [brainstorm]
-      scope_tags: ["*"]
-      mutation_surface: read-only
+      intent_tags: [prototype]
+      scope_tags: ["可丢弃原型", "原型验证", "做一个原型", "做个原型", "throwaway prototype", "build a prototype"]
+      mutation_surface: local-write
       requires_auth: false
       cost_class: free
       invoke_hint: "[skill: prototype]"
       route_priority: 60
+      examples:
+        positive: ["做一个可丢弃原型验证这个方向"]
+        negative: ["设计一个登录功能", "原型验证和单元测试有什么区别"]
     source:
       type: upstream_git
       upstream: mattpocock_skills
       path: skills/engineering/prototype
-      relationship: local_enriched_from_upstream
+      relationship: upstream_aligned
+      update_policy: crawl_then_diff_proposal
+
+  - name: resolving-merge-conflicts
+    profile: required
+    local_path: global-skills/resolving-merge-conflicts
+    description: Resolve an in-progress git merge or rebase conflict
+    routing:
+      route_state: routable
+      intent_tags: [matt-superpowers]
+      scope_tags: ["merge conflict", "merge conflicts", "rebase conflict", "合并冲突", "解决冲突"]
+      mutation_surface: local-write
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: resolving-merge-conflicts]"
+      route_priority: 35
+      capability_group: [engineering-process, git-workflow, mattpocock-flow]
+      upstream_group: "mattpocock/skills:resolving-merge-conflicts"
+      examples:
+        positive: ["resolve these merge conflicts"]
+        negative: ["ready to commit, please verify"]
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/engineering/resolving-merge-conflicts
+      relationship: upstream_aligned
+      update_policy: crawl_then_diff_proposal
+
+  - name: review
+    profile: required
+    local_path: global-skills/review
+    description: Two-axis Standards and Spec review of changes since a fixed point
+    routing:
+      route_state: routable
+      intent_tags: [matt-superpowers]
+      scope_tags: ["two-axis review", "review since", "standards and spec", "评审分支", "两轴审查"]
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: review]"
+      route_priority: 45
+      capability_group: [code-review, engineering-process, mattpocock-flow]
+      upstream_group: "mattpocock/skills:review"
+      examples:
+        positive: ["run a two-axis review since main"]
+        negative: ["please review my code"]
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/in-progress/review
+      relationship: upstream_aligned
+      update_policy: crawl_then_diff_proposal
+
+  - name: decision-mapping
+    profile: required
+    local_path: global-skills/decision-mapping
+    description: Map loose ideas into sequenced investigation tickets
+    routing:
+      route_state: routable
+      intent_tags: [matt-superpowers]
+      scope_tags: ["decision map", "decision mapping", "investigation tickets", "决策地图", "决策映射", "松散想法"]
+      mutation_surface: local-write
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: decision-mapping]"
+      route_priority: 50
+      capability_group: [engineering-process, product-planning, mattpocock-flow]
+      upstream_group: "mattpocock/skills:decision-mapping"
+      examples:
+        positive: ["make a decision map for this loose idea"]
+        negative: ["设计一个登录功能"]
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/in-progress/decision-mapping
+      relationship: upstream_aligned
       update_policy: crawl_then_diff_proposal
 
   - name: database-migration
+    routing:
+      route_state: not-routable
+      capability_group: [data-migration]
+      upstream_group: "suite-local"
     profile: required
     local_path: global-skills/database-migration
     description: Database migration execution and review
@@ -226,6 +448,10 @@ skills:
       update_policy: local_canonical_no_upstream
 
   - name: supply-chain-risk-auditor
+    routing:
+      route_state: not-routable
+      capability_group: [security-audit]
+      upstream_group: "suite-local"
     profile: required
     local_path: global-skills/supply-chain-risk-auditor
     description: Dependency and package supply-chain risk assessment
@@ -234,6 +460,62 @@ skills:
       relationship: suite_local
       update_policy: local_canonical_no_upstream
 
+  - name: writing-great-skills
+    routing:
+      route_state: retired
+      capability_group: [skill-authoring]
+      upstream_group: "mattpocock/skills:writing-great-skills"
+    description: Reference for writing and editing skills well
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/productivity/writing-great-skills
+      relationship: upstream_aligned
+      update_policy: crawl_then_diff_proposal
+
+  - name: graphify
+    routing:
+      route_state: not-routable
+      capability_group: [code-intelligence]
+      upstream_group: "safishamsi/graphify"
+    profile: required
+    local_path: global-skills/graphify
+    description: Project knowledge graph generation
+    trigger: graph_intent
+    source:
+      type: local_wrapper
+      upstream: graphify
+      relationship: wrapper_around_upstream_tool
+      update_policy: monitor_tool_release_and_wrapper_contract
+
+  - name: superpowers
+    profile: required
+    local_path: global-skills/superpowers
+    description: Explicit-gated parent for an AGS-selected or user-invoked bundled Superpowers playbook
+    routing:
+      route_state: routable
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: superpowers]"
+      capability_group: [engineering-process]
+      upstream_group: "obra/superpowers"
+    source:
+      type: upstream_git
+      upstream: superpowers
+      path: skills
+      relationship: bundled_parent
+      update_policy: crawl_then_diff_proposal
+
+  # ── host-system skill-authoring entry (adopted into the registry; NOT a suite
+  #    body) ──
+  # `skill-creator` is a Codex host-system (`.system`) skill discovered read-only
+  # on this machine. AGS never holds, copies, or relinks its body; there is no
+  # `local_path` and no machine path here (source.type: host-system). It is the
+  # deliberately adopted skill-authoring entry. The three-gate rule still
+  # applies: the runtime skill-tag gate independently confirms it is available for
+  # the active host before any task card may invoke it. A host without the
+  # host-system body fails closed; AGS never substitutes another skill.
   - name: skill-creator
     routing:
       route_state: routable
@@ -247,270 +529,663 @@ skills:
       capability_group: [skill-authoring]
       upstream_group: "host-system"
       examples:
-        positive: ["创建一个新技能", "create a new skill"]
+        positive: ["创建一个新技能", "创建一个新的 Hermes skill", "create a new skill"]
         negative: ["帮我修复这个报错"]
     source:
       type: host-system
       relationship: host_discovered
       update_policy: host_managed_no_upstream
 
-  - name: graphify
-    profile: required
-    local_path: global-skills/graphify
-    description: Project knowledge graph generation
-    trigger: graph_intent
+  - name: claude-mem
+    profile: optional
+    local_path: skill-packs/optional/claude-mem
+    description: AGS wrapper for Claude-Mem persistent session memory search
+    routing:
+      route_state: routable
+      intent_tags: [memory-search, previous-session, continuity]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: local
+      invoke_hint: "[skill: claude-mem]"
+      route_priority: 70
     source:
       type: local_wrapper
-      upstream: graphify
-      relationship: wrapper_around_upstream_tool
-      update_policy: monitor_tool_release_and_wrapper_contract
+      upstream: claude_mem
+      relationship: wrapper_around_claude_plugin
+      update_policy: monitor_plugin_release_and_wrapper_contract
 
-  - name: superpowers
-    profile: required
-    description: Single host-visible router for bundled Superpowers engineering playbooks
+  # ── lark / Feishu family (external CLI body, AGS metadata + thin indexes) ──
+  - name: lark-mail
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
     routing:
       route_state: routable
-      invoke_hint: "[skill: superpowers]"
-      capability_group: [engineering-process]
-      upstream_group: "obra/superpowers"
-    source:
-      type: host-system
-      upstream: superpowers
-      relationship: registry_adopted_host_body
-      update_policy: crawl_then_diff_proposal
-
-  - name: domain-modeling
-    profile: required
-    description: Build and sharpen a project's domain model
-    routing:
-      route_state: routable
-      invoke_hint: "[skill: domain-modeling]"
-      mutation_surface: local-write
-      route_priority: 55
-    source:
-      type: upstream_git
-      upstream: mattpocock_skills
-      path: skills/engineering/domain-modeling
-      relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
-
-  - name: grilling
-    profile: required
-    description: Pressure-test an existing plan or design
-    routing:
-      route_state: routable
-      invoke_hint: "[skill: grilling]"
-      mutation_surface: read-only
-      route_priority: 45
-    source:
-      type: upstream_git
-      upstream: mattpocock_skills
-      path: skills/productivity/grilling
-      relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
-
-  - name: to-prd
-    profile: required
-    description: Synthesize the current conversation into a project PRD
-    routing:
-      route_state: routable
-      invoke_hint: "[skill: to-prd]"
+      intent_tags: [mail-send]
+      scope_tags: ["邮件", "发邮件", "mail"]
       mutation_surface: external-write
-      route_priority: 40
-    source:
-      type: upstream_git
-      upstream: mattpocock_skills
-      path: skills/engineering/to-prd
-      relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
-
-  - name: to-issues
-    profile: required
-    description: Break a PRD or plan into independently-grabbable issue slices
-    routing:
-      route_state: routable
-      invoke_hint: "[skill: to-issues]"
-      mutation_surface: external-write
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-mail (Feishu — confirm before invoke)"
       route_priority: 60
-    source:
-      type: upstream_git
-      upstream: mattpocock_skills
-      path: skills/engineering/to-issues
-      relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
-
-  - name: triage
-    profile: required
-    description: Triage issues and external PRs into agent-ready briefs
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: ["把这个文档发邮件给张三"]
+        negative: []
+  - name: lark-calendar
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
     routing:
       route_state: routable
-      invoke_hint: "[skill: triage]"
+      intent_tags: [calendar-query]
+      scope_tags: ["日历", "日程", "calendar"]
       mutation_surface: external-write
-      route_priority: 40
-    source:
-      type: upstream_git
-      upstream: mattpocock_skills
-      path: skills/engineering/triage
-      relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
-
-  - name: decision-mapping
-    profile: required
-    description: Map loose ideas into sequenced investigation tickets
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-calendar (Feishu — confirm before invoke)"
+      route_priority: 60
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: ["帮我查一下飞书日历今天安排"]
+        negative: []
+  - name: lark-doc
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
     routing:
       route_state: routable
-      invoke_hint: "[skill: decision-mapping]"
-      mutation_surface: local-write
-      route_priority: 50
-    source:
-      type: upstream_git
-      upstream: mattpocock_skills
-      path: skills/in-progress/decision-mapping
-      relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
-
-  - name: resolving-merge-conflicts
-    profile: required
-    description: Resolve an in-progress git merge or rebase conflict
+      intent_tags: [lark-doc]
+      scope_tags: ["文档", "云文档", "doc"]
+      mutation_surface: external-write
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-doc (Feishu — confirm before invoke)"
+      route_priority: 60
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: []
+        negative: []
+  - name: lark-sheets
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
     routing:
       route_state: routable
-      invoke_hint: "[skill: resolving-merge-conflicts]"
-      mutation_surface: local-write
-      route_priority: 35
-    source:
-      type: upstream_git
-      upstream: mattpocock_skills
-      path: skills/engineering/resolving-merge-conflicts
-      relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
-
-  - name: handoff
-    profile: required
-    description: Compact the current conversation into a fresh-session handoff
+      intent_tags: [sheet-op]
+      scope_tags: ["表格", "多维表格", "sheet"]
+      mutation_surface: external-write
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-sheets (Feishu — confirm before invoke)"
+      route_priority: 60
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: []
+        negative: []
+  - name: lark-im
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
     routing:
       route_state: routable
-      invoke_hint: "[skill: handoff]"
-      mutation_surface: local-write
-      route_priority: 40
-    source:
-      type: upstream_git
-      upstream: mattpocock_skills
-      path: skills/productivity/handoff
-      relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
+      intent_tags: [messaging]
+      scope_tags: ["消息", "发消息", "im"]
+      mutation_surface: external-write
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-im (Feishu — confirm before invoke)"
+      route_priority: 60
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: []
+        negative: []
+  - name: lark-approval
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
+    routing:
+      route_state: routable
+      intent_tags: [approval]
+      scope_tags: ["审批", "approval"]
+      mutation_surface: external-write
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-approval (Feishu — confirm before invoke)"
+      route_priority: 60
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: []
+        negative: []
+  - name: lark-task
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
+    routing:
+      route_state: routable
+      intent_tags: [lark-collab]
+      scope_tags: ["任务", "task"]
+      mutation_surface: external-write
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-task (Feishu — confirm before invoke)"
+      route_priority: 60
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: []
+        negative: []
+  - name: lark-wiki
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
+    routing:
+      route_state: routable
+      intent_tags: [lark-collab]
+      scope_tags: ["知识库", "wiki"]
+      mutation_surface: external-write
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-wiki (Feishu — confirm before invoke)"
+      route_priority: 60
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: []
+        negative: []
+  - name: lark-minutes
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
+    routing:
+      route_state: routable
+      intent_tags: [lark-collab]
+      scope_tags: ["纪要", "妙记", "minutes"]
+      mutation_surface: external-write
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-minutes (Feishu — confirm before invoke)"
+      route_priority: 60
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: []
+        negative: []
+  - name: lark-vc
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
+    routing:
+      route_state: routable
+      intent_tags: [lark-collab]
+      scope_tags: ["视频会议", "vc"]
+      mutation_surface: external-write
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-vc (Feishu — confirm before invoke)"
+      route_priority: 60
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: []
+        negative: []
+  - name: lark-drive
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
+    routing:
+      route_state: routable
+      intent_tags: [lark-collab]
+      scope_tags: ["云盘", "文件", "drive"]
+      mutation_surface: external-write
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-drive (Feishu — confirm before invoke)"
+      route_priority: 60
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: []
+        negative: []
+  - name: lark-contact
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
+    routing:
+      route_state: routable
+      intent_tags: [lark-collab]
+      scope_tags: ["通讯录", "联系人", "contact"]
+      mutation_surface: external-write
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-contact (Feishu — confirm before invoke)"
+      route_priority: 60
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: []
+        negative: []
+  - name: lark-attendance
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
+    routing:
+      route_state: routable
+      intent_tags: [lark-collab]
+      scope_tags: ["考勤", "attendance"]
+      mutation_surface: external-write
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-attendance (Feishu — confirm before invoke)"
+      route_priority: 60
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: []
+        negative: []
+  - name: lark-okr
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
+    routing:
+      route_state: routable
+      intent_tags: [lark-collab]
+      scope_tags: ["okr", "目标"]
+      mutation_surface: external-write
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-okr (Feishu — confirm before invoke)"
+      route_priority: 60
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: []
+        negative: []
+  - name: lark-event
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
+    routing:
+      route_state: routable
+      intent_tags: [lark-collab]
+      scope_tags: ["日程", "event"]
+      mutation_surface: external-write
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-event (Feishu — confirm before invoke)"
+      route_priority: 60
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: []
+        negative: []
+  - name: lark-base
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
+    routing:
+      route_state: routable
+      intent_tags: [lark-collab]
+      scope_tags: ["多维表格", "base"]
+      mutation_surface: external-write
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-base (Feishu — confirm before invoke)"
+      route_priority: 60
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: []
+        negative: []
+  - name: lark-slides
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
+    routing:
+      route_state: routable
+      intent_tags: [lark-collab]
+      scope_tags: ["幻灯片", "slides"]
+      mutation_surface: external-write
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-slides (Feishu — confirm before invoke)"
+      route_priority: 60
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: []
+        negative: []
+  - name: lark-whiteboard
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
+    routing:
+      route_state: routable
+      intent_tags: [lark-collab]
+      scope_tags: ["白板", "whiteboard"]
+      mutation_surface: external-write
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-whiteboard (Feishu — confirm before invoke)"
+      route_priority: 60
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: []
+        negative: []
+  - name: lark-markdown
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
+    routing:
+      route_state: routable
+      intent_tags: [lark-collab]
+      scope_tags: ["markdown"]
+      mutation_surface: external-write
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-markdown (Feishu — confirm before invoke)"
+      route_priority: 60
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: []
+        negative: []
+  - name: lark-apps
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
+    routing:
+      route_state: routable
+      intent_tags: [lark-collab]
+      scope_tags: ["飞书应用", "apps"]
+      mutation_surface: external-write
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-apps (Feishu — confirm before invoke)"
+      route_priority: 60
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: []
+        negative: []
+  - name: lark-openapi-explorer
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
+    routing:
+      route_state: routable
+      intent_tags: [lark-collab]
+      scope_tags: ["openapi", "接口探索"]
+      mutation_surface: external-write
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-openapi-explorer (Feishu — confirm before invoke)"
+      route_priority: 60
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: []
+        negative: []
+  - name: lark-vc-agent
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
+    routing:
+      route_state: routable
+      intent_tags: [lark-collab]
+      scope_tags: ["会议助手", "vcagent"]
+      mutation_surface: external-write
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-vc-agent (Feishu — confirm before invoke)"
+      route_priority: 60
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: []
+        negative: []
+  - name: lark-workflow-meeting-summary
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
+    routing:
+      route_state: routable
+      intent_tags: [lark-collab]
+      scope_tags: ["会议总结", "会议纪要"]
+      mutation_surface: external-write
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-workflow-meeting-summary (Feishu — confirm before invoke)"
+      route_priority: 60
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: []
+        negative: []
+  - name: lark-workflow-standup-report
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
+    routing:
+      route_state: routable
+      intent_tags: [lark-collab]
+      scope_tags: ["站会", "日报"]
+      mutation_surface: external-write
+      requires_auth: true
+      auth_kind: feishu-account
+      cost_class: network
+      invoke_hint: "lark-workflow-standup-report (Feishu — confirm before invoke)"
+      route_priority: 60
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+      examples:
+        positive: []
+        negative: []
+  - name: lark-shared
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
+    routing:
+      route_state: not-routable
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
+  - name: lark-skill-maker
+    profile: optional
+    source: { type: external_cli_skill, manager: lark-cli }
+    routing:
+      route_state: not-routable
+      capability_group: [lark-collab]
+      upstream_group: "lark/feishu-skills"
 
-  # ags-capability retired from the front-stage command-skill set (2.7): the
-  # `ags capability ...` CLI and Cross-Agent sync engine remain, but the
-  # host-visible `ags-capability` command skill is no longer installed. The row
-  # is retained as a history-preserve resurrection guard; public edition ships
-  # no canonical skill body for it.
+  # ── AGS governance ops command skills (not-routable) ──
+  - name: ags-agents
+    profile: required
+    local_path: global-skills/ags-agents
+    routing:
+      route_state: not-routable
+      capability_group: [ags-governance-ops]
+      upstream_group: "suite-local"
+  # ags-capability retired from the front-stage command-skill set (0.2.7): the
+  # `ags capability ...` CLI and cross-Agent sync engine remain; the command
+  # skill is no longer suite-required. The registry row is KEPT with
+  # route_state: retired (the canonical global-skills/ags-capability body is
+  # still on disk) so the skill console refuses to re-adopt/sync it into any
+  # host — a resurrection guard. See governance/skill-adoption-log.yaml.
   - name: ags-capability
-    description: Retired Codex front-stage command skill for the capability CLI
     routing:
       route_state: retired
-      intent_tags: []
-    source:
-      type: local
-      relationship: retired_history_record
-      update_policy: none_retired
+      capability_group: [ags-governance-ops]
+      upstream_group: "suite-local"
+  - name: ags-doctor
+    profile: required
+    local_path: global-skills/ags-doctor
+    routing:
+      route_state: not-routable
+      capability_group: [ags-governance-ops]
+      upstream_group: "suite-local"
+  - name: ags-init
+    profile: required
+    local_path: global-skills/ags-init
+    routing:
+      route_state: not-routable
+      capability_group: [ags-governance-ops]
+      upstream_group: "suite-local"
+  - name: ags-setup
+    profile: required
+    local_path: global-skills/ags-setup
+    routing:
+      route_state: not-routable
+      capability_group: [ags-governance-ops]
+      upstream_group: "suite-local"
+  - name: ags-skill
+    profile: required
+    local_path: global-skills/ags-skill
+    routing:
+      route_state: not-routable
+      capability_group: [ags-governance-ops]
+      upstream_group: "suite-local"
+  - name: guizang-ppt-skill
+    profile: optional
+    local_path: skill-packs/optional/guizang-ppt-skill
+    routing:
+      route_state: not-routable
+      capability_group: [content-creation]
+      upstream_group: "guizang/ppt"
 
-# Metadata-only host skills. Public AGS never bundles these bodies; the Skill
-# Resolver activates a row only when the current machine snapshot also proves
-# that the named skill is healthy and visible to the active host.
-  - name: claude-mem
-    routing: { route_state: routable, invoke_hint: "[skill: claude-mem]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+  # ── personal packs (profile personal — never public-full) ──
+  - name: khazix-writer
+    profile: personal
+    local_path: skill-packs/personal/khazix-writer
+    routing:
+      route_state: not-routable
+      capability_group: [content-writing]
+      upstream_group: "personal"
   - name: obsidian-vault
-    routing: { route_state: routable, invoke_hint: "[skill: obsidian-vault]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-mail
-    routing: { route_state: routable, invoke_hint: "[skill: lark-mail]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-calendar
-    routing: { route_state: routable, invoke_hint: "[skill: lark-calendar]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-doc
-    routing: { route_state: routable, invoke_hint: "[skill: lark-doc]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-sheets
-    routing: { route_state: routable, invoke_hint: "[skill: lark-sheets]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-base
-    routing: { route_state: routable, invoke_hint: "[skill: lark-base]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-im
-    routing: { route_state: routable, invoke_hint: "[skill: lark-im]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-approval
-    routing: { route_state: routable, invoke_hint: "[skill: lark-approval]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-task
-    routing: { route_state: routable, invoke_hint: "[skill: lark-task]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-wiki
-    routing: { route_state: routable, invoke_hint: "[skill: lark-wiki]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-minutes
-    routing: { route_state: routable, invoke_hint: "[skill: lark-minutes]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-vc
-    routing: { route_state: routable, invoke_hint: "[skill: lark-vc]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-vc-agent
-    routing: { route_state: routable, invoke_hint: "[skill: lark-vc-agent]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-drive
-    routing: { route_state: routable, invoke_hint: "[skill: lark-drive]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-contact
-    routing: { route_state: routable, invoke_hint: "[skill: lark-contact]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-attendance
-    routing: { route_state: routable, invoke_hint: "[skill: lark-attendance]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-okr
-    routing: { route_state: routable, invoke_hint: "[skill: lark-okr]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-event
-    routing: { route_state: routable, invoke_hint: "[skill: lark-event]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-slides
-    routing: { route_state: routable, invoke_hint: "[skill: lark-slides]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-whiteboard
-    routing: { route_state: routable, invoke_hint: "[skill: lark-whiteboard]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-markdown
-    routing: { route_state: routable, invoke_hint: "[skill: lark-markdown]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-apps
-    routing: { route_state: routable, invoke_hint: "[skill: lark-apps]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-openapi-explorer
-    routing: { route_state: routable, invoke_hint: "[skill: lark-openapi-explorer]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-workflow-meeting-summary
-    routing: { route_state: routable, invoke_hint: "[skill: lark-workflow-meeting-summary]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
-  - name: lark-workflow-standup-report
-    routing: { route_state: routable, invoke_hint: "[skill: lark-workflow-standup-report]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+    profile: personal
+    local_path: skill-packs/personal/obsidian-vault
+    routing:
+      route_state: routable
+      intent_tags: [matt-superpowers]
+      scope_tags: ["obsidian vault", "obsidian", "黑曜石"]
+      mutation_surface: local-write
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: obsidian-vault]"
+      route_priority: 70
+      capability_group: [knowledge-management, mattpocock-flow]
+      upstream_group: "mattpocock/skills:obsidian-vault"
+      examples:
+        positive: ["search my Obsidian vault for project notes"]
+        negative: ["查一下 React 文档"]
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/personal/obsidian-vault
+      relationship: upstream_aligned
+      update_policy: crawl_then_diff_proposal
   - name: 产经破壁机-撰稿
-    routing: { route_state: routable, invoke_hint: "[skill: 产经破壁机-撰稿]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+    profile: personal
+    local_path: skill-packs/personal/产经破壁机-撰稿
+    routing:
+      route_state: routable
+      intent_tags: [content-writing, financial-writing, industrial-analysis]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: 产经破壁机-撰稿]"
+      route_priority: 35
+      capability_group: [content-writing]
+      upstream_group: "personal"
   - name: 产经破壁机-选题策划
-    routing: { route_state: routable, invoke_hint: "[skill: 产经破壁机-选题策划]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+    profile: personal
+    local_path: skill-packs/personal/产经破壁机-选题策划
+    routing:
+      route_state: routable
+      intent_tags: [topic-planning, financial-topics, industrial-analysis]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: 产经破壁机-选题策划]"
+      route_priority: 35
+      capability_group: [content-writing]
+      upstream_group: "personal"
   - name: 深度科技评论
-    routing: { route_state: routable, invoke_hint: "[skill: 深度科技评论]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+    profile: personal
+    local_path: skill-packs/personal/深度科技评论
+    routing:
+      route_state: routable
+      intent_tags: [technology-commentary, deep-analysis, content-writing]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: 深度科技评论]"
+      route_priority: 35
+      capability_group: [content-writing]
+      upstream_group: "personal"
   - name: 六爻问卦
-    routing: { route_state: routable, invoke_hint: "[skill: 六爻问卦]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+    profile: personal
+    local_path: skill-packs/personal/六爻问卦
+    routing:
+      route_state: routable
+      intent_tags: [divination, liuyao, iching]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: 六爻问卦]"
+      route_priority: 35
+      capability_group: [divination]
+      upstream_group: "personal"
   - name: 辐射塔罗牌
-    routing: { route_state: routable, invoke_hint: "[skill: 辐射塔罗牌]" }
-    source: { type: host-system, relationship: host_discovered, update_policy: host_managed_no_upstream }
+    profile: personal
+    local_path: skill-packs/personal/辐射塔罗牌
+    routing:
+      route_state: routable
+      intent_tags: [divination, tarot, fallout-tarot]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: 辐射塔罗牌]"
+      route_priority: 35
+      capability_group: [divination]
+      upstream_group: "personal"
 
+candidate_skills:
+  - name: git-guardrails-claude-code
+    profile: candidate
+    adoption_priority: high
+    adoption_mode: evaluate_only
+    rationale: Complements existing review gates with hard Git safety guardrails.
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/misc/git-guardrails-claude-code
+
+  - name: ubiquitous-language
+    profile: candidate
+    adoption_priority: low
+    adoption_mode: evaluate_only
+    rationale: Deprecated upstream; keep as concept reference only.
+    source:
+      type: upstream_git
+      upstream: mattpocock_skills
+      path: skills/deprecated/ubiquitous-language
+
+# 0.2.x compatibility metadata only. `demand_routes` contributes intent tags
+# and legacy deserialization coverage; it is NOT a 0.3.0 route authority. Hosts
+# select an exact SkillTarget from SkillCard metadata, and Resolver validates
+# skill_id + entrypoint + snapshot_hash with no fallback. Superpowers playbooks
+# remain internal entrypoints of one host-visible parent.
 demand_routes:
   - demand: { category: engineering, demand: debugging }
     skill_id: diagnosing-bugs
@@ -849,54 +1524,3 @@ route_targets:
       examples:
         positive: ["帮我写一个新技能", "create a new skill"]
         negative: ["帮我修复这个报错"]
-
-candidate_skills:
-  - name: git-guardrails-claude-code
-    profile: candidate
-    adoption_priority: high
-    adoption_mode: evaluate_only
-    rationale: Complements existing review gates with hard Git safety guardrails.
-    source:
-      type: upstream_git
-      upstream: mattpocock_skills
-      path: skills/misc/git-guardrails-claude-code
-
-  - name: to-prd
-    profile: candidate
-    adoption_priority: medium
-    adoption_mode: optional_task_card_module
-    rationale: Useful for PRD shaping, but should not replace the task-card contract.
-    source:
-      type: upstream_git
-      upstream: mattpocock_skills
-      path: skills/engineering/to-prd
-
-  - name: to-issues
-    profile: candidate
-    adoption_priority: medium
-    adoption_mode: optional_task_card_module
-    rationale: Useful for GitHub issue breakdown when a project is issue-first.
-    source:
-      type: upstream_git
-      upstream: mattpocock_skills
-      path: skills/engineering/to-issues
-
-  - name: triage
-    profile: candidate
-    adoption_priority: medium
-    adoption_mode: optional_task_card_module
-    rationale: Useful for backlog and issue triage, not required for local task cards.
-    source:
-      type: upstream_git
-      upstream: mattpocock_skills
-      path: skills/engineering/triage
-
-  - name: ubiquitous-language
-    profile: candidate
-    adoption_priority: low
-    adoption_mode: evaluate_only
-    rationale: Deprecated upstream; keep as concept reference only.
-    source:
-      type: upstream_git
-      upstream: mattpocock_skills
-      path: skills/deprecated/ubiquitous-language

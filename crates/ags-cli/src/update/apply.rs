@@ -1,5 +1,6 @@
 use crate::cli::UpdateLane;
 use crate::context::{guard_writable_target, private_install_target, source_root_or_exit};
+use crate::managed_projects;
 use crate::receipt_bridge::emit_ags_action_receipt;
 use crate::setup::run_private_apply;
 use crate::update::plan::cmd_update_plan;
@@ -83,7 +84,7 @@ fn update_advised_commands(lane: Option<UpdateLane>) -> Vec<receipt::ReceiptAdvi
             let command = match l {
                 UpdateLane::Agents => "ags agents govern",
                 UpdateLane::Skills => "ags skill sync --apply",
-                UpdateLane::Projects => "ags doctor --scope project (per managed project)",
+                UpdateLane::Projects => "ags update apply --lane projects --apply",
                 UpdateLane::Public => "review public boundary; AGS never publishes by default",
                 _ => "",
             };
@@ -111,13 +112,16 @@ pub(in crate::update) fn cmd_update_apply(
 
     let run_core = lane.map(|l| l == UpdateLane::Core).unwrap_or(true);
     let run_runtime = lane.map(|l| l == UpdateLane::Runtime).unwrap_or(true);
+    let run_projects = lane.map(|l| l == UpdateLane::Projects).unwrap_or(true);
     // Whether any locally-executable lane was actually selected. Advice-only
-    // lane selections (agents / projects / public / skills) execute nothing
+    // lane selections (agents / public / skills) execute nothing
     // locally and must NOT be reported as an applied update.
-    let executed_local = run_core || run_runtime;
+    let executed_local = run_core || run_runtime || run_projects;
 
     let mut verifications: Vec<receipt::VerificationResult> = Vec::new();
     let mut steps_json: Vec<serde_json::Value> = Vec::new();
+    let mut project_json: Vec<serde_json::Value> = Vec::new();
+    let mut writes: Vec<receipt::ReceiptWrite> = Vec::new();
     let mut all_ok = true;
     if run_core {
         for (label, ok, detail) in orchestrate_local_kernel_build(&source) {
@@ -145,8 +149,6 @@ pub(in crate::update) fn cmd_update_apply(
     if run_runtime && all_ok {
         // Rewrite AGS-owned runtime/thin-index via the non-exiting apply helper
         // so this command still reaches its own receipt / JSON / exit handling.
-        // `None` preserves the machine's recorded Capability Route enrollment
-        // (suite-only default if none) — update never silently changes it.
         let (rt_report, _t, _pt) = run_private_apply(target.clone(), force, false);
         let rt_ok = rt_report.exit_code() == 0;
         if !rt_ok {
@@ -160,6 +162,88 @@ pub(in crate::update) fn cmd_update_apply(
             exit_code: if rt_ok { 0 } else { 1 },
             output_hash: receipt::sha256_hex(b"runtime-reapplied"),
         });
+    }
+    if run_projects && all_ok {
+        let reg_path = managed_projects::registry_path(&rt_target);
+        match managed_projects::load(&reg_path) {
+            Ok(reg) => {
+                let (existing, stale) = managed_projects::partition_existing(&reg);
+                if !stale.is_empty() {
+                    all_ok = false;
+                    for project in stale {
+                        project_json.push(serde_json::json!({
+                            "target": project.path,
+                            "slug": project.slug,
+                            "status": "stale",
+                            "drift": true,
+                            "changed_files": [],
+                            "blocked_reasons": ["registered project directory is missing"],
+                        }));
+                    }
+                }
+                for project in existing {
+                    let report = crate::init::refresh_managed_project(
+                        Path::new(&project.path),
+                        &project.slug,
+                        &source,
+                        true,
+                    );
+                    let ok = report.status == "applied"
+                        || report.status == "clean"
+                        || report.status == "suite-authority";
+                    if !ok {
+                        all_ok = false;
+                    }
+                    for path in &report.changed_files {
+                        writes.push(receipt::ReceiptWrite {
+                            op: "refresh".to_string(),
+                            path: path.clone(),
+                            from: None,
+                            backup: None,
+                            detail: format!("managed project AGS projection: {}", report.slug),
+                        });
+                    }
+                    let detail = format!(
+                        "status={} changed={} unchanged={} blocked={}",
+                        report.status,
+                        report.changed_files.len(),
+                        report.unchanged_files.len(),
+                        report.blocked_reasons.len()
+                    );
+                    if format != "json" {
+                        println!(
+                            "  [{}] project {} — {}",
+                            if ok { "ok" } else { "FAIL" },
+                            report.target,
+                            detail
+                        );
+                    }
+                    verifications.push(receipt::VerificationResult {
+                        command: format!("ags update projects refresh {}", report.target),
+                        exit_code: if ok { 0 } else { 1 },
+                        output_hash: receipt::sha256_hex(detail.as_bytes()),
+                    });
+                    project_json.push(serde_json::json!({
+                        "target": report.target,
+                        "slug": report.slug,
+                        "status": report.status,
+                        "drift": report.drift,
+                        "changed_files": report.changed_files,
+                        "unchanged_files": report.unchanged_files,
+                        "blocked_reasons": report.blocked_reasons,
+                    }));
+                }
+            }
+            Err(e) => {
+                all_ok = false;
+                project_json.push(serde_json::json!({
+                    "status": "blocked",
+                    "drift": true,
+                    "changed_files": [],
+                    "blocked_reasons": [e],
+                }));
+            }
+        }
     }
 
     let advised = update_advised_commands(lane);
@@ -180,7 +264,7 @@ pub(in crate::update) fn cmd_update_apply(
             decision: decision.to_string(),
             reason,
         },
-        vec![],
+        writes,
         vec![],
         advised,
         verifications,
@@ -198,8 +282,9 @@ pub(in crate::update) fn cmd_update_apply(
                 "applied": applied_flag,
                 "executed_local": executed_local,
                 "steps": steps_json,
+                "projects": project_json,
                 "receipt_ref": receipt_path.as_ref().map(|p| p.display().to_string()),
-                "note": "core/runtime auto-execute locally; agents/projects/public/skills are advise-only.",
+                "note": "core/runtime/projects execute locally under --apply; agents/public/skills remain advise-only. Project refresh never commits or pushes.",
             }))
             .unwrap()
         );
@@ -235,7 +320,7 @@ mod update_apply_tests {
         let agents = update_advised_commands(Some(UpdateLane::Agents));
         assert_eq!(agents.len(), 1);
         assert!(agents[0].command.contains("ags agents govern"));
-        // No lane filter advises all four advice-only lanes.
-        assert_eq!(update_advised_commands(None).len(), 4);
+        // No lane filter advises all three advice-only lanes.
+        assert_eq!(update_advised_commands(None).len(), 3);
     }
 }

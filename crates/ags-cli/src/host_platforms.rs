@@ -201,7 +201,7 @@ pub(crate) fn render_cross_platform_init_text(plan: &CrossPlatformInitPlan) -> S
                 p.mcp_host_command
             ));
             lines.push(
-                "      AGS skill thin-index:    plan — guarded apply via `ags skill propose --action adopt --skill <name> --apply`"
+                "      AGS skill lifecycle:     plan — `ags skill adopt <skill-id>` writes only the machine-private overlay when confirmed with `--apply`"
                     .to_string(),
             );
             lines.push(

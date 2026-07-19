@@ -9,8 +9,9 @@
 //! After MCP `initialize`, the server tracks per-connection preflight state.
 //! All `tools/call` requests (except `ags_preflight` itself) and phase-gated
 //! `prompts/get` requests are blocked until `ags_preflight` completes.
-//! `tools/list`, `resources/list`, `resources/read`, and `prompts/list` are
-//! always allowed — they are discovery/read-only operations.
+//! `tools/list`, static protocol resources, and `prompts/list` are always
+//! allowed. The current-host capability resource is read-only but remains
+//! preflight-bound because it represents one specific host/target pair.
 
 use std::io::{BufRead, BufReader, Write};
 
@@ -33,9 +34,10 @@ struct PreflightState {
     preflight_completed: bool,
     preflight_agent: Option<String>,
     /// Resolved target path from the successful preflight RESULT (never raw call
-    /// arguments). Reused as the default `target` context for
-    /// `ags_route_request` when the caller does not pass one explicitly.
+    /// arguments). It is the mandatory target binding for route/apply; callers
+    /// cannot override it in either tool.
     preflight_target: Option<String>,
+    routing_session: tools::RoutingSession,
 }
 
 impl PreflightState {
@@ -44,6 +46,7 @@ impl PreflightState {
             preflight_completed: false,
             preflight_agent: None,
             preflight_target: None,
+            routing_session: tools::RoutingSession::default(),
         }
     }
 
@@ -54,6 +57,19 @@ impl PreflightState {
         self.preflight_completed = true;
         self.preflight_agent = agent;
         self.preflight_target = target;
+    }
+
+    fn binding(&self) -> Option<tools::PreflightBinding> {
+        if !self.preflight_completed {
+            return None;
+        }
+        Some(tools::PreflightBinding {
+            host: self.preflight_agent.clone()?,
+            target: self.preflight_target.as_deref()?.into(),
+            host_home: std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from(".")),
+        })
     }
 }
 
@@ -195,7 +211,7 @@ fn dispatch_request(
         "tools/list" => handle_tools_list(req),
         "tools/call" => handle_tools_call(req, preflight),
         "resources/list" => handle_resources_list(req),
-        "resources/read" => handle_resources_read(req),
+        "resources/read" => handle_resources_read(req, preflight),
         "prompts/list" => handle_prompts_list(req),
         "prompts/get" => handle_prompts_get(req, preflight),
         "ping" => JsonRpcResponse::success(req.id.clone(), serde_json::json!({})),
@@ -270,19 +286,20 @@ fn handle_tools_call(req: &JsonRpcRequest, preflight: &mut PreflightState) -> Js
         return JsonRpcResponse::error(req.id.clone(), -32000, PREFLIGHT_GATE_ERROR);
     }
 
-    // Inject preflight-derived defaults (active_host / target) for phase tools
-    // that consume them. Explicit tool arguments always win — only absent keys
-    // are filled. This runs only AFTER the initialization gate above, so an
-    // a retired pre-router phase tool is still blocked rather than routed
-    // host-agnostic.
-    let arguments = tools::inject_preflight_defaults(
-        tool_name,
-        arguments,
-        preflight.preflight_agent.as_deref(),
-        preflight.preflight_target.as_deref(),
-    );
+    // Every preflight attempt invalidates actions from the preceding binding,
+    // even when the new preflight ultimately reports a stop condition.
+    if tools::is_preflight_tool_name(tool_name) {
+        preflight.routing_session.invalidate();
+    }
 
-    match tools::call_tool(tool_name, &arguments) {
+    let binding = preflight.binding();
+
+    match tools::call_tool(
+        tool_name,
+        &arguments,
+        binding.as_ref(),
+        &mut preflight.routing_session,
+    ) {
         Ok(result) => {
             // Mark preflight as completed only when the preflight report itself
             // is clean. A successful JSON-RPC tool call may still report
@@ -317,8 +334,9 @@ fn handle_resources_list(req: &JsonRpcRequest) -> JsonRpcResponse {
     JsonRpcResponse::success(req.id.clone(), result)
 }
 
-/// `resources/read` — always allowed (read-only protocol documentation).
-fn handle_resources_read(req: &JsonRpcRequest) -> JsonRpcResponse {
+/// `resources/read` — static protocol documentation is always allowed; the
+/// current-host capability catalog requires the successful preflight binding.
+fn handle_resources_read(req: &JsonRpcRequest, preflight: &PreflightState) -> JsonRpcResponse {
     let params = match req.params.as_ref() {
         Some(p) => p,
         None => return JsonRpcResponse::invalid_params(req.id.clone(), "params required"),
@@ -330,6 +348,31 @@ fn handle_resources_read(req: &JsonRpcRequest) -> JsonRpcResponse {
             return JsonRpcResponse::invalid_params(req.id.clone(), "params.uri required");
         }
     };
+
+    if uri == tools::CURRENT_HOST_CAPABILITIES_URI {
+        let Some(binding) = preflight.binding() else {
+            return JsonRpcResponse::error(req.id.clone(), -32000, PREFLIGHT_GATE_ERROR);
+        };
+        return match tools::read_current_host_catalog(
+            &binding,
+            &skill_resolver::locate_runtime_home(),
+        ) {
+            Ok(snapshot) => {
+                let text = serde_json::to_string_pretty(&snapshot)
+                    .unwrap_or_else(|error| format!("{{\"error\":\"{error}\"}}"));
+                let result = crate::protocol::ResourceReadResult {
+                    contents: vec![crate::protocol::ResourceContent {
+                        uri: tools::CURRENT_HOST_CAPABILITIES_URI.to_string(),
+                        mimeType: Some("application/json".to_string()),
+                        text,
+                    }],
+                };
+                let value = serde_json::to_value(result).unwrap_or(serde_json::Value::Null);
+                JsonRpcResponse::success(req.id.clone(), value)
+            }
+            Err(error) => JsonRpcResponse::internal_error(req.id.clone(), &error),
+        };
+    }
 
     match resources::read_resource(uri) {
         Ok(result) => {
@@ -473,7 +516,7 @@ mod tests {
             })
             .collect();
 
-        assert_eq!(names.len(), 7, "AGS MCP should expose exactly 7 tools");
+        assert_eq!(names.len(), 8, "AGS MCP should expose exactly 8 tools");
         assert!(names.contains(&tools::TOOL_PREFLIGHT));
         assert!(
             names.iter().all(|name| !name.contains('.')),
@@ -699,7 +742,7 @@ mod tests {
         );
     }
 
-    // ── resources/read always allowed ───────────────────────────────────
+    // ── resources/read boundaries ───────────────────────────────────────
 
     #[test]
     fn resources_read_always_allowed() {
@@ -707,8 +750,20 @@ mod tests {
             "resources/read",
             Some(json!({"uri": "ags://global-kernel"})),
         );
-        let resp = handle_resources_read(&req);
+        let preflight = PreflightState::new();
+        let resp = handle_resources_read(&req, &preflight);
         assert!(is_success(&resp), "resources/read must always succeed");
+    }
+
+    #[test]
+    fn current_host_catalog_requires_preflight() {
+        let req = make_request(
+            "resources/read",
+            Some(json!({"uri": tools::CURRENT_HOST_CAPABILITIES_URI})),
+        );
+        let resp = handle_resources_read(&req, &PreflightState::new());
+        assert!(has_error(&resp));
+        assert!(error_contains(&resp, "Initialization Gate"));
     }
 
     // ── initialize resets preflight state ───────────────────────────────
@@ -745,15 +800,11 @@ mod tests {
         );
     }
 
-    // ── route_request inherits preflight context (agent + target) ───────────
+    // ── route_request is bound to preflight context ─────────────────────
 
-    /// After a successful `ags_preflight`, an `ags_route_request` call that omits
-    /// `active_host` / `target` must inherit them from the recorded preflight
-    /// state — the route is computed for the preflight agent, not host-agnostic.
     #[test]
-    fn route_request_inherits_preflight_agent_and_target() {
+    fn route_request_uses_preflight_agent_and_target() {
         let mut preflight = PreflightState::new();
-        // 1. Complete preflight for codex against the suite root.
         let pf_params = json!({
             "name": "ags_preflight",
             "arguments": {"agent": "codex", "target": suite_root()}
@@ -764,22 +815,17 @@ mod tests {
         assert_eq!(preflight.preflight_agent.as_deref(), Some("codex"));
         assert!(preflight.preflight_target.is_some());
 
-        let inherited = tools::inject_preflight_defaults(
-            "ags_route_request",
-            json!({"request": "测试失败，帮我诊断"}),
-            preflight.preflight_agent.as_deref(),
-            preflight.preflight_target.as_deref(),
-        );
-        assert_eq!(inherited["active_host"], "codex");
-        assert_eq!(
-            inherited["target"],
-            preflight.preflight_target.as_deref().unwrap()
-        );
-
-        // 2. route_request WITHOUT active_host/target → inherits preflight ctx.
         let sc_params = json!({
             "name": "ags_route_request",
-            "arguments": {"request": "测试失败，帮我诊断"}
+            "arguments": {"proposal": {
+                "schema_version": "0.3.0-host-route-proposal",
+                "request_fingerprint": "sha256:req",
+                "phase": "direct_response",
+                "solution_state": "not_required",
+                "execution_authority": "none",
+                "scope_hash": "sha256:scope",
+                "targets": [{"kind": "direct_response"}]
+            }}
         });
         let sc_req = make_request("tools/call", Some(sc_params));
         let sc_resp = handle_tools_call(&sc_req, &mut preflight);
@@ -799,34 +845,34 @@ mod tests {
             .expect("route_request must return text content");
         let v: serde_json::Value = serde_json::from_str(text).expect("valid json");
 
-        assert_eq!(v["decision"]["targets"][0]["kind"], "skill");
-        assert_eq!(v["skill_results"].as_array().unwrap().len(), 1);
+        assert_eq!(v["host"], "codex");
+        assert_eq!(v["target"], preflight.preflight_target.as_deref().unwrap());
+        assert_eq!(v["resolved_targets"][0]["kind"], "direct_response");
     }
 
-    /// Explicit `active_host` in the call wins over the recorded preflight agent.
     #[test]
-    fn route_request_explicit_active_host_wins_over_preflight() {
+    fn route_request_rejects_explicit_binding_override() {
         let mut preflight = PreflightState::new();
         preflight.mark_completed(Some("codex".to_string()), Some(suite_root()));
 
         let sc_params = json!({
             "name": "ags_route_request",
-            "arguments": {"request": "解释代码", "active_host": "claude-code"}
+            "arguments": {
+                "active_host": "claude-code",
+                "proposal": {
+                    "schema_version": "0.3.0-host-route-proposal",
+                    "request_fingerprint": "sha256:req",
+                    "phase": "direct_response",
+                    "solution_state": "not_required",
+                    "execution_authority": "none",
+                    "scope_hash": "sha256:scope",
+                    "targets": [{"kind": "direct_response"}]
+                }
+            }
         });
         let sc_req = make_request("tools/call", Some(sc_params));
         let sc_resp = handle_tools_call(&sc_req, &mut preflight);
-        assert!(is_success(&sc_resp));
-
-        let text = sc_resp
-            .result
-            .as_ref()
-            .and_then(|r| r.get("content"))
-            .and_then(|c| c.as_array())
-            .and_then(|a| a.first())
-            .and_then(|c| c.get("text"))
-            .and_then(|t| t.as_str())
-            .expect("text content");
-        let v: serde_json::Value = serde_json::from_str(text).expect("valid json");
-        assert_eq!(v["decision"]["targets"][0]["kind"], "direct_response");
+        assert!(has_error(&sc_resp));
+        assert!(error_contains(&sc_resp, "preflight_binding_conflict"));
     }
 }

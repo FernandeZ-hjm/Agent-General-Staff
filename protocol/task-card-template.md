@@ -126,22 +126,22 @@ Verification gate:
 
 ## 使用说明
 
-- **Cursor / Codex**：先完成 ambient preflight，再由 MCP `ags_route_request` 返回唯一结构化 `RequestDecision`。`DirectResponse` 直接交付；已有批准 contract 且收到明确同会话修改授权时可走宿主直接执行；仅在关键决策仍未解决时进入 solution phase。明确任务卡/跨 Agent 交接指令且交接契约已经确认后，才调用 `ags task compile --task-card-requested --confirmed-handoff-contract` 或把已确认方案填入本模板。对话前台输出任务卡时必须以 `## 任务卡` 作为统一抬头，并保持固定槽位顺序。不得把原始用户自然语言请求直接当作任务卡输入，也不得为了本地直接执行伪造任务卡请求。
+- **Cursor / Codex**：先完成 ambient preflight，读取 `ags://capabilities/current-host`，再由宿主根据完整对话生成 typed `HostRouteProposal`；MCP `ags_route_request` 只做只读治理校验。`DirectResponse` 直接交付；已有批准 contract 且收到明确同会话修改授权时走宿主原生 direct-edit；仅在关键决策仍未解决时进入 solution phase。明确任务卡/跨 Agent 交接指令且交接契约已经确认后，才调用 `ags task compile --task-card-requested --confirmed-handoff-contract`。不得把原始用户文本直接交给 AGS 路由器，也不得为了本地直接执行伪造任务卡请求。
 - **Executor**：读取任务卡 + 引用的协议文件，执行并交付。
 - 固定规则（安全、分级、runtime adapter、Review gate、验证、交付格式）在协议文件中，任务卡不再重复。
 - 为了保持执行稳定性和缓存友好性，任务卡必须使用固定骨架：标题、字段顺序、基础措辞保持不变；只在固定槽位填写动态任务内容。
 - `项目画像` 是稳定上下文入口。项目存在 `config/agent-project-profile.yaml` 时只引用路径或提取必要短事实，不把整份画像粘进任务卡；项目无画像时填写 `无`。
 - `记忆胶囊` 是人工项目宪章入口。存在本地 capsule 时只引用路径，不粘贴长记忆；没有 capsule 时填写 `无`。AGS-governed host 正常由只读 `SessionStart` memory hook 自动注入 capsule 和同目录 `task-memory.md`；hook 不可用、未安装或外部 executor 无法接收注入时，Executor 开始任务前必须按路径读取。若任务目标与 capsule 的 `## 项目设计目的` 冲突，停止并报告。
-- `任务存档` 是自动任务记忆入口。存在本地 `task-memory.md` 时填写该路径；没有任务记忆时填写 `无`。使用 runner 执行后，最终交付报告会先沉淀到本机 `task-memory.md` / `task-archive/`，再打印到前台；完整证据保存在 `$HOME/.agents/memory/projects/<project-slug>/task-archive/`。
+- `任务存档` 是任务记忆入口。存在本地 `task-memory.md` 时填写该路径；没有任务记忆时填写 `无`。`ags run` 只准备 LaunchPlan，不会自动执行任务、写入任务记忆或归档交付；真实 Executor/宿主完成后按项目记忆协议写入。
 - `目标文件夹路径` 是本次任务的实际工作目录或目标仓库根目录，必须填写绝对路径；远程控制、挂载目录、跨仓库或启动目录与目标目录不一致时，以实际会被读写的目标文件夹为准。
-- 默认不生成 `.md` 文件产物；只有用户明确要求落盘或需要 runner 直接消费文件时，才创建任务卡文件。
-- 技能标记是可选的末尾元数据，不属于任务级别默认项。仅当 `RequestDecision` 的 `SkillDemand` 经 Skill Resolver 精确命中，或已确认 handoff contract 精确命中某项可路由技能时，才在 `交付` 段之后追加 0..n 行 `[skill: <canonical-name>]`；没有精确命中就完全省略。不得默认追加 `[skill: superpowers]` 或按 Light / Medium / Heavy 批量附加技能。
-- Verification gate 是协议要求，不默认依赖任何技能。仅当 `RequestDecision` / Skill Resolver 或已确认 contract 精确选择 Superpowers playbook 时，才在 `实施要求` 中写明加载 `superpowers` 父技能和对应 internal entrypoint，并在末尾追加一次父标签；否则不得写入该要求或标签。
+- 默认不生成 `.md` 文件产物；只有用户明确要求落盘或需要 `ags run` 从路径读取任务卡时，才创建任务卡文件。
+- 技能标记是可选的末尾元数据，不属于任务级别默认项。仅当 typed proposal 或已确认 handoff contract 给出精确 `skill_id`，并且 Skill Resolver 以相同 `entrypoint + snapshot_hash` 准入时，才在 `交付` 段之后追加 0..n 行 `[skill: <canonical-name>]`；没有精确命中就完全省略。不得从 `SkillDemand`、关键词或任务级别推导标签。
+- Verification gate 是协议要求，不默认依赖任何技能。只有精确 SkillTarget / 已确认 contract 选择 Superpowers 父技能与 internal entrypoint 时，才写入对应要求和一次父标签。
 - 任务卡只有唯一形态：本文件 `protocol/task-card-template.md` 定义的固定骨架。跨仓库、外部 agent、或 Executor 无法访问本项目文件时，仍使用同一骨架，并把所需固定规则内联进去使其自包含；不得切换到第二套模板或按任务级别选用不同模板文件。任务级别 Light / Medium / Heavy 只是 `任务级别：` 字段值，不决定模板文件。
 - “完整”“压缩”“compact”“full”“可粘贴”“可复制给 Claude Code”“直接发给 CC 执行”只是对话展示偏好，不是任务卡形态。compact 任务卡格式已删除：任务卡只有唯一经典固定骨架，这些词不得改变任务卡骨架、标题或槽位顺序，也不得据此生成 compact 骨架或“默认 compact 可执行卡”。
 - 对话交付任务卡时，默认使用普通 Markdown 输出整张任务卡，不要用一个外层 fenced code block 包住整卡；这样对话框可以自然换行。只有用户明确要求单个 literal copy block、文件 artifact，或任务卡内含嵌套 fenced 代码块且必须作为一个代码块复制时，才允许外层使用 `~~~~markdown` / `~~~~`。
 - 对话最终输出只要包含 `Executor: Claude Code`，就必须输出一个可执行任务卡块，且任务卡内容第一条非空行必须是 `## 任务卡`；若生成结果不是这个形态，必须丢弃并重写，不得把自由 runbook、`text` fence 或 prose-first prompt 交给用户粘贴。
-- 需求入口由 MCP `ags_route_request` 的结构化 `RequestDecision` 统一表达；交付前用 `ags gate output <candidate>` 自检 canonical 形态。输出门禁只约束 handoff 产物，不限制已授权的 `direct-edit`。
+- 需求入口由宿主 typed `HostRouteProposal` 与 MCP `RouteResolution` 统一表达；交付前用 `ags gate output <candidate>` 自检 canonical 形态。输出门禁只约束 handoff 产物，不限制已授权的同会话 direct-edit。
 - 本项目任务卡可读性格式必须稳定：`任务：` 只写一句话；如任务需要拆分条目，把条目放入 `目标：`。`目标：`、`非目标：`、`目标文件夹路径：`、`相关路径：`、`本次任务相关文件：`、`验证：`、`交付：` 只要包含多项，就必须把字段名单独成行，后续每项单独换行；不得写成 `目标：1. ... 2. ...`、`验证：- ... - ...` 这种 inline list。推荐格式：
   ```markdown
   目标：
@@ -169,10 +169,10 @@ Verification gate:
 - 任务级别按 `protocol/task-routing.md` 定义。
 - **Task-card handoff gate**：`ags task compile` 需要 `--task-card-requested` 与 `--confirmed-handoff-contract` 两个结构化信号；缺少时分别以 `task_card_not_requested` 或 `handoff_contract_not_confirmed` 拒绝，输入重开 solution work 时以 `solution_formation_required` 拒绝。此规则不限制已授权的同会话 `direct-edit`。参见 `protocol/agent-task-protocol.md` 生命周期阶段 3.5。
 - Executor、Runtime adapter、Execution surface、Permission mode、Parallelism、Verification gate 按 `protocol/runtime-adapters.md` 定义；Review gate 的唯一规则表在 `protocol/agent-task-protocol.md`。
-- `Execution effort` 使用中性执行强度语义（`low` / `normal` / `high` / `exhaustive`），默认 `normal`；它只表示思考强度，绝不映射为权限、并行或 review 豁免。宿主私有深度/工作流触发词（如 `ultracode`）不得写进任务卡前台生成路径，只能由 claude-code adapter / runner 按 resolved policy 在执行层翻译；`ultracode` 仅作为旧值解析兼容保留，task compiler 不再生成。
+- `Execution effort` 使用中性执行强度语义（`low` / `normal` / `high` / `exhaustive`），默认 `normal`；它只表示思考强度，绝不映射为权限、并行或 review 豁免。宿主私有深度/工作流触发词（如 `ultracode`）不得写进任务卡前台生成路径；`ags run` 只在 resolved LaunchPlan 中保留该提示供宿主消费。`ultracode` 仅作为旧值解析兼容保留，task compiler 不再生成。
 - `Workflow authority` 声明是否允许 subagent / workflow（`none` / `within-card` / `plan-only` / `allowed`），默认 `none`；它只声明授权，不直接点火。
-- `子任务编排` 是可选槽位，`mode` 取 `none` / `optional` / `required`，默认 `none`（省略即 `none`）。`mode != none` 时 validator 要求 `Workflow authority` 非 none 且 `Parallelism` 为 subagent/worktree/multi-session/agent-team；该槽位只声明可拆分结构、子任务边界与回收要求，真正 subagent / workflow 点火仍由 claude-code adapter / runner 按 resolved policy 翻译，不由任务卡正文触发。子任务只能装可并行工作（只读审计 / 实现 / 文档同步 / 测试补充）；最终验证、交付报告、commit、push、release gate 必须由主 executor 独做，子任务结果合并为单一 diff 后由主 executor 统一验证与交付（见 `protocol/runtime-adapters.md` §Subtask Scope Rules）。
-- `scripts/run-task-card.sh` 是薄包装层，把校验 / gate / policy / adapter / 收据规划全部委托给 Rust runner（`ags run`）。它实际只支持 `--check-only`（gate 预览后停止）、`--dry-run`（输出完整 launch plan 不执行）、`--current-task-approval`（向 resolver 传递 audit/hint 信号，不解锁执行权限，级别不因此降级或提权）、`--approve-writes`（audit/hint 信号；仍可作为 M9 generic-adapter 能力上限 override）、`--format text|json`（透传给 `ags run`）。包装层本身不实现执行层自动选择，不会提高任务卡声明的权限。
+- `子任务编排` 是可选槽位，`mode` 取 `none` / `optional` / `required`，默认 `none`（省略即 `none`）。`mode != none` 时 validator 要求 `Workflow authority` 非 none 且 `Parallelism` 为 subagent/worktree/multi-session/agent-team；该槽位只声明可拆分结构、子任务边界与回收要求，`ags run` 只把 resolved policy 放入 LaunchPlan，真正 subagent / workflow 点火由宿主决定，不由任务卡正文或 Runner 触发。子任务只能装可并行工作（只读审计 / 实现 / 文档同步 / 测试补充）；最终验证、交付报告、commit、push、release gate 必须由主 executor 独做，子任务结果合并为单一 diff 后由主 executor 统一验证与交付（见 `protocol/runtime-adapters.md` §Subtask Scope Rules）。
+- `scripts/run-task-card.sh` 是薄包装层，把校验 / policy / gate / LaunchPlan 准备委托给 Rust runner（`ags run`）。允许时返回 `HOST_EXECUTION_REQUIRED`；它不启动宿主、不执行任务、不验证结果、不写最终收据。`--check-only` 只做 gate 预览，`--dry-run` 输出相同结构化计划。
 - 自动执行层选择 / Learning Runner / 临时 Task IR / compiled brief 注入 / `learning-gaps/` 沉淀均为协议目标，planned（尚未实现）：当前 `scripts/run-task-card.sh` 与 `ags run` 不编译 Task IR，不注入 compiled brief，不沉淀 learning-gaps。任务卡不得假设这些行为已生效。
 - 涉及本地 Agent 技能同步、proposal、adoption log 或 ignore list 时，必须引用项目内对应治理文档；如无项目治理文档，使用前台技能治理控制台 `ags skill`（`inventory` / `dedupe` / `update` / `sync` / `verify`）。套件级 `scripts/govern-new-skills.sh` 为 Phase 2 规划项，尚未实现，不得作为可运行步骤引用。最终输出仍使用本文件的固定任务卡骨架。
 

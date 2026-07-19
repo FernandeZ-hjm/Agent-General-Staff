@@ -10,7 +10,8 @@
 //! `ags_preflight` is the **mandatory first call** for all AGS scenarios.
 //! Hosts MUST complete preflight (MCP or CLI fallback `ags session preflight
 //! --for <agent>`) before invoking any other AGS tool. `ags_route_request`
-//! is the unique requirement router, NOT a preflight substitute.
+//! consumes a typed host proposal as a strictly read-only governance resolver,
+//! NOT as a preflight substitute or natural-language router.
 //!
 //! # Identity
 //!

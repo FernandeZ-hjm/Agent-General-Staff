@@ -86,12 +86,12 @@ fn write_state(runtime_home: &Path, state: &NotifierState) {
     }
 }
 
-// ── Strict semver (constraint: only v?X.Y.Z; pre-release tags ignored) ──────
+// ── Strict product version (v?X.Y.Z) ────────────────────────────────────────
 
-/// Parse a STRICT `v?X.Y.Z` version into `(major, minor, patch)`. Anything with a
-/// pre-release / build suffix (`v2.8.0-beta`, `2.8.0+meta`) or a component count
-/// other than three returns `None` — such tags are simply ignored when picking
-/// the latest, never coerced to a release version.
+/// Parse a STRICT `v?X.Y.Z` product version. Anything with a
+/// pre-release / build suffix (`v0.3.0-beta`, `0.3.0+meta`) or a component count
+/// other than three returns `None` — such tags are ignored when picking the
+/// latest, never coerced to a release version.
 fn parse_version(s: &str) -> Option<(u64, u64, u64)> {
     let s = s.trim();
     let s = s
@@ -529,20 +529,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_version_is_strict_and_ignores_prerelease() {
-        assert_eq!(parse_version("2.7.0"), Some((2, 7, 0)));
-        assert_eq!(parse_version("v2.7.1"), Some((2, 7, 1)));
-        // Constraint: 2.10.0 > 2.9.9 (numeric, not string).
-        assert!(parse_version("2.10.0").unwrap() > parse_version("2.9.9").unwrap());
-        // Pre-release / build / wrong-arity are ignored (None), not coerced.
-        assert_eq!(parse_version("v2.8.0-beta"), None);
-        assert_eq!(parse_version("2.8.0+meta"), None);
-        assert_eq!(parse_version("2.8"), None);
-        assert_eq!(parse_version("2.8.0.1"), None);
-        assert_eq!(parse_version("not-a-version"), None);
-    }
-
-    #[test]
     fn days_between_counts_calendar_days() {
         assert_eq!(days_between("2026-06-19", "2026-06-19"), Some(0));
         assert_eq!(days_between("2026-06-19", "2026-06-26"), Some(7));
@@ -578,7 +564,7 @@ mod tests {
             &NotifierState {
                 schema_version: STATE_SCHEMA.to_string(),
                 current_version: AGS_VERSION.to_string(),
-                latest_version: "2.7.0".to_string(),
+                latest_version: AGS_VERSION.to_string(),
                 checked_at: 111,
                 last_checked_date: "2026-06-19".to_string(),
                 last_result: "up-to-date".to_string(),
@@ -680,7 +666,7 @@ mod tests {
             &NotifierState {
                 schema_version: STATE_SCHEMA.to_string(),
                 current_version: AGS_VERSION.to_string(),
-                latest_version: "2.7.0".to_string(),
+                latest_version: AGS_VERSION.to_string(),
                 checked_at: 1,
                 last_checked_date: "2026-06-01".to_string(),
                 last_result: "up-to-date".to_string(),

@@ -78,16 +78,17 @@ Task cards may also include a fixed `任务存档` slot:
 - 无 / `$HOME/.agents/memory/projects/<project-slug>/task-memory.md`
 ```
 
-Before any memory exists this can be `无`. Runner execution refreshes
-`task-memory.md` by default, making it the single automatically refreshed task
+Before any memory exists this can be `无`. `ags run` does not execute or refresh
+memory. The host's completed-task capture hook—or an explicit
+`context-memory.sh capture`—refreshes `task-memory.md`, making it the single task
 continuity entrypoint. Full evidence remains under `task-archive/<run-id>/`.
 
 ## Capture Policy
 
 Memory capture is append-only and conservative:
 
-- Archive each `ags run` receipt under `task-archive/` when memory capture is
-  enabled.
+- Archive each host-generated completed-task receipt under `task-archive/` when
+  memory capture is enabled.
 - Refresh `task-memory.md` from recent local task archives, including a compact
   excerpt of the latest delivery report.
 - Prefer references to receipt files over copying logs.
@@ -100,7 +101,7 @@ Memory capture is append-only and conservative:
 - Extract reusable workflow ideas as proposals first; humans decide whether to
   promote them into rules, profiles, or skills.
 
-## Runner Integration
+## Host and Memory Integration
 
 Task-start context read:
 
@@ -146,10 +147,11 @@ Command responsibilities:
 
 Boundary notes:
 
-- The receipt-first runner (`ags run`) writes the task receipt and delivery
-  report. `scripts/run-task-card.sh` is a thin wrapper that delegates planning
-  to `ags run` (`--check-only`, `--dry-run`, `--approve-writes`,
-  `--format text|json`); it does not itself copy a receipt package.
+- The runner (`ags run`) prepares a LaunchPlan and returns
+  `HOST_EXECUTION_REQUIRED`; it does not execute, verify, write the task receipt,
+  or generate a delivery report. `scripts/run-task-card.sh` is a thin wrapper
+  over that read-only preparation surface. The host owns post-execution memory,
+  receipt, and delivery-report writes.
 - A transient compile/learning pipeline and `learning-gaps/` proposal capture
   remain planned (not yet implemented). When added, any such proposals must not
   be promoted into rules without human review.

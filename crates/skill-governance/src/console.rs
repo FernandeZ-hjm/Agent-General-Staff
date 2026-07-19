@@ -8,8 +8,9 @@
 //!   skill directories, governed MCP servers, the AGS suite interface, and
 //!   CLI-backed capabilities (e.g. `lark-cli`).
 //! - Host-visibility checks ([`verify_host`], [`build_inventory`]) that probe
-//!   whether a capability is actually visible to a host (Claude Code skill path
-//!   + `claude mcp list`). Codex/Cursor are reserved with stable fields.
+//!   whether a capability is actually visible to a host (Claude Code, Codex,
+//!   and CodeBuddy-Code skill paths plus supported MCP probes). Cursor remains
+//!   reserved with stable fields.
 //! - A confirmation-protected proposal/apply path ([`propose_action`]) for
 //!   adopt / update / remove / uninstall / repair / verify. Without an explicit
 //!   `apply` confirmation nothing is written and no external installer runs.
@@ -24,10 +25,10 @@
 //! add/remove` itself.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-pub const CONSOLE_SCHEMA_VERSION: &str = "0.2.8-skill-console";
+pub const CONSOLE_SCHEMA_VERSION: &str = "0.3.0-skill-console";
 
 // ── Command runner seam ─────────────────────────────────────────────────────
 
@@ -818,8 +819,7 @@ fn parse_codex_mcp_list(stdout: &str) -> Vec<(String, bool)> {
 
 // ── Host visibility computation ───────────────────────────────────────────────
 
-const SUPPORTED_HOSTS: &[&str] = &["claude-code", "codex", "codebuddy-code"];
-const DEFERRED_HOSTS: &[&str] = &["cursor"];
+const SUPPORTED_HOSTS: &[&str] = &["claude-code", "codex", "codebuddy-code", "cursor"];
 
 /// The `~/<subdir>` skills directory a host loads skill entries from, if any.
 /// `Some` ⇒ the host is supported and gets a real probe.
@@ -828,6 +828,7 @@ fn host_skills_subdir(host: &str) -> Option<&'static str> {
         "claude-code" => Some(".claude/skills"),
         "codex" => Some(".codex/skills"),
         "codebuddy-code" => Some(".codebuddy/skills"),
+        "cursor" => Some(".cursor/skills"),
         _ => None,
     }
 }
@@ -838,20 +839,80 @@ fn host_skills_subdir(host: &str) -> Option<&'static str> {
 /// entries.
 fn shared_skill_dirs_for_host(ctx: &ConsoleContext, host: &str) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    if host == "codex" {
+    if matches!(host, "codex" | "cursor") {
         dirs.push(ctx.home.join(".agents/skills"));
+    }
+    if host == "codex" {
         dirs.extend(codex_plugin_skill_dirs(&ctx.home));
     }
     dirs
 }
 
 fn codex_plugin_skill_dirs(home: &Path) -> Vec<PathBuf> {
+    let enabled = enabled_codex_plugin_names(home);
+    if enabled.is_empty() {
+        return Vec::new();
+    }
     let cache = home.join(".codex/plugins/cache");
     let mut dirs = Vec::new();
-    collect_plugin_skill_dirs(&cache, 0, &mut dirs);
+    let Ok(marketplaces) = std::fs::read_dir(&cache) else {
+        return dirs;
+    };
+    for marketplace in marketplaces.flatten().map(|entry| entry.path()) {
+        let Ok(plugins) = std::fs::read_dir(marketplace) else {
+            continue;
+        };
+        for plugin in plugins.flatten().map(|entry| entry.path()) {
+            let Some(name) = plugin.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if enabled.contains(name) {
+                collect_plugin_skill_dirs(&plugin, 0, &mut dirs);
+            }
+        }
+    }
     dirs.sort();
     dirs.dedup();
     dirs
+}
+
+/// Cache presence is not activation evidence. Codex records enabled plugins in
+/// `~/.codex/config.toml`; only those plugin names may contribute runtime skill
+/// visibility. A missing or malformed config therefore yields no active plugin
+/// skill directories instead of making every cached version host-visible.
+fn enabled_codex_plugin_names(home: &Path) -> HashSet<String> {
+    let Ok(config) = std::fs::read_to_string(home.join(".codex/config.toml")) else {
+        return HashSet::new();
+    };
+    let mut enabled = HashSet::new();
+    let mut current_plugin: Option<String> = None;
+    for line in config.lines().map(str::trim) {
+        if let Some(id) = line
+            .strip_prefix("[plugins.\"")
+            .and_then(|line| line.strip_suffix("\"]"))
+        {
+            current_plugin = id
+                .split_once('@')
+                .map(|(name, _)| name)
+                .or(Some(id))
+                .map(str::to_string);
+            continue;
+        }
+        if line.starts_with('[') {
+            current_plugin = None;
+            continue;
+        }
+        let Some(name) = current_plugin.as_ref() else {
+            continue;
+        };
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim() == "enabled" && value.trim() == "true" {
+            enabled.insert(name.clone());
+        }
+    }
+    enabled
 }
 
 fn collect_plugin_skill_dirs(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
@@ -900,16 +961,10 @@ fn host_visibility(
         };
     }
 
-    // Reserved hosts: stable fields, deferred status, no probing.
-    let deferred = DEFERRED_HOSTS.contains(&host);
     HostVisibility {
         host: host.to_string(),
         supported: false,
-        status: if deferred {
-            HostVisibilityStatus::Deferred
-        } else {
-            HostVisibilityStatus::Unsupported
-        },
+        status: HostVisibilityStatus::Unsupported,
         evidence: vec![format!(
             "Host '{host}' visibility check is not implemented in this version (model fields are stable)."
         )],
@@ -1019,6 +1074,9 @@ fn host_skill_body_dirs(ctx: &ConsoleContext, host: &str, name: &str) -> Vec<Pat
         .collect()
 }
 
+/// Return nested skill entrypoints underneath a parent's playbook resource
+/// directory. A host that recursively discovers `SKILL.md` files will expose
+/// every one of these as an independent skill, bypassing the parent router.
 fn nested_playbook_skill_files(body: &Path) -> Vec<PathBuf> {
     let root = body.join("playbooks");
     let mut pending = vec![root];
@@ -1332,7 +1390,56 @@ fn thin_index_target_match(real_entry: &Path, real_canonical: &Path) -> Option<&
     if real_entry == real_canonical {
         return Some("AGS canonical body");
     }
+    if same_private_stable_suite_path(real_entry, real_canonical) {
+        return Some("AGS stable/private runtime twin");
+    }
     None
+}
+
+fn same_private_stable_suite_path(real_entry: &Path, real_canonical: &Path) -> bool {
+    let Some((entry_suite, entry_rel)) = split_suite_runtime_path(real_entry) else {
+        return false;
+    };
+    let Some((canonical_suite, canonical_rel)) = split_suite_runtime_path(real_canonical) else {
+        return false;
+    };
+
+    entry_suite != canonical_suite && entry_rel == canonical_rel
+}
+
+fn split_suite_runtime_path(path: &Path) -> Option<(&'static str, PathBuf)> {
+    const SUITE_PREFIX: &str = "agent-governance-suite-";
+    const SOURCE_SUFFIX: &str = "private";
+    const RUNTIME_SUFFIX: &str = "stable";
+
+    let mut suite = None;
+    let mut rel = PathBuf::new();
+
+    for component in path.components() {
+        if let Some(found) = suite {
+            rel.push(component.as_os_str());
+            suite = Some(found);
+            continue;
+        }
+        let Some(name) = component.as_os_str().to_str() else {
+            continue;
+        };
+        if let Some(suffix) = name.strip_prefix(SUITE_PREFIX) {
+            if suffix == SOURCE_SUFFIX {
+                suite = Some("source");
+            } else if suffix == RUNTIME_SUFFIX {
+                suite = Some("runtime");
+            }
+        }
+    }
+
+    suite.and_then(|found| {
+        if rel.components().next().is_some() {
+            Some((found, rel))
+        } else {
+            None
+        }
+    })
 }
 
 /// MCP-registration visibility for a host via its cached `<host> mcp list`.
@@ -1437,7 +1544,7 @@ pub enum ConsoleAction {
 }
 
 impl ConsoleAction {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "adopt" => Some(Self::Adopt),
             "update" => Some(Self::Update),
@@ -1521,20 +1628,11 @@ fn find_git_root(start: &Path) -> Option<PathBuf> {
 /// where it actually lives. Read-only.
 fn host_dir_entry_visibility(home: &Path, host: &str, name: &str) -> HostVisibility {
     let Some(subdir) = host_skills_subdir(host) else {
-        let deferred = DEFERRED_HOSTS.contains(&host);
         return HostVisibility {
             host: host.to_string(),
             supported: false,
-            status: if deferred {
-                HostVisibilityStatus::Deferred
-            } else {
-                HostVisibilityStatus::Unsupported
-            },
-            evidence: vec![if deferred {
-                "host check reserved for a later phase".to_string()
-            } else {
-                "host has no skills directory".to_string()
-            }],
+            status: HostVisibilityStatus::Unsupported,
+            evidence: vec!["host has no skills directory".to_string()],
         };
     };
     let base = home.join(subdir);
@@ -1548,10 +1646,17 @@ fn host_dir_entry_visibility(home: &Path, host: &str, name: &str) -> HostVisibil
     // still win, but a present-but-invalid SKILL.md is never silently passed as
     // Visible.
     let mut degraded: Option<HostVisibility> = None;
-    for (loc, dir) in [
-        ("entry", base.join(name)),
-        ("system", base.join(".system").join(name)),
-    ] {
+    let mut locations = vec![
+        ("entry".to_string(), base.join(name)),
+        ("system".to_string(), base.join(".system").join(name)),
+    ];
+    if host == "codex" {
+        locations.push(("shared".to_string(), home.join(".agents/skills").join(name)));
+        for root in codex_plugin_skill_dirs(home) {
+            locations.push(("enabled-plugin".to_string(), root.join(name)));
+        }
+    }
+    for (loc, dir) in locations {
         let Ok(meta) = std::fs::symlink_metadata(&dir) else {
             continue;
         };
@@ -1689,6 +1794,17 @@ fn classify_host_dir_entry(
     if canonical_within_store(repo_root, entry) {
         return None;
     }
+    // A body inside a sibling AGS suite mirror (private<->stable) — recognized.
+    if split_suite_runtime_path(&real).is_some() {
+        return Some(HostDirCandidate {
+            source: real,
+            managed_status: ManagedStatus::Discovered,
+            canonical_present: has_skill_md,
+            risk_notes: vec![
+                "Discovered from a sibling AGS suite mirror. Opt-in candidate; not routable until registered.".to_string(),
+            ],
+        });
+    }
     // A body inside another git project (not the AGS suite) — project-local.
     if let Some(proj) = find_git_root(&real) {
         if proj != *repo_root {
@@ -1770,6 +1886,69 @@ fn discover_host_dir_capabilities(
                 }
             }
         }
+
+        // Shared multi-agent bodies and enabled Codex plugin skill roots are
+        // runtime-visible sources too. `shared_skill_dirs_for_host` only
+        // returns plugin roots proven enabled by host configuration, so a
+        // disabled cache entry never enters the candidate catalog.
+        for root in shared_skill_dirs_for_host(ctx, host) {
+            let enabled_plugin = root.starts_with(ctx.home.join(".codex/plugins/cache"));
+            let Ok(rd) = std::fs::read_dir(&root) else {
+                continue;
+            };
+            for entry in rd.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if known.iter().any(|known| known == &name) || by_name.contains_key(&name) {
+                    continue;
+                }
+                if let Some(mut candidate) =
+                    classify_host_dir_entry(&ctx.repo_root, &entry.path(), &name, false)
+                {
+                    if enabled_plugin {
+                        candidate.risk_notes.push(
+                            "Discovered from a host-configured enabled plugin root; cache presence alone is never activation evidence."
+                                .to_string(),
+                        );
+                    }
+                    by_name.insert(name, candidate);
+                }
+            }
+        }
+    }
+
+    // Project-scoped skill roots are candidates even before a host thin index
+    // points at them. They remain read-only and fail closed until overlay
+    // adoption; the suite never copies or rewrites their bodies.
+    for root in [
+        ctx.repo_root.join(".agents/skills"),
+        ctx.repo_root.join(".codex/skills"),
+        ctx.repo_root.join(".claude/skills"),
+    ] {
+        let Ok(rd) = std::fs::read_dir(&root) else {
+            continue;
+        };
+        for entry in rd.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if known.iter().any(|known| known == &name) || by_name.contains_key(&name) {
+                continue;
+            }
+            let path = entry.path();
+            if !path.join("SKILL.md").is_file() {
+                continue;
+            }
+            by_name.insert(
+                name,
+                HostDirCandidate {
+                    source: path,
+                    managed_status: ManagedStatus::ProjectLocal,
+                    canonical_present: true,
+                    risk_notes: vec![
+                        "Project-local skill — recognized read-only and unavailable for routing until explicitly adopted in the machine overlay."
+                            .to_string(),
+                    ],
+                },
+            );
+        }
     }
     let mut out = Vec::new();
     for (name, cand) in by_name {
@@ -1812,7 +1991,7 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
         .collect();
     let mut caps: Vec<ManagedCapability> = Vec::new();
 
-    // Routing metadata (Capability Route) — manifest is the single authority.
+    // Skill-resolution metadata — manifest is the single authority.
     // Read up-front so expected-host gating can exclude internal-entrypoint
     // route targets (routing.parent set) before they are ever flagged.
     let routing_meta = read_routing_metadata(&ctx.repo_root);
@@ -1905,10 +2084,10 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
         });
     }
 
-    // Required routable parent skills declared only in the registry must still
-    // materialize in the expected universe. A fresh machine with no host body
-    // needs a real NotVisible row so strict verify cannot silently shrink its
-    // denominator and report a false-green result.
+    // 1.6. Required routable parent skills declared only in the registry must
+    // still materialize in the expected universe. In particular, a fresh
+    // machine with no host body needs a real NotVisible row so strict verify
+    // cannot report a false-green result by silently shrinking its denominator.
     for required in &routing_meta.required_skill_parents {
         if known_skill_names.iter().any(|name| name == &required.name) {
             continue;
@@ -2166,8 +2345,8 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
     // 6. Synthesize route-target rows for internal entrypoints (playbook / MCP
     //    tool / CLI subcommand) declared under `route_targets:`. Routing-only:
     //    kind inherited from the parent, NO expected_hosts, NO host probe, NO
-    //    actions, never adopted/synced. Skill Resolver resolves their
-    //    availability through the parent capability.
+    //    actions, never adopted/synced. Skill Resolver dereferences their
+    //    availability + `primary` to the parent capability.
     for (name, routing) in &routing_meta.route_targets {
         // Registry route-target declarations are authoritative over stale
         // host/plugin bodies with the same upstream name. Keeping the discovered
@@ -2221,7 +2400,7 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
         hosts,
         capabilities: caps,
         summary,
-        note: "Read-only inventory. Third-party capabilities are opt-in; AGS never silently bundles or installs. Use `ags skill propose --action <verb> --skill <name>` for a dry-run, then `--apply` to confirm.".to_string(),
+        note: "Read-only inventory. Third-party capabilities are opt-in; AGS never silently bundles or installs. Use `ags skill adopt <skill-id>` or `ags skill ignore <skill-id>` for a private-overlay dry-run, then `--apply` to confirm; use skill/capability sync separately for AGS-owned thin-index distribution.".to_string(),
         routing_parse_failures: routing_meta.parse_failures,
     }
 }
@@ -2454,13 +2633,13 @@ fn scan_thin_index_drift(home: &Path, host: &str) -> Option<ThinIndexDrift> {
 }
 
 fn scan_shared_thin_index_drift(home: &Path, host: &str) -> Option<ThinIndexDrift> {
-    (host == "codex")
+    matches!(host, "codex" | "cursor")
         .then(|| home.join(".agents/skills"))
         .and_then(|dir| scan_skill_dir_drift(&dir, "shared"))
 }
 
 fn scan_skill_dir_drift(dir: &Path, label: &str) -> Option<ThinIndexDrift> {
-    let read = std::fs::read_dir(&dir).ok()?;
+    let read = std::fs::read_dir(dir).ok()?;
     let mut total = 0usize;
     let (mut clean, mut bak, mut broken, mut realdir) = (0usize, 0usize, 0usize, 0usize);
     let mut samples: Vec<String> = Vec::new();
@@ -2504,13 +2683,10 @@ fn scan_skill_dir_drift(dir: &Path, label: &str) -> Option<ThinIndexDrift> {
     })
 }
 
-/// Verify host visibility for one host. Read-only. For reserved hosts (cursor)
-/// returns `supported: false`, `status: "unsupported"` with stable fields and
-/// an empty check list.
+/// Verify host visibility for one host. Read-only.
 pub fn verify_host(ctx: &ConsoleContext, host: &str) -> HostVerifyResult {
     let supported = SUPPORTED_HOSTS.contains(&host);
     if !supported {
-        let deferred = DEFERRED_HOSTS.contains(&host);
         return HostVerifyResult {
             schema_version: CONSOLE_SCHEMA_VERSION.to_string(),
             host: host.to_string(),
@@ -2528,11 +2704,7 @@ pub fn verify_host(ctx: &ConsoleContext, host: &str) -> HostVerifyResult {
             },
             thin_index_drift: None,
             shared_thin_index_drift: None,
-            note: if deferred {
-                format!("Host '{host}' visibility check is reserved for a later phase. Model fields are stable; no probing performed.")
-            } else {
-                format!("Host '{host}' is not a recognized AGS host.")
-            },
+            note: format!("Host '{host}' is not a recognized AGS host."),
         };
     }
 
@@ -3187,7 +3359,10 @@ fn is_external_shared_skill(ctx: &ConsoleContext, cap: &ManagedCapability) -> bo
         && cap.source.as_deref().map(Path::new) == Some(expected.as_path())
 }
 
-/// Accept a skill body only from the store declared by its owner.
+/// Accept a skill body only from the store declared by its owner. Suite-owned
+/// skills stay confined to the repository stores; registry-governed external
+/// skills stay confined to the shared multi-agent store under the injected
+/// home. No arbitrary absolute manifest source becomes host-loadable.
 fn canonical_source_allowed(
     ctx: &ConsoleContext,
     cap: &ManagedCapability,
@@ -3887,6 +4062,12 @@ fn is_syncable(cap: &ManagedCapability) -> bool {
     )
 }
 
+const AGS_SUITE_ROOT_NAMES: &[&str] = &[
+    "example-private-suite",
+    "example-stable-suite",
+    "agent-governance-suite-runtime",
+];
+
 /// Read the top-level skill registry authority for deliberately retired suite
 /// skills. External-manager bodies are excluded: AGS does not own their host
 /// entries and therefore must never clean them up automatically.
@@ -3942,16 +4123,28 @@ fn normalized_absolute_path(path: &Path) -> Option<PathBuf> {
     normalized.is_absolute().then_some(normalized)
 }
 
-/// Return the current public authority root only when it has an AGS registry.
-/// Public AGS never trusts or mutates sibling workspaces.
-fn public_authority_root(repo_root: &Path) -> Option<PathBuf> {
+/// Return the three suite roots only when the injected repository itself is a
+/// recognized suite workspace. This binds cleanup to siblings of the current
+/// authority instead of trusting an arbitrary path that merely contains a
+/// similar-looking directory name.
+fn sibling_ags_suite_roots(repo_root: &Path) -> Vec<PathBuf> {
     let candidate = normalized_absolute_path(repo_root)
         .or_else(|| std::fs::canonicalize(repo_root).ok())
         .unwrap_or_else(|| repo_root.to_path_buf());
-    candidate
-        .join("manifests/skills-registry.yaml")
-        .is_file()
-        .then_some(candidate)
+    let Some(name) = candidate.file_name().and_then(|name| name.to_str()) else {
+        return Vec::new();
+    };
+    if !AGS_SUITE_ROOT_NAMES.contains(&name) {
+        return Vec::new();
+    }
+    let Some(parent) = candidate.parent() else {
+        return Vec::new();
+    };
+    AGS_SUITE_ROOT_NAMES
+        .iter()
+        .map(|name| parent.join(name))
+        .filter(|root| root.is_dir())
+        .collect()
 }
 
 fn canonicalize_nearest_existing(path: &Path) -> Option<PathBuf> {
@@ -3989,9 +4182,9 @@ fn suite_store_target_matches_name(relative: &Path, name: &str) -> bool {
 
 /// Prove that `entry` is an AGS-owned retired-skill thin index. The entry must
 /// be a symlink; its resolved target must have the exact canonical-store shape
-/// for `name`; and both resolving and dangling targets must remain beneath the
-/// current public authority root. Real directories, arbitrary links, and
-/// name-mismatched links fail closed.
+/// for `name`; and both resolving and dangling targets must remain beneath one
+/// of the current authority's private/stable/runtime sibling roots. Real
+/// directories, arbitrary links, and name-mismatched suite links fail closed.
 fn retired_suite_thin_index_is_safe(ctx: &ConsoleContext, entry: &Path, name: &str) -> bool {
     if !is_safe_path_component(name)
         || !retired_suite_skill_names(&ctx.repo_root)
@@ -4018,7 +4211,7 @@ fn retired_suite_thin_index_is_safe(ctx: &ConsoleContext, entry: &Path, name: &s
         return false;
     };
 
-    public_authority_root(&ctx.repo_root)
+    sibling_ags_suite_roots(&ctx.repo_root)
         .into_iter()
         .any(|root| {
             let Some(root) = normalized_absolute_path(&root) else {
@@ -4162,6 +4355,8 @@ fn shared_store_hygiene_plan(
             }
         }
 
+        // Codex also loads the shared root. Once the parent is exposed there,
+        // an existing host-specific symlink is a duplicate picker entry.
         let codex_entry = ctx.home.join(".codex/skills").join(&parent_name);
         match std::fs::symlink_metadata(&codex_entry) {
             Ok(meta) if !meta.file_type().is_symlink() => blocked_reasons.push(format!(
@@ -4232,6 +4427,8 @@ fn shared_store_hygiene_plan(
 /// adopted/governed capability. Builds the inventory once and reuses it.
 pub fn sync_plan(ctx: &ConsoleContext, hosts: &[&str], apply: bool) -> CapabilitySyncResult {
     let inventory = build_inventory(ctx, hosts);
+    // Shared migration runs first in apply mode. The refreshed inventory then
+    // sees the shared parent and naturally suppresses a duplicate Codex entry.
     let shared_store_hygiene = shared_store_hygiene_plan(ctx, &inventory, apply);
     let hygiene_succeeded = shared_store_hygiene.blocked_reasons.is_empty()
         && shared_store_hygiene.apply_errors.is_empty();
@@ -4252,6 +4449,9 @@ pub fn sync_plan(ctx: &ConsoleContext, hosts: &[&str], apply: bool) -> Capabilit
                 &cap.name,
                 apply && hygiene_succeeded,
             );
+            // Dry-run cannot materialize the shared parent before planning the
+            // capability phase. Remove the redundant Codex relink that would be
+            // suppressed after the planned shared relink actually runs.
             if !apply
                 && shared_store_hygiene.planned_writes.iter().any(|write| {
                     write.op == "relink"
@@ -4860,17 +5060,19 @@ mod tests {
             &repo.join("manifests/suite.yaml"),
             "schema_version: \"1.0\"\n\
              suite:\n  name: \"test-suite\"\n  version: \"9.9.9\"\n  required:\n\
-             \x20   - name: \"demo-skill\"\n      version: \"1.0\"\n      source: \"global-skills/demo-skill\"\n      hash: \"h1\"\n      adopted: \"2026-01-01T00:00:00Z\"\n      entry_ref: \"demo-skill-ref\"\n\
-             \x20 optional:\n\
-             \x20   - name: \"lark-shared\"\n      version: \"1.0\"\n      source: \"skill-packs/optional/lark-shared\"\n      hash: \"h2\"\n      adopted: \"2026-01-01T00:00:00Z\"\n      entry_ref: \"lark-shared-ref\"\n",
+             \x20   - name: \"demo-skill\"\n      version: \"1.0\"\n      source: \"global-skills/demo-skill\"\n      hash: \"h1\"\n      adopted: \"2026-01-01T00:00:00Z\"\n      entry_ref: \"demo-skill-ref\"\n",
         );
         write_file(
             &repo.join("global-skills/demo-skill/SKILL.md"),
             "---\nname: demo-skill\ndescription: demo.\n---\nbody\n",
         );
         write_file(
-            &repo.join("skill-packs/optional/lark-shared/SKILL.md"),
-            "---\nname: lark-shared\ndescription: lark shared helper.\n---\nbody\n",
+            &repo.join("manifests/skills-registry.yaml"),
+            "schema_version: \"1.0\"\nskills:\n  - name: lark-shared\n    profile: optional\n    source: { type: external_cli_skill, manager: lark-cli }\n",
+        );
+        write_file(
+            &home.join(".agents/skills/lark-shared/SKILL.md"),
+            "---\nname: lark-shared\ndescription: official external body.\n---\n",
         );
         // An on-disk skill NOT in the manifest → should surface as Discovered.
         write_file(
@@ -4905,17 +5107,22 @@ mod tests {
         std::fs::write(path, content).unwrap();
     }
 
-    fn seed_external_skill(ctx: &ConsoleContext) -> PathBuf {
-        write_file(
-            &ctx.repo_root.join("manifests/skills-registry.yaml"),
-            "schema_version: \"1.0\"\nskills:\n  - name: lark-calendar\n    profile: optional\n    source: { type: external_cli_skill, manager: lark-cli }\n",
+    #[test]
+    fn external_registry_skill_body_is_governed_from_shared_store() {
+        let (ctx, base) = ctx_with("external-registry-body", canned_list());
+        let shared = ctx.home.join(".agents/skills/lark-shared");
+
+        let inv = build_inventory(&ctx, &["codex"]);
+        let cap = find(&inv, "lark-shared");
+        assert_eq!(cap.managed_status, ManagedStatus::Governed);
+        assert_eq!(cap.registry_status, RegistryStatus::Registered);
+        assert!(cap.canonical_present);
+        assert_eq!(
+            std::fs::canonicalize(cap.source.as_deref().unwrap()).unwrap(),
+            std::fs::canonicalize(&shared).unwrap()
         );
-        let shared = ctx.home.join(".agents/skills/lark-calendar");
-        write_file(
-            &shared.join("SKILL.md"),
-            "---\nname: lark-calendar\ndescription: official external body.\n---\n",
-        );
-        shared
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
@@ -5103,18 +5310,136 @@ mod tests {
     }
 
     #[test]
-    fn external_registry_skill_is_governed_from_shared_store() {
-        let (ctx, base) = ctx_with("external-registry", canned_list());
-        let shared = seed_external_skill(&ctx);
+    fn nested_skill_files_are_rejected_as_host_discoverable_playbooks() {
+        let (ctx, base) = ctx_with("nested-playbook-exposure", canned_list());
+        write_file(
+            &ctx.repo_root.join("manifests/skills-registry.yaml"),
+            "schema_version: \"1.0\"\n\
+             skills:\n\
+             \x20 - name: superpowers\n\
+             \x20   profile: required\n\
+             \x20   routing:\n\
+             \x20     route_state: routable\n\
+             \x20     invoke_hint: \"[skill: superpowers]\"\n\
+             \x20   source:\n\
+             \x20     type: host-system\n\
+             route_targets:\n\
+             \x20 - name: verification-before-completion\n\
+             \x20   routing:\n\
+             \x20     route_state: routable\n\
+             \x20     invoke_hint: \"[skill: superpowers]\"\n\
+             \x20     parent: { kind: skill, name: superpowers }\n\
+             \x20     entrypoint: { kind: playbook, name: verification-before-completion }\n",
+        );
+        write_file(
+            &ctx.home.join(".agents/skills/superpowers/SKILL.md"),
+            "---\nname: superpowers\ndescription: parent router.\n---\n",
+        );
+        write_file(
+            &ctx.home.join(
+                ".agents/skills/superpowers/playbooks/verification-before-completion/SKILL.md",
+            ),
+            "---\nname: verification-before-completion\ndescription: nested playbook.\n---\n",
+        );
 
         let inv = build_inventory(&ctx, &["codex"]);
-        let cap = find(&inv, "lark-calendar");
-        assert_eq!(cap.managed_status, ManagedStatus::Governed);
-        assert_eq!(cap.registry_status, RegistryStatus::Registered);
-        assert!(cap.canonical_present);
-        assert_eq!(
-            std::fs::canonicalize(cap.source.as_deref().unwrap()).unwrap(),
-            std::fs::canonicalize(&shared).unwrap()
+        let parent = find(&inv, "superpowers");
+        assert_eq!(parent.health_status, HealthStatus::Degraded);
+        assert!(parent.host_visibility.iter().any(|visibility| {
+            visibility.host == "codex"
+                && visibility.status == HostVisibilityStatus::Degraded
+                && visibility.evidence.iter().any(|item| {
+                    item.contains("nested SKILL.md") && item.contains("host-discoverable")
+                })
+        }));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn playbook_resources_are_loadable_without_becoming_skills() {
+        let (ctx, base) = ctx_with("playbook-resource-shape", canned_list());
+        write_file(
+            &ctx.repo_root.join("manifests/skills-registry.yaml"),
+            "schema_version: \"1.0\"\n\
+             skills:\n\
+             \x20 - name: superpowers\n\
+             \x20   profile: required\n\
+             \x20   routing:\n\
+             \x20     route_state: routable\n\
+             \x20     invoke_hint: \"[skill: superpowers]\"\n\
+             \x20   source:\n\
+             \x20     type: host-system\n\
+             route_targets:\n\
+             \x20 - name: verification-before-completion\n\
+             \x20   routing:\n\
+             \x20     route_state: routable\n\
+             \x20     invoke_hint: \"[skill: superpowers]\"\n\
+             \x20     parent: { kind: skill, name: superpowers }\n\
+             \x20     entrypoint: { kind: playbook, name: verification-before-completion }\n",
+        );
+        write_file(
+            &ctx.home.join(".agents/skills/superpowers/SKILL.md"),
+            "---\nname: superpowers\ndescription: parent router.\n---\n",
+        );
+        write_file(
+            &ctx.home.join(
+                ".agents/skills/superpowers/playbooks/verification-before-completion/PLAYBOOK.md",
+            ),
+            "# Verification before completion\n",
+        );
+
+        let inv = build_inventory(&ctx, &["codex"]);
+        let parent = find(&inv, "superpowers");
+        assert_eq!(parent.health_status, HealthStatus::Healthy);
+        assert!(parent.host_visibility.iter().any(|visibility| {
+            visibility.host == "codex" && visibility.status == HostVisibilityStatus::Visible
+        }));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_registry_skill_sync_targets_shared_body() {
+        let (ctx, base) = ctx_with("external-registry-sync", canned_list());
+        let shared = ctx.home.join(".agents/skills/lark-shared");
+        link_shared_skill_entry(&ctx, ".claude/skills", "lark-shared");
+
+        let result = sync_plan(&ctx, &["claude-code", "codex", "codebuddy-code"], false);
+        let lark = result
+            .items
+            .iter()
+            .find(|item| item.capability == "lark-shared")
+            .expect("external Lark skill is syncable");
+        assert!(
+            lark.blocked_reasons.is_empty(),
+            "{:?}",
+            lark.blocked_reasons
+        );
+        assert!(
+            lark.planned_writes
+                .iter()
+                .all(|write| !write.path.contains(".claude/skills/lark-shared")),
+            "an exact existing thin index must not be rewritten: {:?}",
+            lark.planned_writes
+        );
+        assert!(lark.planned_writes.iter().any(|write| {
+            write.path.contains(".codebuddy/skills/lark-shared")
+                && write.from.as_deref() == Some(shared.to_str().unwrap())
+        }));
+        assert!(
+            lark.planned_writes
+                .iter()
+                .all(|write| !write.path.contains(".codex/skills/lark-shared")),
+            "Codex already loads the shared body: {:?}",
+            lark.planned_writes
+        );
+        assert!(
+            lark.planned_writes
+                .iter()
+                .all(|write| write.path != shared.to_string_lossy()),
+            "AGS must never mutate the external body"
         );
 
         let _ = std::fs::remove_dir_all(&base);
@@ -5122,40 +5447,55 @@ mod tests {
 
     #[test]
     fn external_registry_skill_missing_body_fails_closed() {
-        let (ctx, base) = ctx_with("external-missing", canned_list());
-        let shared = seed_external_skill(&ctx);
-        std::fs::remove_dir_all(shared).unwrap();
+        let (ctx, base) = ctx_with("external-registry-missing", canned_list());
+        std::fs::remove_dir_all(ctx.home.join(".agents/skills/lark-shared")).unwrap();
 
-        let inv = build_inventory(&ctx, &["codex"]);
-        let cap = find(&inv, "lark-calendar");
+        let inv = build_inventory(&ctx, &["claude-code"]);
+        let cap = find(&inv, "lark-shared");
+        assert_eq!(cap.managed_status, ManagedStatus::Governed);
         assert!(!cap.canonical_present);
-        assert_eq!(
-            cap.host_visibility[0].status,
-            HostVisibilityStatus::NotVisible
-        );
 
-        let proposal = propose_action(&ctx, ConsoleAction::Adopt, "lark-calendar", true);
-        assert!(!proposal.applied);
-        assert!(proposal.planned_writes.is_empty());
+        let verify = verify_host(&ctx, "claude-code");
+        let check = verify
+            .checks
+            .iter()
+            .find(|check| check.name == "lark-shared")
+            .unwrap();
+        assert!(check.expected);
+        assert!(!verify.summary.all_visible);
+        assert!(verify.summary.failed >= 1);
+        assert_eq!(verify.status, "incomplete");
+
+        let result = propose_action(&ctx, ConsoleAction::Adopt, "lark-shared", true);
+        assert!(!result.applied);
+        assert!(result.planned_writes.is_empty());
+        assert!(
+            result
+                .blocked_reasons
+                .iter()
+                .any(|reason| reason.contains("Canonical SKILL.md not found")),
+            "{:?}",
+            result.blocked_reasons
+        );
 
         let _ = std::fs::remove_dir_all(&base);
     }
 
     #[cfg(unix)]
     #[test]
-    fn external_registry_skill_escape_is_rejected() {
-        let (ctx, base) = ctx_with("external-escape", canned_list());
-        let shared = seed_external_skill(&ctx);
+    fn external_registry_skill_body_symlink_outside_shared_root_fails_closed() {
+        let (ctx, base) = ctx_with("external-registry-outside", canned_list());
+        let shared = ctx.home.join(".agents/skills/lark-shared");
         std::fs::remove_dir_all(&shared).unwrap();
-        let outside = base.join("outside/lark-calendar");
+        let outside = base.join("external/lark-shared");
         write_file(
             &outside.join("SKILL.md"),
-            "---\nname: lark-calendar\ndescription: outside body.\n---\n",
+            "---\nname: lark-shared\ndescription: outside body.\n---\n",
         );
         make_symlink(&outside, &shared).unwrap();
 
         let inv = build_inventory(&ctx, &["codex"]);
-        let cap = find(&inv, "lark-calendar");
+        let cap = find(&inv, "lark-shared");
         assert!(!cap.canonical_present);
         assert_eq!(
             cap.host_visibility[0].status,
@@ -5167,24 +5507,30 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn external_registry_skill_sync_never_mutates_body_or_duplicates_codex() {
-        let (ctx, base) = ctx_with("external-sync", canned_list());
-        let shared = seed_external_skill(&ctx);
+    fn external_registry_skill_apply_writes_only_needed_thin_index() {
+        let (ctx, base) = ctx_with("external-registry-apply", canned_list());
+        let shared = ctx.home.join(".agents/skills/lark-shared");
+        let original = std::fs::read_to_string(shared.join("SKILL.md")).unwrap();
+        link_shared_skill_entry(&ctx, ".claude/skills", "lark-shared");
 
-        let result = propose_action(&ctx, ConsoleAction::Adopt, "lark-calendar", false);
-        assert!(result.blocked_reasons.is_empty());
-        assert!(result.planned_writes.iter().any(|write| {
-            write.path.contains(".codebuddy/skills/lark-calendar")
-                && write.from.as_deref() == Some(shared.to_str().unwrap())
-        }));
-        assert!(result
-            .planned_writes
-            .iter()
-            .all(|write| !write.path.contains(".codex/skills/lark-calendar")));
-        assert!(result
-            .planned_writes
-            .iter()
-            .all(|write| write.path != shared.to_string_lossy()));
+        let result = propose_action(&ctx, ConsoleAction::Adopt, "lark-shared", true);
+        assert!(result.applied, "{:?}", result.apply_errors);
+        assert_eq!(result.applied_writes.len(), 1);
+        assert!(result.applied_writes[0].contains(".codebuddy/skills/lark-shared"));
+        assert!(std::fs::symlink_metadata(ctx.home.join(".codex/skills/lark-shared")).is_err());
+        let codebuddy = ctx.home.join(".codebuddy/skills/lark-shared");
+        assert!(std::fs::symlink_metadata(&codebuddy)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(
+            std::fs::canonicalize(codebuddy).unwrap(),
+            std::fs::canonicalize(&shared).unwrap()
+        );
+        assert_eq!(
+            std::fs::read_to_string(shared.join("SKILL.md")).unwrap(),
+            original
+        );
 
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -5287,13 +5633,33 @@ mod tests {
     }
 
     #[cfg(unix)]
+    fn link_shared_skill_entry(ctx: &ConsoleContext, host_subdir: &str, name: &str) {
+        let parent = ctx.home.join(host_subdir);
+        std::fs::create_dir_all(&parent).unwrap();
+        make_symlink(
+            &ctx.home.join(".agents/skills").join(name),
+            &parent.join(name),
+        )
+        .unwrap();
+    }
+
+    #[cfg(unix)]
     fn write_codex_plugin_skill(ctx: &ConsoleContext, name: &str) {
+        write_codex_plugin_skill_with_enabled(ctx, name, true);
+    }
+
+    #[cfg(unix)]
+    fn write_codex_plugin_skill_with_enabled(ctx: &ConsoleContext, name: &str, enabled: bool) {
         write_file(
             &ctx.home
                 .join(".codex/plugins/cache/openai-curated/superpowers/test/skills")
                 .join(name)
                 .join("SKILL.md"),
             &format!("---\nname: {name}\ndescription: plugin skill.\n---\nbody\n"),
+        );
+        write_file(
+            &ctx.home.join(".codex/config.toml"),
+            &format!("[plugins.\"superpowers@openai-curated\"]\nenabled = {enabled}\n"),
         );
     }
 
@@ -5330,12 +5696,16 @@ mod tests {
     }
 
     #[test]
-    fn suite_managed_and_registry_status_are_set() {
+    fn suite_and_external_managed_statuses_are_set() {
         let (ctx, base) = ctx_with("status", canned_list());
         let inv = build_inventory(&ctx, &["claude-code"]);
         let lark = find(&inv, "lark-shared");
-        assert_eq!(lark.managed_status, ManagedStatus::SuiteManaged);
+        assert_eq!(lark.managed_status, ManagedStatus::Governed);
         assert_eq!(lark.registry_status, RegistryStatus::Registered);
+        assert_eq!(
+            find(&inv, "demo-skill").managed_status,
+            ManagedStatus::SuiteManaged
+        );
         let ags = find(&inv, "ags");
         assert_eq!(ags.managed_status, ManagedStatus::SuiteInterface);
         // ags offers only verify — it can't be removed via the console
@@ -5348,12 +5718,7 @@ mod tests {
     fn claude_skill_path_visible_only_when_entry_present() {
         let (ctx, base) = ctx_with("skillpath", canned_list());
         // Distribute only lark-shared's host entry.
-        link_skill_entry(
-            &ctx,
-            ".claude/skills",
-            "lark-shared",
-            "skill-packs/optional/lark-shared",
-        );
+        link_shared_skill_entry(&ctx, ".claude/skills", "lark-shared");
         let inv = build_inventory(&ctx, &["claude-code"]);
 
         let lark_vis = &find(&inv, "lark-shared").host_visibility[0];
@@ -5424,12 +5789,7 @@ mod tests {
     fn codex_skill_path_and_mcp_visibility_are_real() {
         let (ctx, base) = ctx_with("codexreal", canned_list());
         // Distribute a skill entry into the CODEX skills dir (~/.codex/skills).
-        link_skill_entry(
-            &ctx,
-            ".codex/skills",
-            "lark-shared",
-            "skill-packs/optional/lark-shared",
-        );
+        link_shared_skill_entry(&ctx, ".codex/skills", "lark-shared");
         let inv = build_inventory(&ctx, &["codex"]);
 
         // Codex is now a real (supported) host — not deferred.
@@ -5454,12 +5814,6 @@ mod tests {
     #[test]
     fn codex_skill_path_can_use_shared_agents_source() {
         let (ctx, base) = ctx_with("codexshared", canned_list());
-        link_skill_entry(
-            &ctx,
-            ".agents/skills",
-            "lark-shared",
-            "skill-packs/optional/lark-shared",
-        );
         let inv = build_inventory(&ctx, &["codex"]);
 
         let lark = &find(&inv, "lark-shared").host_visibility[0];
@@ -5480,18 +5834,38 @@ mod tests {
     #[test]
     fn codex_skill_path_can_use_plugin_source() {
         let (ctx, base) = ctx_with("codexplugin", canned_list());
-        write_codex_plugin_skill(&ctx, "lark-shared");
+        write_codex_plugin_skill(&ctx, "demo-skill");
         let inv = build_inventory(&ctx, &["codex"]);
 
-        let lark = &find(&inv, "lark-shared").host_visibility[0];
-        assert_eq!(lark.host, "codex");
-        assert_eq!(lark.status, HostVisibilityStatus::Visible);
+        let demo = &find(&inv, "demo-skill").host_visibility[0];
+        assert_eq!(demo.host, "codex");
+        assert_eq!(demo.status, HostVisibilityStatus::Visible);
         assert!(
-            lark.evidence
+            demo.evidence
                 .iter()
                 .any(|e| e.contains(".codex/plugins/cache")),
             "Codex visibility should cite the plugin source: {:?}",
-            lark.evidence
+            demo.evidence
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_disabled_plugin_cache_is_not_runtime_visible() {
+        let (ctx, base) = ctx_with("codexplugindisabled", canned_list());
+        write_codex_plugin_skill_with_enabled(&ctx, "demo-skill", false);
+        let inv = build_inventory(&ctx, &["codex"]);
+
+        let demo = &find(&inv, "demo-skill").host_visibility[0];
+        assert_eq!(demo.host, "codex");
+        assert_eq!(demo.status, HostVisibilityStatus::NotVisible);
+        assert!(
+            demo.evidence
+                .iter()
+                .all(|e| !e.contains(".codex/plugins/cache")),
+            "a disabled plugin cache must not count as runtime visibility: {:?}",
+            demo.evidence
         );
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -5506,12 +5880,7 @@ mod tests {
             "demo-skill",
             "global-skills/demo-skill",
         );
-        link_skill_entry(
-            &ctx,
-            ".codebuddy/skills",
-            "lark-shared",
-            "skill-packs/optional/lark-shared",
-        );
+        link_shared_skill_entry(&ctx, ".codebuddy/skills", "lark-shared");
 
         let inv = build_inventory(&ctx, &["codebuddy-code"]);
         let demo = &find(&inv, "demo-skill").host_visibility[0];
@@ -5550,18 +5919,18 @@ mod tests {
     }
 
     #[test]
-    fn cursor_host_is_deferred_with_stable_fields() {
+    fn cursor_host_uses_real_visibility_and_verify_fields() {
         let (ctx, base) = ctx_with("cursor", canned_list());
         let inv = build_inventory(&ctx, &["cursor"]);
         let v = &find(&inv, "lark-shared").host_visibility[0];
         assert_eq!(v.host, "cursor");
-        assert!(!v.supported);
-        assert_eq!(v.status, HostVisibilityStatus::Deferred);
+        assert!(v.supported);
+        assert_ne!(v.status, HostVisibilityStatus::Deferred);
 
         let verify = verify_host(&ctx, "cursor");
-        assert!(!verify.supported);
-        assert_eq!(verify.status, "unsupported");
-        assert!(verify.checks.is_empty());
+        assert!(verify.supported);
+        assert_ne!(verify.status, "unsupported");
+        assert!(!verify.checks.is_empty());
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -5603,7 +5972,7 @@ mod tests {
         assert!(res.apply_errors.is_empty());
         // P1.1 + thin index: all supported skill hosts get a symlink (not a copy) into the
         // injected home, and SKILL.md is reachable THROUGH it (canonical body).
-        for sub in [".claude/skills", ".codex/skills", ".codebuddy/skills"] {
+        for sub in [".claude/skills", ".codebuddy/skills"] {
             let entry = ctx.home.join(sub).join("lark-shared");
             let meta = std::fs::symlink_metadata(&entry).unwrap();
             assert!(
@@ -5613,6 +5982,10 @@ mod tests {
             let md = std::fs::read_to_string(entry.join("SKILL.md")).unwrap();
             assert!(md.contains("name: lark-shared"));
         }
+        assert!(
+            std::fs::symlink_metadata(ctx.home.join(".codex/skills/lark-shared")).is_err(),
+            "Codex must not receive a duplicate entry for the shared skill"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -5693,7 +6066,7 @@ mod tests {
     #[test]
     fn skill_apply_status_is_applied() {
         let (ctx, base) = ctx_with("applystatus", canned_list());
-        let res = propose_action(&ctx, ConsoleAction::Adopt, "lark-shared", true);
+        let res = propose_action(&ctx, ConsoleAction::Adopt, "demo-skill", true);
         assert!(res.applied);
         assert_eq!(res.apply_status, "applied");
         assert!(!res.applied_writes.is_empty());
@@ -5705,12 +6078,7 @@ mod tests {
     fn lark_distinction_is_explicit() {
         let (ctx, base) = ctx_with("lark", canned_list());
         // Host skill path present; lark is NOT an MCP in the list.
-        link_skill_entry(
-            &ctx,
-            ".claude/skills",
-            "lark-shared",
-            "skill-packs/optional/lark-shared",
-        );
+        link_shared_skill_entry(&ctx, ".claude/skills", "lark-shared");
         let inv = build_inventory(&ctx, &["claude-code"]);
 
         // 1. lark-* skill — fronted by lark-cli (risk note), claude skill path visible.
@@ -5835,10 +6203,10 @@ mod tests {
     #[test]
     fn console_action_parsing_roundtrips() {
         for a in CONSOLE_ACTIONS {
-            let parsed = ConsoleAction::from_str(a).expect("known action");
+            let parsed = ConsoleAction::parse(a).expect("known action");
             assert_eq!(parsed.as_str(), *a);
         }
-        assert!(ConsoleAction::from_str("bogus").is_none());
+        assert!(ConsoleAction::parse("bogus").is_none());
     }
 
     // ── Adversarial-review regression tests ──────────────────────────────────
@@ -5922,7 +6290,7 @@ mod tests {
         std::fs::create_dir_all(&codex_skills).unwrap();
         std::fs::set_permissions(&codex_skills, std::fs::Permissions::from_mode(0o555)).unwrap();
 
-        let res = propose_action(&ctx, ConsoleAction::Adopt, "lark-shared", true);
+        let res = propose_action(&ctx, ConsoleAction::Adopt, "demo-skill", true);
 
         std::fs::set_permissions(&codex_skills, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert!(!res.applied);
@@ -5933,7 +6301,7 @@ mod tests {
             "failed batch must not report retained writes"
         );
         assert!(
-            std::fs::symlink_metadata(ctx.home.join(".claude/skills/lark-shared")).is_err(),
+            std::fs::symlink_metadata(ctx.home.join(".claude/skills/demo-skill")).is_err(),
             "claude relink must be rolled back when codex fails later"
         );
         assert!(
@@ -5941,7 +6309,7 @@ mod tests {
             "directories created only for the rolled-back host must be removed"
         );
         assert!(
-            std::fs::symlink_metadata(codex_skills.join("lark-shared.ags-tmp")).is_err(),
+            std::fs::symlink_metadata(codex_skills.join("demo-skill.ags-tmp")).is_err(),
             "failed codex staging path must be cleaned"
         );
         let _ = std::fs::remove_dir_all(&base);
@@ -5967,13 +6335,14 @@ mod tests {
     #[test]
     fn verify_ok_when_expected_skill_visible() {
         let (ctx, base) = ctx_with("verifyok", canned_list());
-        // Distribute the required skill's host entry → expected set satisfied.
+        // Distribute every expected skill entry → expected set satisfied.
         link_skill_entry(
             &ctx,
             ".claude/skills",
             "demo-skill",
             "global-skills/demo-skill",
         );
+        link_shared_skill_entry(&ctx, ".claude/skills", "lark-shared");
         let v = verify_host(&ctx, "claude-code");
         assert!(v.summary.all_visible, "no expected capability is missing");
         assert_eq!(v.summary.failed, 0);
@@ -6067,9 +6436,7 @@ mod tests {
     #[test]
     fn remove_unlinks_thin_index_keeps_canonical() {
         let (ctx, base) = ctx_with("removeindex", canned_list());
-        let canonical = ctx
-            .repo_root
-            .join("skill-packs/optional/lark-shared/SKILL.md");
+        let canonical = ctx.home.join(".agents/skills/lark-shared/SKILL.md");
         assert!(canonical.is_file());
 
         assert!(propose_action(&ctx, ConsoleAction::Adopt, "lark-shared", true).applied);
@@ -6150,6 +6517,41 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    // The development private suite may verify a suite-owned skill whose thin
+    // index points at the stable runtime twin.
+    #[cfg(unix)]
+    #[test]
+    fn stable_runtime_twin_symlink_is_visible() {
+        let (ctx, base) = ctx_with_repo_dir(
+            "stable-runtime",
+            canned_list(),
+            &format!("agent-governance-suite-{}", "private"),
+        );
+        let stable_source = base.join(format!(
+            "agent-governance-suite-{}/global-skills/demo-skill",
+            "stable"
+        ));
+        write_file(
+            &stable_source.join("SKILL.md"),
+            "---\nname: demo-skill\ndescription: stable runtime body.\n---\n",
+        );
+        let skills = ctx.home.join(".claude/skills");
+        std::fs::create_dir_all(&skills).unwrap();
+        make_symlink(&stable_source, &skills.join("demo-skill")).unwrap();
+
+        let inv = build_inventory(&ctx, &["claude-code"]);
+        let vis = &find(&inv, "demo-skill").host_visibility[0];
+        assert_eq!(vis.status, HostVisibilityStatus::Visible);
+        assert!(
+            vis.evidence
+                .iter()
+                .any(|e| e.contains("AGS stable/private runtime twin")),
+            "{:?}",
+            vis.evidence
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     // Goal 2: canonical body status is modeled distinctly from host visibility.
     #[test]
     fn canonical_present_reflects_the_body() {
@@ -6168,7 +6570,7 @@ mod tests {
     #[test]
     fn canonical_within_store_helper() {
         let (ctx, base) = ctx_with("withinstore", canned_list());
-        let inside = ctx.repo_root.join("skill-packs/optional/lark-shared");
+        let inside = ctx.repo_root.join("global-skills/demo-skill");
         assert!(canonical_within_store(&ctx.repo_root, &inside));
         let outside = base.join("outside-store");
         std::fs::create_dir_all(&outside).unwrap();
@@ -6215,8 +6617,7 @@ mod tests {
         let (ctx, base) = ctx_with("canonmismatch", canned_list());
         // Corrupt the canonical body so its declared name no longer matches.
         write_file(
-            &ctx.repo_root
-                .join("skill-packs/optional/lark-shared/SKILL.md"),
+            &ctx.home.join(".agents/skills/lark-shared/SKILL.md"),
             "---\nname: not-lark-shared\ndescription: mislabeled.\n---\n",
         );
         let res = propose_action(&ctx, ConsoleAction::Adopt, "lark-shared", true);
@@ -6263,8 +6664,8 @@ mod tests {
         let (ctx, base) = ctx_with("syncdry", canned_list());
         let result = sync_plan(&ctx, &["claude-code", "codex"], false);
 
-        // Syncable = suite-managed skills (demo-skill, lark-shared) + governed
-        // MCPs (context7, codegraph). orphan-skill (discovered) and ags
+        // Syncable = suite-managed demo-skill + externally governed lark-shared
+        // + governed MCPs (context7, codegraph). orphan-skill (discovered) and ags
         // (suite-interface) are excluded.
         let names: Vec<&str> = result.items.iter().map(|i| i.capability.as_str()).collect();
         assert!(names.contains(&"demo-skill"));
@@ -6540,6 +6941,35 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn sync_plan_repairs_codex_thin_index_when_plugin_is_disabled() {
+        let (ctx, base) = ctx_with("syncdisabledplugincodex", canned_list());
+        write_codex_plugin_skill_with_enabled(&ctx, "demo-skill", false);
+
+        let result = sync_plan(&ctx, &["codex"], false);
+        let demo = result
+            .items
+            .iter()
+            .find(|i| i.capability == "demo-skill")
+            .expect("demo-skill considered");
+
+        assert!(
+            demo.planned_writes
+                .iter()
+                .any(|w| w.path.contains(".codex/skills/demo-skill")),
+            "a disabled plugin cache must not suppress the canonical Codex thin-index: {:?}",
+            demo.planned_writes
+        );
+        assert!(
+            !demo.note.contains(".codex/plugins/cache"),
+            "disabled plugin cache must not be reported as runtime-visible: {}",
+            demo.note
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn sync_plan_apply_replaces_existing_thin_index_without_backup() {
         let (ctx, base) = ctx_with("syncnobak", canned_list());
         let entry = ctx.home.join(".claude/skills/demo-skill");
@@ -6664,7 +7094,7 @@ mod tests {
         let (ctx, base) = ctx_with_repo_dir(
             "retired-thin-index-cleanup",
             canned_list(),
-            "public-authority",
+            "example-private-suite",
         );
         write_file(
             &ctx.repo_root.join("manifests/skills-registry.yaml"),
@@ -6675,9 +7105,15 @@ mod tests {
              \x20 - name: retired-mismatch\n    routing: { route_state: retired }\n",
         );
 
+        let stable = base.join("example-stable-suite");
+        let runtime = base.join("agent-governance-suite-runtime");
         write_file(
-            &ctx.repo_root.join("global-skills/retired-safe/SKILL.md"),
-            "---\nname: retired-safe\ndescription: retired public body.\n---\n",
+            &stable.join("global-skills/retired-safe/SKILL.md"),
+            "---\nname: retired-safe\ndescription: old stable body.\n---\n",
+        );
+        write_file(
+            &runtime.join("global-skills/retired-safe/SKILL.md"),
+            "---\nname: retired-safe\ndescription: old runtime body.\n---\n",
         );
 
         let claude_safe = ctx.home.join(".claude/skills/retired-safe");
@@ -6686,16 +7122,8 @@ mod tests {
         std::fs::create_dir_all(claude_safe.parent().unwrap()).unwrap();
         std::fs::create_dir_all(codex_safe.parent().unwrap()).unwrap();
         std::fs::create_dir_all(shared_dangling.parent().unwrap()).unwrap();
-        make_symlink(
-            &ctx.repo_root.join("global-skills/retired-safe"),
-            &claude_safe,
-        )
-        .unwrap();
-        make_symlink(
-            &ctx.repo_root.join("global-skills/retired-safe"),
-            &codex_safe,
-        )
-        .unwrap();
+        make_symlink(&stable.join("global-skills/retired-safe"), &claude_safe).unwrap();
+        make_symlink(&runtime.join("global-skills/retired-safe"), &codex_safe).unwrap();
         make_symlink(
             &ctx.repo_root.join("global-skills/retired-safe"),
             &shared_dangling,
@@ -6715,11 +7143,7 @@ mod tests {
         let external_entry = ctx.home.join(".codebuddy/skills/retired-external");
         make_symlink(&outside, &external_entry).unwrap();
         let mismatch_entry = ctx.home.join(".codebuddy/skills/retired-mismatch");
-        make_symlink(
-            &ctx.repo_root.join("global-skills/retired-safe"),
-            &mismatch_entry,
-        )
-        .unwrap();
+        make_symlink(&stable.join("global-skills/retired-safe"), &mismatch_entry).unwrap();
 
         let dry_run = sync_plan(&ctx, &["claude-code", "codex", "codebuddy-code"], false);
         let retired_writes: Vec<&PlannedWrite> = dry_run
@@ -6786,11 +7210,7 @@ mod tests {
         );
 
         let applied = sync_plan(&ctx, &["claude-code", "codex", "codebuddy-code"], true);
-        assert_eq!(
-            applied.shared_store_hygiene.apply_status, "applied",
-            "cleanup errors: {:?}",
-            applied.shared_store_hygiene.apply_errors
-        );
+        assert_eq!(applied.shared_store_hygiene.apply_status, "applied");
         for entry in [&claude_safe, &codex_safe, &shared_dangling] {
             assert!(
                 std::fs::symlink_metadata(entry).is_err(),

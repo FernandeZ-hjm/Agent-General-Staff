@@ -693,9 +693,13 @@ mod install_plan_tests {
         assert!(content.contains("ags init --target ."));
         assert!(content.contains("/ags setup"));
         assert!(content.contains("/ags init"));
-        assert!(content.contains("MCP `ags_route_request`"));
-        assert!(content.contains("structured `RequestDecision`"));
-        assert!(content.contains("decision selects task compilation"));
+        assert!(content.contains("strictly read-only `ags_route_request`"));
+        assert!(content.contains("typed `HostRouteProposal`"));
+        assert!(content.contains("`ags_apply_action`"));
+        assert!(content.contains("explicit handoff request"));
+        assert!(content.contains("independently confirmed contract"));
+        assert!(content.contains("solution work is unresolved or reopened"));
+        assert!(content.contains("direct edit stays host-native"));
         assert!(content.contains(AGS_VERSION));
     }
 

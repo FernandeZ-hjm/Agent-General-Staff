@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 task-card-validator = { path = "../task-card-validator" }
-request-router = { path = "../request-router" }
+request-governance = { path = "../request-governance" }
 workflow-sync-check = { path = "../workflow-sync-check" }
 suite-doctor = { path = "../suite-doctor" }
 bootstrap-dry-run = { path = "../bootstrap-dry-run" }

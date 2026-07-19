@@ -153,6 +153,8 @@ pub fn default_public_allowlist() -> Allowlist {
                 ],
                 allowed_content_drift_sections: vec![
                     "Agent Task Protocol".to_string(),
+                    "Agent Task Protocol > 完整生命周期 > 3. Phase / Authority（阶段与授权）"
+                        .to_string(),
                     "Agent Task Protocol > 完整生命周期 > 3. Solution Formation（按需）"
                         .to_string(),
                     "Agent Task Protocol > 完整生命周期 > 4. Skill Resolution（确定性技能映射）"

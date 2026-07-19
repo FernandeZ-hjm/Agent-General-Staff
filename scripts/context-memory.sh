@@ -32,7 +32,7 @@ Options:
 
 Notes:
   The context capsule is a manual project charter and stable-memory entrypoint.
-  Automated capture never overwrites it. Full runner receipts are copied into
+  Automated capture never overwrites it. Full host-generated task receipts are copied into
   task-archive/ for local-only history.
 EOF
 }

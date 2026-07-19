@@ -9,9 +9,31 @@ to ship the `ags` CLI, canonical task-card protocols, execution-policy checks,
 release-boundary verification, memory-capsule templates, and public
 skill-governance workflows.
 
-The current CLI/package version is `0.2.8`; current release tags use the same
-`v0.2.8` form. Older `2.x` headings below are preserved as historical product
+The current CLI/package version is `0.3.0`; current release tags use the same
+`v0.3.0` form. Older `2.x` headings below are preserved as historical product
 release labels and are not rewritten.
+
+## Release 0.3.0
+
+### Host semantic proposals and explicit apply
+
+- Replaced the natural-language `request-router` with typed
+  `request-governance`. The host keeps full conversation context and submits a
+  closed `HostRouteProposal`; AGS validates phase, authority, exact skill and
+  closed machine targets without interpreting raw text.
+- `ags_route_request` is strictly read-only and rejects legacy raw requests.
+  `ags_apply_action` is the sole effectful MCP tool and consumes a one-shot,
+  connection-bound held action by lease/action ID.
+- Added deterministic per-host capability catalogs, exact skill/entrypoint
+  validation, machine-private adopt/ignore/rollback overlays, auth availability
+  gates, and non-sensitive skill outcome/activity records.
+- Renamed canonical `TaskExecute` to `TaskPrepareExecution`; `ags run` now stops
+  at a validated `LaunchPlan` and reports `HOST_EXECUTION_REQUIRED` instead of
+  claiming execution, verification, or completion.
+- Added receipt 2.1 governance evidence while preserving 2.0 readers, made typed
+  handoff task level explicit, and fixed the full-width-colon compiler panic.
+- Public packaging now excludes capability snapshots, overlays, usage ledgers,
+  leases, auth state and runtime receipts.
 
 ## Release 0.2.8
 

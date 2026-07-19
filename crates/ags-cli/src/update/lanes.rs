@@ -12,6 +12,7 @@ pub(in crate::update) struct UpdateLanePlan {
     pub(crate) summary: String,
     pub(crate) drift: Option<bool>,
     pub(crate) commands: Vec<String>,
+    pub(crate) details: Vec<serde_json::Value>,
 }
 fn build_update_lane_plan(
     lane: UpdateLane,
@@ -19,6 +20,7 @@ fn build_update_lane_plan(
     runtime_home: &Path,
 ) -> UpdateLanePlan {
     let auto = lane.auto_executes_locally();
+    let mut details = Vec::new();
     let (summary, drift, commands): (String, Option<bool>, Vec<String>) = match lane {
         UpdateLane::Core => (
             format!("AGS kernel {AGS_VERSION} — rebuild from the private source repo"),
@@ -53,6 +55,35 @@ fn build_update_lane_plan(
             let reg = managed_projects::load(&managed_projects::registry_path(runtime_home))
                 .unwrap_or_default();
             let (existing, stale) = managed_projects::partition_existing(&reg);
+            let reports: Vec<_> = existing
+                .iter()
+                .map(|project| {
+                    crate::init::refresh_managed_project(
+                        Path::new(&project.path),
+                        &project.slug,
+                        source_root,
+                        false,
+                    )
+                })
+                .collect();
+            let drifted = reports.iter().filter(|report| report.drift).count();
+            let blocked = reports
+                .iter()
+                .filter(|report| !report.blocked_reasons.is_empty())
+                .count();
+            details = reports
+                .iter()
+                .map(|report| {
+                    serde_json::json!({
+                        "target": report.target,
+                        "slug": report.slug,
+                        "status": report.status,
+                        "drift": report.drift,
+                        "changed_files": report.changed_files,
+                        "blocked_reasons": report.blocked_reasons,
+                    })
+                })
+                .collect();
             let remote = reg
                 .projects
                 .iter()
@@ -60,14 +91,16 @@ fn build_update_lane_plan(
                 .count();
             (
                 format!(
-                    "managed projects: {} ({} present, {} stale, {} remote-backed) — local plan only, never auto-push",
+                    "managed projects: {} ({} present, {} drifted, {} blocked, {} stale, {} remote-backed) — refreshes AGS-owned files only, never auto-pushes",
                     reg.projects.len(),
                     existing.len(),
+                    drifted,
+                    blocked,
                     stale.len(),
                     remote
                 ),
-                None,
-                vec!["ags doctor --scope project (per managed project)".to_string()],
+                Some(drifted > 0 || blocked > 0 || !stale.is_empty()),
+                vec!["ags update apply --lane projects --apply".to_string()],
             )
         }
         UpdateLane::Public => (
@@ -84,6 +117,7 @@ fn build_update_lane_plan(
         summary,
         drift,
         commands,
+        details,
     }
 }
 pub(in crate::update) fn build_all_update_lanes(
@@ -104,6 +138,7 @@ pub(in crate::update) fn update_lane_json(p: &UpdateLanePlan) -> serde_json::Val
         "summary": p.summary,
         "drift": p.drift,
         "commands": p.commands,
+        "details": p.details,
     })
 }
 
@@ -121,16 +156,17 @@ mod update_lane_tests {
     }
 
     #[test]
-    fn update_lanes_mark_only_core_runtime_auto() {
+    fn update_lanes_mark_core_runtime_and_projects_auto() {
         assert!(UpdateLane::Core.auto_executes_locally());
         assert!(UpdateLane::Runtime.auto_executes_locally());
+        assert!(UpdateLane::Projects.auto_executes_locally());
         assert!(!UpdateLane::Agents.auto_executes_locally());
-        assert!(!UpdateLane::Projects.auto_executes_locally());
         assert!(!UpdateLane::Public.auto_executes_locally());
         assert_eq!(UpdateLane::Core.risk_tier(), "heavy");
         assert_eq!(UpdateLane::Public.risk_tier(), "heavy");
         assert_eq!(UpdateLane::Runtime.risk_tier(), "medium");
         assert_eq!(UpdateLane::Agents.risk_tier(), "advice");
+        assert_eq!(UpdateLane::Projects.risk_tier(), "medium");
     }
 
     #[test]

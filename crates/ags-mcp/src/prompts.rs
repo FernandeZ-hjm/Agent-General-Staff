@@ -39,15 +39,15 @@ pub fn list_prompts() -> PromptListResult {
             PromptDef {
                 name: "ags_solution_phase".to_string(),
                 description: Some(
-                    "Guide solution formation only after the canonical RequestDecision \
-                     shows unresolved design work. Keep AGS stateless, use host-owned \
+                    "Guide solution formation only after the typed RouteResolution \
+                     shows unresolved design work. Keep context host-owned, \
                      context, and do not turn solution confirmation into task-card authority."
                         .to_string(),
                 ),
                 arguments: Some(vec![PromptArgument {
                     name: "user_request".to_string(),
                     description: Some(
-                        "The complete current request context to pass to ags_route_request."
+                        "The complete current request context the host uses to form a typed proposal."
                             .to_string(),
                     ),
                     required: Some(true),
@@ -121,10 +121,10 @@ fn prompt_solution_phase(arguments: &serde_json::Value) -> PromptGetResult {
         "## AGS Solution Phase\n\n\
          **User request**: {}\n\n\
          ### Instructions\n\n\
-         0. **Route once first** with `ags_route_request`, passing complete host-owned \
-         conversation context. Continue this prompt only when the RequestDecision selects \
-         a solution-forming SkillDemand or reports missing design input. DirectResponse \
-         delivers and stops. MachineCli is consumed by MCP.\n\
+         0. **Resolve once first**: read `ags://capabilities/current-host`, use complete \
+         host-owned context to form a typed HostRouteProposal, then call read-only \
+         `ags_route_request`. Continue only when the proposal phase is solution_formation. \
+         DirectResponse delivers and stops; held machine actions require explicit apply.\n\
          1. **Understand unresolved decisions**. Clarify ambiguities. Diagnose if needed.\n\
          2. **Read context capsule and task memory** (AGS preflight should have surfaced paths).\n\
          3. **Use only explicitly available methods**; external advice cannot override AGS gates.\n\
@@ -146,8 +146,8 @@ fn prompt_solution_phase(arguments: &serde_json::Value) -> PromptGetResult {
          - \"方案 OK\" authorizes neither mutation nor a task card.\n\
          - AGS is the governance authority.\n\n\
          ### Next phase\n\n\
-         After user confirmation, submit the complete updated context through \
-         `ags_route_request`. Task-card handoff still requires both structured gates.",
+         After user confirmation, the host forms a new typed proposal from the updated \
+         context. Task-card handoff still requires both structured gates.",
         user_request
     );
 

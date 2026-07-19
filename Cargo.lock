@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "ags-cli"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "ags-mcp",
  "ags-platform",
@@ -15,7 +15,7 @@ dependencies = [
  "execution-policy",
  "project-discovery",
  "receipt",
- "request-router",
+ "request-governance",
  "runner",
  "serde",
  "serde_json",
@@ -29,12 +29,12 @@ dependencies = [
 
 [[package]]
 name = "ags-mcp"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "ags-verify",
  "execution-policy",
  "project-discovery",
- "request-router",
+ "request-governance",
  "serde",
  "serde_json",
  "skill-resolver",
@@ -43,12 +43,13 @@ dependencies = [
 
 [[package]]
 name = "ags-platform"
-version = "0.2.8"
+version = "0.3.0"
 
 [[package]]
 name = "ags-verify"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
+ "request-governance",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -127,7 +128,7 @@ dependencies = [
 
 [[package]]
 name = "bootstrap-dry-run"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "ags-platform",
  "serde",
@@ -138,7 +139,7 @@ dependencies = [
 
 [[package]]
 name = "capability-registry"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -244,7 +245,7 @@ dependencies = [
 
 [[package]]
 name = "execution-policy"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -399,9 +400,10 @@ dependencies = [
 
 [[package]]
 name = "project-discovery"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "ags-platform",
+ "request-governance",
  "serde",
  "serde_json",
 ]
@@ -423,8 +425,9 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "receipt"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
+ "request-governance",
  "serde",
  "serde_json",
  "sha2",
@@ -432,19 +435,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "request-router"
-version = "0.2.8"
+name = "request-governance"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
 name = "runner"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "execution-policy",
  "receipt",
+ "request-governance",
  "serde",
  "serde_json",
  "skill-resolver",
@@ -545,7 +550,7 @@ dependencies = [
 
 [[package]]
 name = "skill-governance"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -554,10 +559,10 @@ dependencies = [
 
 [[package]]
 name = "skill-resolver"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "ags-platform",
- "request-router",
+ "request-governance",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -573,7 +578,7 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "suite-doctor"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "ags-platform",
  "project-discovery",
@@ -597,11 +602,11 @@ dependencies = [
 
 [[package]]
 name = "task-card-validator"
-version = "0.2.8"
+version = "0.3.0"
 
 [[package]]
 name = "task-compiler"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "ags-platform",
  "serde",
@@ -821,7 +826,7 @@ dependencies = [
 
 [[package]]
 name = "workflow-sync-check"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",

@@ -2,16 +2,15 @@ AGS Global Governance Kernel loaded.
 
 1. Call `ags_preflight` first. If it fails, stop.
 2. The host owns conversation context; AGS does not retain conversational state.
-3. Call `ags_route_request` once with the complete current request and structured approval evidence.
-4. Consume the canonical RequestDecision:
+3. Read `ags://capabilities/current-host`; use complete context to create a typed HostRouteProposal.
+4. Call read-only `ags_route_request` and consume the RouteResolution:
    - DirectResponse: reply and stop; do not read skill snapshots or invoke CLI.
-   - Skill: resolve the closed SkillDemand against the validated ActiveSkillTable snapshot.
-   - MachineCli: let MCP invoke the fixed business-level AGS CLI capability.
-   - InsufficientContext: ask only for the reported missing input, then resubmit complete context.
-5. DirectResponse is exclusive. A decision may contain at most one Skill and one MachineCli as peer targets.
-6. Compiler, Policy, Gate, Runner, and Skill Resolver never re-parse natural language.
-7. Existing canonical task cards validate and execute; task-card generation requires explicit handoff intent plus a confirmed handoff contract.
-8. AGS governs authority and gates; external methods cannot override RequestDecision or execution policy.
-9. Verify before completion and emit receipts for writes.
+   - Skill: submit exact skill_id, optional entrypoint, and snapshot_hash.
+   - MachineCli: receive a server-held action; explicitly call ags_apply_action with lease_id + action_id.
+5. DirectResponse is exclusive. A proposal may contain at most one exact Skill and one MachineCli as peer targets.
+6. Compiler, Policy, Gate, Runner, Skill Resolver, and AGS MCP never parse natural language.
+7. Existing canonical task cards validate then prepare a LaunchPlan; task-card generation requires explicit handoff intent plus a confirmed handoff contract.
+8. AGS governs authority and gates; external methods cannot override execution policy or lease admission.
+9. Runner never executes or verifies; the host verifies before completion and emits receipts for writes.
 
 Reference `ags://global-kernel` for the full contract.

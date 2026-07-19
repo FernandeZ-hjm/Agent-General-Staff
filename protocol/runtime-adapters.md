@@ -21,7 +21,7 @@ state:
 - what review gate is required,
 - what evidence is required before claiming completion.
 
-## Lifecycle Boundary: Request Routing Is Not Runner Execution
+## Lifecycle Boundary: Host Proposal Is Not Runner Execution
 
 The fields defined in this file (Permission mode, Parallelism, Execution
 surface, launch args) govern task-card handoff execution. They do not govern
@@ -31,9 +31,10 @@ host-native `direct-edit`:
 - **Ambient preflight** (project detection, context reading, git status) is a
   read-only discovery phase. It runs before any task card exists and is not
   constrained by Permission mode or Parallelism.
-- **Request Router** is the only natural-language routing node. Its structured
-  `RequestDecision` selects `DirectResponse`, `SkillDemand`, and/or one
-  business-level `MachineCli` capability before task-level classification.
+- **Host semantic proposal** is the only natural-language interpretation. The
+  host reads the current capability catalog, uses complete conversation context,
+  and submits a typed `HostRouteProposal`. AGS validates exact targets but does
+  not classify raw text.
 - **Solution phase** (understanding, diagnosis, solution formation, user
   confirmation) is conditional framing performed by Codex / Cursor only while
   material decisions remain unresolved. An already approved contract is reused
@@ -48,12 +49,12 @@ Only after the user explicitly requests a task-card handoff and the card is
 compiled do runtime-adapter fields take effect. The runner, resolver, and gate
 operate on that card; they do not govern solution formation or direct edit.
 
-**RequestDecision is not a runtime adapter field.** It is distinct from
+**RouteResolution is not a runtime adapter field.** It is distinct from
 `Runtime adapter`, `Permission mode`, and `Execution surface`, and never sets or
 changes them. WorkBuddy and CodeBuddy-Code are Tencent Agent host clients;
 like any host other than `codex` / `claude-code` / `cursor` they map to
 `Runtime adapter: generic` (M9 caps permission at `plan-only` without explicit
-approval). Request routing does not change that mapping.
+approval). Request governance does not change that mapping.
 
 Two distinct layers must not be conflated. The `default_permission_mode` reported
 by `ags agent instructions` / `ags session preflight` (for example,
@@ -64,7 +65,9 @@ execution-policy resolver acting on a task card's `Runtime adapter` field: M9 ca
 `generic` at `plan-only` without explicit approval. A Tencent Agent client
 (WorkBuddy / CodeBuddy-Code) carried as a generic host therefore still has its
 actual task-card writes gated at `plan-only` by M9, regardless of the discovery
-baseline shown in agent instructions.
+baseline shown in agent instructions. `ags_route_request` itself is strictly
+read-only; `ags_apply_action` is the sole effectful MCP tool and only consumes a
+connection-bound fixed action.
 
 **Task-card handoff gate**: `ags task compile` requires both
 `--task-card-requested` and `--confirmed-handoff-contract` before it will output
@@ -336,10 +339,10 @@ task-notification, or a background-agent handoff:
 
 ## Receipt-First Execution
 
-Receipt-first execution is a logging and foreground-interaction policy, not a
-new workflow family and not a permission mode.
+Receipt-first execution is a host logging and foreground-interaction policy,
+not a Runner side effect, workflow family, or permission mode.
 
-Use it when the executor should keep detailed process evidence in the runner
+Use it when the host executor should keep detailed process evidence in its
 receipt package while keeping the foreground context limited to:
 
 - phase summaries,
@@ -475,8 +478,8 @@ Execution notes:
 - On Heavy resume, reread the task card, `git status --short`, and
   `review_targets`; then honor the confirmed `Permission mode` (`plan-only`
   remains non-mutating, `execute-and-verify` resumes).
-- When launched with runner receipt-first mode, keep verbose process logs in
-  the receipt package and keep foreground output to phase summaries, approval
+- When the host uses receipt-first mode after consuming a LaunchPlan, keep
+  verbose process logs in the host-owned receipt package and foreground output to phase summaries, approval
   prompts, stop conditions, and delivery-report pointers.
 
 Parallelism mapping:
@@ -562,16 +565,19 @@ task card text
       │
       ▼
 ┌─────────────────┐
-│ runner           │  Actually launches the executor
-│ (future /        │  with resolved policy
-│  scripts/)       │
+│ runner           │  Prepares a LaunchPlan only
+│                  │  → HOST_EXECUTION_REQUIRED
 └─────────────────┘
 ```
 
 The validator is a **hard gate** — an invalid task card must be fixed before
-proceeding.  The execution-policy resolver is a **soft resolution layer** — it
+proceeding. The execution-policy resolver is a **soft resolution layer** — it
 takes a valid task card and may downgrade permission or parallelism, but it
 never rejects a valid card; it only adjusts the launch strategy and records why.
+
+The Runner never dispatches the command preview. It does not perform execution,
+verification, delivery-report generation, or receipt writing. The host owns
+those steps after consuming an allowed LaunchPlan.
 
 ### Key resolution rules
 
@@ -637,13 +643,14 @@ structured launch inputs can set it: `--current-task-approval` →
 environment override (`AGS_APPROVE_WRITES=1` → `runner-env`). Task card text is
 **never** an approval source.
 
-### Stop before launch
+### Stop before host execution
 
-The resolver has one launch-blocking mechanism:
+The resolver has one host-execution blocking mechanism. The field name remains
+`stop_before_launch` for schema compatibility; AGS 0.3.0 Runner never launches:
 
 | Mechanism | Meaning | Runner behavior |
 |---|---|---|
-| `stop_before_launch=true` | Do **not** launch at all. | Runner must refuse to start. The task card or execution context must be corrected before another attempt. |
+| `stop_before_launch=true` | Do **not** authorize host launch. | Runner returns a stopped LaunchPlan with `host_execution_required=false`. The task card or execution context must be corrected before another attempt. |
 
 `stop_before_launch` is set when:
 - Active parallelism (subagent, worktree, multi-session, agent-team) is
@@ -672,18 +679,18 @@ and resolver.
 ### Resolved policy JSON schema
 
 `ags policy resolve <task-card> --format json` is the stable machine contract
-for runners.  The text format is human-readable diagnostics only; runners MUST
-consume JSON.
+consumed by the LaunchPlan preparer and then by the host. The text format is
+human-readable diagnostics only.
 
 | Field | Type | Stable values / semantics |
 |---|---|---|
 | `executor` | string | Validated task-card executor. |
 | `runtime_adapter` | string | Validated task-card runtime adapter. |
-| `effective_permission_mode` | string | `plan-only` or `execute-and-verify`. This is the only permission mode a runner may use. |
+| `effective_permission_mode` | string | `plan-only` or `execute-and-verify`. This is the only permission mode a host may use. |
 | `effective_parallelism` | string | `none`, `subagent`, `worktree`, `multi-session`, `agent-team`. This is the resolved value after authority and writability gates. |
 | `effective_execution_surface` | string | `local-workspace`, `cli`, `ide`, `web`, `remote-control`, `background-agent`. If `background-agent` is blocked by `plan-only`, this becomes `cli`. |
-| `allowed_launch_args` | string array | The exact runner CLI args allowed for launch. Runner MUST pass them verbatim and MUST NOT synthesize additional args from raw task-card fields. |
-| `stop_before_launch` | boolean | If `true`, runner MUST refuse to launch. |
+| `allowed_launch_args` | string array | Compatibility-named exact host CLI args. Runner may only copy them verbatim into `AdapterPlan`; it never launches and MUST NOT synthesize arguments from raw task-card fields. |
+| `stop_before_launch` | boolean | If `true`, Runner MUST return a stopped LaunchPlan and the host MUST NOT launch. |
 | `stop_reasons` | object array | Canonical stop reasons. This plural array is the only stop-reason field; legacy singular `stop_reason` MUST NOT be emitted or consumed. |
 | `was_downgraded` | boolean | Whether any field was downgraded from the input card. |
 | `downgrade_reasons` | object array | Full audit trail; each entry has `rule_id`, `field`, `before`, `after`, `reason`. |
@@ -694,21 +701,22 @@ consume JSON.
 Stopped policy invariant:
 
 - If `stop_before_launch=true`, `allowed_launch_args` MUST be `[]`.
-- Runners MUST check `stop_before_launch` before consuming any launch args.
+- Runner MUST check `stop_before_launch` before exposing adapter args, and the
+  host MUST check it before execution.
 
 ## Script Wrapper (`run-task-card.sh`) → `ags run`
 
 `scripts/run-task-card.sh` is a **thin compatibility wrapper** that preserves the
 historical script entry point. It performs no validation, gate, policy, adapter,
-or receipt logic of its own. It forwards the task-card path and a small fixed set
-of flags to the canonical Rust runner `ags run`, which owns the entire
-resolver-first launch contract described below.
+receipt, notifier, or execution logic of its own. It `exec`s the canonical Rust
+LaunchPlan preparer `ags run` with the task-card path and a small fixed set of
+flags.
 
 The wrapper's only real flags are:
 
 - `--check-only` — stop after the gate check; exit `0` if allowed and `1` if
   stopped.
-- `--dry-run` — emit the full launch plan without executing.
+- `--dry-run` — mark and emit the full launch plan as a dry run. No mode executes.
 - `--current-task-approval` — pass live current-task approval through to the
   resolver as an audit/hint signal (task level does not downgrade the permission
   mode).
@@ -717,10 +725,8 @@ The wrapper's only real flags are:
 - `--format text|json` — output format passed through to `ags run`
   (default `text`).
 
-The task-card path must come FIRST; options follow it. Beyond argument
-forwarding, the only extra behavior the wrapper adds is signal forwarding (it
-kills the child `ags run` on cancellation) and a best-effort, post-task update
-notifier that runs after a normal, real execution. The wrapper never reads raw
+The task-card path must come FIRST; options follow it. The wrapper adds no
+post-task behavior because `ags run` does not execute a task. It never reads raw
 task-card fields and never synthesizes launch flags.
 
 ### Flow
@@ -732,22 +738,22 @@ task card
 run-task-card.sh                           ◄── thin wrapper; forwards args only
     │
     ▼
-ags run <task-card> [flags]                ◄── canonical runner owns all logic:
+ags run <task-card> [flags]                ◄── canonical plan preparer owns:
     │  validates the canonical task card        validation, gate, policy resolve,
     │  resolves execution policy (M1–M10)        adapter, receipt planning
     │  applies authority / writability gates
     │
     ▼
-launch or stop
+HOST_EXECUTION_REQUIRED or STOP
 ```
 
 ### Resolver-first contract (enforced by `ags run`)
 
 The resolver enforces M5/M6: `plan-only` must never produce write-type launch
-args or active parallelism flags.
-`ags run` therefore drives launch from the **resolved execution policy**
-(`ags policy resolve`), not from raw task-card fields. If a runner bypassed the
-resolver and used unprocessed task-card values directly, it could produce
+args or active parallelism flags. `ags run` therefore prepares its LaunchPlan
+from the **resolved execution policy** (`ags policy resolve`), not from raw
+task-card fields. If it bypassed the resolver and used unprocessed task-card
+values directly, it could expose
 `--parallel`, `--worktree`, or `--headless` flags for a `plan-only` card —
 bypassing the resolver's writability gate entirely.
 
@@ -756,23 +762,24 @@ bypassing the resolver's writability gate entirely.
 1. Resolve the execution policy via `ags policy resolve <task-card> --format json`
    (with `--current-task-approval` or `--approve-writes` when the invoking
    context carries the matching structured approval).
-2. Check `stop_before_launch` — if `true`, refuse to launch and surface all
-   `stop_reasons` entries to the caller. Multiple independent gates can stop
-   the same launch attempt.
-3. Use `allowed_launch_args` verbatim as the CLI arguments for the launched
-   session.
+2. Check `stop_before_launch` — if `true`, return a stopped LaunchPlan and
+   surface all `stop_reasons` entries. Multiple independent gates can stop the
+   same proposed host launch.
+3. Copy `allowed_launch_args` verbatim into `AdapterPlan.launch_args`; do not
+   start a process. The host decides whether and how to execute after receiving
+   `HOST_EXECUTION_REQUIRED`.
 4. Never read `Parallelism:`, `Execution surface:`, or `Permission mode:`
    from the raw task card to decide launch flags — those values have already
    been resolved, downgraded, and gated by the resolver.
 5. Run the runtime skill-tag availability gate (the third gate) on the
-   launch-plan path. After the policy gate, `ags run` extracts the card's
+   LaunchPlan path. After the policy gate, `ags run` extracts the card's
    trailing `[skill: …]` tags, derives the active host from the resolved
    `runtime_adapter` (`claude-code` / `codex-local`→`codex` / `cursor`;
    `generic`/unknown → host-agnostic, fail-closed), and runs the equivalent of
    `ags gate skill-tags`. Any tag the live machine snapshot does not judge
    `available` forces `gate_decision=stop` (`gate_error_kind=skill_tags_unavailable`),
-   empties launch args, and skips the receipt. This makes the third gate
-   automatic on the main task-card execution chain — not only the manual
+   empties launch args, and disables the future host receipt plan. This makes
+   the third gate automatic on the main task-card preparation chain—not only the manual
    `ags gate skill-tags` subcommand. `--check-only` stops at the offline policy
    gate and does NOT run the runtime skill-tag gate, preserving the validator's
    offline static determinism. The `LaunchPlan.skill_tags_gate` field carries the
@@ -794,19 +801,19 @@ Given a task card with `Permission mode: plan-only`, `Parallelism: worktree`:
 }
 ```
 
-`ags run` sees `stop_before_launch: true`, refuses to launch, and reports the
-stop reason entries. It never generates `--parallel --worktree`, and it receives
-no launch args at all because stopped policies expose `allowed_launch_args: []`.
+`ags run` sees `stop_before_launch: true`, returns a stopped LaunchPlan, and
+reports the stop reason entries. It never generates `--parallel --worktree`,
+never launches, and exposes no launch args because stopped policies contain
+`allowed_launch_args: []`.
 
 ### Defaults preserved
 
 `ags run` never upgrades `Permission mode`. Task level never downgrades it
 either: a Heavy card keeps its declared permission mode.
 When a Heavy card omits `Permission mode:`, the compiler default is `plan-only`;
-an explicit `execute-and-verify` mode is always preserved and runs without an
-extra planning round.
-Receipt-first execution remains an explicit runner flag; it is never enabled
-implicitly.
+an explicit `execute-and-verify` mode is preserved without an extra planning
+round, but actual execution still belongs to the host. Receipt generation is a
+post-execution host obligation; Runner only returns `ReceiptPlan` metadata.
 
 ### Planned — standalone auto-orchestration (not implemented)
 
@@ -815,8 +822,8 @@ implicitly.
 > the resolved policy JSON and decides launch flags — does **not** exist. The
 > wrapper supports only `--check-only`, `--dry-run`, `--current-task-approval`,
 > `--approve-writes`, and `--format`; it delegates the entire resolver-first launch contract above to
-> `ags run`. Treat the resolver-first rules in this section as the contract
-> `ags run` already enforces, not as a separate script-level auto mode.
+> `ags run`. Treat the resolver-first rules in this section as the LaunchPlan
+> contract `ags run` already enforces, not as a separate script-level auto mode.
 
 ## Planned — Learning Runner (not implemented)
 

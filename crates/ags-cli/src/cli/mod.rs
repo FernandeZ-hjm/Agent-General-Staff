@@ -246,9 +246,10 @@ pub(crate) enum Commands {
 
     // ── Global skill governance (五段链路第 3 段) ─────────────────
     /// 纳管本机技能本体（前台主入口）. Local skill-body governance home:
-    /// inventory / dedupe / update / sync / verify (+ hidden compat scan /
-    /// check / propose / upstream). Dry-run by default; --apply writes only the
-    /// thin index under the single guard. `ags capability` is the underlying layer.
+    /// inventory / adopt / ignore / rollback / dedupe / update / sync / verify
+    /// (+ hidden compat scan / check / propose / upstream). Lifecycle changes
+    /// are dry-run by default and write only the machine-private overlay with
+    /// explicit --apply. `ags capability` is the underlying visibility layer.
     Skill {
         /// Output format: text (default) or json.
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
@@ -301,15 +302,15 @@ pub(crate) enum Commands {
     },
 
     // ── Runner operations ──────────────────────────────────────────
-    /// Run a task card through the gate-first execution pipeline.
+    /// Prepare a task card for host-owned execution through the gate-first pipeline.
     ///
     /// Flow: validate → gate → policy → adapter resolve → launch plan.
     /// The runner ONLY consumes resolved execution policy — it never reads
     /// raw task-card fields to decide permissions, parallelism, or launch args.
     ///
     /// --check-only stops after gate check. --dry-run outputs the full launch
-    /// plan without launching. Without flags, outputs a plan for shell-wrapper
-    /// dispatch.
+    /// plan. Without flags, returns `host_execution_required` after the same
+    /// checks. This command never launches, verifies, or completes the task.
     #[command(hide = true)]
     Run {
         /// Task card file (use "-" for stdin)

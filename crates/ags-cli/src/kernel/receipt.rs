@@ -85,7 +85,7 @@ fn cmd_receipt_generate(
     );
 
     let receipt = receipt::Receipt {
-        schema_version: "2.0-m6".to_string(),
+        schema_version: receipt::RECEIPT_SCHEMA_VERSION.to_string(),
         receipt_id,
         timestamp: format!("unix-{}", {
             use std::time::SystemTime;
@@ -107,6 +107,12 @@ fn cmd_receipt_generate(
         verification_results,
         delivery_report_hash: delivery_hash,
         exit_code: None,
+        governance_status: Some(if gate_result == "stop" {
+            request_governance::GovernanceStatus::BlockedByPolicy
+        } else {
+            request_governance::GovernanceStatus::DoneWithReceipt
+        }),
+        governance_evidence: None,
     };
 
     match format {

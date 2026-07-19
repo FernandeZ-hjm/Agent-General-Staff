@@ -117,6 +117,13 @@ pub const PUBLIC_FORBIDDEN_PAYLOAD: &[&str] = &[
     "protocol/evolution-memory.md",
     "memory/",
     "task-archive/",
+    "capability-snapshot/",
+    "skill-registry/",
+    "skill-usage/",
+    "decision-leases/",
+    "auth-state/",
+    "receipts/",
+    ".ags/",
 ];
 
 /// Select the appropriate manifest for a project kind.
@@ -340,6 +347,13 @@ mod tests {
             "skill-packs/personal/example/SKILL.md",
             ".agents/memory/projects/demo/context-capsule.md",
             ".codex/skills/example/SKILL.md",
+            "capability-snapshot/codex.json",
+            "skill-registry/user-overlay.yaml",
+            "skill-usage/codex.ndjson",
+            "decision-leases/current.json",
+            "auth-state/codex.json",
+            "receipts/ar-runtime.json",
+            ".ags/runtime/skill-registry/user-overlay.yaml",
         ] {
             assert!(
                 is_public_forbidden_payload(path),
@@ -356,7 +370,9 @@ mod tests {
         assert!(is_public_forbidden_payload(
             "global-skills/example/SKILL.md"
         ));
-        assert!(is_public_forbidden_payload("private-advisory/memory.json"));
+        assert!(is_public_forbidden_payload(
+            "private-advisory/methods/genes.json"
+        ));
         assert!(is_public_forbidden_payload(
             "assets/private-method-memory/capsules.json"
         ));
@@ -374,6 +390,19 @@ mod tests {
             "manifests/templates/runtime-profiles.template.yaml"
         ));
         assert!(is_public_forbidden_payload("protocol/evolution-memory.md"));
+        assert!(is_public_forbidden_payload(
+            "capability-snapshot/codex.json"
+        ));
+        assert!(is_public_forbidden_payload(
+            "skill-registry/user-overlay.yaml"
+        ));
+        assert!(is_public_forbidden_payload("skill-usage/codex.ndjson"));
+        assert!(is_public_forbidden_payload("decision-leases/lease.json"));
+        assert!(is_public_forbidden_payload("auth-state/codex.json"));
+        assert!(is_public_forbidden_payload("receipts/action.json"));
+        assert!(is_public_forbidden_payload(
+            ".ags/runtime/capability-snapshot/codex.json"
+        ));
         assert!(!is_public_forbidden_payload("global-skills.md"));
         assert!(!is_public_forbidden_payload("governance/skill-sync.md"));
     }

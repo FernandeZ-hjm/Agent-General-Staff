@@ -149,17 +149,17 @@ closed；`ags doctor` 也会把这类宿主路由缺口列为正式失败项。
 
 ## 怎么工作
 
-AGS 0.2.8 只有一个自然语言路由节点。宿主在 preflight 后把完整对话上下文交给 MCP `ags_route_request`，Request Router 一次返回结构化 `RequestDecision`。它可以选择直接回复、技能需求或机器 CLI 能力；直接回复与其他目标互斥，技能和一个业务级 CLI 能力可以共存。Skill Resolver 只对已校验的 `ActiveSkillTable` 做闭集映射；MCP 用固定 argv 调用真实 `ags` CLI。Compiler、Policy、Gate 和 Runner 都不再解析自然语言。
+AGS 0.3.0 把自然语言理解留在宿主。preflight 后，宿主读取 `ags://capabilities/current-host`，结合完整对话形成 typed `HostRouteProposal`；严格只读的 `ags_route_request` 只校验阶段、授权、精确技能和闭集机器动作。`ags_apply_action` 是唯一 effectful MCP 工具，以一次性 lease/action 引用消费服务端保存的固定动作。Skill Resolver 只按 `HostCapabilitySnapshot` 精确校验 skill/entrypoint，没有关键词、相似度或 fallback。Compiler、Policy、Gate 和 Runner 都不解析自然语言；Runner 只准备 LaunchPlan 并返回 `HOST_EXECUTION_REQUIRED`。
 
 ```text
 AGS 场景输入 → preflight
   ├─ 已有 canonical 任务卡 → 先校验
-  │    ├─ 合法 → 策略解析 → 执行 → 验证 → 回执 → 记忆
+  │    ├─ 合法 → 策略解析 → Gate → LaunchPlan → 宿主执行/验证
   │    └─ 非法 → 停止并返回校验错误，不得回落到新任务卡生成
-  └─ 原始请求 → MCP → Request Router → RequestDecision
+  └─ 原始请求 → 宿主语义提案 → 只读 ags_route_request
        ├─ DirectResponse → 宿主回复
-       ├─ SkillDemand → Skill Resolver → 宿主技能
-       └─ MachineCli → MCP 固定 argv → ags CLI 内部执行链
+       ├─ exact SkillTarget → Skill Resolver → 宿主技能
+       └─ MachineCliTarget → DecisionLease → 显式 ags_apply_action
 ```
 
 从原始请求生成新任务卡时，**三段门槛**依然生效：
@@ -177,12 +177,12 @@ flowchart TD
     X -->|是| V[Existing Card Validate<br/>ags task validate]
     V -->|合法| K
     V -->|非法| V_STOP[STOP<br/>返回校验错误，不生成新卡]
-    X -->|否，原始请求| MCP[MCP<br/>ags_route_request]
-    MCP --> R[Request Router<br/>唯一自然语言节点]
-    R --> D0{RequestDecision}
+    X -->|否，原始请求| R[宿主语义选择<br/>HostRouteProposal]
+    R --> MCP[只读 MCP<br/>ags_route_request]
+    MCP --> D0{RouteResolution}
     D0 -->|DirectResponse| PASS[宿主直接回复]
-    D0 -->|SkillDemand| SR[Skill Resolver<br/>ActiveSkillTable 闭集映射]
-    D0 -->|MachineCli| MC[MCP 固定 argv<br/>ags CLI 业务能力]
+    D0 -->|exact SkillTarget| SR[Skill Resolver<br/>HostCapabilitySnapshot 精确校验]
+    D0 -->|held MachineCli| MC[DecisionLease<br/>ags_apply_action]
     SR --> HOST[宿主加载技能]
     MC --> K
     D0 -->|任务卡交接请求| B1[读取记忆胶囊 + 任务记忆]
@@ -225,7 +225,7 @@ flowchart TD
 
 ## 常用命令
 
-0.2.8 采用唯一 Request Router + 五段链路 CLI 架构：5 个人类命令面覆盖全局治理生命周期；路由后的 `MachineCli` 则是 MCP 消费的机器能力面。
+0.3.0 采用宿主语义提案 + 五段链路 CLI 架构：5 个人类命令面覆盖全局治理生命周期；机器动作只有在只读 route 生成一次性租约后，才由显式 apply 消费。
 
 ### 五段链路（全局管理）
 

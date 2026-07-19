@@ -36,13 +36,14 @@ suite_interfaces:
     trust_level: "suite_canonical"
     description: >
       AGS MCP Server — host initialization adapter and mandatory governance
-      interface over MCP stdio. Provides 7 governance tools, 5 protocol
+      interface over MCP stdio. Provides 8 governance tools, 6 public-safe
       resources, and 4 governance prompts. AGS is the governance authority;
-      it is NOT a governed third-party MCP. All tools are read-only.
+      it is NOT a governed third-party MCP. ags_route_request is strictly
+      read-only; ags_apply_action is the sole effectful MCP tool.
     package:
       manager: "cargo"
       name: "ags-mcp"
-      version: "0.2.8"
+      version: "0.3.0"
       repository: "this repository"
       license: "MIT"
     install:
@@ -72,11 +73,12 @@ suite_interfaces:
         - "Run AGS governance preflight — mandatory first call for all AGS scenarios."
         - "Check protocol status, export agent instructions, validate task cards."
         - "Resolve execution policy for validated task cards."
-        - "Run local-scope verification checks."
-        - "Return the canonical RequestDecision from the unique requirement router."
+        - "Return read-only guidance for the fixed local verification action; actual verification runs only through ags_apply_action."
+        - "Validate typed HostRouteProposal values and return RouteResolution without launching a process or writing a file."
+        - "Return the preflight-bound ags://capabilities/current-host resource."
         - "Return AGS protocol resources and governance prompts."
       denied:
-        - "Write files, install hooks, or modify any configuration."
+        - "Write files, install hooks, or modify configuration outside ags_apply_action's closed fixed-action mappings."
         - "Decide task level, permission mode, review gate, or verification gate — these are already encoded in AGS protocol; the tools only enforce."
         - "Read or write real tokens, node-local secrets, or host secrets."
         - "Modify user worktrees without explicit authorization."
@@ -89,17 +91,35 @@ suite_interfaces:
       rule: >
         In any AGS scenario, the host MUST call ags_preflight (or CLI fallback)
         before invoking any other AGS tool. All other AGS tools
-        (ags_route_request, ags_task_validate, ags_policy_resolve,
-        ags_verify_local) require preflight to have completed first.
+        (ags_route_request, ags_apply_action, ags_task_validate,
+        ags_policy_resolve, ags_verify_local) require preflight to have completed
+        first. A new preflight invalidates every held DecisionLease.
         Hosts should reject calls to these tools before preflight.
+    surfaces:
+      tools:
+        ags_route_request:
+          mutation_surface: read-only
+          input: typed_host_route_proposal
+          process_launch: forbidden
+          filesystem_write: forbidden
+        ags_apply_action:
+          mutation_surface: effectful
+          input: decision_lease_and_action_reference_only
+          arbitrary_argv: forbidden
+          replay: forbidden
+      resources:
+        ags://capabilities/current-host:
+          mutation_surface: read-only
+          binding: preflight_host_and_target
     risk:
       level: "low"
       findings:
         - "Runs as a local stdio process with same user privileges as the host."
-        - "All operations are read-only — no filesystem mutation."
+        - "Route and resources are read-only; explicit apply may run one fixed action."
         - "No external network calls — all tool implementations are local."
       mitigations:
-        - "Read-only by design — no write paths exist."
+        - "All mutation is isolated to ags_apply_action and guarded by a one-shot connection-local DecisionLease."
+        - "ags_apply_action accepts only lease/action references and fixed mappings; arbitrary argv is impossible."
         - "Stdio transport only in v1 — no network exposure."
         - "No secret handling — tools do not read tokens, credentials, or keychain."
 

@@ -1,7 +1,7 @@
 ## Task-Card Handoff Gate
 
 The solution has been confirmed, but `方案 OK` does not create a task-card
-handoff. The host must provide structured handoff evidence to the Request Router.
+handoff. The host must encode structured handoff evidence in a typed proposal.
 
 ### Direct execution
 
@@ -19,7 +19,7 @@ Generate a task card only after an explicit handoff instruction such as:
 - `给我你执行的任务卡`
 
 The solution/diagnosis, scope, verification, and handoff boundaries must also be
-provided as a field-structured `handoff_contract` payload. The router/compiler blocks card output when:
+provided as a typed `HandoffContract` with explicit `task_level`. Request governance/compiler blocks card output when:
 
 - the instruction is missing: `block_reason: task_card_not_requested`
 - the confirmed contract is missing: `block_reason: handoff_contract_not_confirmed`
@@ -30,7 +30,7 @@ for authorized direct local execution.
 ### Existing task cards
 
 If the first non-empty line is `## 任务卡`, validate it as an existing handoff
-contract. Valid cards skip generation and continue to policy/runner; invalid
+contract. Valid cards skip generation and continue to policy/gate/LaunchPlan; invalid
 cards fail closed.
 
 ### Handoff sequence
@@ -40,4 +40,4 @@ cards fail closed.
 3. Pass both structured gates.
 4. Classify Light/Medium/Heavy from the confirmed contract.
 5. Generate the canonical task card.
-6. Validate, resolve policy, and dispatch to the named executor.
+6. Validate, resolve policy, and prepare a LaunchPlan; the host owns dispatch.

@@ -406,7 +406,8 @@ pub struct ResolvedExecutionPolicy {
     /// For plan-only, this will never include write-enabling flags.
     pub allowed_launch_args: Vec<String>,
 
-    /// If true, the runner must NOT launch — stop with `stop_reasons`.
+    /// If true, a LaunchPlan must not authorize host launch and must expose
+    /// `stop_reasons`. The field name is retained for schema compatibility.
     pub stop_before_launch: bool,
 
     /// Why the launch was stopped (only meaningful if `stop_before_launch`).
