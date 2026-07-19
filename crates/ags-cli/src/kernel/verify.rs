@@ -1,6 +1,26 @@
 use crate::cli::VerifyAction;
 use std::path::Path;
 
+// Windows executables start with a substantially smaller main-thread stack
+// than Unix hosts. The full verifier deliberately nests Cargo subprocesses
+// and structured report construction, so run that workload on an explicitly
+// sized worker stack to keep the canonical cross-platform gate deterministic.
+const VERIFY_WORKER_STACK_SIZE: usize = 8 * 1024 * 1024;
+
+fn run_verify_with_portable_stack(
+    scope: ags_verify::Scope,
+    target: &Path,
+) -> Result<ags_verify::VerificationReport, String> {
+    let target = target.to_path_buf();
+    std::thread::Builder::new()
+        .name("ags-verify".to_string())
+        .stack_size(VERIFY_WORKER_STACK_SIZE)
+        .spawn(move || ags_verify::run_verify(scope, &target))
+        .map_err(|error| format!("could not start verification worker: {error}"))?
+        .join()
+        .map_err(|_| "verification worker terminated unexpectedly".to_string())
+}
+
 /// Shared dispatch: `verify` and backward-compatible `verify run`.
 fn cmd_verify_run(scope: &str, format: &str, target: &Path) {
     if !target.exists() {
@@ -16,7 +36,13 @@ fn cmd_verify_run(scope: &str, format: &str, target: &Path) {
         }
     };
 
-    let report = ags_verify::run_verify(scope, target);
+    let report = match run_verify_with_portable_stack(scope, target) {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("verify: {error}");
+            std::process::exit(1);
+        }
+    };
 
     match format {
         "json" => println!("{}", ags_verify::render_json(&report)),
