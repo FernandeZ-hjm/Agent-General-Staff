@@ -756,8 +756,9 @@ pub(crate) fn refresh_managed_project(
                 std::fs::create_dir_all(parent)?;
             }
             std::fs::write(&write.path, &write.after)?;
+            let _requested_mode = write.mode;
             #[cfg(unix)]
-            if let Some(mode) = write.mode {
+            if let Some(mode) = _requested_mode {
                 use std::os::unix::fs::PermissionsExt;
                 let mut permissions = std::fs::metadata(&write.path)?.permissions();
                 permissions.set_mode(mode);
