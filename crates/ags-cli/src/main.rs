@@ -41,7 +41,24 @@ mod update;
 
 use cli::{Cli, Commands};
 
+const CLI_WORKER_STACK_SIZE: usize = 8 * 1024 * 1024;
+
 fn main() {
+    let worker = std::thread::Builder::new()
+        .name("ags-main".to_string())
+        .stack_size(CLI_WORKER_STACK_SIZE)
+        .spawn(run_cli)
+        .unwrap_or_else(|error| {
+            eprintln!("ags: could not start CLI worker: {error}");
+            std::process::exit(1);
+        });
+    if worker.join().is_err() {
+        eprintln!("ags: CLI worker terminated unexpectedly");
+        std::process::exit(1);
+    }
+}
+
+fn run_cli() {
     let cli = Cli::parse();
 
     match cli.command {
