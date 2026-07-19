@@ -206,20 +206,20 @@ pub fn repair(target: &Path) -> RepairResult {
                     skipped.push(format!("{}: could not parse path", item.check_name));
                     continue;
                 }
-                let script_path = Path::new(path_str);
+                let _script_path = Path::new(path_str);
                 // Use std::fs::set_permissions to set executable bit on unix
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
-                    if let Ok(meta) = std::fs::metadata(script_path) {
+                    if let Ok(meta) = std::fs::metadata(_script_path) {
                         let mut perms = meta.permissions();
                         let mode = perms.mode();
                         perms.set_mode(mode | 0o111);
-                        match std::fs::set_permissions(script_path, perms) {
+                        match std::fs::set_permissions(_script_path, perms) {
                             Ok(_) => repaired.push(format!(
                                 "{}: chmod +x {}",
                                 item.check_name,
-                                script_path.display()
+                                _script_path.display()
                             )),
                             Err(e) => failed.push(format!("{}: {}", item.check_name, e)),
                         }
@@ -227,7 +227,7 @@ pub fn repair(target: &Path) -> RepairResult {
                         skipped.push(format!(
                             "{}: {} not found",
                             item.check_name,
-                            script_path.display()
+                            _script_path.display()
                         ));
                     }
                 }
