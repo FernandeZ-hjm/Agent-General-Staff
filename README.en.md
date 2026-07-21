@@ -151,13 +151,19 @@ The repository ships a `deny.toml` (RustSec advisories + license allowlist + cra
 
 ## How It Works
 
-AGS 0.2.8 has exactly one natural-language routing node. After preflight, the host sends complete conversation context to MCP `ags_route_request`; Request Router returns one structured `RequestDecision`. It may select a direct response, a skill demand, or a machine CLI capability. A direct response is exclusive, while one skill and one business-level CLI capability may coexist. Skill Resolver only maps a closed demand against a validated `ActiveSkillTable`; MCP invokes the real `ags` CLI with fixed argv. Compiler, Policy, Gate, and Runner never re-parse natural language.
+AGS 0.3.0 leaves natural-language understanding with the host. After preflight,
+the host reads `ags://capabilities/current-host`, keeps the complete
+conversation context, and submits a typed `HostRouteProposal` to read-only
+`ags_route_request`. AGS validates phase, authority, exact skill selection, and
+closed machine actions; it never parses raw language. A direct response is
+exclusive. The only effectful MCP tool, `ags_apply_action`, consumes a
+connection-bound server-held action by lease and action ID.
 
 ```text
-User request → MCP → Request Router → RequestDecision
+User request → host semantic proposal → HostRouteProposal
   ├─ DirectResponse → host response
-  ├─ SkillDemand → Skill Resolver → host skill
-  └─ MachineCli → MCP fixed argv → ags CLI internal execution chain
+  ├─ SkillTarget → exact Skill Resolver → host skill
+  └─ MachineCliTarget → DecisionLease → explicit ags_apply_action
 ```
 
 Once inside the task-card pipeline, the **three-gate threshold** still applies:
@@ -172,11 +178,11 @@ Without both the task-card instruction and a confirmed handoff contract, task-ca
 flowchart TD
     A[User Request] --> B[1. Preflight<br/>ags_preflight / CLI fallback]
     B --> MCP[MCP<br/>ags_route_request]
-    MCP --> R[Request Router<br/>only natural-language node]
-    R --> D0{RequestDecision}
+    MCP --> P[HostRouteProposal<br/>host-owned semantics]
+    P --> D0[ags_route_request<br/>read-only RouteResolution]
     D0 -->|DirectResponse| PASS[Host response]
-    D0 -->|SkillDemand| SR[Skill Resolver<br/>closed ActiveSkillTable mapping]
-    D0 -->|MachineCli| MC[MCP fixed argv<br/>ags CLI capability]
+    D0 -->|SkillTarget| SR[Skill Resolver<br/>exact host-snapshot mapping]
+    D0 -->|MachineCliTarget| MC[DecisionLease<br/>explicit ags_apply_action]
     SR --> HOST[Host loads skill]
     MC --> K
     D0 -->|Task-card handoff| B1[Read context capsule + task memory]
@@ -197,12 +203,12 @@ flowchart TD
     J_FAIL --> I
     K --> L{stop_before_launch?}
     L -->|Yes| L_STOP[STOP: fix or get approval]
-    L -->|No| M[9. Execution<br/>ags run]
-    M --> N[10. Verification<br/>ags verify]
+    L -->|No| M[9. LaunchPlan<br/>AGS returns HOST_EXECUTION_REQUIRED]
+    M --> N[10. Host execution and verification]
     N --> O[11. Receipt<br/>ags receipt generate]
     O --> P[12. Task Memory Update]
 
-    style R fill:#7e57c2,color:#fff
+    style P fill:#7e57c2,color:#fff
     style MCP fill:#9575cd,color:#fff
     style PASS fill:#c8e6c9
     style B fill:#e1f5fe
@@ -217,7 +223,7 @@ For architectural details, see [docs/architecture.md](docs/architecture.md).
 
 ## Common Commands
 
-0.2.8 uses one Request Router plus a five-stage CLI architecture: five human-facing commands cover the governance lifecycle, while `MachineCli` is the post-routing machine capability surface consumed by MCP.
+0.3.0 uses a host-owned typed proposal plus a five-stage CLI architecture: five human-facing commands cover the governance lifecycle, while a closed `MachineCliTarget` can be consumed only through an explicit, leased apply action.
 
 ### Five-Stage Pipeline (Global Management)
 
@@ -240,7 +246,7 @@ For architectural details, see [docs/architecture.md](docs/architecture.md).
 | `ags policy check` | Validate + resolve, exit with gate decision |
 | `ags policy explain` | Print per-rule policy explanations |
 | `ags gate check` | Runner-level gate decision |
-| `ags run` | Task-card execution pipeline (resolver-first) |
+| `ags run` | Prepare a validated LaunchPlan; host execution remains required |
 | `ags verify --scope local` | Structured verification (local / full / release) |
 | `ags verify lane` | Classify verification path by diff risk |
 | `ags receipt verify` | Verify execution receipt integrity |

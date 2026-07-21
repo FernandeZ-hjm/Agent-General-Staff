@@ -1,4 +1,4 @@
-# Agent General Staff 2.0 — Public Edition Workspace
+# Agent General Staff 0.3 — Public Edition Workspace
 
 This is the **public distributable edition** of the Agent General Staff.
 It contains the public-safe Rust `ags` CLI core, AGS MCP host initialization
@@ -65,8 +65,8 @@ scripts/                    # Public-safe scripts
 crates/                     # Rust crates (public-safe core)
   ags-cli/                  # Unified CLI entry point
   ags-mcp/                  # AGS MCP host initialization adapter
-  request-router/           # Unique natural-language RequestDecision router
-  skill-resolver/           # Closed SkillDemand mapping
+  request-governance/       # Typed HostRouteProposal / RouteResolution contracts
+  skill-resolver/           # Exact SkillTarget resolution against host snapshots
   task-card-validator/      # Task-card validation
   execution-policy/         # Execution policy resolver
   suite-doctor/             # Suite health diagnostics
@@ -89,7 +89,7 @@ tests/                      # Test fixtures
 
 ## Release Identity
 
-Release line: AGS 2.0 Public Edition.
+Release line: AGS 0.3 Public Edition.
 
 Repository name: `agent-governance-suite`.
 

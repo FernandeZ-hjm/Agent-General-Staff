@@ -9,13 +9,13 @@ Before responding or executing tasks in this repository, also read and follow:
 ## AGS: Standing Engineering Hub
 
 Agent General Staff (AGS) is a standing engineering hub. After preflight, the
-host sends complete conversation context through MCP `ags_route_request`; this
-is the only natural-language routing node. It returns one structured
-`RequestDecision` with peer targets `DirectResponse`, `SkillDemand`, and
-`MachineCli`. DirectResponse is exclusive; at most one Skill and one MachineCli
-may coexist. Skill Resolver only maps a closed demand against the validated
-ActiveSkillTable, and MCP invokes machine capabilities through fixed argv on the
-real `ags` CLI. Compiler, Policy, Gate, and Runner never re-parse natural language.
+host reads `ags://capabilities/current-host`, keeps the complete conversation
+context, and submits a typed `HostRouteProposal` to read-only
+`ags_route_request`. AGS validates phase, authority, one exact `SkillTarget`,
+and one closed `MachineCliTarget`; it never interprets natural language.
+`DirectResponse` is exclusive. `ags_apply_action` is the sole effectful MCP
+tool and consumes a connection-bound, server-held action by lease/action ID.
+Compiler, Policy, Gate, and Runner consume structured contracts only.
 
 When AGS MCP is available, every AGS-related task must explicitly call the MCP
 `ags_preflight` tool first. CLI preflight is a fallback path only when MCP is not

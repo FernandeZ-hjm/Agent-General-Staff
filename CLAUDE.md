@@ -1,6 +1,6 @@
-# Agent General Staff 2.0 — Public Edition
+# Agent General Staff 0.3 — Public Edition
 
-This is the **2.0 public distributable edition** of the Agent General Staff (`ags`).
+This is the **0.3 public distributable edition** of the Agent General Staff (`ags`).
 It provides a Rust-native CLI toolchain, an AGS MCP stdio server, Claude Code
 `/ags` entry commands, and Codex-visible AGS command skills for task-card
 validation, execution policy resolution, protocol drift checking, suite health
@@ -14,19 +14,20 @@ Agents working in this repository must follow the canonical protocol files under
 `protocol/` before changing code, generating task cards, installing hooks, or
 declaring completion.
 
-AGS is a standing engineering hub. After preflight, the host sends complete
-conversation context through MCP `ags_route_request`; this is the only
-natural-language routing node. It returns one structured `RequestDecision` with
-peer targets `DirectResponse`, `SkillDemand`, and `MachineCli`. DirectResponse
-is exclusive; at most one Skill and one MachineCli may coexist. Skill Resolver
-only maps a closed demand against the validated ActiveSkillTable, and MCP invokes
-machine capabilities through fixed argv on the real `ags` CLI. Compiler, Policy,
-Gate, and Runner never re-parse natural language.
+AGS is a standing engineering hub. After preflight, the host reads
+`ags://capabilities/current-host`, preserves complete conversation context, and
+submits a typed `HostRouteProposal` to read-only `ags_route_request`. AGS only
+validates phase, authority, exact skill selection, and closed machine actions;
+it never interprets raw language. `DirectResponse` is exclusive. The only
+effectful MCP tool is `ags_apply_action`, which consumes a connection-bound,
+server-held action by lease/action ID. Compiler, Policy, Gate, and Runner
+consume structured contracts only.
 
 ```text
-human request -> MCP -> Request Router -> RequestDecision
-  -> DirectResponse OR SkillDemand / MachineCli
-  -> structured consumer -> gate / verification / receipt
+human request -> host semantic proposal -> HostRouteProposal
+  -> ags_route_request (read-only) -> RouteResolution
+  -> DirectResponse | exact SkillTarget | held MachineCli action
+  -> ags_apply_action only for the held machine action
 ```
 
 Do not classify raw user requests as Light / Medium / Heavy. Preflight is always
@@ -228,8 +229,8 @@ crates/                 # Rust crates (public-safe core)
     src/skill/          # Skill governance entry
     src/doctor/         # Health diagnostics entry
     src/cli/            # Command routing — actions + kernel_actions
-  request-router/       # The only natural-language RequestDecision router
-  skill-resolver/       # Closed SkillDemand-to-skill mapping
+  request-governance/   # Typed HostRouteProposal and RouteResolution contracts
+  skill-resolver/       # Exact SkillTarget resolution against a host snapshot
   task-card-validator/  # Task-card validation
   execution-policy/     # Execution policy resolver
   suite-doctor/         # Suite health diagnostics

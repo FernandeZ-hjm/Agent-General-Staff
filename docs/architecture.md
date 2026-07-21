@@ -1,14 +1,15 @@
 # AGS Architecture
 
-This document describes the internal architecture of Agent General Staff 2.0
+This document describes the internal architecture of Agent General Staff 0.3
 Public Edition. It covers the lifecycle phases, the Rust CLI crate dependency
 graph, the AGS MCP host initialization adapter, the task-card-to-execution
 pipeline, and the memory capsule mechanism.
 
 ## 1. AGS Lifecycle
 
-AGS separates natural-language routing from structured execution. The host owns
-conversation context; Request Router is the only component that reads it.
+AGS separates host-owned natural-language understanding from structured AGS
+validation. The host owns conversation context and forms the typed proposal;
+AGS never parses raw requests.
 
 ```mermaid
 flowchart TD
@@ -16,13 +17,12 @@ flowchart TD
     B --> B0{AGS MCP available?}
     B0 -->|Yes| B1[ags_preflight via AGS MCP]
     B0 -->|No| B1F[CLI fallback: ags session preflight]
-    B1 --> MCP[MCP ags_route_request]
-    B1F --> MCP
-    MCP --> RR[Request Router<br/>only natural-language node]
-    RR --> RD{RequestDecision}
+    B1 --> P[HostRouteProposal]
+    B1F --> P
+    P --> RD[ags_route_request<br/>read-only RouteResolution]
     RD -->|DirectResponse| DIRECT[Host responds]
-    RD -->|SkillDemand| SR[Skill Resolver<br/>closed ActiveSkillTable mapping]
-    RD -->|MachineCli| FIXED[MCP fixed argv<br/>real ags CLI]
+    RD -->|SkillTarget| SR[Skill Resolver<br/>exact host-snapshot mapping]
+    RD -->|MachineCliTarget| FIXED[DecisionLease<br/>explicit ags_apply_action]
     SR --> SKILL[Host loads selected skill]
     FIXED --> J[Structured capability input]
     RD -->|Task-card handoff| C[Solution formation if needed]
@@ -38,15 +38,15 @@ flowchart TD
     K --> K1[ags policy resolve — soft resolution]
     K1 --> L{stop_before_launch?}
     L -->|Yes| L_STOP[STOP: fix task card or get approval]
-    L -->|No| M[9. Execution]
-    M --> N[10. Verification]
+    L -->|No| M[9. LaunchPlan]
+    M --> N[10. Host execution and verification]
     N --> O[11. Receipt Generation]
     O --> P[12. Task Memory Update]
     P --> Q[Done]
 
     style B fill:#e1f5fe
     style C fill:#fff3e0
-    style RR fill:#7e57c2,color:#fff
+    style P fill:#7e57c2,color:#fff
     style E fill:#f3e5f5
     style J fill:#ffcdd2
     style K fill:#ffcdd2
@@ -59,7 +59,7 @@ flowchart TD
 | Gate | What It Blocks | Hard/Soft |
 |---|---|---|
 | AGS MCP initialization gate | AGS scenarios before `ags_preflight` completes | Hard, with CLI fallback only if MCP is unavailable |
-| Request contract | DirectResponse is exclusive; at most one SkillDemand and one MachineCli coexist | Hard |
+| Request contract | DirectResponse is exclusive; otherwise at most one exact SkillTarget and one closed MachineCliTarget coexist | Hard |
 | Task-card instruction gate | Compilation without explicit request and confirmed handoff contract | Hard |
 | Task-card validation | Execution of invalid task cards | Hard |
 | Policy resolution | Execution with wrong permission/parallelism | Soft (downgrades, never rejects) |
@@ -90,8 +90,8 @@ graph TD
     B --> C11[capability-registry<br/>Capability Detection]
     B --> C12[runner<br/>Runner Launch]
     B --> C13[ags-mcp<br/>Host Initialization Adapter]
-    B --> C14[request-router<br/>RequestDecision]
-    B --> C15[skill-resolver<br/>Closed SkillDemand Mapping]
+    B --> C14[request-governance<br/>HostRouteProposal / RouteResolution]
+    B --> C15[skill-resolver<br/>Exact SkillTarget Mapping]
 
     C2 --> C1
     C2 --> C8
@@ -129,10 +129,10 @@ graph TD
 | `task-compiler` | Compile execution contract into canonical task card | Codex, Cursor |
 | `skill-governance` | Skill scan, check, propose, install, adopt, ignore | Users |
 | `capability-registry` | Detect available capabilities (MCP, tools, skills) | `skill-governance` |
-| `runner` | Launch executor with resolved policy | `scripts/run-task-card.sh` |
+| `runner` | Prepare a validated LaunchPlan; never executes the host action | `scripts/run-task-card.sh` |
 | `ags-mcp` | Expose read-only AGS governance tools/resources/prompts over stdio MCP; requires `ags_preflight` first | MCP hosts: Codex, Claude Code, Cursor, WorkBuddy |
-| `request-router` | Convert complete conversation context into one closed `RequestDecision` | `ags-mcp` |
-| `skill-resolver` | Map `SkillDemand` against a validated machine snapshot without language parsing or fallback | `ags-mcp`, `ags-cli` |
+| `request-governance` | Define and validate typed HostRouteProposal / RouteResolution contracts | `ags-mcp`, `ags-cli` |
+| `skill-resolver` | Resolve an exact SkillTarget against a validated host snapshot without language parsing or fallback | `ags-mcp`, `ags-cli` |
 
 ## 3. AGS MCP Host Initialization Adapter
 
@@ -146,7 +146,7 @@ flowchart LR
     HOST[MCP Host<br/>Codex / Claude Code / Cursor / WorkBuddy]
     AGSMCP[AGS MCP<br/>ags mcp serve --transport stdio]
     PREFLIGHT[ags_preflight<br/>mandatory first call]
-    ROUTE[ags_route_request<br/>RequestDecision]
+    ROUTE[ags_route_request<br/>read-only RouteResolution]
     TOOLS[Read-only AGS tools<br/>agent instructions / protocol status / task validate / verify local]
     CLI[CLI fallback<br/>ags session preflight]
 
@@ -165,6 +165,8 @@ flowchart LR
 
 - AGS MCP is the mandatory governance interface for AGS scenarios when present.
 - `ags_preflight` must be the first AGS MCP tool call.
+- The host submits `HostRouteProposal`; AGS does not accept raw request text.
+- `ags_apply_action` is the sole effectful MCP tool and consumes only a held action.
 - AGS MCP does not proxy, wrap, install, or require external advisory MCPs.
   Hosts call AGS MCP and any optional advisory MCP separately when both are
   available.

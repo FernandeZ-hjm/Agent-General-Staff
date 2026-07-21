@@ -1212,6 +1212,18 @@ fi
 echo ""
 echo "--- Five-Segment Command Surface (agents / update / skill) ---"
 
+# Current architecture documents must not present the retired 0.2.8 request
+# router as a live surface. Release notes and explicitly-marked compatibility
+# material are intentionally outside this focused current-document check.
+echo -n "[....] current documents use the 0.3 typed-proposal architecture "
+current_docs=(AGENTS.md CLAUDE.md WORKSPACE.md README.en.md docs/architecture.md)
+if rg -n -i -S 'Request Router|RequestDecision|request-router/|AGS 0\.2\.8 has|0\.2\.8 uses' "${current_docs[@]}" > /tmp/verify-current-doc-routing.log 2>&1; then
+    echo "FAIL (retired 0.2.8 routing terminology found; see /tmp/verify-current-doc-routing.log)"
+    failures=$((failures + 1))
+else
+    echo "OK"
+fi
+
 echo -n "[....] ags agents scan runs read-only (json) "
 if cargo run -q -p ags-cli -- agents scan --format json > /tmp/verify-agents-scan.json 2>&1 \
     && grep -q '"command": "agents scan"' /tmp/verify-agents-scan.json; then
