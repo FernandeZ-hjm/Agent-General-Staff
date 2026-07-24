@@ -1,5 +1,22 @@
 use crate::context::AGS_VERSION;
 
+pub(in crate::setup) fn host_entry_policy_content() -> String {
+    format!(
+        r#"# AGS Host Entry Policy
+
+Current protocol version: {AGS_VERSION}.
+
+- In an AGS-governed project, call MCP `ags_preflight` before any other AGS tool; use `ags session preflight --for <agent> --target <repo>` only when MCP is unavailable.
+- After preflight, read `ags://capabilities/current-host`. The host keeps the complete conversation context, performs the only natural-language interpretation, builds a typed `HostRouteProposal`, and submits it to the strictly read-only `ags_route_request`.
+- Never send raw request text to AGS. Consume `RouteResolution`; invoke only an exact admitted `SkillTarget` or closed `MachineCliTarget`. Only `ags_apply_action` may consume a returned connection-held action.
+- Existing canonical `## 任务卡` input validates first. A valid card proceeds to policy, gate, and LaunchPlan; an invalid card stops and never falls back to task-card generation.
+- Task-card compilation requires an explicit handoff request and a confirmed closed handoff contract. Authorized same-session direct edits remain host-native.
+- In OMP Plan mode, keep `solution_state=open` while decisions remain unresolved. When the contract closes, route `execution + task_card_handoff + TaskCompile` and make the final plan the single canonical `## 任务卡`.
+- The Plan UI keeps that card pending user activation. When the user selects Execute, dispatch the exact same card and `task_card_hash` to the execution Agent; do not regenerate or rewrite it. The execution Agent validates the existing card first.
+"#
+    )
+}
+
 pub(in crate::setup) fn claude_ags_command_content() -> String {
     format!(
         r#"---

@@ -55,7 +55,7 @@ fn merge_ags_entry_block(existing: &str, body: &str) -> (String, EntryBlockOutco
 /// a malformed block. Confirm-gated because it only runs on the setup apply path.
 pub(in crate::setup) fn write_ags_global_entry(target: &Path) -> suite_doctor::Finding {
     let path = target.join("ags-global-entry.md");
-    let body = "@AGENTS.md\n@CLAUDE.md\nAGS managed global entry — five-segment chain: setup → agents → skill → init → update.";
+    let body = "@AGENTS.md\n@CLAUDE.md\n@hosts/host-entry-policy.md\nAGS managed global entry — five-segment chain: setup → agents → skill → init → update.";
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
     let (content, outcome) = merge_ags_entry_block(&existing, body);
     if outcome == EntryBlockOutcome::Conflict {

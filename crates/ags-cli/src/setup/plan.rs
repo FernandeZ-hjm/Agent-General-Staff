@@ -8,7 +8,7 @@ use crate::project_templates::{portable_validate_script, project_protocol_files}
 use crate::setup::apply::codex_skill_thin_index_ancestor;
 use crate::setup::templates::{
     claude_ags_command_content, codex_ags_command_skill_agent_metadata_content,
-    codex_ags_command_skill_content, codex_ags_command_skill_specs,
+    codex_ags_command_skill_content, codex_ags_command_skill_specs, host_entry_policy_content,
 };
 use std::path::{Path, PathBuf};
 
@@ -257,6 +257,12 @@ Each command skill routes through AGS preflight before acting.\n",
             path: target.join("hosts/codebuddy-code.mcp.snippet.json"),
             description: "CodeBuddy-Code platform MCP registration snippet for AGS".to_string(),
             content: codebuddy_code_snippet,
+            mode: None,
+        },
+        InstallFile {
+            path: target.join("hosts/host-entry-policy.md"),
+            description: "canonical AGS 0.3 host entry and OMP Plan single-card policy".to_string(),
+            content: host_entry_policy_content(),
             mode: None,
         },
         InstallFile {
@@ -550,6 +556,16 @@ mod install_plan_tests {
             .files
             .iter()
             .any(|file| file.path == claude_ags_command_path()));
+        let host_entry_policy = plan
+            .files
+            .iter()
+            .find(|file| file.path.ends_with("hosts/host-entry-policy.md"))
+            .expect("host entry policy must be installed");
+        assert!(host_entry_policy.content.contains("HostRouteProposal"));
+        assert!(host_entry_policy.content.contains("RouteResolution"));
+        assert!(host_entry_policy.content.contains("OMP Plan mode"));
+        assert!(host_entry_policy.content.contains("task_card_hash"));
+        assert!(!host_entry_policy.content.contains("RequestDecision"));
         let manifest = plan
             .files
             .iter()

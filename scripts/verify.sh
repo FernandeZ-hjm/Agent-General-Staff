@@ -1365,6 +1365,21 @@ else
 fi
 rm -rf "$GE_TARGET"
 
+echo -n "[....] host entry policy uses typed routing + OMP Plan single-card semantics "
+if rg -q 'HostRouteProposal' crates/ags-cli/src/setup/templates.rs \
+    && rg -q 'RouteResolution' crates/ags-cli/src/setup/templates.rs \
+    && rg -q 'OMP Plan mode' crates/ags-cli/src/setup/templates.rs \
+    && rg -q 'task_card_hash' crates/ags-cli/src/setup/templates.rs \
+    && ! rg -n 'RequestDecision|把完整当前请求交给 `ags_route_request`|AGS 0\.2\.8 入口' \
+        crates/ags-cli/src/setup/templates.rs crates/ags-cli/src/setup/global_entry.rs > /tmp/verify-host-entry-drift.txt 2>&1; then
+    echo "OK"
+else
+    echo "FAIL (host entry template must use AGS 0.3 typed proposal and immutable OMP task-card dispatch)"
+    cat /tmp/verify-host-entry-drift.txt
+    failures=$((failures + 1))
+fi
+rm -f /tmp/verify-host-entry-drift.txt
+
 echo -n "[....] ags update apply --format json emits pure JSON (no leading progress text) "
 if cargo run -q -p ags-cli -- update apply --lane agents --apply --format json > /tmp/verify-update-apply.json 2>/dev/null \
     && head -1 /tmp/verify-update-apply.json | grep -q '^{' \
