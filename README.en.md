@@ -17,7 +17,8 @@ It is not another agent, and it is not a bundle of tools. It solves the **govern
 
 - [Quick Start](#quick-start)
 - [60-Second Demo](#60-second-demo)
-- [Seven Gates](#seven-gates)
+- [Eight Gates](#eight-gates)
+- [Install As MCP](#install-as-mcp)
 - [How It Works](#how-it-works)
 - [Common Commands](#common-commands)
 - [Why AGS](#why-ags)
@@ -106,9 +107,9 @@ ags verify --scope local
 
 More examples at [examples/](examples/). Eval scenarios at [evals/](evals/).
 
-## Seven Gates
+## Eight Gates
 
-AGS does not rely on a single feature to govern agents. It places a gate at seven points along the engineering pipeline. Each gate addresses a specific pothole that AI coding has repeatedly driven into.
+AGS does not rely on a single feature to govern agents. It places a gate at eight points along the engineering pipeline. Each gate addresses a specific pothole that AI coding has repeatedly driven into.
 
 ### Task Card Governance
 
@@ -149,6 +150,38 @@ Let experience escape the chat log and become a project asset. After each task, 
 
 The repository ships a `deny.toml` (RustSec advisories + license allowlist + crates.io-only sources), wired into CI and `scripts/verify.sh` with a fail-closed policy. `ags verify lane` and the lane-decision helper classify diffs into minimal / standard / full / release paths, while release verification keeps the public-full boundary free of private runtime files, machine-local paths, and build output.
 
+## Install As MCP
+
+After the formal GitHub Release and npm launcher are published, users do not
+need a Rust toolchain:
+
+```bash
+npx -y @agent-governance-suite/mcp
+```
+
+The launcher selects the matching release asset, verifies `SHA256SUMS`, caches
+the verified binary, and starts `ags mcp serve --transport stdio` without a
+shell child process.
+
+`ags onboarding plan --host <host>` covers project, host, Skill, CLI, MCP, and
+Hook onboarding. It prefers the
+[public manifest](https://github.com/FernandeZ-hjm/Agent-General-Staff/blob/main/manifests/third-party-capabilities.yaml)
+on GitHub `main`, binds the reviewed content hash, and falls back to the manifest
+packaged with the current version when GitHub is unavailable. The manifest is
+reviewed data, not a remote installer: no third-party action occurs without
+confirmation and a real availability/host-visibility check.
+
+```mermaid
+flowchart TB
+    GH[Latest GitHub manifest] --> PLAN[onboarding plan<br/>source + content hash]
+    PKG[Packaged manifest] -. offline fallback .-> PLAN
+    PLAN --> REVIEW{Human review}
+    REVIEW --> EXT[Skill / CLI / MCP / Hook<br/>explicit onboarding]
+    EXT --> INV[Capability inventory]
+    INV --> SNAP[HostCapabilitySnapshot]
+    SNAP --> CAT[current-host<br/>exact routable catalog]
+```
+
 ## How It Works
 
 AGS 0.3.0 leaves natural-language understanding with the host. After preflight,
@@ -166,57 +199,50 @@ User request → host semantic proposal → HostRouteProposal
   └─ MachineCliTarget → DecisionLease → explicit ags_apply_action
 ```
 
-Once inside the task-card pipeline, the **three-gate threshold** still applies:
-
-1. **Solution OK** — the user confirms the solution direction
-2. **Task-card instruction** — the user explicitly asks for a task card ("Solution OK" ≠ "go")
-3. **Task routing** — Light / Medium / Heavy, determining execution policy
-
-Without both the task-card instruction and a confirmed handoff contract, task-card compilation must not proceed.
+Outside Plan mode, compilation requires an explicit task-card handoff request
+and a confirmed execution contract. Inside Plan mode, the final
+decision-complete artifact is compiled directly as the one canonical task card;
+approval exits Plan mode and dispatches that exact card without regeneration.
+An explicit same-session edit remains a host-native path and does not require a
+task card.
 
 ```mermaid
-flowchart TD
-    A[User Request] --> B[1. Preflight<br/>ags_preflight / CLI fallback]
-    B --> MCP[MCP<br/>ags_route_request]
-    MCP --> P[HostRouteProposal<br/>host-owned semantics]
-    P --> D0[ags_route_request<br/>read-only RouteResolution]
-    D0 -->|DirectResponse| PASS[Host response]
-    D0 -->|SkillTarget| SR[Skill Resolver<br/>exact host-snapshot mapping]
-    D0 -->|MachineCliTarget| MC[DecisionLease<br/>explicit ags_apply_action]
-    SR --> HOST[Host loads skill]
-    MC --> K
-    D0 -->|Task-card handoff| B1[Read context capsule + task memory]
-    B1 --> C[2. Solution Phase]
-    C --> C1[Understand → Diagnose → Form solution]
-    C1 --> D{User confirms?}
-    D -->|Solution OK| E[3. Execution Contract]
-    D -->|Revise| C
-    E --> F{Task-card instruction?}
-    F -->|Generate task card| G[4. Task-Card Instruction Gate ✅]
-    F -->|Not received| F_WAIT[Wait — ags task compile<br/>requires explicit request + confirmed handoff]
-    F_WAIT --> F
-    G --> H[5. Routing<br/>Light / Medium / Heavy]
-    H --> I[6. Task Card Generation<br/>ags task compile]
-    I --> J[7. Gate Check<br/>ags task validate — hard gate]
-    J -->|Pass| K[8. Policy Resolution<br/>ags policy resolve — soft resolution]
-    J -->|Fail| J_FAIL[Fix task card]
-    J_FAIL --> I
-    K --> L{stop_before_launch?}
-    L -->|Yes| L_STOP[STOP: fix or get approval]
-    L -->|No| M[9. LaunchPlan<br/>AGS returns HOST_EXECUTION_REQUIRED]
-    M --> N[10. Host execution and verification]
-    N --> O[11. Receipt<br/>ags receipt generate]
-    O --> P[12. Task Memory Update]
+flowchart TB
+    A[Input] --> B[1. Preflight]
+    B --> CAT[2. current-host catalog<br/>snapshot hash]
+    CAT --> X{Existing canonical card?}
+    X -->|No| H[3. Host keeps full context<br/>forms solution when needed]
+    H --> PROP[4. HostRouteProposal]
+    PROP --> ROUTE{read-only ags_route_request<br/>RouteResolution}
+    ROUTE -->|DirectResponse| PASS[Respond and stop]
+    ROUTE -->|SkillTarget| SKILL[Exact skill + entrypoint]
+    ROUTE -->|MachineCliTarget| LEASE[Held action + explicit apply]
+    ROUTE -->|Authorized same-session edit| EXEC[10. Host-native execution]
+    ROUTE -->|Explicit handoff<br/>or Plan-mode final artifact| COMPILE[5. Task compiler]
+    SKILL --> SOUT[Result returns to host]
+    LEASE --> AOUT[Action receipt returns to host]
+    COMPILE --> CARD[6. Single canonical task card]
+    X -->|Yes| V[7. Validate task card]
+    CARD --> V
+    V -->|Valid| POLICY[8. Policy + gate]
+    V -->|Invalid| VSTOP[STOP<br/>never regenerate from invalid input]
+    POLICY -->|Stop| PSTOP[STOP: fix or obtain authority]
+    POLICY -->|Prepare| LP[9. LaunchPlan<br/>HOST_EXECUTION_REQUIRED]
+    LP --> EXEC
+    EXEC --> VERIFY[11. Host verification]
+    VERIFY --> REPORT[12. Delivery report + evidence]
+    REPORT -->|Task card| CLOSE[Exact card hash + G/AC/V/EV closure]
+    REPORT -->|Direct edit| DONE[Evidence-backed delivery]
+    CLOSE --> ARCHIVE[Receipt + task memory]
 
-    style P fill:#7e57c2,color:#fff
-    style MCP fill:#9575cd,color:#fff
-    style PASS fill:#c8e6c9
     style B fill:#e1f5fe
-    style C fill:#fff3e0
-    style G fill:#ffeb3b,stroke:#f57f17
-    style J fill:#ffcdd2
-    style K fill:#ffcdd2
-    style O fill:#e3f2fd
+    style CAT fill:#e8f5e9
+    style PROP fill:#7e57c2,color:#fff
+    style ROUTE fill:#9575cd,color:#fff
+    style COMPILE fill:#ffeb3b,stroke:#f57f17
+    style V fill:#ffcdd2
+    style LP fill:#c8e6c9
+    style CLOSE fill:#b3e5fc
 ```
 
 For architectural details, see [docs/architecture.md](docs/architecture.md).
@@ -250,7 +276,11 @@ For architectural details, see [docs/architecture.md](docs/architecture.md).
 | `ags verify --scope local` | Structured verification (local / full / release) |
 | `ags verify lane` | Classify verification path by diff risk |
 | `ags receipt verify` | Verify execution receipt integrity |
+| `ags task close` | Close a report against the exact card hash and G/AC/V/EV identifiers |
 | `ags mcp serve` | Start the AGS MCP stdio server |
+| `ags onboarding plan --host <host>` | Build a reviewed Skill/CLI/MCP/Hook plan from the live or packaged manifest |
+| `ags capability inventory` | Discover machine capabilities; discovery does not grant routing authority |
+| `ags capability snapshot --host <host>` | Build a hashed machine-local host-availability snapshot |
 | `ags capability verify --host <host> --strict` | Verify required capabilities, parent skills, and internal entrypoints for a host |
 
 **Agent entry:** `/ags` is the Claude Code entry. All AGS tasks should call `ags_preflight` via AGS MCP first, with the CLI as a fallback only. Run `ags <command> --help` for full subcommand details.
@@ -315,7 +345,9 @@ Think of it as fitting a budget model with an arc reactor: a small core that let
 
 ## Cross-Platform Support
 
-AGS continues to be verified on `ubuntu-latest`, `macos-latest`, and `windows-latest` in CI.
+AGS source CI verifies `ubuntu-latest`, `macos-latest`, and `windows-latest`.
+An explicit release tag additionally builds Apple Silicon macOS, Intel macOS,
+x86_64 Linux, ARM64 Linux, and x86_64 Windows assets.
 
 - The **Rust core** builds, tests, and runs across all three platforms. The `ags-platform` crate handles home-directory resolution and PATH lookups uniformly (Windows uses `USERPROFILE` + `PATHEXT`; no dependency on Unix `$HOME` or external `which`).
 - **Bash scripts** (`scripts/*.sh`) target Linux / macOS / WSL / Git Bash and are not promised to run natively under Windows PowerShell or cmd.
@@ -332,6 +364,22 @@ ags verify --scope release
 # Compatibility gate (equivalent to ags verify --scope local + command-surface smoke)
 bash scripts/verify.sh
 ```
+
+### 0.3.0 Release Order
+
+1. Push the public-safe source to GitHub `main` and wait for that exact commit's
+   CI to pass.
+2. Confirm the Cargo workspace, `packages/ags-mcp/package.json`, and
+   `RELEASE_NOTES.md` all declare `0.3.0`.
+3. A maintainer explicitly creates and pushes `v0.3.0`; normal CI and sync
+   scripts never create tags.
+4. The tag workflow verifies that commit belongs to `origin/main`, then creates
+   five platform assets, `SHA256SUMS`, provenance, and the GitHub Release.
+5. Only after those assets are complete may a maintainer manually dispatch the
+   npm workflow with the exact `0.3.0` version.
+
+Pushing stable/public `main` is not authorization to create a tag, a GitHub
+Release, or an npm publication.
 
 ## Third-Party Skills
 

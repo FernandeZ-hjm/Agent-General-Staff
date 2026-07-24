@@ -11,7 +11,9 @@ Before any other AGS action, call `ags_preflight(agent, target?)`. If MCP is una
 ```text
 human request
 → host keeps complete conversation context
-→ host reads current-host SkillCard catalog
+→ host reads current-host SkillCard and third-party catalog; a third-party
+  natural-language candidate requires both routable metadata and Ready
+  availability, while host-native MCP also requires live tool visibility
 → HostRouteProposal
 → ags_route_request (strictly read-only)
 → DirectResponse | exact SkillSelection | host-native edit | server-held action
@@ -27,7 +29,10 @@ The host is the only natural-language semantic node. AGS rejects legacy raw requ
 - A SkillTarget carries only `skill_id`, optional `entrypoint`, and `snapshot_hash`.
 - Confirmed same-session direct edit is host-native and does not compile a task card.
 - Existing canonical task cards validate first and use `TaskPrepareExecution`; they do not re-enter solution formation.
-- Task-card generation requires explicit handoff intent plus a confirmed, closed handoff contract.
+- Explicit task-card generation requires handoff intent plus a confirmed,
+  closed contract. In host Plan mode, the final decision-complete artifact is
+  the canonical task card and uses `--host-plan-mode-final`; Plan UI approval
+  switches to execution mode and dispatches the exact card without regeneration.
 
 ## Resolve / Apply Boundary
 

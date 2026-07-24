@@ -107,8 +107,8 @@ def looks_like_delivery_report(text: str) -> bool:
         return False
     has_report_marker = "任务交付报告" in text or "# Delivery Report" in text
     has_status = "## 任务状态" in text or "任务状态" in text
-    has_conclusion = "一句话结论" in text or "Conclusion" in text
-    return has_report_marker and has_status and has_conclusion
+    has_contract = "Closure schema: 1.0" in text and "Contract ID:" in text
+    return has_report_marker and has_status and has_contract
 
 
 def find_task_card_and_report(entries: list[dict[str, Any]], hook_input: dict[str, Any]) -> tuple[str, str]:
@@ -253,6 +253,111 @@ def write_receipt(repo_path: pathlib.Path, task_card: str, report: str, hook_inp
     return receipt_dir
 
 
+def inline_value(text: str, key: str) -> str:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(key):
+            return stripped[len(key):].strip()
+    return ""
+
+
+def declared_ids(text: str, prefix: str) -> list[str]:
+    pattern = rf"(?m)^\s*-\s*({re.escape(prefix)}\d{{2}})\s*(?::|->)"
+    return re.findall(pattern, text)
+
+
+def report_section(text: str, heading: str) -> str:
+    marker = f"{heading}\n"
+    if marker not in text:
+        return ""
+    body = text.split(marker, 1)[1]
+    return body.split("\n## ", 1)[0].strip()
+
+
+def delivery_closure(task_card: str, report: str) -> dict[str, Any]:
+    task_hash = hashlib.sha256(task_card.encode("utf-8")).hexdigest()
+    contract_id = inline_value(task_card, "Contract ID:")
+    expected_receipt_id = f"receipt-{task_hash[:12]}"
+    checks: list[dict[str, Any]] = []
+
+    def check(name: str, passed: bool, detail: str) -> None:
+        checks.append({"name": name, "passed": passed, "detail": detail})
+
+    check("closure-schema", inline_value(report, "Closure schema:") == "1.0", "expected 1.0")
+    check(
+        "contract-id-binding",
+        inline_value(report, "Contract ID:") == contract_id and bool(contract_id),
+        f"expected {contract_id}",
+    )
+    check(
+        "task-card-hash-binding",
+        inline_value(report, "task-card-hash:") == task_hash,
+        f"expected {task_hash}",
+    )
+    check(
+        "receipt-id-binding",
+        inline_value(report, "receipt-id:") == expected_receipt_id,
+        f"expected {expected_receipt_id}",
+    )
+
+    closure_sets = [
+        ("goal-closure", declared_ids(task_card, "G-"), declared_ids(report_section(report, "## 目标闭环"), "G-")),
+        (
+            "acceptance-closure",
+            declared_ids(task_card, "AC-"),
+            declared_ids(report_section(report, "## 验收闭环"), "AC-"),
+        ),
+        (
+            "verification-closure",
+            declared_ids(report_section(task_card, "Verification gate:"), "V-"),
+            declared_ids(report_section(report, "## 验证闭环"), "V-"),
+        ),
+    ]
+    for name, expected, actual in closure_sets:
+        check(
+            name,
+            bool(expected) and sorted(expected) == sorted(actual) and len(actual) == len(set(actual)),
+            f"expected={expected}, actual={actual}",
+        )
+
+    status = inline_value(report, "状态:")
+    unresolved = report_section(report, "## 未闭环项")
+    if status == "completed":
+        status_rows = "\n".join(
+            report_section(report, heading)
+            for heading in ("## 目标闭环", "## 验收闭环", "## 验证闭环")
+        )
+        closed_statuses = not any(
+            marker in status_rows
+            for marker in (": partial", ": skipped", ": fail", ": not-run")
+        )
+        review_closed = inline_value(report, "review-gate:") in ("passed", "n/a")
+        unresolved_none = any(
+            line.strip().lstrip("-").strip() == "none" for line in unresolved.splitlines()
+        )
+        check(
+            "completed-state-consistency",
+            closed_statuses and review_closed and unresolved_none,
+            f"closed_statuses={closed_statuses}, review_closed={review_closed}, unresolved_none={unresolved_none}",
+        )
+    else:
+        check(
+            "open-state-consistency",
+            status in ("partial", "blocked") and bool(unresolved) and "- none" not in unresolved,
+            "partial/blocked requires concrete unresolved IDs",
+        )
+
+    return {
+        "schema_version": "1.0-delivery-closure",
+        "valid": all(item["passed"] for item in checks),
+        "contract_id": contract_id,
+        "task_card_hash": task_hash,
+        "delivery_report_hash": hashlib.sha256(report.encode("utf-8")).hexdigest(),
+        "receipt_id": expected_receipt_id,
+        "checks": checks,
+    }
+
+
 def capture_memory(receipt_dir: pathlib.Path, repo_path: pathlib.Path) -> bool:
     context_memory = find_context_memory_script()
     if context_memory is None:
@@ -311,6 +416,14 @@ def main() -> int:
 
     repo_path = resolve_repo_path(str(hook_input.get("cwd") or ""))
     receipt_dir = write_receipt(repo_path, task_card, report, hook_input)
+    closure = delivery_closure(task_card, report)
+    (receipt_dir / "closure.json").write_text(
+        json.dumps(closure, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    if not closure["valid"]:
+        log(f"[SKIP] delivery closure invalid receipt={receipt_dir}")
+        return 0
     if capture_memory(receipt_dir, repo_path):
         mark_captured(fp)
     return 0

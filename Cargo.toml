@@ -17,6 +17,8 @@ members = [
     "crates/ags-mcp",
     "crates/ags-platform",
     "crates/skill-resolver",
+    "crates/ags-onboarding",
+    "crates/delivery-report-validator",
 ]
 resolver = "2"
 

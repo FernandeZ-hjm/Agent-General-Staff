@@ -57,13 +57,15 @@ use std::path::{Path, PathBuf};
 // ── Public types ─────────────────────────────────────────────────────────
 
 /// Schema version emitted in compile reports.
-pub const SCHEMA_VERSION: &str = "2.0-m4";
+pub const SCHEMA_VERSION: &str = "2.1-m4";
 
 /// Known task-card field headers that the compiler can fill.
 /// Legacy compact headers (路径/读取/关键路径/停止条件) are retained ONLY for
 /// lenient intent parsing; they are never emitted in the rendered output.
 const FIELD_HEADERS: &[(&str, bool)] = &[
     // inline fields
+    ("Contract ID:", true),
+    ("Handoff source:", true),
     ("Executor:", true),
     ("Runtime adapter:", true),
     ("Execution surface:", true),
@@ -73,6 +75,8 @@ const FIELD_HEADERS: &[(&str, bool)] = &[
     ("Execution effort:", true),
     ("Workflow authority:", true),
     // multi-line fields
+    ("读取并遵守：", false),
+    ("Review gate:", false),
     ("路径：", false),
     ("读取：", false),
     ("任务：", false),
@@ -85,10 +89,12 @@ const FIELD_HEADERS: &[(&str, bool)] = &[
     ("相关路径：", false),
     ("本次任务相关文件：", false),
     ("目标：", false),
+    ("验收标准：", false),
     ("非目标：", false),
     ("实施要求：", false),
     ("关键路径：", false),
     ("验证：", false),
+    ("Verification gate:", false),
     ("停止条件：", false),
     ("交付：", false),
 ];
@@ -98,6 +104,8 @@ const FIELD_HEADERS: &[(&str, bool)] = &[
 /// validator's single required-field set (the classic fixed skeleton).
 const REQUIRED_FIELDS: &[&str] = &[
     "读取并遵守：",
+    "Contract ID:",
+    "Handoff source:",
     "Executor:",
     "Runtime adapter:",
     "Execution surface:",
@@ -114,6 +122,7 @@ const REQUIRED_FIELDS: &[&str] = &[
     "相关路径：",
     "本次任务相关文件：",
     "目标：",
+    "验收标准：",
     "非目标：",
     "验证：",
     "Verification gate:",
@@ -131,6 +140,8 @@ fn normalise_key(raw: &str) -> Option<&'static str> {
     }
     // Also accept colon-less Chinese keys
     match raw {
+        "Contract ID" => Some("Contract ID:"),
+        "Handoff source" => Some("Handoff source:"),
         "Executor" => Some("Executor:"),
         "Runtime adapter" => Some("Runtime adapter:"),
         "Execution surface" => Some("Execution surface:"),
@@ -152,6 +163,7 @@ fn normalise_key(raw: &str) -> Option<&'static str> {
         "相关路径" => Some("相关路径："),
         "本次任务相关文件" => Some("本次任务相关文件："),
         "目标" => Some("目标："),
+        "验收标准" => Some("验收标准："),
         "非目标" => Some("非目标："),
         "实施要求" => Some("实施要求："),
         "关键路径" => Some("关键路径："),
@@ -175,6 +187,27 @@ pub struct ParsedIntent {
 }
 
 pub const HANDOFF_CONTRACT_SCHEMA_VERSION: &str = "0.3.0-handoff-contract";
+
+/// Structured origin of a newly compiled task card.
+///
+/// Host Plan mode is an alternative structured handoff signal: its final,
+/// decision-complete artifact is the canonical task card. It is not the task
+/// card's `Permission mode` and grants no execution authority by itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HandoffSource {
+    ExplicitHandoff,
+    HostPlanMode,
+}
+
+impl HandoffSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ExplicitHandoff => "explicit-handoff",
+            Self::HostPlanMode => "host-plan-mode",
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskLevel {
@@ -352,6 +385,8 @@ pub enum SlotSource {
     MemoryPath,
     /// A well-known default value (e.g. Parallelism: none).
     Default,
+    /// Deterministically derived from the closed handoff contract.
+    Derived,
     /// The slot could not be filled.
     Missing,
 }
@@ -364,6 +399,7 @@ impl SlotSource {
             SlotSource::WorkspaceIdentity => "workspace_identity",
             SlotSource::MemoryPath => "memory_path",
             SlotSource::Default => "default",
+            SlotSource::Derived => "derived",
             SlotSource::Missing => "missing",
         }
     }
@@ -632,6 +668,11 @@ pub struct CompileReport {
     /// Whether the caller supplied structured evidence that the solution,
     /// scope, verification, and handoff contract is confirmed.
     pub confirmed_handoff_contract: bool,
+    /// Whether the final, decision-complete host Plan-mode artifact triggered
+    /// task-card compilation.
+    pub host_plan_mode_final: bool,
+    /// Structured origin rendered into `Handoff source:`.
+    pub handoff_source: String,
     /// Whether executable task card output is allowed.
     /// Requires both handoff gates, `check_only=false`, and no missing slots.
     pub executable_allowed: bool,
@@ -669,14 +710,38 @@ pub fn compile_with_contract(
     task_card_requested: bool,
     confirmed_handoff_contract: bool,
 ) -> (String, CompileReport) {
+    compile_with_handoff_source(
+        intent,
+        project_root,
+        check_only,
+        task_card_requested,
+        confirmed_handoff_contract,
+        HandoffSource::ExplicitHandoff,
+    )
+}
+
+/// Compile with an explicit structured handoff origin.
+///
+/// `HostPlanMode` means the host has reached its final, decision-complete
+/// Plan-mode artifact. It replaces a separate task-card-request prompt but
+/// still requires a confirmed, closed handoff contract.
+pub fn compile_with_handoff_source(
+    intent: &str,
+    project_root: &Path,
+    check_only: bool,
+    task_card_requested: bool,
+    confirmed_handoff_contract: bool,
+    handoff_source: HandoffSource,
+) -> (String, CompileReport) {
     if intent.trim_start().starts_with('{') {
         return match serde_json::from_str::<HandoffContract>(intent) {
-            Ok(contract) => match compile_typed_handoff_contract(
+            Ok(contract) => match compile_typed_handoff_contract_with_source(
                 &contract,
                 project_root,
                 check_only,
                 task_card_requested,
                 confirmed_handoff_contract,
+                handoff_source,
             ) {
                 Ok(result) => result,
                 Err(errors) => invalid_typed_contract_report(
@@ -684,6 +749,7 @@ pub fn compile_with_contract(
                     check_only,
                     task_card_requested,
                     confirmed_handoff_contract,
+                    handoff_source,
                 ),
             },
             Err(error) => invalid_typed_contract_report(
@@ -691,6 +757,7 @@ pub fn compile_with_contract(
                 check_only,
                 task_card_requested,
                 confirmed_handoff_contract,
+                handoff_source,
             ),
         };
     }
@@ -700,6 +767,7 @@ pub fn compile_with_contract(
         check_only,
         task_card_requested,
         confirmed_handoff_contract,
+        handoff_source,
     )
 }
 
@@ -708,6 +776,7 @@ fn invalid_typed_contract_report(
     check_only: bool,
     task_card_requested: bool,
     confirmed_handoff_contract: bool,
+    handoff_source: HandoffSource,
 ) -> (String, CompileReport) {
     (
         String::new(),
@@ -724,6 +793,8 @@ fn invalid_typed_contract_report(
             check_only,
             task_card_requested,
             confirmed_handoff_contract,
+            host_plan_mode_final: handoff_source == HandoffSource::HostPlanMode,
+            handoff_source: handoff_source.as_str().to_string(),
             executable_allowed: false,
             block_reason: Some("invalid_typed_handoff_contract".to_string()),
         },
@@ -737,6 +808,24 @@ pub fn compile_typed_handoff_contract(
     task_card_requested: bool,
     confirmed_handoff_contract: bool,
 ) -> Result<(String, CompileReport), Vec<String>> {
+    compile_typed_handoff_contract_with_source(
+        contract,
+        project_root,
+        check_only,
+        task_card_requested,
+        confirmed_handoff_contract,
+        HandoffSource::ExplicitHandoff,
+    )
+}
+
+pub fn compile_typed_handoff_contract_with_source(
+    contract: &HandoffContract,
+    project_root: &Path,
+    check_only: bool,
+    task_card_requested: bool,
+    confirmed_handoff_contract: bool,
+    handoff_source: HandoffSource,
+) -> Result<(String, CompileReport), Vec<String>> {
     let intent = render_typed_handoff_contract(contract)?;
     let (card, mut report) = compile_legacy_contract(
         &intent,
@@ -744,6 +833,7 @@ pub fn compile_typed_handoff_contract(
         check_only,
         task_card_requested,
         confirmed_handoff_contract,
+        handoff_source,
     );
     report.contract_format = "typed".to_string();
     report
@@ -764,7 +854,10 @@ fn render_typed_handoff_contract(contract: &HandoffContract) -> Result<String, V
         errors.push("typed handoff contract task must not be empty".to_string());
     }
     for key in contract.fields.keys() {
-        if key == "任务：" || key == "任务级别：" {
+        if matches!(
+            key.as_str(),
+            "任务：" | "任务级别：" | "Contract ID:" | "Handoff source:"
+        ) {
             errors.push(format!(
                 "typed field {key} cannot override a required typed member"
             ));
@@ -803,6 +896,7 @@ fn compile_legacy_contract(
     check_only: bool,
     task_card_requested: bool,
     confirmed_handoff_contract: bool,
+    handoff_source: HandoffSource,
 ) -> (String, CompileReport) {
     let ctx = gather_project_context(project_root);
     let parsed = parse_intent(intent);
@@ -825,6 +919,28 @@ fn compile_legacy_contract(
                 });
             }
         }
+    }
+
+    // Contract identity and handoff origin are compiler-owned. They are
+    // deterministic and cannot be overridden by loose or typed input.
+    let contract_material = format!(
+        "{}\n---handoff-source---\n{}",
+        intent.trim(),
+        handoff_source.as_str()
+    );
+    let contract_hash = receipt::sha256_hex(contract_material.as_bytes());
+    let contract_id = format!("tc-{}", &contract_hash[..16]);
+    for (field, value) in [
+        ("Contract ID:", contract_id),
+        ("Handoff source:", handoff_source.as_str().to_string()),
+    ] {
+        fields.insert(field.to_string(), value.clone());
+        slot_sources.retain(|slot| slot.field != field);
+        slot_sources.push(SlotEntry {
+            field: field.to_string(),
+            value,
+            source: SlotSource::Derived,
+        });
     }
 
     // ── Phase 2: project-aware slot filling ────────────────────────
@@ -1044,25 +1160,16 @@ fn compile_legacy_contract(
         });
     }
 
-    // Verification gate: — default if absent (carries the stop condition)
-    if !has_field(&fields, "Verification gate:") {
-        let vg =
-            "- commands:\n  - 按任务卡验证门禁执行\n- stop condition:\n  - 验证失败时停止并报告"
-                .to_string();
-        fields.insert("Verification gate:".to_string(), vg.clone());
-        slot_sources.push(SlotEntry {
-            field: "Verification gate:".to_string(),
-            value: vg,
-            source: SlotSource::Default,
-        });
-    }
-
     // 交付：— default if absent
     if !has_field(&fields, "交付：") {
-        fields.insert("交付：".to_string(), "按协议输出交付报告".to_string());
+        let delivery = "- 按 protocol/agent-task-protocol.md 输出交付报告\n\
+- 报告必须回填本卡 Contract ID、LaunchPlan task_card_hash，并逐项闭环 G-*/AC-*/V-*；未闭环项不得隐藏\n\
+- 报告落盘后运行 `ags task close <task-card> <delivery-report>`，通过后再生成或归档 receipt"
+            .to_string();
+        fields.insert("交付：".to_string(), delivery.clone());
         slot_sources.push(SlotEntry {
             field: "交付：".to_string(),
-            value: "按协议输出交付报告".to_string(),
+            value: delivery,
             source: SlotSource::Default,
         });
     }
@@ -1152,11 +1259,14 @@ fn compile_legacy_contract(
     // ── Phase 7: task-card handoff generation gate ──────────────────
     // Determine whether executable output is allowed.
     // Four conditions must all be met:
-    //   1. User explicitly requested a task card (task_card_requested)
+    //   1. Explicit handoff requested a task card, or this is the final
+    //      decision-complete host Plan-mode artifact
     //   2. The handoff contract is confirmed through structured caller state
     //   3. Not in check-only mode
     //   4. No missing slots
-    let (executable_allowed, block_reason) = if !task_card_requested {
+    let host_plan_mode_final = handoff_source == HandoffSource::HostPlanMode;
+    let handoff_requested = task_card_requested || host_plan_mode_final;
+    let (executable_allowed, block_reason) = if !handoff_requested {
         (false, Some("task_card_not_requested".to_string()))
     } else if !confirmed_handoff_contract {
         (false, Some("handoff_contract_not_confirmed".to_string()))
@@ -1218,6 +1328,8 @@ fn compile_legacy_contract(
         check_only,
         task_card_requested,
         confirmed_handoff_contract,
+        host_plan_mode_final,
+        handoff_source: handoff_source.as_str().to_string(),
         executable_allowed,
         block_reason,
     };
@@ -1294,6 +1406,8 @@ fn render_task_card(fields: &HashMap<String, String>) -> String {
     // (路径/读取/关键路径/停止条件) are intentionally never rendered.
     let order: &[&str] = &[
         "读取并遵守：",
+        "Contract ID:",
+        "Handoff source:",
         "Executor:",
         "Runtime adapter:",
         "Execution surface:",
@@ -1313,6 +1427,7 @@ fn render_task_card(fields: &HashMap<String, String>) -> String {
         "相关路径：",
         "本次任务相关文件：",
         "目标：",
+        "验收标准：",
         "非目标：",
         "实施要求：",
         "验证：",
@@ -1359,7 +1474,9 @@ fn render_task_card(fields: &HashMap<String, String>) -> String {
 fn is_inline_field(header: &str) -> bool {
     matches!(
         header,
-        "Executor:"
+        "Contract ID:"
+            | "Handoff source:"
+            | "Executor:"
             | "Runtime adapter:"
             | "Execution surface:"
             | "Permission mode:"
@@ -1417,6 +1534,15 @@ pub fn render_report_text(report: &CompileReport) -> String {
             "NO"
         }
     ));
+    lines.push(format!(
+        "Host Plan-mode final: {}",
+        if report.host_plan_mode_final {
+            "YES"
+        } else {
+            "NO"
+        }
+    ));
+    lines.push(format!("Handoff source: {}", report.handoff_source));
     lines.push(format!(
         "Handoff contract confirmed: {}",
         if report.confirmed_handoff_contract {
@@ -1518,13 +1644,62 @@ mod tests {
     // Most compiler tests exercise rendering and validation after a governed
     // handoff. Keep that premise explicit while public legacy callers remain
     // fail-closed by default.
+    fn with_test_closure_contract(intent: &str) -> String {
+        if intent.trim_start().starts_with('{') {
+            return intent.to_string();
+        }
+        let mut enriched = intent.to_string();
+        if let Some(goal_start) = enriched.find("目标：") {
+            let value_start = goal_start + "目标：".len();
+            let value_end = FIELD_HEADERS
+                .iter()
+                .filter_map(|(header, _)| {
+                    enriched[value_start..]
+                        .find(&format!("\n{header}"))
+                        .map(|position| value_start + position)
+                })
+                .min()
+                .unwrap_or(enriched.len());
+            let original = enriched[value_start..value_end]
+                .trim()
+                .trim_start_matches('-')
+                .trim_start_matches(|character: char| {
+                    character.is_ascii_digit()
+                        || character == '.'
+                        || character.is_ascii_whitespace()
+                })
+                .trim()
+                .replace('\n', " ");
+            if !original.starts_with("G-") {
+                enriched.replace_range(value_start..value_end, &format!("\n- G-01: {original}"));
+            }
+            if !enriched.contains("验收标准：") {
+                enriched.push_str("\n验收标准：\n- AC-01 -> G-01: 测试结果达到预期\n");
+            }
+            if !enriched.contains("Verification gate:") {
+                enriched.push_str(
+                    "\nVerification gate:\n- commands:\n  - V-01 -> AC-01: cargo test\n\
+- expected evidence:\n  - EV-01 -> AC-01: test pass\n\
+- stop condition:\n  - 失败时停止\n",
+                );
+            }
+        }
+        enriched
+    }
+
     fn compile(
         intent: &str,
         project_root: &Path,
         check_only: bool,
         task_card_requested: bool,
     ) -> (String, CompileReport) {
-        super::compile_with_contract(intent, project_root, check_only, task_card_requested, true)
+        super::compile_with_contract(
+            &with_test_closure_contract(intent),
+            project_root,
+            check_only,
+            task_card_requested,
+            true,
+        )
     }
 
     fn compile_simple(
@@ -1532,8 +1707,13 @@ mod tests {
         project_root: &Path,
         task_card_requested: bool,
     ) -> Result<String, Box<CompileReport>> {
-        super::compile_simple_with_contract(intent, project_root, task_card_requested, true)
-            .map_err(Box::new)
+        super::compile_simple_with_contract(
+            &with_test_closure_contract(intent),
+            project_root,
+            task_card_requested,
+            true,
+        )
+        .map_err(Box::new)
     }
 
     #[test]
@@ -1833,6 +2013,63 @@ mod tests {
     }
 
     #[test]
+    fn host_plan_mode_final_is_the_task_card_handoff() {
+        let intent =
+            with_test_closure_contract("任务：执行已封闭的 Plan 模式方案\n目标：按原计划完成实现");
+        let project_root = Path::new(".");
+        let (card, report) = super::compile_with_handoff_source(
+            &intent,
+            project_root,
+            false,
+            false,
+            true,
+            HandoffSource::HostPlanMode,
+        );
+
+        assert!(report.host_plan_mode_final);
+        assert!(!report.task_card_requested);
+        assert!(report.executable_allowed);
+        assert_eq!(report.handoff_source, "host-plan-mode");
+        assert!(card.contains("Handoff source: host-plan-mode"));
+        assert!(card.contains("Contract ID: tc-"));
+
+        let (same_card, _) = super::compile_with_handoff_source(
+            &intent,
+            project_root,
+            false,
+            false,
+            true,
+            HandoffSource::HostPlanMode,
+        );
+        assert_eq!(
+            card, same_card,
+            "closed Plan input must compile deterministically"
+        );
+    }
+
+    #[test]
+    fn host_plan_mode_still_requires_a_confirmed_contract() {
+        let intent = with_test_closure_contract(
+            "任务：执行仍未确认的 Plan 模式方案\n目标：不得提前生成任务卡",
+        );
+        let (card, report) = super::compile_with_handoff_source(
+            &intent,
+            Path::new("."),
+            false,
+            false,
+            false,
+            HandoffSource::HostPlanMode,
+        );
+
+        assert!(card.is_empty());
+        assert!(!report.executable_allowed);
+        assert_eq!(
+            report.block_reason.as_deref(),
+            Some("handoff_contract_not_confirmed")
+        );
+    }
+
+    #[test]
     fn test_check_only_blocks_executable_even_when_requested() {
         // check_only takes precedence over task_card_requested.
         let intent = "任务：test check only gate\n目标：verify precedence";
@@ -1995,7 +2232,11 @@ mod tests {
             "schema_version": HANDOFF_CONTRACT_SCHEMA_VERSION,
             "task_level": "Heavy",
             "task": "typed contract",
-            "fields": {"目标：": "verify typed path"}
+            "fields": {
+                "目标：": "- G-01: verify typed path",
+                "验收标准：": "- AC-01 -> G-01: typed path is preserved",
+                "Verification gate:": "- commands:\n  - V-01 -> AC-01: cargo test -p task-compiler\n- expected evidence:\n  - EV-01 -> AC-01: test pass\n- stop condition:\n  - test failure"
+            }
         })
         .to_string();
         let (card, report) = compile(&json, Path::new("."), false, true);

@@ -3,6 +3,10 @@
 读取并遵守：
 - AGENTS.md
 
+Contract ID: tc-0123456789abcdef
+
+Handoff source: existing-card
+
 Executor: Codex
 
 Runtime adapter: codex-local
@@ -41,7 +45,11 @@ Review gate:
 本次任务相关文件：
 - Cargo.toml
 
-目标：确认 full task card 校验器正确接受合法输入
+目标：
+- G-01: 确认 full task card 校验器正确接受合法输入
+
+验收标准：
+- AC-01 -> G-01: validator、policy、gate 与 runner 均接受同一合法输入
 
 非目标：不涉及生产环境变更
 
@@ -49,8 +57,12 @@ Review gate:
 cargo test --workspace
 
 Verification gate:
-- commands: cargo test --workspace
-- expected evidence: all tests pass
+- commands:
+  - V-01 -> AC-01: cargo test --workspace
+- expected evidence:
+  - EV-01 -> AC-01: all tests pass
+- stop condition:
+  - 任一验证命令失败即停止并报告
 
 交付：
-按协议输出测试通过结果
+- 按协议输出测试通过结果，并用 Contract ID 与 task-card-hash 回绑交付报告

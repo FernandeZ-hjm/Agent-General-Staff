@@ -36,6 +36,9 @@ solution when one exists; otherwise form one before classification.
 `方案 OK` confirms the design but does not authorize mutation. Explicit
 same-session modification authorization enters `direct-edit`; explicit handoff
 authorization plus a confirmed closed handoff contract enters task-card compilation.
+A host Plan mode uses its decision-complete final artifact as the canonical
+task card via `--host-plan-mode-final --confirmed-handoff-contract`; approval
+switches to execution mode and dispatches that exact card without regeneration.
 
 ## Required Reads
 

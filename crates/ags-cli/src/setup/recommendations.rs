@@ -1,10 +1,8 @@
 //! `ags setup` — third-party core capability recommendation block.
 //!
-//! READ-ONLY display sourced from `manifests/skill-recommendations.yaml`. AGS
-//! never clones, installs, downloads, or writes host config / skill thin-index
-//! for these — the block reports local-install + host-visibility status (via
-//! filesystem stat only) and a manual next step. Mirrors the other setup
-//! section renderers.
+//! READ-ONLY display sourced from the unified third-party capability manifest.
+//! Installation is never silent: confirmed per-item changes are delegated to
+//! the audited onboarding/skill-adoption lifecycle.
 
 use skill_governance::recommendations::{read_recommendations, recommendation_status};
 use std::path::Path;
@@ -29,6 +27,7 @@ pub(in crate::setup) fn third_party_recommendations_json(
                 "upstream": rec.upstream,
                 "risk": rec.risk,
                 "install_location": rec.install_location,
+                "capability_state": st.capability_state,
                 "local_install": st.local_install,
                 "host_visibility": st.host_visibility,
                 "next_step": st.next_step,
@@ -38,8 +37,8 @@ pub(in crate::setup) fn third_party_recommendations_json(
     serde_json::json!({
         "schema_version": doc.schema_version,
         "principle": doc.principle,
-        "boundary": "Recommendation-only. AGS never clones, installs, downloads, or writes host config / skill thin-index for these. Status is read-only (filesystem stat).",
-        "write_mode": "read-only (no install, no host write)",
+        "boundary": "No silent installation. Setup is read-only; explicit per-item onboarding apply delegates to audited skill adoption.",
+        "write_mode": "setup read-only; onboarding apply is confirmation-protected",
         "items": items,
     })
 }
@@ -49,13 +48,11 @@ pub(in crate::setup) fn render_third_party_recommendations_text(
     home: &Path,
 ) -> String {
     let doc = read_recommendations(source_root);
-    let mut lines = vec![
-        "Third-Party Core Capability Recommendations (recommendation-only · AGS never installs)"
-            .to_string(),
-    ];
+    let mut lines =
+        vec!["Third-Party Core Capability Recommendations (no silent install)".to_string()];
     if doc.skills.is_empty() {
         lines.push(
-            "  (manifests/skill-recommendations.yaml not found — no recommendations to show)"
+            "  (third-party capability manifest unavailable — no recommendations to show)"
                 .to_string(),
         );
         return lines.join("\n");
@@ -82,8 +79,9 @@ pub(in crate::setup) fn render_third_party_recommendations_text(
                 .clone()
                 .unwrap_or_else(|| "(community-maintained)".to_string());
             lines.push(format!(
-                "    - {:<28} install:{:<14} hosts:{:<26} src:{}",
+                "    - {:<28} state:{:<22} install:{:<14} hosts:{:<26} src:{}",
                 rec.id,
+                st.capability_state,
                 st.local_install,
                 hosts.join(","),
                 src,
@@ -91,12 +89,11 @@ pub(in crate::setup) fn render_third_party_recommendations_text(
         }
     }
     lines.push(
-        "  Boundary: recommendation-only; AGS never clones, installs, or writes host config / thin-index."
+        "  Boundary: setup never installs; explicit per-item onboarding apply uses audited adoption."
             .to_string(),
     );
     lines.push(
-        "  Next: review each source and install manually, then `ags skill verify --host <host>`."
-            .to_string(),
+        "  Next: run `ags onboarding plan`, approve one item, then verify the host.".to_string(),
     );
     lines.join("\n")
 }

@@ -54,3 +54,53 @@ pub(crate) fn codex_mcp_list_line(server: &str) -> Result<Option<String>, String
         Err(combined.trim().to_string())
     }
 }
+
+pub(crate) fn mcp_server_ids(host: &str) -> Result<Vec<String>, String> {
+    let (program, args): (&str, &[&str]) = match host {
+        "claude-code" => ("claude", &["mcp", "list"]),
+        "codex" | "omp" => ("codex", &["mcp", "list"]),
+        _ => return Ok(Vec::new()),
+    };
+    let output = std::process::Command::new(program)
+        .args(args)
+        .output()
+        .map_err(|error| error.to_string())?;
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if !output.status.success() {
+        return Err(combined.trim().to_string());
+    }
+    let mut ids = combined
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with("Name ") || line.starts_with("Checking ") {
+                return None;
+            }
+            let active = if host == "claude-code" {
+                line.contains("✔ Connected")
+            } else {
+                line.split_whitespace().any(|field| field == "enabled")
+            };
+            if !active {
+                return None;
+            }
+            let candidate = if host == "claude-code" {
+                line.split_once(':').map(|(name, _)| name)
+            } else {
+                line.split_whitespace().next()
+            }?;
+            (!candidate.is_empty()
+                && candidate.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || "-_:.".contains(character)
+                }))
+            .then(|| candidate.to_string())
+        })
+        .collect::<Vec<_>>();
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
+}

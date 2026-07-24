@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use skill_governance::console::{
     build_inventory, inventory_snapshot_hash, CommandOutcome, CommandRunner, ConsoleContext,
     HealthStatus, HostVisibilityStatus, ManagedCapability, ManagedKind, ManagedStatus,
-    RegistryStatus, RouteState,
+    RegistryStatus, RouteExamples, RouteState,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
@@ -22,6 +22,8 @@ use std::path::{Path, PathBuf};
 pub const HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION: &str = "0.3.0-host-capability-snapshot";
 pub const CAPABILITY_SNAPSHOT_SCHEMA_VERSION: &str = HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION;
 pub const USER_OVERLAY_SCHEMA_VERSION: &str = "0.3.0-user-skill-overlay";
+pub const USER_SOURCE_REGISTRY_SCHEMA_VERSION: &str = "0.3.0-user-skill-sources";
+pub const USER_SOURCE_AUDIT_VERSION: &str = "skill-source-audit-v1";
 pub const OVERLAY_MUTATION_EVENT_SCHEMA_VERSION: &str = "0.3.0-overlay-mutation-receipt";
 pub const SKILL_USAGE_EVENT_SCHEMA_VERSION: &str = "0.3.0-skill-usage-event";
 pub const SKILL_REASON_CODES: &[&str] = &[
@@ -33,6 +35,7 @@ pub const SKILL_REASON_CODES: &[&str] = &[
     "health_degraded",
     "auth_required",
     "metadata_incomplete",
+    "source_hash_changed",
     "snapshot_stale",
 ];
 
@@ -254,6 +257,12 @@ pub struct SkillCard {
     pub summary: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub intent_tags: Vec<String>,
+    /// Host-facing examples for semantic target selection. AGS never evaluates
+    /// them; they are hashed catalog evidence for the host's single NL pass.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub positive_examples: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub negative_examples: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub entrypoints: Vec<String>,
     pub source_kind: SkillSourceKind,
@@ -267,6 +276,37 @@ pub struct SkillCard {
     pub activity: ActivityState,
     pub version: String,
     pub source_hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThirdPartyCapabilityCard {
+    pub capability_id: String,
+    pub kind: String,
+    pub display_name: String,
+    pub purpose: String,
+    pub profiles: Vec<String>,
+    pub required: bool,
+    pub route_state: String,
+    pub availability: AvailabilityState,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reason_codes: Vec<String>,
+    pub requires_auth: bool,
+    pub auth_state: AuthState,
+    pub health_status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invoke_hint: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub intent_tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub positive_examples: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub negative_examples: Vec<String>,
+    pub routing_surface: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hook_events: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_version: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -390,6 +430,9 @@ pub struct HostCapabilitySnapshot {
     pub active_table_hash: String,
     pub snapshot_hash: String,
     pub catalog: Vec<SkillCard>,
+    pub third_party_registry_url: String,
+    pub third_party_manifest_hash: String,
+    pub third_party_catalog: Vec<ThirdPartyCapabilityCard>,
     pub active_skills: Vec<ActiveSkill>,
 }
 
@@ -410,13 +453,17 @@ impl HostCapabilitySnapshot {
         overlay_hash: impl Into<String>,
         runtime_hash: impl Into<String>,
         mut catalog: Vec<SkillCard>,
+        third_party_registry_url: impl Into<String>,
+        third_party_manifest_hash: impl Into<String>,
+        mut third_party_catalog: Vec<ThirdPartyCapabilityCard>,
         mut active_skills: Vec<ActiveSkill>,
     ) -> Result<Self, ResolveError> {
         let host = host.into();
         sort_skill_cards(&mut catalog);
+        sort_third_party_cards(&mut third_party_catalog);
         let table = ActiveSkillTable::new(host.clone(), "pending", active_skills)?;
         active_skills = table.active_skills();
-        let catalog_hash = catalog_hash(&catalog);
+        let catalog_hash = catalog_hash(&catalog, &third_party_catalog);
         let active_table_hash = active_table_hash(&active_skills);
         let mut snapshot = Self {
             schema_version: HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION.to_string(),
@@ -428,6 +475,9 @@ impl HostCapabilitySnapshot {
             active_table_hash,
             snapshot_hash: String::new(),
             catalog,
+            third_party_registry_url: third_party_registry_url.into(),
+            third_party_manifest_hash: third_party_manifest_hash.into(),
+            third_party_catalog,
             active_skills,
         };
         snapshot.snapshot_hash = snapshot_integrity_hash(&snapshot);
@@ -449,7 +499,7 @@ impl HostCapabilitySnapshot {
         {
             return Err(SnapshotError::SkillSnapshotStale);
         }
-        if self.catalog_hash != catalog_hash(&self.catalog)
+        if self.catalog_hash != catalog_hash(&self.catalog, &self.third_party_catalog)
             || self.active_table_hash != active_table_hash(&self.active_skills)
             || self.snapshot_hash != snapshot_integrity_hash(self)
         {
@@ -510,6 +560,200 @@ impl Default for UserSkillOverlay {
             entries: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UserSourceKind {
+    Local,
+    Github,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UserSourceEntry {
+    pub skill_id: String,
+    pub source_kind: UserSourceKind,
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subdir: Option<String>,
+    pub source_hash: String,
+    pub license: String,
+    pub canonical_path: String,
+    pub audit_version: String,
+    pub target_hosts: Vec<String>,
+    #[serde(default)]
+    pub display_name: String,
+    #[serde(default)]
+    pub summary: String,
+    #[serde(default)]
+    pub intent_tags: Vec<String>,
+    #[serde(default)]
+    pub entrypoints: Vec<String>,
+    #[serde(default)]
+    pub requires_auth: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UserSourceRegistry {
+    pub schema_version: String,
+    pub revision: u64,
+    #[serde(default)]
+    pub entries: Vec<UserSourceEntry>,
+}
+
+impl Default for UserSourceRegistry {
+    fn default() -> Self {
+        Self {
+            schema_version: USER_SOURCE_REGISTRY_SCHEMA_VERSION.to_string(),
+            revision: 0,
+            entries: Vec::new(),
+        }
+    }
+}
+
+pub fn user_source_registry_path(runtime_home: &Path) -> PathBuf {
+    runtime_home
+        .join("skill-registry")
+        .join("user-sources.yaml")
+}
+
+pub fn user_skill_body_root(runtime_home: &Path) -> PathBuf {
+    runtime_home.join("skill-bodies")
+}
+
+pub fn load_user_source_registry(runtime_home: &Path) -> Result<UserSourceRegistry, String> {
+    let path = user_source_registry_path(runtime_home);
+    if !path.exists() {
+        return Ok(UserSourceRegistry::default());
+    }
+    let content = std::fs::read_to_string(&path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let registry: UserSourceRegistry = serde_yaml::from_str(&content)
+        .map_err(|error| format!("cannot parse {}: {error}", path.display()))?;
+    if registry.schema_version != USER_SOURCE_REGISTRY_SCHEMA_VERSION {
+        return Err(format!(
+            "unsupported source registry schema {}; expected {USER_SOURCE_REGISTRY_SCHEMA_VERSION}",
+            registry.schema_version
+        ));
+    }
+    let body_root = user_skill_body_root(runtime_home);
+    let real_body_root = std::fs::canonicalize(&body_root).map_err(|error| {
+        format!(
+            "cannot canonicalize user skill body root {}: {error}",
+            body_root.display()
+        )
+    })?;
+    let mut seen = HashSet::new();
+    for entry in &registry.entries {
+        if !seen.insert(entry.skill_id.clone()) {
+            return Err("duplicate skill_id in user source registry".to_string());
+        }
+        if !safe_skill_id(&entry.skill_id)
+            || !is_sha256(&entry.source_hash)
+            || !is_known_source_license(&entry.license)
+            || entry.summary.trim().is_empty()
+            || entry.intent_tags.is_empty()
+            || entry.audit_version != USER_SOURCE_AUDIT_VERSION
+        {
+            return Err(format!(
+                "invalid metadata for user source {}",
+                entry.skill_id
+            ));
+        }
+        let mut seen_hosts = HashSet::new();
+        if entry.target_hosts.is_empty()
+            || entry.target_hosts.iter().any(|host| {
+                !matches!(
+                    host.as_str(),
+                    "claude-code" | "codex" | "omp" | "codebuddy-code" | "cursor"
+                ) || !seen_hosts.insert(host.as_str())
+            })
+        {
+            return Err(format!(
+                "invalid target_hosts for user source {}",
+                entry.skill_id
+            ));
+        }
+        match entry.source_kind {
+            UserSourceKind::Github if !valid_github_source_provenance(entry) => {
+                return Err(format!(
+                    "github user source {} is not safely pinned",
+                    entry.skill_id
+                ));
+            }
+            UserSourceKind::Local
+                if entry.resolved_ref.is_some()
+                    || entry.subdir.is_some()
+                    || !Path::new(&entry.source).is_absolute() =>
+            {
+                return Err(format!(
+                    "local user source {} has invalid provenance",
+                    entry.skill_id
+                ));
+            }
+            _ => {}
+        }
+        let canonical = std::fs::canonicalize(&entry.canonical_path).map_err(|error| {
+            format!(
+                "cannot canonicalize source body {}: {error}",
+                entry.canonical_path
+            )
+        })?;
+        if !canonical.starts_with(&real_body_root) {
+            return Err(format!(
+                "user source {} escapes the private body store",
+                entry.skill_id
+            ));
+        }
+        let expected = std::fs::canonicalize(body_root.join(&entry.skill_id)).map_err(|error| {
+            format!(
+                "cannot canonicalize expected source body for {}: {error}",
+                entry.skill_id
+            )
+        })?;
+        if canonical != expected {
+            return Err(format!(
+                "user source {} does not use its canonical private body-store location",
+                entry.skill_id
+            ));
+        }
+        let metadata = load_skill_metadata_path(&canonical.join("SKILL.md"));
+        if metadata.name != entry.skill_id {
+            return Err(format!(
+                "user source {} SKILL.md declares a different canonical name",
+                entry.skill_id
+            ));
+        }
+    }
+    Ok(registry)
+}
+
+pub fn write_user_source_registry(
+    runtime_home: &Path,
+    registry: &UserSourceRegistry,
+) -> Result<(), String> {
+    let mut registry = registry.clone();
+    registry
+        .entries
+        .sort_by(|left, right| left.skill_id.cmp(&right.skill_id));
+    for entry in &mut registry.entries {
+        entry.intent_tags.sort();
+        entry.intent_tags.dedup();
+        entry.entrypoints.sort();
+        entry.entrypoints.dedup();
+        entry.target_hosts.sort();
+        entry.target_hosts.dedup();
+    }
+    let serialized = serde_yaml::to_string(&registry)
+        .map_err(|error| format!("cannot serialize source registry: {error}"))?;
+    write_private_atomic(
+        &user_source_registry_path(runtime_home),
+        serialized.as_bytes(),
+    )
 }
 
 pub fn load_user_overlay(runtime_home: &Path) -> Result<UserSkillOverlay, String> {
@@ -614,7 +858,15 @@ pub fn mutate_user_overlay(
         .find(|entry| entry.skill_id == skill_id)
         .cloned();
     let next_revision = overlay.revision.saturating_add(1);
-    let candidate = || external_candidate_card(manifest_root, host_home, active_host, skill_id);
+    let candidate = || {
+        external_candidate_card(
+            manifest_root,
+            runtime_home,
+            host_home,
+            active_host,
+            skill_id,
+        )
+    };
 
     let mut after_entry = match operation {
         OverlayMutationOperation::Adopt => {
@@ -798,10 +1050,45 @@ fn read_existing_private_file(path: &Path) -> Result<Option<Vec<u8>>, String> {
 
 fn external_candidate_card(
     manifest_root: &Path,
+    runtime_home: &Path,
     host_home: &Path,
     active_host: &str,
     skill_id: &str,
 ) -> Result<SkillCard, String> {
+    if let Some(source) = load_user_source_registry(runtime_home)?
+        .entries
+        .into_iter()
+        .find(|entry| entry.skill_id == skill_id)
+    {
+        let canonical = Path::new(&source.canonical_path);
+        if !canonical.join("SKILL.md").is_file() {
+            return Err("canonical_missing".to_string());
+        }
+        return Ok(SkillCard {
+            skill_id: source.skill_id,
+            display_name: source.display_name,
+            summary: source.summary,
+            intent_tags: source.intent_tags,
+            positive_examples: Vec::new(),
+            negative_examples: Vec::new(),
+            entrypoints: source.entrypoints,
+            source_kind: SkillSourceKind::External,
+            governance: GovernanceState::Candidate,
+            availability: AvailabilityState::Unavailable {
+                reason_codes: vec!["candidate_requires_adoption".to_string()],
+            },
+            reason_codes: vec!["candidate_requires_adoption".to_string()],
+            requires_auth: source.requires_auth,
+            auth_state: if source.requires_auth {
+                AuthState::Unknown
+            } else {
+                AuthState::NotRequired
+            },
+            activity: ActivityState::Unobserved,
+            version: source.audit_version,
+            source_hash: source.source_hash,
+        });
+    }
     let context = ConsoleContext::new(
         manifest_root.to_path_buf(),
         host_home.to_path_buf(),
@@ -889,6 +1176,72 @@ fn safe_skill_id(skill_id: &str) -> bool {
         && skill_id
             .chars()
             .all(|character| character.is_alphanumeric() || matches!(character, '-' | '_' | '.'))
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|digest| {
+        digest.len() == 64
+            && digest
+                .chars()
+                .all(|character| character.is_ascii_hexdigit())
+    })
+}
+
+fn is_known_source_license(value: &str) -> bool {
+    matches!(
+        value,
+        "MIT"
+            | "Apache-2.0"
+            | "MPL-2.0"
+            | "BSD-2-Clause"
+            | "BSD-3-Clause"
+            | "GPL-3.0-only"
+            | "GPL-3.0-or-later"
+            | "LGPL-3.0-only"
+            | "LGPL-3.0-or-later"
+            | "AGPL-3.0-only"
+            | "AGPL-3.0-or-later"
+    )
+}
+
+fn valid_github_source_provenance(entry: &UserSourceEntry) -> bool {
+    let Some(resolved_ref) = entry.resolved_ref.as_deref() else {
+        return false;
+    };
+    if resolved_ref.len() != 40
+        || !resolved_ref
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    {
+        return false;
+    }
+    let Some(rest) = entry.source.strip_prefix("https://github.com/") else {
+        return false;
+    };
+    if rest.contains(['?', '#']) {
+        return false;
+    }
+    let parts = rest.split('/').collect::<Vec<_>>();
+    if parts.len() < 5 || parts[2] != "tree" {
+        return false;
+    }
+    if [parts[0], parts[1], parts[3]].iter().any(|part| {
+        part.is_empty()
+            || part.len() > 128
+            || !part.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+            })
+    }) {
+        return false;
+    }
+    let subdir = parts[4..].join("/");
+    let subdir_path = Path::new(&subdir);
+    !subdir.is_empty()
+        && !subdir_path.is_absolute()
+        && subdir_path
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+        && entry.subdir.as_deref() == Some(subdir.as_str())
 }
 
 fn load_overlay_mutation_receipts(
@@ -1056,6 +1409,8 @@ struct RegistryRouting {
     invoke_hint: String,
     #[serde(default)]
     route_state: RouteState,
+    #[serde(default)]
+    examples: RouteExamples,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1090,6 +1445,10 @@ fn load_skill_file_metadata(capability: &ManagedCapability) -> SkillFileMetadata
     } else {
         path.to_path_buf()
     };
+    load_skill_metadata_path(&skill_md)
+}
+
+fn load_skill_metadata_path(skill_md: &Path) -> SkillFileMetadata {
     let Ok(content) = std::fs::read_to_string(skill_md) else {
         return SkillFileMetadata::default();
     };
@@ -1146,6 +1505,24 @@ pub fn build_capability_snapshot_with_runtime_home(
     build_capability_snapshot_with_roots(manifest_root, active_host, runtime_home, &host_home)
 }
 
+pub fn write_capability_snapshot_with_roots(
+    manifest_root: &Path,
+    active_host: &str,
+    runtime_home: &Path,
+    host_home: &Path,
+) -> Result<HostCapabilitySnapshot, String> {
+    let snapshot =
+        build_capability_snapshot_with_roots(manifest_root, active_host, runtime_home, host_home)
+            .map_err(|error| format!("skill snapshot build failed: {error:?}"))?;
+    let serialized = serde_json::to_string_pretty(&snapshot)
+        .map_err(|error| format!("skill snapshot serialization failed: {error}"))?;
+    write_private_atomic(
+        &snapshot_path(runtime_home, active_host),
+        (serialized + "\n").as_bytes(),
+    )?;
+    Ok(snapshot)
+}
+
 /// Build a snapshot with explicit machine roots and a no-process discovery
 /// runner. This is the production seam used by routing as well as the test seam:
 /// capability catalog generation never launches host CLIs.
@@ -1154,6 +1531,27 @@ pub fn build_capability_snapshot_with_roots(
     active_host: &str,
     runtime_home: &Path,
     host_home: &Path,
+) -> Result<HostCapabilitySnapshot, SnapshotBuildError> {
+    let third_party = ags_onboarding::manifest::resolve_third_party_manifest(manifest_root)
+        .map_err(SnapshotBuildError::Overlay)?;
+    build_capability_snapshot_with_roots_and_manifest(
+        manifest_root,
+        active_host,
+        runtime_home,
+        host_home,
+        &third_party,
+    )
+}
+
+/// Build a capability snapshot against one already-resolved third-party
+/// manifest. Onboarding uses this seam so its install plan and the host's
+/// natural-language routing catalog share one immutable manifest hash.
+pub fn build_capability_snapshot_with_roots_and_manifest(
+    manifest_root: &Path,
+    active_host: &str,
+    runtime_home: &Path,
+    host_home: &Path,
+    third_party: &ags_onboarding::manifest::ManifestResolution,
 ) -> Result<HostCapabilitySnapshot, SnapshotBuildError> {
     let context = ConsoleContext::new(
         manifest_root.to_path_buf(),
@@ -1172,7 +1570,24 @@ pub fn build_capability_snapshot_with_roots(
             .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|duration| duration.as_secs());
     let overlay = load_user_overlay(runtime_home).map_err(SnapshotBuildError::Overlay)?;
-    let overlay_bytes = std::fs::read(overlay_path(runtime_home)).unwrap_or_default();
+    let source_registry =
+        load_user_source_registry(runtime_home).map_err(SnapshotBuildError::Overlay)?;
+    let imported_targets: HashMap<_, _> = source_registry
+        .entries
+        .iter()
+        .map(|source| (source.skill_id.as_str(), source.target_hosts.as_slice()))
+        .collect();
+    let relevant_overlay_entries = overlay
+        .entries
+        .iter()
+        .filter(|entry| {
+            imported_targets
+                .get(entry.skill_id.as_str())
+                .is_none_or(|hosts| hosts.iter().any(|host| host == active_host))
+        })
+        .collect::<Vec<_>>();
+    let overlay_bytes = serde_json::to_vec(&relevant_overlay_entries)
+        .map_err(|error| SnapshotBuildError::Overlay(error.to_string()))?;
     let overlay_modified_since = std::fs::metadata(overlay_path(runtime_home))
         .ok()
         .and_then(|metadata| metadata.modified().ok())
@@ -1183,6 +1598,18 @@ pub fn build_capability_snapshot_with_roots(
     } else {
         sha256(&overlay_bytes)
     };
+    let mut relevant_sources = source_registry
+        .entries
+        .iter()
+        .filter(|source| source.target_hosts.iter().any(|host| host == active_host))
+        .cloned()
+        .collect::<Vec<_>>();
+    for source in &mut relevant_sources {
+        source.target_hosts = vec![active_host.to_string()];
+    }
+    relevant_sources.sort_by(|left, right| left.skill_id.cmp(&right.skill_id));
+    let source_registry_bytes = serde_json::to_vec(&relevant_sources)
+        .map_err(|error| SnapshotBuildError::Overlay(error.to_string()))?;
     let (auth_states, auth_hash) = load_auth_states(runtime_home, active_host);
     let usage_events = load_usage_events(runtime_home, active_host);
     let overlay_receipts = load_overlay_mutation_receipts(runtime_home).unwrap_or_default();
@@ -1199,21 +1626,34 @@ pub fn build_capability_snapshot_with_roots(
         .map(|entry| (entry.skill_id.as_str(), entry))
         .collect();
     let routes_by_skill = routes_by_skill(&registry_document.demand_routes);
-    let official_ids: HashSet<_> = inventory
-        .capabilities
+    let official_ids: HashSet<_> = registry_document
+        .skills
         .iter()
-        .filter(|capability| {
-            capability.kind == ManagedKind::Skill
-                && capability.registry_status == RegistryStatus::Registered
-        })
-        .map(|capability| capability.name.as_str())
+        .map(|skill| skill.name.as_str())
         .collect();
+    let imported_ids: HashSet<_> = source_registry
+        .entries
+        .iter()
+        .filter(|source| source.target_hosts.iter().any(|host| host == active_host))
+        .map(|source| source.skill_id.as_str())
+        .collect();
+    if let Some(collision) = source_registry
+        .entries
+        .iter()
+        .find(|source| official_ids.contains(source.skill_id.as_str()))
+    {
+        return Err(SnapshotBuildError::Overlay(format!(
+            "user source {} collides with official registry precedence",
+            collision.skill_id
+        )));
+    }
 
     let mut catalog = Vec::new();
     let mut active_skills = Vec::new();
     for capability in inventory.capabilities.iter().filter(|capability| {
         capability.kind == ManagedKind::Skill
             && capability.managed_status != ManagedStatus::RouteTarget
+            && !imported_ids.contains(capability.name.as_str())
     }) {
         let official = official_ids.contains(capability.name.as_str());
         let registry = metadata.get(capability.name.as_str()).copied();
@@ -1279,17 +1719,351 @@ pub fn build_capability_snapshot_with_roots(
         catalog.push(card);
     }
 
-    let runtime_hash =
-        sha256(format!("{}\n{auth_hash}", inventory_snapshot_hash(&inventory)).as_bytes());
+    let mut imported_body_hashes = Vec::new();
+    for source in &source_registry.entries {
+        let canonical = Path::new(&source.canonical_path);
+        let actual_source_hash = hash_skill_source(canonical).ok();
+        if !source.target_hosts.iter().any(|host| host == active_host) {
+            continue;
+        }
+        imported_body_hashes.push(format!(
+            "{}:{}",
+            source.skill_id,
+            actual_source_hash.as_deref().unwrap_or("unreadable")
+        ));
+        if official_ids.contains(source.skill_id.as_str()) {
+            continue;
+        }
+        let overlay_entry = overlay_entries.get(source.skill_id.as_str()).copied();
+        let ignored = overlay_entry.is_some_and(|entry| entry.state == OverlayEntryState::Ignored);
+        let active = overlay_entry.is_some_and(|entry| entry.state == OverlayEntryState::Active);
+        let canonical_present = canonical.join("SKILL.md").is_file();
+        let visible = user_source_host_visible(host_home, active_host, source);
+        let auth_state = auth_state_for(
+            source.requires_auth,
+            auth_states.skills.get(&source.skill_id).copied(),
+        );
+        let governance = if ignored {
+            GovernanceState::Ignored
+        } else if active {
+            GovernanceState::Active
+        } else {
+            GovernanceState::Candidate
+        };
+        let mut reasons = Vec::new();
+        if governance == GovernanceState::Candidate {
+            reasons.push("candidate_requires_adoption".to_string());
+        }
+        if !canonical_present {
+            reasons.push("canonical_missing".to_string());
+        }
+        if !visible {
+            reasons.push("host_not_visible".to_string());
+        }
+        if matches!(auth_state, AuthState::Missing | AuthState::Unknown) {
+            reasons.push("auth_required".to_string());
+        }
+        if actual_source_hash.as_deref() != Some(source.source_hash.as_str())
+            || overlay_entry.is_some_and(|entry| entry.source_hash != source.source_hash)
+        {
+            reasons.push("source_hash_changed".to_string());
+        }
+        if source.summary.trim().is_empty()
+            || source.intent_tags.is_empty()
+            || overlay_entry.is_some_and(|entry| entry.invoke_hint.trim().is_empty())
+        {
+            reasons.push("metadata_incomplete".to_string());
+        }
+        reasons.sort();
+        reasons.dedup();
+        let availability = if governance == GovernanceState::Active && reasons.is_empty() {
+            AvailabilityState::Ready
+        } else {
+            AvailabilityState::Unavailable {
+                reason_codes: reasons.clone(),
+            }
+        };
+        let mut intent_tags = source.intent_tags.clone();
+        intent_tags.sort();
+        intent_tags.dedup();
+        let mut entrypoints = source.entrypoints.clone();
+        entrypoints.sort();
+        entrypoints.dedup();
+        let mut card = SkillCard {
+            skill_id: source.skill_id.clone(),
+            display_name: source.display_name.clone(),
+            summary: source.summary.clone(),
+            intent_tags,
+            positive_examples: Vec::new(),
+            negative_examples: Vec::new(),
+            entrypoints,
+            source_kind: SkillSourceKind::External,
+            governance,
+            availability,
+            reason_codes: reasons,
+            requires_auth: source.requires_auth,
+            auth_state,
+            activity: ActivityState::Unobserved,
+            version: source.audit_version.clone(),
+            source_hash: actual_source_hash.unwrap_or_else(|| source.source_hash.clone()),
+        };
+        let active_since = overlay_entry
+            .filter(|entry| entry.state == OverlayEntryState::Active)
+            .and_then(|_| {
+                overlay_active_since(&overlay_receipts, &card.skill_id).or(overlay_modified_since)
+            });
+        card.activity = activity_for_skill(&card.skill_id, &usage_events, now_unix, active_since);
+        if card.governance == GovernanceState::Active && card.availability.is_ready() {
+            let invoke_hint = overlay_entry
+                .map(|entry| entry.invoke_hint.clone())
+                .filter(|hint| !hint.is_empty())
+                .unwrap_or_else(|| format!("[skill: {}]", source.skill_id));
+            active_skills.push(ActiveSkill {
+                skill_id: card.skill_id.clone(),
+                invoke_hint,
+                allowed_entrypoints: card.entrypoints.clone(),
+                intent_tags: card.intent_tags.clone(),
+                legacy_demands: Vec::new(),
+                source_hash: card.source_hash.clone(),
+            });
+        }
+        catalog.push(card);
+    }
+
+    let runtime_hash = sha256(
+        format!(
+            "{}\n{auth_hash}\n{}",
+            inventory_snapshot_hash(&inventory),
+            if source_registry_bytes.is_empty() {
+                sha256(b"empty-user-source-registry")
+            } else {
+                sha256(
+                    format!(
+                        "{}\n{}",
+                        sha256(&source_registry_bytes),
+                        imported_body_hashes.join("\n")
+                    )
+                    .as_bytes(),
+                )
+            }
+        )
+        .as_bytes(),
+    );
+    let active_profile = capability_profile(manifest_root);
+    let third_party_catalog = third_party
+        .manifest
+        .capabilities
+        .iter()
+        .filter(|capability| capability.applies_to(active_profile))
+        .map(|capability| {
+            let kind = capability.kind.as_str().to_string();
+            let routing_surface = match capability.kind {
+                ags_onboarding::manifest::CapabilityKind::Skill => "exact-skill-target".to_string(),
+                ags_onboarding::manifest::CapabilityKind::Mcp => "host-native-mcp".to_string(),
+                ags_onboarding::manifest::CapabilityKind::Cli => {
+                    "host-native-cli-or-governed-skill-wrapper".to_string()
+                }
+                ags_onboarding::manifest::CapabilityKind::Hook => {
+                    "host-event-only-not-natural-language".to_string()
+                }
+            };
+            let (availability, reason_codes, auth_state, health_status) = third_party_availability(
+                capability,
+                active_host,
+                &catalog,
+                &inventory.capabilities,
+            );
+            ThirdPartyCapabilityCard {
+                capability_id: capability.id.clone(),
+                kind,
+                display_name: capability.name.clone(),
+                purpose: capability.purpose.clone(),
+                profiles: capability.profiles.clone(),
+                required: capability.required,
+                route_state: capability.routing.route_state.clone(),
+                availability,
+                reason_codes,
+                requires_auth: capability.requires_auth,
+                auth_state,
+                health_status,
+                invoke_hint: capability.routing.invoke_hint.clone(),
+                intent_tags: capability.routing.intent_tags.clone(),
+                positive_examples: capability.routing.positive_examples.clone(),
+                negative_examples: capability.routing.negative_examples.clone(),
+                routing_surface,
+                hook_events: capability
+                    .hook
+                    .as_ref()
+                    .map(|contract| contract.events.clone())
+                    .unwrap_or_default(),
+                source_version: capability.source.version.clone(),
+            }
+        })
+        .collect();
     HostCapabilitySnapshot::new(
         active_host,
         sha256(&registry_bytes),
         overlay_hash,
         runtime_hash,
         catalog,
+        third_party.source.clone(),
+        third_party.content_hash.clone(),
+        third_party_catalog,
         active_skills,
     )
     .map_err(SnapshotBuildError::Resolve)
+}
+
+fn capability_profile(manifest_root: &Path) -> &'static str {
+    let content =
+        std::fs::read_to_string(manifest_root.join("manifests/suite.yaml")).unwrap_or_default();
+    let value: serde_yaml::Value = serde_yaml::from_str(&content).unwrap_or_default();
+    let suite = value.get("suite");
+    let name = suite
+        .and_then(|suite| suite.get("name"))
+        .and_then(serde_yaml::Value::as_str)
+        .unwrap_or_default();
+    let version = suite
+        .and_then(|suite| suite.get("version"))
+        .and_then(serde_yaml::Value::as_str)
+        .unwrap_or_default();
+    if name == "agent-general-staff" || version.ends_with("-public") {
+        "public"
+    } else {
+        "private"
+    }
+}
+
+fn third_party_availability(
+    capability: &ags_onboarding::manifest::ThirdPartyCapability,
+    active_host: &str,
+    catalog: &[SkillCard],
+    inventory: &[ManagedCapability],
+) -> (AvailabilityState, Vec<String>, AuthState, String) {
+    use ags_onboarding::manifest::CapabilityKind;
+
+    let mut reasons = Vec::new();
+    let mut health_status = "unknown".to_string();
+    let auth_state = if capability.requires_auth {
+        AuthState::Unknown
+    } else {
+        AuthState::NotRequired
+    };
+
+    match capability.kind {
+        CapabilityKind::Skill => {
+            if let Some(card) = catalog.iter().find(|card| card.skill_id == capability.id) {
+                reasons.extend(card.reason_codes.clone());
+                health_status = if card.availability.is_ready() {
+                    "healthy"
+                } else {
+                    "unavailable"
+                }
+                .to_string();
+                if capability.requires_auth
+                    && matches!(card.auth_state, AuthState::Missing | AuthState::Unknown)
+                {
+                    reasons.push("auth_required".to_string());
+                }
+                reasons.sort();
+                reasons.dedup();
+                return (
+                    if card.availability.is_ready() && reasons.is_empty() {
+                        AvailabilityState::Ready
+                    } else {
+                        AvailabilityState::Unavailable {
+                            reason_codes: reasons.clone(),
+                        }
+                    },
+                    reasons,
+                    card.auth_state,
+                    health_status,
+                );
+            }
+            reasons.push("capability_not_installed".to_string());
+        }
+        CapabilityKind::Cli => {
+            let command = capability.install.command.as_deref().unwrap_or_default();
+            if command.is_empty() || !ags_platform::is_on_path(command) {
+                reasons.push("command_not_on_path".to_string());
+                health_status = "unavailable".to_string();
+            } else if capability.requires_auth {
+                reasons.push("auth_state_unknown".to_string());
+                health_status = "unknown".to_string();
+            } else {
+                health_status = "healthy".to_string();
+            }
+        }
+        CapabilityKind::Mcp => {
+            let server_name = capability
+                .mcp
+                .as_ref()
+                .map(|contract| contract.server_name.as_str())
+                .unwrap_or(capability.id.as_str());
+            if let Some(managed) = inventory.iter().find(|managed| {
+                managed.kind == ManagedKind::Mcp
+                    && (managed.name == capability.id || managed.name == server_name)
+            }) {
+                let visible = managed.host_visibility.iter().any(|visibility| {
+                    visibility.host == active_host
+                        && visibility.supported
+                        && visibility.status == HostVisibilityStatus::Visible
+                });
+                if !visible {
+                    reasons.push("host_not_visible".to_string());
+                }
+                health_status = match managed.health_status {
+                    HealthStatus::Healthy => "healthy",
+                    HealthStatus::Degraded => {
+                        reasons.push("health_degraded".to_string());
+                        "degraded"
+                    }
+                    HealthStatus::Unknown => {
+                        reasons.push("health_unknown".to_string());
+                        "unknown"
+                    }
+                    HealthStatus::Unhealthy => {
+                        reasons.push("health_unhealthy".to_string());
+                        "unhealthy"
+                    }
+                }
+                .to_string();
+            } else {
+                reasons.push("host_not_visible".to_string());
+                health_status = "unavailable".to_string();
+            }
+            if capability.requires_auth {
+                reasons.push("auth_state_unknown".to_string());
+            }
+        }
+        CapabilityKind::Hook => {
+            reasons.push("event_only_not_natural_language".to_string());
+            health_status = "not-probed".to_string();
+        }
+    }
+
+    reasons.sort();
+    reasons.dedup();
+    let availability = if reasons.is_empty() {
+        AvailabilityState::Ready
+    } else if reasons.iter().all(|reason| {
+        matches!(
+            reason.as_str(),
+            "auth_state_unknown"
+                | "health_degraded"
+                | "health_unknown"
+                | "event_only_not_natural_language"
+        )
+    }) {
+        AvailabilityState::Degraded {
+            reason_codes: reasons.clone(),
+        }
+    } else {
+        AvailabilityState::Unavailable {
+            reason_codes: reasons.clone(),
+        }
+    };
+    (availability, reasons, auth_state, health_status)
 }
 
 struct NoProcessDiscovery;
@@ -1420,9 +2194,22 @@ fn skill_card(
     let invoke_hint_present = routing.is_some_and(|routing| !routing.invoke_hint.trim().is_empty())
         || overlay.is_some_and(|entry| !entry.invoke_hint.trim().is_empty())
         || !file_metadata.invoke_hint.trim().is_empty();
-    if declared_summary.is_none() || intent_tags.is_empty() || (routable && !invoke_hint_present) {
+    let semantic_examples_complete = routing.is_none_or(|routing| {
+        routing.route_state != RouteState::Routable
+            || (!routing.examples.positive.is_empty() && !routing.examples.negative.is_empty())
+    });
+    if declared_summary.is_none()
+        || intent_tags.is_empty()
+        || (routable && (!invoke_hint_present || !semantic_examples_complete))
+    {
         reasons.push("metadata_incomplete".to_string());
     }
+    let positive_examples = routing
+        .map(|routing| routing.examples.positive.clone())
+        .unwrap_or_default();
+    let negative_examples = routing
+        .map(|routing| routing.examples.negative.clone())
+        .unwrap_or_default();
 
     let availability = if governance == GovernanceState::Active && reasons.is_empty() {
         AvailabilityState::Ready
@@ -1453,6 +2240,8 @@ fn skill_card(
             .unwrap_or_else(|| capability.name.clone()),
         summary,
         intent_tags,
+        positive_examples,
+        negative_examples,
         entrypoints,
         source_kind: source_kind(capability),
         governance,
@@ -1518,6 +2307,50 @@ fn source_hash(capability: &ManagedCapability) -> String {
     } else {
         sha256(format!("unreadable-skill-source\n{}", capability.name).as_bytes())
     }
+}
+
+pub fn hash_skill_source(path: &Path) -> Result<String, String> {
+    let mut canonical = b"ags-skill-source-v1\n".to_vec();
+    let hashed = if path.is_dir() {
+        append_source_directory(path, path, &mut canonical)
+    } else {
+        append_source_node(
+            path.parent().unwrap_or_else(|| Path::new(".")),
+            path,
+            &mut canonical,
+        )
+    };
+    if hashed {
+        Ok(sha256(&canonical))
+    } else {
+        Err(format!("cannot hash skill source {}", path.display()))
+    }
+}
+
+fn user_source_host_visible(host_home: &Path, active_host: &str, source: &UserSourceEntry) -> bool {
+    let host_specific = match active_host {
+        "codex" => Some(host_home.join(".codex/skills").join(&source.skill_id)),
+        "claude-code" => Some(host_home.join(".claude/skills").join(&source.skill_id)),
+        "omp" => Some(host_home.join(".omp/agent/skills").join(&source.skill_id)),
+        "cursor" => Some(host_home.join(".cursor/skills").join(&source.skill_id)),
+        "codebuddy-code" => Some(host_home.join(".codebuddy/skills").join(&source.skill_id)),
+        _ => None,
+    };
+    let shared = matches!(active_host, "codex" | "omp" | "cursor")
+        .then(|| host_home.join(".agents/skills").join(&source.skill_id));
+    let existing = [host_specific, shared]
+        .into_iter()
+        .flatten()
+        .filter(|entry| entry.exists() || std::fs::symlink_metadata(entry).is_ok())
+        .collect::<Vec<_>>();
+    existing.len() == 1
+        && existing.iter().all(|entry| {
+            std::fs::canonicalize(entry)
+                .ok()
+                .zip(std::fs::canonicalize(&source.canonical_path).ok())
+                .is_some_and(|(actual, expected)| actual == expected)
+                && entry.join("SKILL.md").is_file()
+        })
 }
 
 /// Hash the complete skill body without timestamps or absolute paths. This
@@ -1891,30 +2724,42 @@ fn sort_skill_cards(cards: &mut [SkillCard]) {
     cards.sort_by(|left, right| left.skill_id.cmp(&right.skill_id));
 }
 
+fn sort_third_party_cards(cards: &mut [ThirdPartyCapabilityCard]) {
+    cards.sort_by(|left, right| {
+        left.kind
+            .cmp(&right.kind)
+            .then(left.capability_id.cmp(&right.capability_id))
+    });
+}
+
 fn active_table_hash(active_skills: &[ActiveSkill]) -> String {
     let mut canonical = active_skills.to_vec();
     sort_active_skills(&mut canonical);
     sha256(&serde_json::to_vec(&canonical).unwrap_or_default())
 }
 
-fn catalog_hash(catalog: &[SkillCard]) -> String {
+fn catalog_hash(catalog: &[SkillCard], third_party_catalog: &[ThirdPartyCapabilityCard]) -> String {
     let mut canonical = catalog.to_vec();
     for card in &mut canonical {
         card.activity = ActivityState::Unobserved;
     }
     sort_skill_cards(&mut canonical);
-    sha256(&serde_json::to_vec(&canonical).unwrap_or_default())
+    let mut third_party = third_party_catalog.to_vec();
+    sort_third_party_cards(&mut third_party);
+    sha256(&serde_json::to_vec(&(canonical, third_party)).unwrap_or_default())
 }
 
 fn snapshot_integrity_hash(snapshot: &HostCapabilitySnapshot) -> String {
     sha256(
         format!(
-            "{}\n{}\n{}\n{}\n{}\n{}\n{}",
+            "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
             snapshot.schema_version,
             snapshot.host,
             snapshot.registry_hash,
             snapshot.overlay_hash,
             snapshot.runtime_hash,
+            snapshot.third_party_registry_url,
+            snapshot.third_party_manifest_hash,
             snapshot.catalog_hash,
             snapshot.active_table_hash
         )
@@ -1956,6 +2801,8 @@ mod tests {
             display_name: "Codebase Design".to_string(),
             summary: "Deep module design".to_string(),
             intent_tags: vec!["module-design".to_string()],
+            positive_examples: vec!["设计这个模块接口".to_string()],
+            negative_examples: vec!["解释这个模块".to_string()],
             entrypoints: vec!["module-design".to_string()],
             source_kind: SkillSourceKind::Suite,
             governance: GovernanceState::Active,
@@ -2017,6 +2864,9 @@ mod tests {
             "sha256:overlay",
             "sha256:runtime",
             vec![card()],
+            "https://example.invalid/manifest.yaml",
+            "sha256:third-party",
+            vec![],
             vec![active_skill()],
         )
         .unwrap();
@@ -2026,6 +2876,9 @@ mod tests {
             "sha256:overlay",
             "sha256:runtime",
             vec![card()],
+            "https://example.invalid/manifest.yaml",
+            "sha256:third-party",
+            vec![],
             vec![active_skill()],
         )
         .unwrap();
@@ -2048,6 +2901,9 @@ mod tests {
             "sha256:overlay",
             "sha256:runtime",
             vec![card()],
+            "https://example.invalid/manifest.yaml",
+            "sha256:third-party",
+            vec![],
             vec![active_skill()],
         )
         .unwrap();
@@ -2083,6 +2939,9 @@ mod tests {
             "sha256:overlay",
             "sha256:runtime",
             vec![cold_card],
+            "https://example.invalid/manifest.yaml",
+            "sha256:third-party",
+            vec![],
             vec![active_skill()],
         )
         .unwrap();
@@ -2092,6 +2951,9 @@ mod tests {
             "sha256:overlay",
             "sha256:runtime",
             vec![card()],
+            "https://example.invalid/manifest.yaml",
+            "sha256:third-party",
+            vec![],
             vec![active_skill()],
         )
         .unwrap();
@@ -2110,6 +2972,7 @@ mod tests {
             "health_degraded",
             "auth_required",
             "metadata_incomplete",
+            "source_hash_changed",
             "snapshot_stale",
         ] {
             assert!(SKILL_REASON_CODES.contains(&required), "missing {required}");
@@ -2240,6 +3103,336 @@ mod tests {
         .unwrap_err();
         assert_eq!(error, "official_registry_precedence");
         assert!(!overlay_path(&base.join("runtime")).exists());
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn imported_source_registry_candidate_becomes_active_when_linked_and_adopted() {
+        let base = std::env::temp_dir().join(format!("ags-imported-source-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let runtime = base.join("runtime");
+        let home = base.join("home");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let body = user_skill_body_root(&runtime).join("apple-design");
+        std::fs::create_dir_all(&body).unwrap();
+        std::fs::write(
+            body.join("SKILL.md"),
+            "---\nname: apple-design\ndescription: Apple design guidance.\nintent_tags: [apple-design, design]\n---\n",
+        )
+        .unwrap();
+        let source_hash = hash_skill_source(&body).unwrap();
+        write_capability_snapshot_with_roots(&root, "claude-code", &runtime, &home).unwrap();
+        let mut sources = UserSourceRegistry {
+            revision: 1,
+            ..Default::default()
+        };
+        sources.entries.push(UserSourceEntry {
+            skill_id: "apple-design".to_string(),
+            source_kind: UserSourceKind::Local,
+            source: body.display().to_string(),
+            resolved_ref: None,
+            subdir: None,
+            source_hash,
+            license: "MIT".to_string(),
+            canonical_path: body.display().to_string(),
+            audit_version: USER_SOURCE_AUDIT_VERSION.to_string(),
+            target_hosts: vec!["codex".to_string(), "omp".to_string()],
+            display_name: "apple-design".to_string(),
+            summary: "Apple design guidance.".to_string(),
+            intent_tags: vec!["apple-design".to_string(), "design".to_string()],
+            entrypoints: Vec::new(),
+            requires_auth: false,
+        });
+        write_user_source_registry(&runtime, &sources).unwrap();
+        let host_entry = home.join(".codex/skills/apple-design");
+        std::fs::create_dir_all(host_entry.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&body, &host_entry).unwrap();
+        let omp_entry = home.join(".omp/agent/skills/apple-design");
+        std::fs::create_dir_all(omp_entry.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&body, &omp_entry).unwrap();
+
+        mutate_user_overlay(
+            &root,
+            &runtime,
+            &home,
+            "codex",
+            "apple-design",
+            OverlayMutationOperation::Adopt,
+            None,
+            true,
+        )
+        .unwrap();
+        let snapshot =
+            build_capability_snapshot_with_roots(&root, "codex", &runtime, &home).unwrap();
+        assert!(snapshot
+            .active_skills
+            .iter()
+            .any(|skill| skill.skill_id == "apple-design"));
+        assert!(snapshot.catalog.iter().any(|card| {
+            card.skill_id == "apple-design"
+                && card.governance == GovernanceState::Active
+                && card.availability == AvailabilityState::Ready
+        }));
+        let omp_snapshot =
+            build_capability_snapshot_with_roots(&root, "omp", &runtime, &home).unwrap();
+        assert!(omp_snapshot
+            .active_skills
+            .iter()
+            .any(|skill| skill.skill_id == "apple-design"));
+        let shared_entry = home.join(".agents/skills/apple-design");
+        std::fs::create_dir_all(shared_entry.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&body, &shared_entry).unwrap();
+        let omp_duplicate =
+            build_capability_snapshot_with_roots(&root, "omp", &runtime, &home).unwrap();
+        assert!(!omp_duplicate
+            .active_skills
+            .iter()
+            .any(|skill| skill.skill_id == "apple-design"));
+        assert!(omp_duplicate.catalog.iter().any(|card| {
+            card.skill_id == "apple-design"
+                && card
+                    .reason_codes
+                    .iter()
+                    .any(|reason| reason == "host_not_visible")
+        }));
+        std::fs::remove_file(&shared_entry).unwrap();
+        let shared_shadow = base.join("shared-shadow/apple-design");
+        std::fs::create_dir_all(&shared_shadow).unwrap();
+        std::fs::write(
+            shared_shadow.join("SKILL.md"),
+            "---\nname: apple-design\ndescription: unrelated shared shadow.\n---\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(&shared_shadow, &shared_entry).unwrap();
+        let omp_conflict =
+            build_capability_snapshot_with_roots(&root, "omp", &runtime, &home).unwrap();
+        assert!(!omp_conflict
+            .active_skills
+            .iter()
+            .any(|skill| skill.skill_id == "apple-design"));
+        std::fs::remove_file(&shared_entry).unwrap();
+        assert!(
+            load_validated_snapshot_with_roots(&root, &runtime, "claude-code", &home).is_ok(),
+            "a codex/omp adoption must not stale the persisted Claude snapshot"
+        );
+        let original_runtime_hash = snapshot.runtime_hash;
+        std::fs::remove_file(&host_entry).unwrap();
+        let shadow = base.join("shadow/apple-design");
+        std::fs::create_dir_all(&shadow).unwrap();
+        std::fs::write(
+            shadow.join("SKILL.md"),
+            "---\nname: apple-design\ndescription: unrelated shadow.\nintent_tags: [apple-design]\n---\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(&shadow, &host_entry).unwrap();
+        let shadowed =
+            build_capability_snapshot_with_roots(&root, "codex", &runtime, &home).unwrap();
+        assert!(!shadowed
+            .active_skills
+            .iter()
+            .any(|skill| skill.skill_id == "apple-design"));
+        assert!(shadowed.catalog.iter().any(|card| {
+            card.skill_id == "apple-design"
+                && card
+                    .reason_codes
+                    .iter()
+                    .any(|reason| reason == "host_not_visible")
+        }));
+        std::fs::write(
+            body.join("SKILL.md"),
+            "---\nname: apple-design\ndescription: tampered.\nintent_tags: [apple-design]\n---\n",
+        )
+        .unwrap();
+        let tampered =
+            build_capability_snapshot_with_roots(&root, "codex", &runtime, &home).unwrap();
+        assert_ne!(tampered.runtime_hash, original_runtime_hash);
+        assert!(!tampered
+            .active_skills
+            .iter()
+            .any(|skill| skill.skill_id == "apple-design"));
+        assert!(tampered.catalog.iter().any(|card| {
+            card.skill_id == "apple-design"
+                && card
+                    .reason_codes
+                    .iter()
+                    .any(|reason| reason == "source_hash_changed")
+        }));
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn source_registry_rejects_frontmatter_name_alias() {
+        let base =
+            std::env::temp_dir().join(format!("ags-source-registry-alias-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let runtime = base.join("runtime");
+        let body = user_skill_body_root(&runtime).join("apple-design");
+        std::fs::create_dir_all(&body).unwrap();
+        std::fs::write(
+            body.join("SKILL.md"),
+            "---\nname: another-skill\ndescription: alias attempt\n---\n",
+        )
+        .unwrap();
+        let registry = UserSourceRegistry {
+            schema_version: USER_SOURCE_REGISTRY_SCHEMA_VERSION.to_string(),
+            revision: 1,
+            entries: vec![UserSourceEntry {
+                skill_id: "apple-design".to_string(),
+                source_kind: UserSourceKind::Local,
+                source: body.display().to_string(),
+                resolved_ref: None,
+                subdir: None,
+                source_hash: hash_skill_source(&body).unwrap(),
+                license: "MIT".to_string(),
+                canonical_path: body.display().to_string(),
+                audit_version: USER_SOURCE_AUDIT_VERSION.to_string(),
+                target_hosts: vec!["codex".to_string()],
+                display_name: "apple-design".to_string(),
+                summary: "alias attempt".to_string(),
+                intent_tags: vec!["apple-design".to_string()],
+                entrypoints: Vec::new(),
+                requires_auth: false,
+            }],
+        };
+        write_user_source_registry(&runtime, &registry).unwrap();
+        assert!(load_user_source_registry(&runtime)
+            .unwrap_err()
+            .contains("different canonical name"));
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn source_registry_rejects_unknown_license_audit_and_unpinned_provenance() {
+        let base = std::env::temp_dir().join(format!(
+            "ags-source-registry-provenance-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let runtime = base.join("runtime");
+        let body = user_skill_body_root(&runtime).join("apple-design");
+        std::fs::create_dir_all(&body).unwrap();
+        std::fs::write(
+            body.join("SKILL.md"),
+            "---\nname: apple-design\ndescription: provenance test\n---\n",
+        )
+        .unwrap();
+        let mut entry = UserSourceEntry {
+            skill_id: "apple-design".to_string(),
+            source_kind: UserSourceKind::Local,
+            source: body.display().to_string(),
+            resolved_ref: None,
+            subdir: None,
+            source_hash: hash_skill_source(&body).unwrap(),
+            license: "MIT".to_string(),
+            canonical_path: body.display().to_string(),
+            audit_version: USER_SOURCE_AUDIT_VERSION.to_string(),
+            target_hosts: vec!["codex".to_string()],
+            display_name: "apple-design".to_string(),
+            summary: "provenance test".to_string(),
+            intent_tags: vec!["apple-design".to_string()],
+            entrypoints: Vec::new(),
+            requires_auth: false,
+        };
+        let write = |entry: &UserSourceEntry| {
+            write_user_source_registry(
+                &runtime,
+                &UserSourceRegistry {
+                    schema_version: USER_SOURCE_REGISTRY_SCHEMA_VERSION.to_string(),
+                    revision: 1,
+                    entries: vec![entry.clone()],
+                },
+            )
+            .unwrap();
+        };
+        write(&entry);
+        assert!(load_user_source_registry(&runtime).is_ok());
+
+        entry.target_hosts = vec!["omp".to_string()];
+        write(&entry);
+        assert!(load_user_source_registry(&runtime).is_ok());
+        entry.target_hosts = vec!["codex".to_string()];
+
+        entry.license = "unknown".to_string();
+        write(&entry);
+        assert!(load_user_source_registry(&runtime)
+            .unwrap_err()
+            .contains("invalid metadata"));
+
+        entry.license = "MIT".to_string();
+        entry.audit_version = "future-or-tampered".to_string();
+        write(&entry);
+        assert!(load_user_source_registry(&runtime)
+            .unwrap_err()
+            .contains("invalid metadata"));
+
+        entry.audit_version = USER_SOURCE_AUDIT_VERSION.to_string();
+        entry.source_kind = UserSourceKind::Github;
+        entry.source = "https://github.com/acme/skills/tree/main/skills/apple-design".to_string();
+        entry.resolved_ref = Some("a".repeat(40));
+        entry.subdir = Some("skills/apple-design".to_string());
+        write(&entry);
+        assert!(load_user_source_registry(&runtime).is_ok());
+
+        entry.source = "nonsense".to_string();
+        entry.resolved_ref = Some("main".to_string());
+        entry.subdir = None;
+        write(&entry);
+        assert!(load_user_source_registry(&runtime)
+            .unwrap_err()
+            .contains("not safely pinned"));
+
+        entry.source_kind = UserSourceKind::Local;
+        entry.source = body.display().to_string();
+        write(&entry);
+        assert!(load_user_source_registry(&runtime)
+            .unwrap_err()
+            .contains("invalid provenance"));
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn source_registry_rejects_body_outside_private_store() {
+        let base =
+            std::env::temp_dir().join(format!("ags-source-registry-escape-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let runtime = base.join("runtime");
+        let body_root = user_skill_body_root(&runtime);
+        std::fs::create_dir_all(&body_root).unwrap();
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(
+            outside.join("SKILL.md"),
+            "---\nname: escaped\ndescription: escaped\n---\n",
+        )
+        .unwrap();
+        let registry = UserSourceRegistry {
+            schema_version: USER_SOURCE_REGISTRY_SCHEMA_VERSION.to_string(),
+            revision: 1,
+            entries: vec![UserSourceEntry {
+                skill_id: "escaped".to_string(),
+                source_kind: UserSourceKind::Local,
+                source: outside.display().to_string(),
+                resolved_ref: None,
+                subdir: None,
+                source_hash: hash_skill_source(&outside).unwrap(),
+                license: "MIT".to_string(),
+                canonical_path: outside.display().to_string(),
+                audit_version: USER_SOURCE_AUDIT_VERSION.to_string(),
+                target_hosts: vec!["codex".to_string()],
+                display_name: "escaped".to_string(),
+                summary: "escaped".to_string(),
+                intent_tags: vec!["escaped".to_string()],
+                entrypoints: Vec::new(),
+                requires_auth: false,
+            }],
+        };
+        let path = user_source_registry_path(&runtime);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_yaml::to_string(&registry).unwrap()).unwrap();
+        assert!(load_user_source_registry(&runtime)
+            .unwrap_err()
+            .contains("escapes the private body store"));
         let _ = std::fs::remove_dir_all(base);
     }
 

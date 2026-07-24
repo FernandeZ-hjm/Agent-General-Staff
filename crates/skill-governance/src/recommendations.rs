@@ -1,15 +1,15 @@
 //! Public third-party skill recommendation surface.
 //!
-//! Reads `manifests/skill-recommendations.yaml` (the single public recommendation
-//! source) and computes READ-ONLY local-install + host-visibility status by
-//! filesystem stat only. RECOMMENDATION-ONLY: AGS never installs, clones,
-//! downloads, copies, or writes a host thin-index for these entries — this
-//! module powers an advisory display, nothing more.
+//! Reads Skill entries from `manifests/third-party-capabilities.yaml` and
+//! computes READ-ONLY local-install + host-visibility status by
+//! filesystem stat only. Installation is never silent: the onboarding layer
+//! may offer a confirmation-protected per-item action that delegates to the
+//! existing audited `ags skill adopt` lifecycle.
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-/// Parsed `manifests/skill-recommendations.yaml`.
+/// Compatibility projection of the unified third-party capability manifest.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct RecommendationsDoc {
     #[serde(default)]
@@ -39,6 +39,10 @@ pub struct Recommendation {
     #[serde(default)]
     pub upstream: Option<String>,
     #[serde(default)]
+    pub revision: Option<String>,
+    #[serde(default)]
+    pub license: Option<String>,
+    #[serde(default)]
     pub risk: Option<String>,
     #[serde(default)]
     pub install_location: Option<String>,
@@ -48,8 +52,12 @@ pub struct Recommendation {
 #[derive(Debug, Clone, Serialize)]
 pub struct RecommendationStatus {
     pub id: String,
+    /// Unified onboarding state. This prevents contradictory local-install and
+    /// host-visibility fields from being interpreted as ready.
+    pub capability_state: String,
     /// "installed" when a local body exists at the install location, else
-    /// "not-installed". AGS never creates this — the user installs manually.
+    /// "not-installed". A controlled onboarding action may install it only
+    /// after explicit confirmation.
     pub local_install: String,
     /// Per-host visibility through either a direct thin index or the shared
     /// multi-agent skill body.
@@ -71,13 +79,51 @@ const HOST_SKILL_DIRS: &[(&str, &str)] = &[
     ("codex", ".codex/skills"),
 ];
 
-/// Read `manifests/skill-recommendations.yaml` under `repo_root`. Missing or
-/// malformed manifest → an empty doc (the setup block degrades gracefully).
+/// Read public Skill entries from the unified third-party capability manifest.
+/// Missing or malformed manifest → an empty doc (setup degrades gracefully).
 pub fn read_recommendations(repo_root: &Path) -> RecommendationsDoc {
-    let path = repo_root.join("manifests/skill-recommendations.yaml");
-    match std::fs::read_to_string(&path) {
-        Ok(content) => serde_yaml::from_str(&content).unwrap_or_default(),
-        Err(_) => RecommendationsDoc::default(),
+    let Ok(manifest) = ags_onboarding::manifest::read_third_party_manifest(repo_root) else {
+        return RecommendationsDoc::default();
+    };
+    let skills = manifest
+        .capabilities
+        .into_iter()
+        .filter(|capability| {
+            capability.kind == ags_onboarding::manifest::CapabilityKind::Skill
+                && capability.applies_to("public")
+        })
+        .map(|capability| {
+            let source = capability.source.repository.clone().map(|repository| {
+                let Some(revision) = capability.source.revision.as_deref() else {
+                    return repository;
+                };
+                let mut pinned = format!("{}/tree/{revision}", repository.trim_end_matches('/'));
+                if let Some(subdir) = capability.source.subdir.as_deref() {
+                    pinned.push('/');
+                    pinned.push_str(subdir.trim_start_matches('/'));
+                }
+                pinned
+            });
+            Recommendation {
+                id: capability.id,
+                name: capability.name,
+                tier: capability.tier,
+                purpose: capability.purpose,
+                recommendation_only: true,
+                source_kind: capability.source.manager,
+                source,
+                upstream: capability.source.repository,
+                revision: capability.source.revision,
+                license: capability.source.license,
+                risk: Some(capability.risk),
+                install_location: capability.install.install_location,
+            }
+        })
+        .collect();
+    RecommendationsDoc {
+        schema_version: manifest.schema_version,
+        principle: manifest.principle,
+        skills,
     }
 }
 
@@ -96,22 +142,35 @@ pub fn recommendation_status(rec: &Recommendation, home: &Path) -> Recommendatio
                 status: if visible { "visible" } else { "not-visible" }.to_string(),
             }
         })
-        .collect();
-    let next_step = if installed {
-        "Installed locally — verify host visibility with `ags skill verify --host claude-code`."
-            .to_string()
-    } else {
+        .collect::<Vec<_>>();
+    let any_visible = host_visibility
+        .iter()
+        .any(|visibility| visibility.status == "visible");
+    let capability_state = match (installed, any_visible) {
+        (true, true) => "active-ready",
+        (true, false) => "installed-not-visible",
+        (false, true) => "visible-not-ready",
+        (false, false) => "absent",
+    };
+    let next_step = match capability_state {
+        "active-ready" => "Installed and visible — verify deterministic routing with `ags skill route-test`."
+            .to_string(),
+        "installed-not-visible" => "Installed locally — run a confirmed host visibility sync, then verify.".to_string(),
+        "visible-not-ready" => "A host entry exists without the reviewed local body — repair or remove the stale entry before routing.".to_string(),
+        _ => {
         match rec.source.as_deref() {
             Some(src) => {
                 format!(
-                    "Not installed — review {src} and install manually (AGS never installs it)."
+                    "Not installed — review {src}; use an explicit per-item onboarding apply or install manually."
                 )
             }
             None => "Not installed — select a trusted source and install manually.".to_string(),
         }
+        }
     };
     RecommendationStatus {
         id: rec.id.clone(),
+        capability_state: capability_state.to_string(),
         local_install: if installed {
             "installed"
         } else {
@@ -215,6 +274,7 @@ mod tests {
         };
         let st = recommendation_status(&rec, &home);
         assert_eq!(st.local_install, "not-installed");
+        assert_eq!(st.capability_state, "absent");
         assert!(st.host_visibility.iter().all(|h| h.status == "not-visible"));
         assert!(st.next_step.contains("Not installed"));
     }
@@ -233,6 +293,7 @@ mod tests {
         };
         let st = recommendation_status(&rec, &home);
         assert_eq!(st.local_install, "installed");
+        assert_eq!(st.capability_state, "active-ready");
         assert!(st.host_visibility.iter().all(|h| h.status == "visible"));
         let _ = std::fs::remove_dir_all(&home);
     }

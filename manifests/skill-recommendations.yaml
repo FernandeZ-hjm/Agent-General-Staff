@@ -1,12 +1,13 @@
 # AGS Public Edition — Third-Party Skill Recommendations
 #
-# This manifest is the SINGLE public recommendation source consumed by
-# `ags setup` (the third-party core capability recommendation block) and by
-# docs/skill-recommendations.md.
+# Compatibility/reference projection retained for older releases and docs.
+# Current `ags setup`, onboarding, and update consume the unified live/fallback
+# registry in `manifests/third-party-capabilities.yaml`.
 #
-# RECOMMENDATION-ONLY. Every entry here is an *external* recommendation:
-#   - AGS never clones, installs, downloads, copies, or packages these bodies.
-#   - AGS never writes host config or a skill thin-index for them.
+# CONTROLLED ADOPTION. Every entry here is an *external* recommendation:
+#   - AGS never installs one silently.
+#   - Explicit per-item apply reuses `ags skill adopt`, with a reviewed source,
+#     pinned revision, license metadata, audit evidence, and post-apply verify.
 #   - `recommendation_only: true` + `source_kind: external` means the upstream
 #     URL is a pointer for manual install — it is NOT an AGS-locally-hosted
 #     canonical skill body. Only a real local `SKILL.md` under an AGS canonical
@@ -23,11 +24,10 @@
 schema_version: "1.1-public"
 generated: "2026-06-22"
 principle: >
-  Third-party skills enhance the full development experience but are NEVER
-  installed by AGS. Each entry is an external recommendation with a manual
-  install path. recommendation_only/external sources are pointers, not
-  AGS-hosted bodies; AGS will never clone repositories, run external install
-  commands, write host config, or write skill thin-indexes for them.
+  Third-party skills enhance the full development experience but are never
+  installed silently. Each entry is an external recommendation. An explicit
+  per-item apply may delegate to the audited `ags skill adopt` lifecycle;
+  unpinned, unlicensed, or untrusted sources remain advice-only.
 
 # Excluded by policy (documented so reviewers can see the intent, NOT recommended):
 excluded:
@@ -46,6 +46,7 @@ skills:
     source_kind: external
     upstream: "https://github.com/obra/superpowers"
     source: "https://github.com/obra/superpowers"
+    revision: "3dcbd5c4b48e02263fbf4a3c01e3fe4f81d584d9"
     license: "MIT"
     attribution: "Copyright (c) 2025 Jesse Vincent; retain upstream MIT notice when copying or adapting Superpowers material."
     risk: medium
@@ -65,6 +66,8 @@ skills:
     source_kind: external
     upstream: "https://github.com/mattpocock/skills"
     source: "https://github.com/mattpocock/skills/tree/main/skills/productivity/grilling"
+    revision: "ed37663cc5fbef691ddfecd080dff42f7e7e350d"
+    license: "MIT"
     risk: low
     risk_description: Read-only interview; no writes.
     install_location: $HOME/.agents/skills/grilling/
@@ -79,6 +82,8 @@ skills:
     source_kind: external
     upstream: "https://github.com/mattpocock/skills"
     source: "https://github.com/mattpocock/skills/tree/main/skills/in-progress/review"
+    revision: "ed37663cc5fbef691ddfecd080dff42f7e7e350d"
+    license: "MIT"
     risk: low
     risk_description: Read-only review; posts comments only when explicitly requested.
     install_location: $HOME/.agents/skills/review/
@@ -93,6 +98,8 @@ skills:
     source_kind: external
     upstream: "https://github.com/mattpocock/skills"
     source: "https://github.com/mattpocock/skills/tree/main/skills/in-progress/decision-mapping"
+    revision: "ed37663cc5fbef691ddfecd080dff42f7e7e350d"
+    license: "MIT"
     risk: low
     risk_description: Read-only analysis.
     install_location: $HOME/.agents/skills/decision-mapping/
@@ -107,6 +114,8 @@ skills:
     source_kind: external
     upstream: "https://github.com/mattpocock/skills"
     source: "https://github.com/mattpocock/skills/tree/main/skills/engineering/resolving-merge-conflicts"
+    revision: "ed37663cc5fbef691ddfecd080dff42f7e7e350d"
+    license: "MIT"
     risk: low
     risk_description: Local git operations; human-confirmed resolution.
     install_location: $HOME/.agents/skills/resolving-merge-conflicts/
@@ -121,6 +130,8 @@ skills:
     source_kind: external
     upstream: "https://github.com/mattpocock/skills"
     source: "https://github.com/mattpocock/skills/tree/main/skills/engineering/to-prd"
+    revision: "ed37663cc5fbef691ddfecd080dff42f7e7e350d"
+    license: "MIT"
     risk: low
     risk_description: Document generation; no production writes.
     install_location: $HOME/.agents/skills/to-prd/
@@ -135,6 +146,8 @@ skills:
     source_kind: external
     upstream: "https://github.com/mattpocock/skills"
     source: "https://github.com/mattpocock/skills/tree/main/skills/engineering/to-issues"
+    revision: "ed37663cc5fbef691ddfecd080dff42f7e7e350d"
+    license: "MIT"
     risk: low
     risk_description: Issue drafting; creation only when explicitly requested.
     install_location: $HOME/.agents/skills/to-issues/
@@ -149,6 +162,8 @@ skills:
     source_kind: external
     upstream: "https://github.com/mattpocock/skills"
     source: "https://github.com/mattpocock/skills/tree/main/skills/engineering/triage"
+    revision: "ed37663cc5fbef691ddfecd080dff42f7e7e350d"
+    license: "MIT"
     risk: low
     risk_description: Read-only triage analysis.
     install_location: $HOME/.agents/skills/triage/
@@ -163,6 +178,8 @@ skills:
     source_kind: external
     upstream: "https://github.com/mattpocock/skills"
     source: "https://github.com/mattpocock/skills/tree/main/skills/productivity/handoff"
+    revision: "ed37663cc5fbef691ddfecd080dff42f7e7e350d"
+    license: "MIT"
     risk: low
     risk_description: Read-only summarization.
     install_location: $HOME/.agents/skills/handoff/
@@ -178,6 +195,8 @@ skills:
     source_kind: external
     upstream: "https://github.com/mattpocock/skills"
     source: "https://github.com/mattpocock/skills/tree/main/skills/engineering/diagnosing-bugs"
+    revision: "ed37663cc5fbef691ddfecd080dff42f7e7e350d"
+    license: "MIT"
     risk: low
     risk_description: Read-only diagnosis; no production writes.
     install_location: $HOME/.agents/skills/diagnosing-bugs/
@@ -193,6 +212,8 @@ skills:
     source_kind: external
     upstream: "https://github.com/mattpocock/skills"
     source: "https://github.com/mattpocock/skills/tree/main/skills/engineering/grill-with-docs"
+    revision: "ed37663cc5fbef691ddfecd080dff42f7e7e350d"
+    license: "MIT"
     risk: medium
     risk_description: May create local ADR or glossary artifacts while aligning requirements; external writes remain separately gated.
     install_location: $HOME/.agents/skills/grill-with-docs/
@@ -207,6 +228,8 @@ skills:
     source_kind: external
     upstream: "https://github.com/mattpocock/skills"
     source: "https://github.com/mattpocock/skills/tree/main/skills/engineering/improve-codebase-architecture"
+    revision: "ed37663cc5fbef691ddfecd080dff42f7e7e350d"
+    license: "MIT"
     risk: medium
     risk_description: May propose structural refactors; always requires human approval.
     install_location: $HOME/.agents/skills/improve-codebase-architecture/

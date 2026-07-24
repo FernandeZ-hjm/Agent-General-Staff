@@ -35,6 +35,14 @@ pub(crate) const FIELD_DEFS: &[FieldDef] = &[
         is_inline: true,
     },
     FieldDef {
+        name: "Contract ID:",
+        is_inline: true,
+    },
+    FieldDef {
+        name: "Handoff source:",
+        is_inline: true,
+    },
+    FieldDef {
         name: "任务级别：",
         is_inline: true,
     },
@@ -113,6 +121,10 @@ pub(crate) const FIELD_DEFS: &[FieldDef] = &[
     },
     FieldDef {
         name: "目标：",
+        is_inline: false,
+    },
+    FieldDef {
+        name: "验收标准：",
         is_inline: false,
     },
     FieldDef {
@@ -198,6 +210,36 @@ pub fn parse_validated(input: &str) -> Result<ParsedTaskCard, Vec<String>> {
     }
     let fields = parse_card(input);
     Ok(ParsedTaskCard { fields })
+}
+
+/// Extract the stable closure identifiers from an already validated task card.
+pub fn closure_contract(card: &ParsedTaskCard) -> TaskClosureContract {
+    TaskClosureContract {
+        contract_id: field_val(&card.fields, "Contract ID:").to_string(),
+        handoff_source: field_val(&card.fields, "Handoff source:").to_string(),
+        goal_ids: collect_declared_ids(field_val(&card.fields, "目标："), "G-"),
+        acceptance_criteria_ids: collect_declared_ids(field_val(&card.fields, "验收标准："), "AC-"),
+        verification_ids: collect_declared_ids(field_val(&card.fields, "Verification gate:"), "V-"),
+        evidence_ids: collect_declared_ids(field_val(&card.fields, "Verification gate:"), "EV-"),
+    }
+}
+
+pub(crate) fn collect_declared_ids(block: &str, prefix: &str) -> Vec<String> {
+    block
+        .lines()
+        .filter_map(|line| {
+            let body = line.trim().trim_start_matches('-').trim();
+            let token = body.split([':', ' ', '→']).next().unwrap_or("");
+            is_indexed_id(token, prefix).then(|| token.to_string())
+        })
+        .collect()
+}
+
+pub(crate) fn is_indexed_id(value: &str, prefix: &str) -> bool {
+    let Some(number) = value.strip_prefix(prefix) else {
+        return false;
+    };
+    number.len() == 2 && number.chars().all(|character| character.is_ascii_digit())
 }
 
 /// Get a field value from the parsed card, or empty string if missing.

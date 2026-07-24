@@ -35,6 +35,7 @@ mod capability;
 mod doctor;
 mod init;
 mod kernel;
+mod onboarding;
 mod setup;
 mod skill;
 mod update;
@@ -100,6 +101,7 @@ fn run_cli() {
             format,
         } => setup::cmd_private_apply(&profile, target, yes, force, &format, register_claude),
         Commands::Agents { action } => agents::run(action),
+        Commands::Onboarding { action } => onboarding::run(action),
         Commands::Skill {
             action,
             format,

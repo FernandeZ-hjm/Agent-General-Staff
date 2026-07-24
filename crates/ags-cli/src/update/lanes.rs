@@ -46,11 +46,37 @@ fn build_update_lane_plan(
             None,
             vec!["ags agents govern".to_string()],
         ),
-        UpdateLane::Skills => (
-            "skill thin-index distribution across hosts".to_string(),
-            None,
-            vec!["ags skill sync --apply".to_string()],
-        ),
+        UpdateLane::Skills => {
+            let registry = ags_onboarding::manifest::resolve_third_party_manifest(source_root);
+            let summary = match registry {
+                Ok(registry) => {
+                    details.push(serde_json::json!({
+                        "third_party_registry_source": registry.source,
+                        "third_party_registry_hash": registry.content_hash,
+                        "third_party_registry_freshness": registry.freshness,
+                        "fallback_reason": registry.fallback_reason,
+                        "capabilities": registry.manifest.capabilities.len(),
+                        "kinds": ["skill", "cli", "mcp", "hook"],
+                    }));
+                    format!(
+                        "third-party capability registry + skill thin-index distribution ({} entries)",
+                        registry.manifest.capabilities.len()
+                    )
+                }
+                Err(error) => {
+                    details.push(serde_json::json!({"third_party_registry_error": error}));
+                    "third-party capability registry unavailable".to_string()
+                }
+            };
+            (
+                summary,
+                None,
+                vec![
+                    "ags onboarding plan".to_string(),
+                    "ags skill sync --apply".to_string(),
+                ],
+            )
+        }
         UpdateLane::Projects => {
             let reg = managed_projects::load(&managed_projects::registry_path(runtime_home))
                 .unwrap_or_default();

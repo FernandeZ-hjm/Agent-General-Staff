@@ -36,8 +36,11 @@ fallback。只有 `ags_apply_action` 能以一次性 lease/action 引用消费�
 不得从原始用户请求直接跳到 Light / Medium / Heavy
 分级。"方案 OK" 只确认方案，不授权写入；
 用户明确授权同会话修改时进入 `direct-edit`，明确要求任务卡或跨 Agent 交接时才进入
-task-card handoff。`ags task compile --task-card-requested
---confirmed-handoff-contract` 只约束任务卡生成，不是所有
+task-card handoff。宿主 Plan mode 在方案闭合后以
+`--host-plan-mode-final --confirmed-handoff-contract` 直接把最终产物写成唯一
+canonical 任务卡；用户批准后退出 Plan mode 并派发同一张卡，不再生成第二份。
+普通显式交接使用 `ags task compile --task-card-requested
+--confirmed-handoff-contract`。这些门槛只约束任务卡生成，不是所有
 本地执行的前置门槛。
 
 首个非空行已经是 `## 任务卡` 的输入属于 existing task card。入口必须先校验：

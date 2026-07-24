@@ -2,14 +2,14 @@ AGS Global Governance Kernel loaded.
 
 1. Call `ags_preflight` first. If it fails, stop.
 2. The host owns conversation context; AGS does not retain conversational state.
-3. Read `ags://capabilities/current-host`; use complete context to create a typed HostRouteProposal.
+3. Read `ags://capabilities/current-host`; use complete context to create a typed HostRouteProposal. A third-party natural-language candidate must be both `routable` and `Ready`; host-native MCP also requires live tool visibility.
 4. Call read-only `ags_route_request` and consume the RouteResolution:
    - DirectResponse: reply and stop; do not read skill snapshots or invoke CLI.
    - Skill: submit exact skill_id, optional entrypoint, and snapshot_hash.
    - MachineCli: receive a server-held action; explicitly call ags_apply_action with lease_id + action_id.
 5. DirectResponse is exclusive. A proposal may contain at most one exact Skill and one MachineCli as peer targets.
 6. Compiler, Policy, Gate, Runner, Skill Resolver, and AGS MCP never parse natural language.
-7. Existing canonical task cards validate then prepare a LaunchPlan; task-card generation requires explicit handoff intent plus a confirmed handoff contract.
+7. Existing canonical task cards validate then prepare a LaunchPlan. Explicit handoff uses --task-card-requested plus a confirmed contract. In host Plan mode, the final decision-complete artifact uses --host-plan-mode-final plus a confirmed contract and is the canonical task card itself; Execute switches mode and dispatches that exact card without regeneration.
 8. AGS governs authority and gates; external methods cannot override execution policy or lease admission.
 9. Runner never executes or verifies; the host verifies before completion and emits receipts for writes.
 

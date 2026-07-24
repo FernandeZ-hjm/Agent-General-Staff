@@ -13,6 +13,27 @@ pub(crate) fn cmd_task_validate(paths: &[String]) {
         std::process::exit(1);
     }
 }
+
+fn cmd_task_close(task_card: &str, delivery_report: &str, format: &str) {
+    let card = std::fs::read_to_string(task_card).unwrap_or_else(|error| {
+        eprintln!("task close: cannot read task card `{task_card}` — {error}");
+        std::process::exit(1);
+    });
+    let report = std::fs::read_to_string(delivery_report).unwrap_or_else(|error| {
+        eprintln!("task close: cannot read delivery report `{delivery_report}` — {error}");
+        std::process::exit(1);
+    });
+    let result = delivery_report_validator::validate(&card, &report);
+    if format == "json" {
+        println!("{}", delivery_report_validator::render_json(&result));
+    } else {
+        println!("{}", delivery_report_validator::render_text(&result));
+    }
+    if !result.valid {
+        std::process::exit(1);
+    }
+}
+
 /// Shared dispatch: `task compile` (M4)
 fn cmd_task_compile(
     path: &str,
@@ -20,6 +41,7 @@ fn cmd_task_compile(
     output: &str,
     check_only: bool,
     task_card_requested: bool,
+    host_plan_mode_final: bool,
     confirmed_handoff_contract: bool,
 ) {
     use std::io::Read;
@@ -29,12 +51,14 @@ fn cmd_task_compile(
         std::process::exit(2);
     }
 
-    if !task_card_requested && output == "card" {
-        eprintln!("task compile: --task-card-requested is required for --output card");
+    if !task_card_requested && !host_plan_mode_final && output == "card" {
+        eprintln!(
+            "task compile: --task-card-requested or --host-plan-mode-final is required for --output card"
+        );
         eprintln!(
             "  The user must explicitly issue a task-card instruction before an executable card can be generated."
         );
-        eprintln!("  Use --task-card-requested after an explicit task-card request such as \"生成任务卡\" or \"按这个方案出任务卡\".");
+        eprintln!("  Use --task-card-requested after an explicit task-card request, or --host-plan-mode-final for the host's decision-complete Plan-mode artifact.");
         std::process::exit(1);
     }
 
@@ -74,12 +98,18 @@ fn cmd_task_compile(
     let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
     // Compile
-    let (compiled_card, report) = task_compiler::compile_with_contract(
+    let handoff_source = if host_plan_mode_final {
+        task_compiler::HandoffSource::HostPlanMode
+    } else {
+        task_compiler::HandoffSource::ExplicitHandoff
+    };
+    let (compiled_card, report) = task_compiler::compile_with_handoff_source(
         &content,
         &project_root,
         check_only,
         task_card_requested,
         confirmed_handoff_contract,
+        handoff_source,
     );
 
     // Validate the compiled card using the canonical validator
@@ -121,6 +151,8 @@ fn cmd_task_compile(
         check_only,
         task_card_requested: report.task_card_requested,
         confirmed_handoff_contract: report.confirmed_handoff_contract,
+        host_plan_mode_final: report.host_plan_mode_final,
+        handoff_source: report.handoff_source,
         executable_allowed: report.executable_allowed,
         block_reason: report.block_reason,
     };
@@ -209,12 +241,18 @@ fn cmd_task_compile(
 pub(crate) fn run(action: TaskAction) {
     match action {
         TaskAction::Validate { paths } => cmd_task_validate(&paths),
+        TaskAction::Close {
+            task_card,
+            delivery_report,
+            format,
+        } => cmd_task_close(&task_card, &delivery_report, &format),
         TaskAction::Compile {
             path,
             format,
             output,
             check_only,
             task_card_requested,
+            host_plan_mode_final,
             confirmed_handoff_contract,
         } => cmd_task_compile(
             &path,
@@ -222,6 +260,7 @@ pub(crate) fn run(action: TaskAction) {
             &output,
             check_only,
             task_card_requested,
+            host_plan_mode_final,
             confirmed_handoff_contract,
         ),
     }

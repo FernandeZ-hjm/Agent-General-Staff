@@ -1,0 +1,22 @@
+schema_version: "0.3.0"
+profile: public
+description: >
+  Public AGS onboarding only. Machine-local and non-public capabilities are
+  excluded from this profile.
+third_party_registry:
+  url: "https://raw.githubusercontent.com/FernandeZ-hjm/Agent-General-Staff/main/manifests/third-party-capabilities.yaml"
+  fallback: "manifests/third-party-capabilities.yaml"
+  policy: "github-live discovery; exact manifest hash bound to reviewed plan"
+
+excluded_capabilities: []
+
+developer_tools:
+  - id: git
+    command: git
+    purpose: source control and source-based skill adoption
+  - id: rust
+    command: rustc
+    purpose: AGS source development
+  - id: cargo
+    command: cargo
+    purpose: AGS source builds and tests

@@ -69,6 +69,7 @@ pub(in crate::agents) fn ags_mcp_tool_surface() -> Vec<&'static str> {
         "ags_preflight",
         "ags_protocol_status",
         "ags_agent_instructions",
+        "ags_onboarding_plan",
         "ags_task_validate",
         "ags_policy_resolve",
         "ags_route_request",

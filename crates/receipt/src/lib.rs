@@ -559,7 +559,7 @@ pub struct ReceiptAdvised {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RollbackStep {
     pub affected_path: String,
-    /// restore-backup | remove-created | relink-previous | none
+    /// restore-backup | remove-created | relink-previous | manual-confirm | none
     pub inverse_op: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backup_path: Option<String>,
@@ -605,6 +605,17 @@ impl RollbackPlan {
             strategy: "thin-index-relink".to_string(),
             steps,
             note: "PLAN-ONLY — apply requires explicit task-card authorization".to_string(),
+        }
+    }
+    /// A human-reviewed inverse for effects whose prior state cannot be
+    /// reconstructed safely from the onboarding command alone.
+    pub fn manual_confirm(steps: Vec<RollbackStep>) -> Self {
+        RollbackPlan {
+            schema_version: "2.0-rollback".to_string(),
+            strategy: "manual-confirm".to_string(),
+            steps,
+            note: "PLAN-ONLY — inspect the action receipt and confirm each inverse step manually"
+                .to_string(),
         }
     }
 }

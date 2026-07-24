@@ -18,7 +18,7 @@
 //! ```rust
 //! use task_card_validator::validate;
 //!
-//! let input = "## 任务卡\n读取并遵守：\n- AGENTS.md\nExecutor: Claude Code\nRuntime adapter: claude-code\nExecution surface: cli\nPermission mode: execute-and-verify\nParallelism: none\n任务级别：Medium\nReview gate:\n- Medium review\n任务：运行测试验证校验器\n背景：验证校验器功能\n项目画像：无\n记忆胶囊：无\n任务存档：无\n目标文件夹路径：\n- .\n相关路径：\n- .\n本次任务相关文件：\n- .\n目标：验证校验器功能\n非目标：不修改文件\n验证：\ncargo test\nVerification gate:\n- commands: cargo test\n交付：\n返回结果\n";
+//! let input = "## 任务卡\n读取并遵守：\n- AGENTS.md\nContract ID: tc-0123456789abcdef\nHandoff source: existing-card\nExecutor: Claude Code\nRuntime adapter: claude-code\nExecution surface: cli\nPermission mode: execute-and-verify\nParallelism: none\n任务级别：Medium\nReview gate:\n- Medium review\n任务：运行测试验证校验器\n背景：验证校验器功能\n项目画像：无\n记忆胶囊：无\n任务存档：无\n目标文件夹路径：\n- .\n相关路径：\n- .\n本次任务相关文件：\n- .\n目标：\n- G-01: 验证校验器功能\n验收标准：\n- AC-01 -> G-01: 合法任务卡通过校验\n非目标：不修改文件\n验证：\ncargo test\nVerification gate:\n- commands:\n  - V-01 -> AC-01: cargo test\n- expected evidence:\n  - EV-01 -> AC-01: test pass\n- stop condition:\n  - 测试失败时停止\n交付：\n返回结果\n";
 //! let errors = validate(input);
 //! assert!(errors.is_empty());
 //! ```
@@ -70,6 +70,6 @@ pub(crate) use validate::read_input;
 // This is an intentional breaking change to this crate's public API; no
 // in-workspace consumer read `card_type`.
 pub use checks::extract_skill_tags;
-pub use parse::parse_validated;
-pub use types::{error_code, ParsedTaskCard};
+pub use parse::{closure_contract, parse_validated};
+pub use types::{error_code, ParsedTaskCard, TaskClosureContract};
 pub use validate::{first_nonempty_line, output_is_canonical_header, validate, validate_files};

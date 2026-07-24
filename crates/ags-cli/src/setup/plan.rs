@@ -563,7 +563,7 @@ mod install_plan_tests {
             .expect("host entry policy must be installed");
         assert!(host_entry_policy.content.contains("HostRouteProposal"));
         assert!(host_entry_policy.content.contains("RouteResolution"));
-        assert!(host_entry_policy.content.contains("OMP Plan mode"));
+        assert!(host_entry_policy.content.contains("host Plan mode"));
         assert!(host_entry_policy.content.contains("task_card_hash"));
         assert!(!host_entry_policy.content.contains("RequestDecision"));
         let manifest = plan
@@ -712,8 +712,8 @@ mod install_plan_tests {
         assert!(content.contains("strictly read-only `ags_route_request`"));
         assert!(content.contains("typed `HostRouteProposal`"));
         assert!(content.contains("`ags_apply_action`"));
-        assert!(content.contains("explicit handoff request"));
-        assert!(content.contains("independently confirmed contract"));
+        assert!(content.contains("Explicit handoff"));
+        assert!(content.contains("confirmed-handoff-contract"));
         assert!(content.contains("solution work is unresolved or reopened"));
         assert!(content.contains("direct edit stays host-native"));
         assert!(content.contains(AGS_VERSION));

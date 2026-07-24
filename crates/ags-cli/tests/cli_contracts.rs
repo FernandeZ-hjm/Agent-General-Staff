@@ -108,6 +108,90 @@ fn task_card_pipeline_cli_contract() {
 }
 
 #[test]
+fn host_plan_card_closes_against_its_exact_delivery_report() {
+    let temp = TestDir::new("host-plan-closure");
+    let contract_path = temp.path().join("handoff.json");
+    let task_card_path = temp.path().join("task-card.md");
+    let delivery_report_path = temp.path().join("delivery-report.md");
+    let contract = serde_json::json!({
+        "schema_version": task_compiler::HANDOFF_CONTRACT_SCHEMA_VERSION,
+        "task_level": "Medium",
+        "task": "执行已封闭的宿主 Plan 模式方案",
+        "fields": {
+            "目标：": "- G-01: 完成 Plan 模式任务卡闭环",
+            "验收标准：": "- AC-01 -> G-01: 任务卡通过校验并与交付报告精确回绑",
+            "Verification gate:": "- commands:\n  - V-01 -> AC-01: ags task validate task-card.md\n- expected evidence:\n  - EV-01 -> AC-01: validator and closure checks pass\n- stop condition:\n  - 任一校验失败即停止"
+        }
+    });
+    std::fs::write(
+        &contract_path,
+        serde_json::to_string_pretty(&contract).unwrap(),
+    )
+    .unwrap();
+
+    let contract_arg = contract_path.to_str().unwrap();
+    let compiled = run_ags(&[
+        "task",
+        "compile",
+        contract_arg,
+        "--output",
+        "card",
+        "--host-plan-mode-final",
+        "--confirmed-handoff-contract",
+    ]);
+    assert_success(&compiled, "host Plan-mode task compile");
+    let card = String::from_utf8(compiled.stdout).unwrap();
+    assert!(card.starts_with("## 任务卡"));
+    assert!(card.contains("Handoff source: host-plan-mode"));
+    let contract_id = card
+        .lines()
+        .find_map(|line| line.strip_prefix("Contract ID: "))
+        .expect("compiled task card Contract ID");
+    std::fs::write(&task_card_path, &card).unwrap();
+
+    let task_card_hash = receipt::sha256_hex(card.as_bytes());
+    let report = format!(
+        "# 任务交付报告\n\
+\n\
+Closure schema: 1.0\n\
+Contract ID: {contract_id}\n\
+task-card-hash: {task_card_hash}\n\
+receipt-id: receipt-{}\n\
+状态: completed\n\
+review-gate: n/a\n\
+\n\
+## 目标闭环\n\
+- G-01: done — Plan 模式任务卡已生成并验证\n\
+\n\
+## 验收闭环\n\
+- AC-01: pass — evidence: exact task-card hash matched\n\
+\n\
+## 验证闭环\n\
+- V-01: pass — ags task validate; exit 0\n\
+\n\
+## 未闭环项\n\
+- none\n",
+        &task_card_hash[..12]
+    );
+    std::fs::write(&delivery_report_path, report).unwrap();
+
+    let closed = parse_json(
+        &run_ags(&[
+            "task",
+            "close",
+            task_card_path.to_str().unwrap(),
+            delivery_report_path.to_str().unwrap(),
+            "--format",
+            "json",
+        ]),
+        "task close",
+    );
+    assert_eq!(closed["valid"], true);
+    assert_eq!(closed["contract_id"], contract_id);
+    assert_eq!(closed["task_card_hash"], task_card_hash);
+}
+
+#[test]
 fn integrity_and_bootstrap_cli_contract() {
     let root = repo_root();
     let receipt = root.join("tests/fixtures/receipt-valid.json");

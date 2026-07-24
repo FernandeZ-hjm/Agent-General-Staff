@@ -26,6 +26,10 @@ execution contract；只在 contract 仍缺失或关键决策未定时才形成�
 - protocol/context-memory.md
 - protocol/cursor-skill-index.md
 
+Contract ID: tc-<16 lowercase hex>
+
+Handoff source: explicit-handoff / host-plan-mode / existing-card
+
 Executor: Codex / Claude Code / Cursor / Human / Other
 
 Runtime adapter: codex-local / claude-code / cursor / generic
@@ -78,8 +82,12 @@ Review gate:
 - 无 / `<project-specific-governance-doc>`
 
 目标：
-1. goal_1
-2. goal_2
+- G-01: goal_1
+- G-02: goal_2
+
+验收标准：
+- AC-01 -> G-01: <可观察、可判定的通过条件>
+- AC-02 -> G-02: <可观察、可判定的通过条件>
 
 非目标：
 - non_goal_1
@@ -112,24 +120,31 @@ Review gate:
 验证：
 Verification gate:
 - commands:
-  - <verification command>
+  - V-01 -> AC-01: <verification command or explicit manual check>
+  - V-02 -> AC-02: <verification command or explicit manual check>
 - expected evidence:
-  - <test result / diff summary / report path>
+  - EV-01 -> AC-01: <test result / diff summary / report path>
+  - EV-02 -> AC-02: <test result / diff summary / report path>
 - stop condition:
   - <when to pause and report instead of continuing>
 
 交付：
-按 protocol/agent-task-protocol.md 输出 delivery report。
+- 按 protocol/agent-task-protocol.md 输出 delivery report。
+- 报告必须回填本卡 `Contract ID`、LaunchPlan `task_card_hash`，并逐项闭环全部 `G-*`、`AC-*`、`V-*`；`partial` / `blocked` 的未闭环 ID 集合必须与非闭环状态完全相等（含待审 `review-gate`），不得缺失、夹带或隐藏。
+- 报告落盘后运行 `ags task close <task-card> <delivery-report>`；闭环校验通过后再生成或归档 receipt。
 ~~~~
 
 ---
 
 ## 使用说明
 
-- **Cursor / Codex**：先完成 ambient preflight，读取 `ags://capabilities/current-host`，再由宿主根据完整对话生成 typed `HostRouteProposal`；MCP `ags_route_request` 只做只读治理校验。`DirectResponse` 直接交付；已有批准 contract 且收到明确同会话修改授权时走宿主原生 direct-edit；仅在关键决策仍未解决时进入 solution phase。明确任务卡/跨 Agent 交接指令且交接契约已经确认后，才调用 `ags task compile --task-card-requested --confirmed-handoff-contract`。不得把原始用户文本直接交给 AGS 路由器，也不得为了本地直接执行伪造任务卡请求。
+- **Cursor / Codex**：先完成 ambient preflight，读取 `ags://capabilities/current-host`，再由宿主根据完整对话生成 typed `HostRouteProposal`；MCP `ags_route_request` 只做只读治理校验。`DirectResponse` 直接交付；已有批准 contract 且收到明确同会话修改授权时走宿主原生 direct-edit；仅在关键决策仍未解决时进入 solution phase。显式任务卡/跨 Agent 交接使用 `ags task compile --task-card-requested --confirmed-handoff-contract`。宿主 Plan mode 的最后一步直接使用 `ags task compile --host-plan-mode-final --confirmed-handoff-contract` 生成本 canonical 任务卡，不再先生成另一份“最终执行计划”，也不追加一次“是否生成任务卡”的询问。
+- **宿主 Plan mode 适配**：Plan mode 内只能只读探索与关闭决策；最终产物是唯一一张 decision-complete `## 任务卡`。若宿主 UI 要求 `<proposed_plan>`，该标签只是渲染 envelope，内部第一条非空行仍必须是 `## 任务卡`。用户选择 Execute 后，宿主先切换到可执行/Default mode，再把原任务卡正文与 `task_card_hash` 原样交给执行 Agent；不得重新生成、摘要或改写任务卡。宿主 Plan mode 与任务卡 `Permission mode` 是两个独立状态。
 - **Executor**：读取任务卡 + 引用的协议文件，执行并交付。
 - 固定规则（安全、分级、runtime adapter、Review gate、验证、交付格式）在协议文件中，任务卡不再重复。
 - 为了保持执行稳定性和缓存友好性，任务卡必须使用固定骨架：标题、字段顺序、基础措辞保持不变；只在固定槽位填写动态任务内容。
+- `Contract ID` 由 compiler 基于已关闭 handoff contract 与 `Handoff source` 确定性生成，格式为 `tc-` + 16 位小写十六进制；调用方不得覆盖。`Handoff source` 只允许 `explicit-handoff`、`host-plan-mode`、`existing-card`，只描述卡的来源，不授权执行。
+- `目标` 使用稳定 `G-NN`；`验收标准` 使用 `AC-NN -> G-NN`；`Verification gate` 必须同时声明 `V-NN -> AC-NN` 和 `EV-NN -> AC-NN`。每个目标至少有一个验收标准，每个验收标准至少有一个验证项与一个预期证据项。不得用“按需验证”“测试一下”或无 ID 的自由文本替代。
 - `项目画像` 是稳定上下文入口。项目存在 `config/agent-project-profile.yaml` 时只引用路径或提取必要短事实，不把整份画像粘进任务卡；项目无画像时填写 `无`。
 - `记忆胶囊` 是人工项目宪章入口。存在本地 capsule 时只引用路径，不粘贴长记忆；没有 capsule 时填写 `无`。AGS-governed host 正常由只读 `SessionStart` memory hook 自动注入 capsule 和同目录 `task-memory.md`；hook 不可用、未安装或外部 executor 无法接收注入时，Executor 开始任务前必须按路径读取。若任务目标与 capsule 的 `## 项目设计目的` 冲突，停止并报告。
 - `任务存档` 是任务记忆入口。存在本地 `task-memory.md` 时填写该路径；没有任务记忆时填写 `无`。`ags run` 只准备 LaunchPlan，不会自动执行任务、写入任务记忆或归档交付；真实 Executor/宿主完成后按项目记忆协议写入。
@@ -145,8 +160,11 @@ Verification gate:
 - 本项目任务卡可读性格式必须稳定：`任务：` 只写一句话；如任务需要拆分条目，把条目放入 `目标：`。`目标：`、`非目标：`、`目标文件夹路径：`、`相关路径：`、`本次任务相关文件：`、`验证：`、`交付：` 只要包含多项，就必须把字段名单独成行，后续每项单独换行；不得写成 `目标：1. ... 2. ...`、`验证：- ... - ...` 这种 inline list。推荐格式：
   ```markdown
   目标：
-  1. goal_1
-  2. goal_2
+  - G-01: goal_1
+  - G-02: goal_2
+  验收标准：
+  - AC-01 -> G-01: observable_result_1
+  - AC-02 -> G-02: observable_result_2
   非目标：
   - non_goal_1
   - non_goal_2
@@ -167,7 +185,7 @@ Verification gate:
   4. 动态命令输出：如 `git status --short`、验证命令、脚本检查结果，只记录在执行过程或交付报告的验证/状态部分，不放进“读取并遵守”清单。
 - 跨仓库、外部 agent、或 Executor 无法访问本项目文件时，使用同一 canonical 骨架的自包含形态（内联所需固定规则），不另立 fallback 任务卡格式。
 - 任务级别按 `protocol/task-routing.md` 定义。
-- **Task-card handoff gate**：`ags task compile` 需要 `--task-card-requested` 与 `--confirmed-handoff-contract` 两个结构化信号；缺少时分别以 `task_card_not_requested` 或 `handoff_contract_not_confirmed` 拒绝，输入重开 solution work 时以 `solution_formation_required` 拒绝。此规则不限制已授权的同会话 `direct-edit`。参见 `protocol/agent-task-protocol.md` 生命周期阶段 3.5。
+- **Task-card handoff gate**：显式交接需要 `--task-card-requested` 与 `--confirmed-handoff-contract`；宿主 Plan mode 最终产物以 `--host-plan-mode-final` 替代 `--task-card-requested`，仍必须同时提供 `--confirmed-handoff-contract`。两条路径都只生成交接 artifact，不授权 mutation；输入重开 solution work 时以 `solution_formation_required` 拒绝。此规则不限制已授权的同会话 `direct-edit`。参见 `protocol/agent-task-protocol.md` 生命周期阶段 3.5。
 - Executor、Runtime adapter、Execution surface、Permission mode、Parallelism、Verification gate 按 `protocol/runtime-adapters.md` 定义；Review gate 的唯一规则表在 `protocol/agent-task-protocol.md`。
 - `Execution effort` 使用中性执行强度语义（`low` / `normal` / `high` / `exhaustive`），默认 `normal`；它只表示思考强度，绝不映射为权限、并行或 review 豁免。宿主私有深度/工作流触发词（如 `ultracode`）不得写进任务卡前台生成路径；`ags run` 只在 resolved LaunchPlan 中保留该提示供宿主消费。`ultracode` 仅作为旧值解析兼容保留，task compiler 不再生成。
 - `Workflow authority` 声明是否允许 subagent / workflow（`none` / `within-card` / `plan-only` / `allowed`），默认 `none`；它只声明授权，不直接点火。

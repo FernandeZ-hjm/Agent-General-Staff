@@ -12,5 +12,7 @@ skill-resolver = { path = "../skill-resolver" }
 execution-policy = { path = "../execution-policy" }
 project-discovery = { path = "../project-discovery" }
 ags-verify = { path = "../ags-verify" }
+ags-onboarding = { path = "../ags-onboarding" }
+receipt = { path = "../receipt" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

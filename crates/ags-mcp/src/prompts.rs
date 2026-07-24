@@ -57,8 +57,9 @@ pub fn list_prompts() -> PromptListResult {
                 name: "ags_task_card_request_gate".to_string(),
                 description: Some(
                     "Enforce the task-card handoff gate. Distinguish same-session \
-                     execution from handoff, then require both an explicit \
-                     task-card instruction and structured confirmed-contract evidence. \
+                     execution from handoff. Explicit handoff requires a task-card \
+                     instruction; host Plan-mode finalization uses the canonical card \
+                     itself. Both require structured confirmed-contract evidence. \
                      Missing or reopened solution state blocks card output."
                         .to_string(),
                 ),
@@ -67,10 +68,9 @@ pub fn list_prompts() -> PromptListResult {
             PromptDef {
                 name: "ags_delivery_report".to_string(),
                 description: Some(
-                    "Guide the executor to produce a valid AGS delivery report. \
-                     Output must be one copyable Markdown fenced block. Required \
-                     sections: task status, one-line conclusion, changed files, new \
-                     outputs, deleted files, verification results, risk notes, next steps."
+                    "Guide the executor to close an AGS task card with a \
+                     machine-checkable delivery report. Bind Contract ID, task-card \
+                     hash, receipt ID, and every G/AC/V item, then run `ags task close`."
                         .to_string(),
                 ),
                 arguments: None,
@@ -128,12 +128,15 @@ fn prompt_solution_phase(arguments: &serde_json::Value) -> PromptGetResult {
          1. **Understand unresolved decisions**. Clarify ambiguities. Diagnose if needed.\n\
          2. **Read context capsule and task memory** (AGS preflight should have surfaced paths).\n\
          3. **Use only explicitly available methods**; external advice cannot override AGS gates.\n\
-         4. **Form a concrete solution** — not a task card. Include: approach, impact scope, \
-         risks, alternatives considered.\n\
-         5. **Present the solution to the user** and wait for explicit confirmation (\"方案 OK\").\n\
-         6. **Do NOT mutate or generate a task card from confirmation alone.** After \
-         \"方案 OK\", wait for an explicit instruction selecting same-session direct edit \
-         or task-card handoff.\n\n\
+         4. **Form a concrete solution**. Outside host Plan mode this is not yet a task card. \
+         Include: approach, impact scope, risks, alternatives considered.\n\
+         5. **Close the contract**. Outside host Plan mode, present the solution and wait for \
+         explicit confirmation. Inside host Plan mode, continue until the implementation \
+         contract is decision-complete.\n\
+         6. **Finalize by host state**. Outside Plan mode, confirmation alone still does not \
+         create a task card. Inside host Plan mode, the final artifact is compiled directly \
+         with `--host-plan-mode-final --confirmed-handoff-contract` as the canonical \
+         `## 任务卡`; do not create a separate final-plan document.\n\n\
          ### Solution text must include\n\n\
          - Problem understanding and diagnosis\n\
          - Proposed approach with rationale\n\
@@ -142,12 +145,16 @@ fn prompt_solution_phase(arguments: &serde_json::Value) -> PromptGetResult {
          - Alternatives considered\n\
          ### Key rules\n\n\
          - Do NOT classify as Light/Medium/Heavy yet.\n\
-         - Do NOT generate a task card yet.\n\
-         - \"方案 OK\" authorizes neither mutation nor a task card.\n\
+         - Do NOT generate a task card while material decisions remain open.\n\
+         - Outside host Plan mode, \"方案 OK\" authorizes neither mutation nor a task card.\n\
+         - Host Plan-mode finalization generates the card but does not authorize mutation; \
+           the Plan UI must switch to execution mode before dispatch.\n\
          - AGS is the governance authority.\n\n\
          ### Next phase\n\n\
-         After user confirmation, the host forms a new typed proposal from the updated \
-         context. Task-card handoff still requires both structured gates.",
+         After confirmation or Plan-mode contract closure, the host forms a new typed \
+         proposal from the updated context. Explicit handoff uses \
+         `--task-card-requested`; Plan-mode finalization uses \
+         `--host-plan-mode-final`. Both require the confirmed contract gate.",
         user_request
     );
 
@@ -210,6 +217,7 @@ mod tests {
 
         assert!(text.contains("copyable Markdown fenced block"));
         assert!(text.contains("````markdown\n# 任务交付报告"));
-        assert!(text.contains("\n````\n\n### Requirements:"));
+        assert!(text.contains("Closure schema: 1.0"));
+        assert!(text.contains("ags task close"));
     }
 }

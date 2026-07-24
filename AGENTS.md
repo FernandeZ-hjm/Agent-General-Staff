@@ -27,10 +27,14 @@ already supplied and approved solution when one exists; otherwise form one befor
 classification. "方案 OK" confirms the design but does not authorize mutation.
 An explicit same-session modification
 instruction enters `direct-edit`; an explicit task-card/handoff instruction enters
-task-card generation. The task card template (`protocol/task-card-template.md`)
+task-card generation. A host Plan mode uses its final decision-complete artifact
+as that handoff instruction: the artifact itself is the canonical task card, not
+a separate plan document. The task card template (`protocol/task-card-template.md`)
 takes a confirmed handoff contract as input, not raw chat messages. `ags task
-compile` requires both `--task-card-requested` and
-`--confirmed-handoff-contract` because it generates a handoff artifact;
+compile` requires `--confirmed-handoff-contract` plus either
+`--task-card-requested` or `--host-plan-mode-final` because it generates a
+handoff artifact. Plan UI approval switches out of Plan mode and dispatches the
+exact validated card without regeneration;
 task cards are not a prerequisite for authorized host-native direct edits.
 
 An input whose first non-empty line is the canonical `## 任务卡` header is an

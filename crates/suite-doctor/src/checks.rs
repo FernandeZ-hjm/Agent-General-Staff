@@ -770,6 +770,37 @@ pub fn skill_resolution_coverage_check(repo_root: &Path) -> Vec<Finding> {
         }
         RouteCoverage::Covered
     }
+    fn routable_metadata_complete(item: &YamlValue) -> bool {
+        let Some(routing) = item.get("routing") else {
+            return true;
+        };
+        if routing.get("route_state").and_then(YamlValue::as_str) != Some("routable") {
+            return true;
+        }
+        let nonempty_string = |key: &str| {
+            routing
+                .get(key)
+                .and_then(YamlValue::as_str)
+                .is_some_and(|value| !value.trim().is_empty())
+        };
+        let nonempty_sequence = |value: Option<&YamlValue>| {
+            value
+                .and_then(YamlValue::as_sequence)
+                .is_some_and(|items| !items.is_empty())
+        };
+        nonempty_string("invoke_hint")
+            && nonempty_sequence(routing.get("intent_tags"))
+            && nonempty_sequence(
+                routing
+                    .get("examples")
+                    .and_then(|value| value.get("positive")),
+            )
+            && nonempty_sequence(
+                routing
+                    .get("examples")
+                    .and_then(|value| value.get("negative")),
+            )
+    }
 
     // name → coverage verdict from skills-registry (typed parse, not key presence).
     let sr = repo_root.join("manifests/skills-registry.yaml");
@@ -891,6 +922,52 @@ pub fn skill_resolution_coverage_check(repo_root: &Path) -> Vec<Finding> {
                 }
             }
         }
+    }
+
+    let mut incomplete = Vec::new();
+    for (path, sections) in [
+        (
+            "manifests/skills-registry.yaml",
+            &["skills", "route_targets"][..],
+        ),
+        (
+            "manifests/mcp-registry.yaml",
+            &["mcps", "route_targets"][..],
+        ),
+    ] {
+        let Ok(content) = std::fs::read_to_string(repo_root.join(path)) else {
+            continue;
+        };
+        let Ok(doc) = serde_yaml::from_str::<YamlValue>(&content) else {
+            continue;
+        };
+        for section in sections {
+            let Some(items) = doc.get(*section).and_then(YamlValue::as_sequence) else {
+                continue;
+            };
+            incomplete.extend(
+                items
+                    .iter()
+                    .filter(|item| !routable_metadata_complete(item))
+                    .filter_map(|item| item.get("name").and_then(YamlValue::as_str))
+                    .map(|name| format!("{section}:{name}")),
+            );
+        }
+    }
+    if incomplete.is_empty() {
+        findings.push(Finding::pass(
+            "routing-metadata-completeness",
+            "every routable Skill, MCP, and CLI-backed target declares invoke_hint, intent_tags, and positive/negative examples",
+        ));
+    } else {
+        findings.push(Finding::fail(
+            "routing-metadata-completeness",
+            "routable capabilities have incomplete host semantic-selection metadata",
+            format!(
+                "Add invoke_hint, intent_tags, and non-empty positive/negative examples for: {}. AGS still does not interpret natural language; these fields populate the host catalog.",
+                incomplete.join(", ")
+            ),
+        ));
     }
 
     findings

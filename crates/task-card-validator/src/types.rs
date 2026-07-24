@@ -12,6 +12,17 @@ pub struct ParsedTaskCard {
     pub fields: std::collections::HashMap<String, String>,
 }
 
+/// Stable identifiers that connect one task card to its delivery report.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskClosureContract {
+    pub contract_id: String,
+    pub handoff_source: String,
+    pub goal_ids: Vec<String>,
+    pub acceptance_criteria_ids: Vec<String>,
+    pub verification_ids: Vec<String>,
+    pub evidence_ids: Vec<String>,
+}
+
 // ── Error codes ────────────────────────────────────────────────────────
 
 /// Stable error codes for machine-consumable error classification.
@@ -35,4 +46,8 @@ pub mod error_code {
     pub const PLAN_ONLY_EXECUTION_VERB_DETECTED: &str = "PLAN_ONLY_EXECUTION_VERB_DETECTED";
     pub const FIELD_ABUSE_DETECTED: &str = "FIELD_ABUSE_DETECTED";
     pub const UNKNOWN_OR_INACTIVE_SKILL_TAG: &str = "UNKNOWN_OR_INACTIVE_SKILL_TAG";
+    pub const CONTRACT_ID_INVALID: &str = "CONTRACT_ID_INVALID";
+    pub const HANDOFF_SOURCE_INVALID: &str = "HANDOFF_SOURCE_INVALID";
+    pub const CLOSURE_ID_INVALID: &str = "CLOSURE_ID_INVALID";
+    pub const CLOSURE_MAPPING_INCOMPLETE: &str = "CLOSURE_MAPPING_INCOMPLETE";
 }

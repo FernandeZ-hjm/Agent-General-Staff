@@ -1,0 +1,61 @@
+name: Publish npm launcher
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact already-released AGS version
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    environment: npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: v${{ inputs.version }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: Verify package and release versions
+        shell: bash
+        run: |
+          package_version="$(node -p "require('./packages/ags-mcp/package.json').version")"
+          test "$package_version" = "${{ inputs.version }}"
+          test "$GITHUB_REPOSITORY" = "FernandeZ-hjm/Agent-General-Staff"
+          tag="v${{ inputs.version }}"
+          assets="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          for name in \
+            "ags-${tag}-aarch64-apple-darwin.tar.gz" \
+            "ags-${tag}-x86_64-apple-darwin.tar.gz" \
+            "ags-${tag}-x86_64-unknown-linux-gnu.tar.gz" \
+            "ags-${tag}-aarch64-unknown-linux-gnu.tar.gz" \
+            "ags-${tag}-x86_64-pc-windows-msvc.zip" \
+            "SHA256SUMS"
+          do
+            grep -Fqx "$name" <<<"$assets"
+          done
+          mkdir -p "$RUNNER_TEMP/ags-release-check"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+            --pattern SHA256SUMS --dir "$RUNNER_TEMP/ags-release-check"
+          for name in \
+            "ags-${tag}-aarch64-apple-darwin.tar.gz" \
+            "ags-${tag}-x86_64-apple-darwin.tar.gz" \
+            "ags-${tag}-x86_64-unknown-linux-gnu.tar.gz" \
+            "ags-${tag}-aarch64-unknown-linux-gnu.tar.gz" \
+            "ags-${tag}-x86_64-pc-windows-msvc.zip"
+          do
+            grep -Fq "  $name" "$RUNNER_TEMP/ags-release-check/SHA256SUMS"
+          done
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: npm test --prefix packages/ags-mcp
+      - run: npm publish --provenance --access public
+        working-directory: packages/ags-mcp

@@ -45,9 +45,10 @@ host-native `direct-edit`:
   release, review, and verification boundaries. An unresolved or reopened
   design returns to solution formation.
 
-Only after the user explicitly requests a task-card handoff and the card is
-compiled do runtime-adapter fields take effect. The runner, resolver, and gate
-operate on that card; they do not govern solution formation or direct edit.
+Only after an explicit task-card handoff, or after a host Plan mode reaches its
+final decision-complete artifact, and the card is compiled do runtime-adapter
+fields take effect. The runner, resolver, and gate operate on that card; they do
+not govern solution formation or direct edit.
 
 **RouteResolution is not a runtime adapter field.** It is distinct from
 `Runtime adapter`, `Permission mode`, and `Execution surface`, and never sets or
@@ -69,13 +70,34 @@ baseline shown in agent instructions. `ags_route_request` itself is strictly
 read-only; `ags_apply_action` is the sole effectful MCP tool and only consumes a
 connection-bound fixed action.
 
-**Task-card handoff gate**: `ags task compile` requires both
-`--task-card-requested` and `--confirmed-handoff-contract` before it will output
-a handoff task card. Missing request evidence reports
+**Task-card handoff gate**: explicit handoff uses
+`--task-card-requested --confirmed-handoff-contract`. A host Plan mode final
+artifact uses `--host-plan-mode-final --confirmed-handoff-contract`; reaching
+that final step replaces the extra task-card-request prompt, not the confirmed
+contract gate. Missing handoff evidence reports
 `block_reason=task_card_not_requested`; missing structured contract evidence
 reports `block_reason=handoff_contract_not_confirmed`; reopened solution work
 reports `solution_formation_required`. This compiler gate does not apply to
-authorized same-session `direct-edit`; \"方案 OK\" alone authorizes neither path.
+authorized same-session `direct-edit`.
+
+## Host Plan Mode Finalization
+
+Plan mode is a host collaboration state, not task-card `Permission mode`.
+
+1. While decisions remain open, the host performs only non-mutating discovery
+   and solution formation.
+2. When the contract is decision-complete, the final Plan-mode artifact is the
+   single canonical `## 任务卡`; do not create a separate final-plan document.
+3. Compile it with
+   `ags task compile --host-plan-mode-final --confirmed-handoff-contract`.
+4. If the host requires a `<proposed_plan>` rendering block, the block is only
+   an envelope. Its inner first non-empty line is `## 任务卡`.
+5. The Plan UI keeps the exact card pending activation. Selecting Execute first
+   switches the host to Default/execution mode, then dispatches the unchanged
+   card plus its `task_card_hash`.
+6. The execution Agent validates the existing card and must not regenerate,
+   summarize, or reinterpret it. Staying in Plan mode keeps the card pending
+   and permits further replacement by a complete new card.
 
 ## Generic Fields
 

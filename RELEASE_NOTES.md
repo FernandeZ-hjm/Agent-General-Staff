@@ -9,11 +9,44 @@ to ship the `ags` CLI, canonical task-card protocols, execution-policy checks,
 release-boundary verification, memory-capsule templates, and public
 skill-governance workflows.
 
-The current CLI/package version is `0.3.0`; current release tags use the same
-`v0.3.0` form. Older `2.x` headings below are preserved as historical product
-release labels and are not rewritten.
+The current source and package version is `0.3.0`. Its formal release tag, when
+explicitly created by a maintainer after `main` CI passes, must be `v0.3.0`.
+Older `2.x` headings below are preserved as historical product release labels
+and are not rewritten.
 
 ## Release 0.3.0
+
+0.3.0 separates three chains that older releases allowed documentation and
+runtime code to blur together:
+
+```mermaid
+flowchart LR
+    subgraph Onboarding["Capability onboarding"]
+        GH[GitHub live manifest] --> OP[onboarding plan<br/>source + content hash]
+        PKG[Packaged fallback] -. offline fallback .-> OP
+        OP --> HUMAN[Human review]
+        HUMAN --> SNAP[Inventory + host snapshot]
+    end
+
+    subgraph Routing["Per-request routing"]
+        SNAP --> CAT[current-host catalog]
+        CAT --> HOST[Host owns language + context]
+        HOST --> PROP[HostRouteProposal]
+        PROP --> ROUTE[read-only ags_route_request]
+        ROUTE --> SKILL[exact SkillTarget]
+        ROUTE --> LEASE[held MachineCli action]
+        LEASE --> APPLY[explicit ags_apply_action]
+    end
+
+    subgraph Delivery["Execution and delivery closure"]
+        HOST --> CONTRACT[confirmed execution contract]
+        CONTRACT --> CARD[single canonical task card]
+        CARD --> POLICY[validate + policy + gate]
+        POLICY --> LP[LaunchPlan]
+        LP --> EXEC[host execution + verification]
+        EXEC --> CLOSE[card hash + G/AC/V/EV closure]
+    end
+```
 
 ### Host semantic proposals and explicit apply
 
@@ -34,6 +67,57 @@ release labels and are not rewritten.
   handoff task level explicit, and fixed the full-width-colon compiler panic.
 - Public packaging now excludes capability snapshots, overlays, usage ledgers,
   leases, auth state and runtime receipts.
+- The host-facing catalog is deliberately thin. Inventory discovers system,
+  user, project-local and external capabilities, but discovery alone never
+  makes an item routable. Registry policy, a legal invocation hint and a
+  healthy host snapshot must all agree before an exact target is accepted.
+
+### Prompt compilation and delivery closure
+
+- Host Plan mode now ends by compiling its decision-complete artifact directly
+  into the single canonical task card. Execute switches mode and dispatches that
+  exact validated card; no second plan or regenerated card is created.
+- Outside Plan mode, the task-card compiler remains available as an AI prompt
+  writer after the solution contract is confirmed; host-native direct edits do
+  not require a task card.
+- Task cards carry stable Contract/G/AC/V/EV identifiers. Delivery reports bind
+  the exact card hash and must close the exact identifier set; partial or blocked
+  reports cannot hide unresolved items in free-form prose.
+- Added `ags task close` and the public `delivery-report-validator` crate so the
+  final report is checked against the exact card instead of being trusted as a
+  narrative completion claim.
+
+### Dynamic onboarding and public distribution
+
+- Added one public onboarding surface for project init, host adapters, Skill,
+  CLI, MCP and Hook capabilities. It reads the live GitHub capability manifest
+  when available, binds the reviewed content hash, and falls back to the packaged
+  manifest without silently installing anything.
+- The public manifest covers Skill, CLI, MCP and Hook capabilities with source,
+  install, probe, auth/health and routing metadata. Remote content is data for a
+  reviewed plan, never an implicitly executed installer.
+- Added the npm MCP launcher and explicit release chain: public `main` CI first,
+  maintainer-created `v0.3.0` tag second, five-platform assets plus
+  `SHA256SUMS`/provenance third, and manual asset-gated npm publication last.
+- Release workflows never create tags. A public `main` push alone does not
+  create a GitHub Release or publish npm.
+
+### Upgrade and verification
+
+- Existing source installs can update normally, then rerun `ags setup` and
+  host/skill verification. New MCP-only installs can use the npm launcher after
+  the formal GitHub Release and npm publication exist.
+- Review the effective third-party plan with
+  `ags onboarding plan --host <host> --format json`; the result states whether
+  its manifest came from GitHub or the packaged fallback and includes the
+  reviewed content hash.
+- Rebuild a host snapshot after capability changes, then run
+  `ags capability verify --host <host> --strict` and `ags doctor`. A manifest
+  entry, an installed binary, or a visible skill by itself is not proof that the
+  capability is safely routable.
+- Maintainer order is strict: public-safe `main` + green CI → explicit
+  `v0.3.0` tag → five platform assets and `SHA256SUMS` + provenance → manual,
+  exact-version npm dispatch. Each arrow is a separate authorization boundary.
 
 ## Release 0.2.8
 

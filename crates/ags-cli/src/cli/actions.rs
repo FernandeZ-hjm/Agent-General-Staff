@@ -3,6 +3,56 @@
 use clap::Subcommand;
 use std::path::PathBuf;
 
+/// Unified public onboarding lifecycle.
+#[derive(Subcommand)]
+pub(crate) enum OnboardingAction {
+    /// Assess the active machine/project and emit a deterministic action plan.
+    Plan {
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+        #[arg(long, default_value = "codex")]
+        host: String,
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Show the current readiness states without applying anything.
+    Status {
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+        #[arg(long, default_value = "codex")]
+        host: String,
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Apply exactly one reviewed item from the current deterministic plan.
+    Apply {
+        #[arg(long)]
+        item: String,
+        /// Exact plan hash printed by `ags onboarding plan`. Required because
+        /// the live GitHub registry may change between review and apply.
+        #[arg(long)]
+        plan_hash: String,
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+        #[arg(long, default_value = "codex")]
+        host: String,
+        /// Required confirmation. There is no batch or implicit apply mode.
+        #[arg(long)]
+        yes: bool,
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Re-assess readiness and fail when a required component is not ready.
+    Verify {
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+        #[arg(long, default_value = "codex")]
+        host: String,
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+}
+
 /// Cross-Agent capability layer + (hidden) M5 suite-capability registry.
 ///
 /// `inventory` / `verify` / `install` / `sync` operate on **cross-Agent host

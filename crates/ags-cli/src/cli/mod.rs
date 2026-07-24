@@ -47,6 +47,14 @@ pub(crate) enum Commands {
         format: String,
     },
 
+    /// Assess, plan, apply one confirmed item, and verify the public AGS
+    /// onboarding profile. Machine-local and non-public capabilities are not
+    /// included.
+    Onboarding {
+        #[command(subcommand)]
+        action: OnboardingAction,
+    },
+
     /// 初始化项目内 AGS 能力入口 (五段链路第 4 段). Onboard the current project
     /// into AGS governance: entry files, project profile, protocol, portable
     /// validator, and a first-class memory capsule. Runs after global

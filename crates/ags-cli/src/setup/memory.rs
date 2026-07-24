@@ -977,11 +977,54 @@ mod tests {
 
         let card = |name: &str| {
             format!(
-                "## 任务卡\n\n任务：\n{name}\nExecutor: Claude Code\nRuntime adapter: claude-code\nVerification gate:\n- 验证\n"
+                "## 任务卡\n\
+Contract ID: tc-0123456789abcdef\n\
+Handoff source: explicit-handoff\n\
+任务：\n{name}\n\
+Executor: Claude Code\n\
+Runtime adapter: claude-code\n\
+目标：\n\
+- G-01: 完成 {name}\n\
+验收标准：\n\
+- AC-01 -> G-01: {name} 完成\n\
+Verification gate:\n\
+- commands:\n\
+  - V-01 -> AC-01: verify {name}\n"
             )
         };
-        let report_txt =
-            |c: &str| format!("# 任务交付报告\n\n## 任务状态\n完成\n\n一句话结论：{c}\n");
+        let report_txt = |card: &str, conclusion: &str| {
+            // The Stop hook pairs transcript artifacts after `.strip()`, so the
+            // test report must bind the exact normalized task-card bytes.
+            let hash = receipt::sha256_hex(card.trim().as_bytes());
+            format!(
+                "# 任务交付报告\n\
+\n\
+Closure schema: 1.0\n\
+Contract ID: tc-0123456789abcdef\n\
+task-card-hash: {hash}\n\
+receipt-id: receipt-{}\n\
+状态: completed\n\
+review-gate: n/a\n\
+\n\
+## 任务状态\n\
+完成\n\
+\n\
+一句话结论：{conclusion}\n\
+\n\
+## 目标闭环\n\
+- G-01: done — 已完成\n\
+\n\
+## 验收闭环\n\
+- AC-01: pass — evidence: verified\n\
+\n\
+## 验证闭环\n\
+- V-01: pass — verify exit 0\n\
+\n\
+## 未闭环项\n\
+- none\n",
+                &hash[..12]
+            )
+        };
         let line = |role: &str, text: &str| {
             serde_json::json!({ "message": { "role": role, "content": text } }).to_string()
         };
@@ -993,7 +1036,7 @@ mod tests {
             format!(
                 "{}\n{}\n{}\n",
                 line("user", &card("OLD-TASK")),
-                line("assistant", &report_txt("old done")),
+                line("assistant", &report_txt(&card("OLD-TASK"), "old done")),
                 line("user", &card("NEW-TASK")),
             ),
         )
@@ -1045,7 +1088,10 @@ mod tests {
         let prev = std::fs::read_to_string(&transcript).unwrap();
         std::fs::write(
             &transcript,
-            format!("{prev}{}\n", line("assistant", &report_txt("new done"))),
+            format!(
+                "{prev}{}\n",
+                line("assistant", &report_txt(&card("NEW-TASK"), "new done"))
+            ),
         )
         .unwrap();
         let out2 = run(&hook_input);

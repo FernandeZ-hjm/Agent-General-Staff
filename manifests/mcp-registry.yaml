@@ -36,7 +36,7 @@ suite_interfaces:
     trust_level: "suite_canonical"
     description: >
       AGS MCP Server — host initialization adapter and mandatory governance
-      interface over MCP stdio. Provides 8 governance tools, 6 public-safe
+      interface over MCP stdio. Provides 9 governance tools, 6 public-safe
       resources, and 4 governance prompts. AGS is the governance authority;
       it is NOT a governed third-party MCP. ags_route_request is strictly
       read-only; ags_apply_action is the sole effectful MCP tool.
@@ -72,6 +72,7 @@ suite_interfaces:
       allowed:
         - "Run AGS governance preflight — mandatory first call for all AGS scenarios."
         - "Check protocol status, export agent instructions, validate task cards."
+        - "Assess the public onboarding profile and hold one-shot per-item bootstrap actions."
         - "Resolve execution policy for validated task cards."
         - "Return read-only guidance for the fixed local verification action; actual verification runs only through ags_apply_action."
         - "Validate typed HostRouteProposal values and return RouteResolution without launching a process or writing a file."
@@ -90,7 +91,9 @@ suite_interfaces:
       evidence_format: "AGS preflight: MCP|CLI, agent=<agent>, status=<ok|failed|fallback>"
       rule: >
         In any AGS scenario, the host MUST call ags_preflight (or CLI fallback)
-        before invoking any other AGS tool. All other AGS tools
+        before invoking any other AGS tool. A failed project-integration
+        preflight may establish a restricted bootstrap_required binding where
+        only ags_onboarding_plan and ags_apply_action are allowed. All ordinary tools
         (ags_route_request, ags_apply_action, ags_task_validate,
         ags_policy_resolve, ags_verify_local) require preflight to have completed
         first. A new preflight invalidates every held DecisionLease.
@@ -133,19 +136,36 @@ mcps:
     status: "adopted"
     category: "documentation_context"
     trust_level: "reviewed_external"
+    routing:
+      route_state: routable
+      intent_tags: [docs-lookup, library-reference]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: network
+      invoke_hint: "context7 MCP (resolve-library-id + get-library-docs)"
+      route_priority: 30
+      examples:
+        positive:
+          - "how do I use the X library API"
+          - "查一下这个库的最新文档"
+        negative:
+          - "把这个文档发邮件给张三"
+          - "send an email with the doc"
+          - "发协作消息"
     package:
       manager: "npm"
       name: "@upstash/context7-mcp"
-      version: "3.1.0"
-      integrity: "sha512-bdlZ0dqSLG4XjNgHjgyToXRthTgc07nWeqpYMpkiCyuUlEiUABrzmtyj6JfBWDTYO1RN4eFkAqpaYcNqWjzTUA=="
-      repository: "https://github.com/upstash/context7/tree/main/packages/mcp"
+      version: "3.2.4"
+      integrity: "sha512-w2Vg6MkF4Qojp8X1fdmJ6NrjZ8Ip/9lflybtqfDKaqOsUV9iVaXeRbyGTqARdn1O8teIPm7Bt+nfVqFiUcZvjQ=="
+      repository: "https://github.com/upstash/context7"
       license: "MIT"
     install:
       transport: "stdio"
       command: "npx"
       args:
         - "-y"
-        - "@upstash/context7-mcp@3.1.0"
+        - "@upstash/context7-mcp@3.2.4"
       installed_clients:
         - "codex"
       not_installed_clients:
@@ -175,17 +195,35 @@ mcps:
     adoption_entry: "context7-mcp-adopted-20260607-optional"
 
   - name: "codegraph"
+    routing:
+      route_state: routable
+      intent_tags: [code-intelligence, symbol-search, call-flow, change-impact]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: local
+      invoke_hint: "codegraph MCP"
+      route_priority: 25
+      capability_group: [code-intelligence]
+      upstream_group: "colbymchenry/codegraph"
+      examples:
+        positive:
+          - "这个函数是怎么一路调用到写入层的？"
+          - "改这个模块会影响哪些调用方？"
+        negative:
+          - "帮我修改这个函数"
+          - "查一下 React 最新文档"
     profile: "required"
     status: "adopted"
     category: "code_intelligence"
     trust_level: "reviewed_external"
     package:
-      manager: "external-cli"
-      name: "codegraph"
-      version: "not_pinned_existing_install"
-      integrity: "not_captured_existing_install"
-      repository: "not_recorded"
-      license: "not_recorded"
+      manager: "npm"
+      name: "@colbymchenry/codegraph"
+      version: "1.5.0"
+      integrity: "sha512-/l1JMVOQ9WGQLrc/IIuAg7Igr944t79/oNCJTcnGkYtIeQx2XFIqI0ho+9Les/Yu4zKfmPU17hIUshD6yP1fKw=="
+      repository: "https://github.com/colbymchenry/codegraph"
+      license: "MIT"
     install:
       transport: "stdio"
       command: "codegraph"
@@ -251,4 +289,22 @@ route_targets:
       upstream_group: "upstash/context7"
       examples:
         positive: ["查一下这个库的最新文档", "how do I use the X library API"]
+        negative: ["把这个文档发邮件给张三"]
+  - name: "context7:resolve-library-id"
+    description: context7 MCP resolve-library-id tool (secondary docs route target)
+    routing:
+      route_state: routable
+      parent: { kind: mcp, name: context7 }
+      entrypoint: { kind: tool, name: resolve-library-id }
+      intent_tags: [docs-lookup]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      requires_auth: false
+      cost_class: network
+      invoke_hint: "context7 MCP resolve-library-id"
+      route_priority: 40
+      capability_group: [documentation-context]
+      upstream_group: "upstash/context7"
+      examples:
+        positive: ["查一下这个库的文档", "library docs"]
         negative: ["把这个文档发邮件给张三"]

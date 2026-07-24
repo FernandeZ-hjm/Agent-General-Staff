@@ -35,6 +35,8 @@ Proposal 必须提供 `schema_version`、`request_fingerprint`、`phase`、`solu
 - `SolutionFormation`：只有关键设计仍开放时才进入；公开版可参考项目内公开资料形成方案。
 - `DirectEdit`：方案已确认，且同会话收到明确修改授权；宿主按已确认 scope 直接执行，不编译任务卡、不重复方案形成、不通过 MCP 代写仓库。
 - `TaskCardHandoff`：明确要求交接并且 handoff contract 已确认后才可编译。
+- 宿主 Plan mode：方案封闭后，最后一步直接编译唯一 canonical `## 任务卡`；
+  不再另写一份 prose final plan，也不再追加“是否生成任务卡”的确认。
 - 已有 `## 任务卡`：先 validate；合法卡直接进入 policy/gate/LaunchPlan，非法卡停止，不得落回任务卡生成。
 
 “方案 OK”仅确认设计，不独立授权 mutation 或 handoff。新问题若真正重开方案，才回到 SolutionFormation。
@@ -69,7 +71,21 @@ ags task compile <contract> \
   --confirmed-handoff-contract
 ```
 
+宿主 Plan mode 的最终产物使用等价的专用入口：
+
+```bash
+ags task compile <contract> \
+  --host-plan-mode-final \
+  --confirmed-handoff-contract
+```
+
+Plan UI 可用 `<proposed_plan>` 包住任务卡供界面识别，但 envelope 内必须只有原始
+canonical task card。用户选择 Execute 后，宿主先退出 Plan mode，再把同一份任务卡正文与
+`task_card_hash` 原样派发；禁止重新生成、摘要或补写第二张卡。
+
 新 typed `HandoffContract` 必须显式声明 `task_level`。旧 loose contract 缺失时仅兼容默认 Medium，并发出 deprecation；禁止关键词推断。Compiler 不重新解释原始聊天、不选择技能。
+Compiler 派生稳定 `Contract ID` 与 `Handoff source`；任务目标、验收标准、验证命令和证据
+分别使用 `G-*`、`AC-*`、`V-*`、`EV-*` 建立一一可校验的闭环映射。
 
 ### 7. Validate / Policy / Gate / LaunchPlan
 
@@ -79,11 +95,14 @@ ags task compile <contract> \
 validate → policy → gate → LaunchPlan → HOST_EXECUTION_REQUIRED
 ```
 
-Runner 不启动宿主、不执行项目任务、不运行事后验证、不写最终 receipt，也不声称完成。宿主消费 LaunchPlan 后按任务卡执行、验证、review 和交付。direct-edit 不需要 route lease 或任务卡。
+Runner 不启动宿主、不执行项目任务、不运行事后验证、不写最终 receipt，也不声称完成。宿主消费 LaunchPlan 后按任务卡执行、验证、review 和交付。执行面必须保留进入 LaunchPlan
+的原始任务卡字节与 `task_card_hash`，供交付报告精确回绑。direct-edit 不需要 route lease 或任务卡。
 
 ### 8. Receipt
 
-新收据 writer 输出 `2.1-m6`，reader/verifier 同时接受 `2.0-m6` 与 `2.1-m6`。`governance_evidence` 只保存 decision/lease/proposal/scope/snapshot/policy hash、skill selection 与 outcome event id，不保存原始请求。
+新收据 writer 输出 `2.1-m6`，reader/verifier 同时接受 `2.0-m6` 与 `2.1-m6`。`governance_evidence` 只保存 decision/lease/proposal/scope/snapshot/policy hash、skill selection 与 outcome event id，不保存原始请求。只有
+`ags task close <task-card> <delivery-report>` 返回 `valid: true` 后，交付报告才可进入最终
+receipt 或 Stop-hook 任务存档。
 
 ## 任务级别与权限
 
@@ -122,6 +141,18 @@ preflight、route、apply、CLI、Runner 与 receipt 共享 `GovernanceStatus`�
 
 ## 交付报告
 
-报告必须列出：状态、改动边界、接口迁移、验证命令与结果、review 证据、git diff 摘要、保留的外部/未跟踪状态、剩余风险，以及未执行的跨工作区、版本控制和发布动作。不得把 LaunchPlan、dry-run 或“准备执行”写成已经执行完成。
+报告必须声明 `Closure schema: 1.0`，并精确回绑任务卡 `Contract ID`、
+`task-card-hash` 与派生 `receipt-id`。`目标闭环`、`验收闭环`、`验证闭环` 的
+`G-*` / `AC-*` / `V-*` 集合必须与任务卡完全一致；`completed` 要求全部闭环、
+review gate 已通过或不适用、`未闭环项` 为 `none`。`partial` / `blocked` 必须逐项列出
+未闭环 ID 和原因。
+
+报告还必须列出：改动边界、接口迁移、验证命令与结果、review 证据、git diff 摘要、
+保留的外部/未跟踪状态、剩余风险，以及未执行的跨工作区、版本控制和发布动作。不得把
+LaunchPlan、dry-run 或“准备执行”写成已经执行完成。
+
+```bash
+ags task close <task-card> <delivery-report> --format json
+```
 
 权威任务卡骨架为 `protocol/task-card-template.md`。

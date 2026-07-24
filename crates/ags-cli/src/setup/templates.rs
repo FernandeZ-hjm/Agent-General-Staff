@@ -10,9 +10,9 @@ Current protocol version: {AGS_VERSION}.
 - After preflight, read `ags://capabilities/current-host`. The host keeps the complete conversation context, performs the only natural-language interpretation, builds a typed `HostRouteProposal`, and submits it to the strictly read-only `ags_route_request`.
 - Never send raw request text to AGS. Consume `RouteResolution`; invoke only an exact admitted `SkillTarget` or closed `MachineCliTarget`. Only `ags_apply_action` may consume a returned connection-held action.
 - Existing canonical `## 任务卡` input validates first. A valid card proceeds to policy, gate, and LaunchPlan; an invalid card stops and never falls back to task-card generation.
-- Task-card compilation requires an explicit handoff request and a confirmed closed handoff contract. Authorized same-session direct edits remain host-native.
-- In OMP Plan mode, keep `solution_state=open` while decisions remain unresolved. When the contract closes, route `execution + task_card_handoff + TaskCompile` and make the final plan the single canonical `## 任务卡`.
-- The Plan UI keeps that card pending user activation. When the user selects Execute, dispatch the exact same card and `task_card_hash` to the execution Agent; do not regenerate or rewrite it. The execution Agent validates the existing card first.
+- Task-card compilation requires a confirmed closed handoff contract plus either an explicit handoff request or the final host Plan-mode artifact. Authorized same-session direct edits remain host-native.
+- In host Plan mode, keep `solution_state=open` while decisions remain unresolved. When the contract closes, run `ags task compile --host-plan-mode-final --confirmed-handoff-contract`; the final artifact is the single canonical `## 任务卡`, not a separate final-plan document.
+- The Plan UI keeps that card pending user activation. When the user selects Execute, switch to Default/execution mode and dispatch the exact same card and `task_card_hash` to the execution Agent; do not regenerate or rewrite it. The execution Agent validates the existing card first.
 "#
     )
 }
@@ -64,7 +64,7 @@ Aliases: `/ags onboard`, `/ags manage`, `/ags 纳管`.
 - Empty or `preflight`: report the AGS preflight result and next allowed actions.
 - `doctor`: run `ags doctor --target .` and summarize the findings.
 - `verify`: run `ags verify --scope local --target .` and summarize the check results.
-- Any other text: treat it as the user request. Prefer MCP `ags_preflight` first; if MCP is unavailable, run `ags session preflight --for claude-code --target .`. Read the preflight-bound current-host capability resource, use complete conversation context to create a typed `HostRouteProposal`, and submit it to strictly read-only `ags_route_request`. Never send raw request text or reclassify it in Compiler, Policy, Gate, Runner, or Skill Resolver. Only `ags_apply_action` may consume a returned connection-held action. A confirmed same-session direct edit stays host-native and does not regenerate a plan or task card; an existing canonical task card validates first. Generate a task card only when the explicit handoff request and independently confirmed contract gates are both closed. If solution work is unresolved or reopened, remain in solution formation and do not compile.
+- Any other text: treat it as the user request. Prefer MCP `ags_preflight` first; if MCP is unavailable, run `ags session preflight --for claude-code --target .`. Read the preflight-bound current-host capability resource, use complete conversation context to create a typed `HostRouteProposal`, and submit it to strictly read-only `ags_route_request`. Never send raw request text or reclassify it in Compiler, Policy, Gate, Runner, or Skill Resolver. Only `ags_apply_action` may consume a returned connection-held action. A confirmed same-session direct edit stays host-native and does not regenerate a plan or task card; an existing canonical task card validates first. Explicit handoff uses `--task-card-requested --confirmed-handoff-contract`. In host Plan mode, the decision-complete final artifact uses `--host-plan-mode-final --confirmed-handoff-contract` and is the canonical task card itself. If solution work is unresolved or reopened, remain in solution formation and do not compile.
 
 Current AGS version expected by this command: {AGS_VERSION}.
 "#

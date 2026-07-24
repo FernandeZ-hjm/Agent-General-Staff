@@ -68,6 +68,7 @@ pub fn default_public_allowlist() -> Allowlist {
             public_rewritten_doc("WORKSPACE.md"),
             public_rewritten_doc("AGENT_SUITE_PROTOCOL.md"),
             public_rewritten_doc("README.md"),
+            public_rewritten_doc("RELEASE_NOTES.md"),
             public_rewritten_doc("Cargo.lock"),
             public_rewritten_doc("protocol/2.0-baseline.md"),
             public_rewritten_doc("protocol/2.0-roadmap.md"),
@@ -91,6 +92,7 @@ pub fn default_public_allowlist() -> Allowlist {
             public_target_only_file("scripts/stop-archive-hook.sh"),
             public_target_only_file("docs/skill-recommendations.md"),
             public_target_only_file("manifests/skill-recommendations.yaml"),
+            public_target_only_file("manifests/third-party-capabilities.yaml"),
             FileAllowlistEntry {
                 file: "protocol/runtime-adapters.md".to_string(),
                 allowed_missing_files: vec![],
@@ -385,6 +387,15 @@ mod tests {
             "scripts/verify.sh",
             &["verify.sh — AGS public edition verification gate".to_string()],
             &DriftKind::ContentDrift
+        ));
+        assert!(is_allowed(
+            &al,
+            "RELEASE_NOTES.md",
+            &[
+                "Agent General Staff Public Edition Release Notes".to_string(),
+                "Release 0.3.0".to_string()
+            ],
+            &DriftKind::ExtraSection
         ));
     }
 

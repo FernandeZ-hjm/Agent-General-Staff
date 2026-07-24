@@ -1,0 +1,456 @@
+# Public remote source:
+# https://raw.githubusercontent.com/FernandeZ-hjm/Agent-General-Staff/main/manifests/third-party-capabilities.yaml
+#
+# This is discovery metadata, not an instruction script. AGS accepts only the
+# closed install strategies implemented in Rust, pins every npm/git payload,
+# and binds apply to the reviewed plan hash.
+
+schema_version: "1.0"
+principle: >
+  Read the newest reviewed catalog from GitHub when available, validate it,
+  freeze the returned content hash in the plan, and apply only one exact,
+  explicitly confirmed action. Offline use falls back to the bundled snapshot
+  and reports that provenance.
+
+capabilities:
+  - id: codegraph-cli
+    kind: cli
+    name: CodeGraph CLI
+    profiles: [public, private]
+    required: true
+    tier: core
+    purpose: Build and inspect the local code knowledge graph.
+    risk: medium
+    source:
+      manager: npm
+      package: "@colbymchenry/codegraph"
+      version: "1.5.0"
+      revision: "ea72e1b190921232aa7bd02e96bef5bbe4fe0ab6"
+      integrity: "sha512-/l1JMVOQ9WGQLrc/IIuAg7Igr944t79/oNCJTcnGkYtIeQx2XFIqI0ho+9Les/Yu4zKfmPU17hIUshD6yP1fKw=="
+      repository: "https://github.com/colbymchenry/codegraph"
+      license: MIT
+    install:
+      strategy: npm-global
+      command: codegraph
+    routing:
+      route_state: not-routable
+
+  - id: codegraph
+    kind: mcp
+    name: CodeGraph MCP
+    profiles: [public, private]
+    required: true
+    tier: core
+    purpose: Resolve symbols, flows, callers, dependencies, and change impact from the local index.
+    risk: medium
+    source:
+      manager: npm
+      package: "@colbymchenry/codegraph"
+      version: "1.5.0"
+      revision: "ea72e1b190921232aa7bd02e96bef5bbe4fe0ab6"
+      integrity: "sha512-/l1JMVOQ9WGQLrc/IIuAg7Igr944t79/oNCJTcnGkYtIeQx2XFIqI0ho+9Les/Yu4zKfmPU17hIUshD6yP1fKw=="
+      repository: "https://github.com/colbymchenry/codegraph"
+      license: MIT
+    install:
+      strategy: host-registrar
+      depends_on: [codegraph-cli]
+    routing:
+      route_state: routable
+      invoke_hint: "codegraph MCP"
+      intent_tags: [code-intelligence, symbol-search, call-flow, change-impact]
+      positive_examples:
+        - "这个函数是怎么一路调用到写入层的？"
+        - "改这个模块会影响哪些调用方？"
+      negative_examples:
+        - "帮我修改这个函数"
+        - "查一下 React 最新文档"
+    mcp:
+      server_name: codegraph
+      command: codegraph
+      args: [serve, --mcp]
+
+  - id: context7
+    kind: mcp
+    name: Context7
+    profiles: [public, private]
+    required: false
+    tier: optional
+    purpose: Retrieve current version-aware library documentation.
+    risk: low
+    source:
+      manager: npm
+      package: "@upstash/context7-mcp"
+      version: "3.2.4"
+      integrity: "sha512-w2Vg6MkF4Qojp8X1fdmJ6NrjZ8Ip/9lflybtqfDKaqOsUV9iVaXeRbyGTqARdn1O8teIPm7Bt+nfVqFiUcZvjQ=="
+      repository: "https://github.com/upstash/context7"
+      license: MIT
+    install:
+      strategy: host-registrar
+    routing:
+      route_state: routable
+      invoke_hint: "context7 MCP (resolve-library-id + get-library-docs)"
+      intent_tags: [docs-lookup, library-reference]
+      positive_examples:
+        - "查一下这个库的最新文档"
+      negative_examples:
+        - "把这个文档发邮件给张三"
+    mcp:
+      server_name: context7
+      command: npx
+      args: [-y, "@upstash/context7-mcp@3.2.4"]
+
+  - id: lark-cli
+    kind: cli
+    name: Lark CLI
+    profiles: [private]
+    required: false
+    tier: collaboration
+    purpose: Provide the host-visible Feishu/Lark command surface used by governed skills.
+    risk: high
+    requires_auth: true
+    source:
+      manager: npm
+      package: "@larksuite/cli"
+      version: "1.0.77"
+      revision: "a7865cd0a7416655535517a2a630848fde318761"
+      integrity: "sha512-xsyUkGS6WsMmxiVHG7Qpl/U8vmi5qoZterAprAMBYQ0/lA5kMjUv5NL2pfDv/Krp2frQme/OtRjD5+jlEw0RPg=="
+      repository: "https://github.com/larksuite/cli"
+      license: MIT
+    install:
+      strategy: external-manager
+      command: lark-cli
+    routing:
+      route_state: routable
+      invoke_hint: "lark-cli through one exact governed Lark skill"
+      intent_tags: [lark, feishu, collaboration]
+      positive_examples:
+        - "用飞书给张三发消息"
+      negative_examples:
+        - "解释飞书开放平台是什么"
+
+  - id: claude-mem-mcp
+    kind: mcp
+    name: Claude-Mem MCP
+    profiles: [private]
+    required: false
+    tier: memory
+    purpose: Search locally stored Claude-Mem observations.
+    risk: medium
+    source:
+      manager: github-release
+      version: "13.12.4"
+      repository: "https://github.com/thedotmack/claude-mem"
+      license: Apache-2.0
+    install:
+      strategy: external-manager
+      depends_on: [claude-mem-hooks]
+    routing:
+      route_state: routable
+      invoke_hint: "claude-mem MCP search"
+      intent_tags: [memory-search, previous-session, continuity]
+      positive_examples:
+        - "找一下上次会话里我们为什么这样设计"
+      negative_examples:
+        - "读取当前仓库的任务记忆文件"
+    mcp:
+      server_name: "plugin:claude-mem:mcp-search"
+      command: plugin-managed
+      args: []
+
+  - id: claude-mem-hooks
+    kind: hook
+    name: Claude-Mem Host Hooks
+    profiles: [private]
+    required: false
+    tier: memory
+    purpose: Bind Claude-Mem capture and lifecycle handlers to Claude Code events.
+    risk: high
+    source:
+      manager: github-release
+      version: "13.12.4"
+      repository: "https://github.com/thedotmack/claude-mem"
+      license: Apache-2.0
+    install:
+      strategy: external-manager
+    routing:
+      route_state: not-routable
+    hook:
+      host: claude-code
+      events: [Setup, SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop]
+      config_glob: "$HOME/.claude/plugins/cache/thedotmack/claude-mem/*/hooks/hooks.json"
+      managed_by: "Claude Code plugin manager"
+      health_probe: "plugin manifest exists and every declared event has a handler"
+      rollback: "use the Claude Code plugin manager to restore the previous plugin version"
+
+  - id: superpowers
+    kind: skill
+    name: Engineering Workflow
+    profiles: [public, private]
+    required: false
+    tier: core
+    purpose: Explicit-gated engineering workflow parent with internal playbooks.
+    risk: medium
+    source:
+      manager: git
+      revision: "3dcbd5c4b48e02263fbf4a3c01e3fe4f81d584d9"
+      repository: "https://github.com/obra/superpowers"
+      license: MIT
+    install:
+      strategy: ags-skill-adopt
+      install_location: "$HOME/.agents/skills/superpowers/"
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: superpowers]"
+      intent_tags: [engineering-workflow]
+      positive_examples: ["调用 superpowers 的 verification-before-completion playbook"]
+      negative_examples: ["解释什么是单元测试"]
+
+  - id: grilling
+    kind: skill
+    name: Plan Grilling
+    profiles: [public, private]
+    required: false
+    tier: flow
+    purpose: Stress-test a plan through a deliberate interview.
+    risk: low
+    source: &matt_grilling
+      manager: git
+      revision: "ed37663cc5fbef691ddfecd080dff42f7e7e350d"
+      repository: "https://github.com/mattpocock/skills"
+      license: MIT
+      subdir: "skills/productivity/grilling"
+    install: &matt_install
+      strategy: ags-skill-adopt
+      install_location: "$HOME/.agents/skills/grilling/"
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: grilling]"
+      intent_tags: [plan-grilling]
+      positive_examples: ["压力测试一下这个方案"]
+      negative_examples: ["按已批准方案开始实现"]
+
+  - id: review
+    kind: skill
+    name: Branch Change Review
+    profiles: [public, private]
+    required: false
+    tier: flow
+    purpose: Review changes since a fixed point against standards and spec.
+    risk: low
+    source:
+      <<: *matt_grilling
+      subdir: "skills/in-progress/review"
+    install:
+      <<: *matt_install
+      install_location: "$HOME/.agents/skills/review/"
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: review]"
+      intent_tags: [branch-review, two-axis-review]
+      positive_examples: ["从 main 开始做两轴变更审查"]
+      negative_examples: ["帮我修这个 bug"]
+
+  - id: decision-mapping
+    kind: skill
+    name: Decision Mapping
+    profiles: [public, private]
+    required: false
+    tier: flow
+    purpose: Turn a loose idea into sequenced investigation decisions.
+    risk: low
+    source:
+      <<: *matt_grilling
+      subdir: "skills/in-progress/decision-mapping"
+    install:
+      <<: *matt_install
+      install_location: "$HOME/.agents/skills/decision-mapping/"
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: decision-mapping]"
+      intent_tags: [decision-map, investigation]
+      positive_examples: ["把这个松散想法做成决策地图"]
+      negative_examples: ["直接实现这个功能"]
+
+  - id: resolving-merge-conflicts
+    kind: skill
+    name: Resolving Merge Conflicts
+    profiles: [public, private]
+    required: false
+    tier: flow
+    purpose: Resolve an active merge or rebase conflict.
+    risk: medium
+    source:
+      <<: *matt_grilling
+      subdir: "skills/engineering/resolving-merge-conflicts"
+    install:
+      <<: *matt_install
+      install_location: "$HOME/.agents/skills/resolving-merge-conflicts/"
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: resolving-merge-conflicts]"
+      intent_tags: [merge-conflict, rebase-conflict]
+      positive_examples: ["解决当前 rebase 冲突"]
+      negative_examples: ["准备提交前帮我验证"]
+
+  - id: to-prd
+    kind: skill
+    name: To PRD
+    profiles: [public, private]
+    required: false
+    tier: flow
+    purpose: Shape the current conversation into a product requirements document.
+    risk: low
+    source:
+      <<: *matt_grilling
+      subdir: "skills/engineering/to-prd"
+    install:
+      <<: *matt_install
+      install_location: "$HOME/.agents/skills/to-prd/"
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: to-prd]"
+      intent_tags: [prd, product-requirements]
+      positive_examples: ["把当前对话整理成 PRD"]
+      negative_examples: ["查一下 React 文档"]
+
+  - id: to-issues
+    kind: skill
+    name: To Issues
+    profiles: [public, private]
+    required: false
+    tier: flow
+    purpose: Break a plan or PRD into independently executable issue slices.
+    risk: medium
+    source:
+      <<: *matt_grilling
+      subdir: "skills/engineering/to-issues"
+    install:
+      <<: *matt_install
+      install_location: "$HOME/.agents/skills/to-issues/"
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: to-issues]"
+      intent_tags: [issues, task-slicing]
+      positive_examples: ["把这份 PRD 拆成 issues"]
+      negative_examples: ["帮我写一个 commit"]
+
+  - id: triage
+    kind: skill
+    name: Triage
+    profiles: [public, private]
+    required: false
+    tier: flow
+    purpose: Turn issue and PR backlogs into agent-ready briefs.
+    risk: medium
+    source:
+      <<: *matt_grilling
+      subdir: "skills/engineering/triage"
+    install:
+      <<: *matt_install
+      install_location: "$HOME/.agents/skills/triage/"
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: triage]"
+      intent_tags: [issue-triage, pr-triage]
+      positive_examples: ["把 issue 42 分诊成 agent-ready"]
+      negative_examples: ["测试挂了，帮我排查"]
+
+  - id: handoff
+    kind: skill
+    name: Handoff
+    profiles: [public, private]
+    required: false
+    tier: flow
+    purpose: Compact the current session into a clean handoff document.
+    risk: low
+    source:
+      <<: *matt_grilling
+      subdir: "skills/productivity/handoff"
+    install:
+      <<: *matt_install
+      install_location: "$HOME/.agents/skills/handoff/"
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: handoff]"
+      intent_tags: [context-handoff]
+      positive_examples: ["给下一个 agent 写交接文档"]
+      negative_examples: ["交给 Claude Code 执行"]
+
+  - id: diagnosing-bugs
+    kind: skill
+    name: Diagnosing Bugs
+    profiles: [public, private]
+    required: false
+    tier: debugging
+    purpose: Build an evidence chain to isolate a bug's root cause.
+    risk: low
+    source:
+      <<: *matt_grilling
+      subdir: "skills/engineering/diagnosing-bugs"
+    install:
+      <<: *matt_install
+      install_location: "$HOME/.agents/skills/diagnosing-bugs/"
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: diagnosing-bugs]"
+      intent_tags: [debug, root-cause]
+      positive_examples: ["系统排查这个异常并定位根因"]
+      negative_examples: ["帮我做代码审查"]
+
+  - id: grill-with-docs
+    kind: skill
+    name: Requirements Clarification with Docs
+    profiles: [public, private]
+    required: false
+    tier: architecture
+    purpose: Align requirements against ADRs, terminology, and project documents.
+    risk: medium
+    source:
+      <<: *matt_grilling
+      subdir: "skills/engineering/grill-with-docs"
+    install:
+      <<: *matt_install
+      install_location: "$HOME/.agents/skills/grill-with-docs/"
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: grill-with-docs]"
+      intent_tags: [docs-grounded-grilling, requirements-clarification]
+      positive_examples: ["结合 ADR 和术语表追问我，把需求对齐"]
+      negative_examples: ["给我一个普通架构建议"]
+
+  - id: improve-codebase-architecture
+    kind: skill
+    name: Improve Codebase Architecture
+    profiles: [public, private]
+    required: false
+    tier: architecture
+    purpose: Improve tangled boundaries, testability, and recurring technical debt.
+    risk: medium
+    source:
+      <<: *matt_grilling
+      subdir: "skills/engineering/improve-codebase-architecture"
+    install:
+      <<: *matt_install
+      install_location: "$HOME/.agents/skills/improve-codebase-architecture/"
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: improve-codebase-architecture]"
+      intent_tags: [architecture-improvement, technical-debt]
+      positive_examples: ["治理这个模块的架构技术债"]
+      negative_examples: ["解释技术债是什么"]
+
+  - id: supply-chain-risk-auditor
+    kind: skill
+    name: Supply Chain Risk Auditor
+    profiles: [public, private]
+    required: false
+    tier: security
+    purpose: Audit dependency and package supply-chain risk.
+    risk: low
+    source:
+      manager: community
+    install:
+      strategy: none
+      install_location: "$HOME/.agents/skills/supply-chain-risk-auditor/"
+    routing:
+      route_state: not-routable

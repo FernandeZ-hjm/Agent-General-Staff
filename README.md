@@ -17,7 +17,7 @@ AGS 是一套面向本地开发环境的多 Agent 工程治理内核。它用 Ru
 
 - [快速开始](#快速开始)
 - [60 秒演示](#60-秒演示)
-- [七道闸](#七道闸)
+- [八道闸](#八道闸)
 - [怎么工作](#怎么工作)
 - [常用命令](#常用命令)
 - [为什么需要 AGS](#为什么需要-ags)
@@ -106,9 +106,9 @@ ags verify --scope local
 
 更多样例见 [examples/](examples/)，评估实验见 [evals/](evals/)。
 
-## 七道闸
+## 八道闸
 
-AGS 不是靠一个功能管住 Agent，而是在工程链路的七个位置各放了一道闸。每道闸解决一个被 AI 编程反复打过的具体的坑。
+AGS 不是靠一个功能管住 Agent，而是在工程链路的八个位置各放了一道闸。每道闸解决一个被 AI 编程反复打过的具体的坑。
 
 ### 任务卡治理
 
@@ -147,6 +147,49 @@ closed；`ags doctor` 也会把这类宿主路由缺口列为正式失败项。
 
 仓库内置 `deny.toml`（RustSec 漏洞通报 + 许可证白名单 + crates.io 唯一来源），`cargo deny` 接入 CI 和 `scripts/verify.sh`，失败即关闭。`ags verify lane` 和 lane-decision helper 按 diff 风险选择 minimal / standard / full / release 验证路径，公开发布还会检查 public-full 边界，避免私有运行时、本机路径或构建产物混进发布面。
 
+### 作为 MCP 安装
+
+正式 Release 与 npm launcher 发布后，普通用户不需要先安装 Rust/Cargo：
+
+```bash
+npx -y @agent-governance-suite/mcp
+```
+
+launcher 会按 OS/架构下载同版本预编译 `ags`，核对 `SHA256SUMS`，缓存验证后的
+二进制，并以无 shell 子进程启动 `ags mcp serve --transport stdio`。首次连接后可用
+`ags onboarding plan --host <host>` 查看项目、宿主、Skill、CLI、MCP 与 Hook 的
+逐项接入建议；它不会静默安装第三方能力。
+
+0.3.0 的第三方能力清单不是写死在提示词里的副本。onboarding 优先读取 GitHub
+`main` 上的
+[公开清单](https://github.com/FernandeZ-hjm/Agent-General-Staff/blob/main/manifests/third-party-capabilities.yaml)，
+并把实际审阅内容的 hash 写进结果；网络不可用时才回退到随当前版本打包的清单。清单只
+描述来源、安装方式、探测方式、认证/健康要求和路由元数据，不会把远端内容当脚本执行。
+Skill、CLI、MCP 与 Hook 都要经过用户确认、真实安装探测和宿主可见性校验，才会进入
+机器本地快照。
+
+```mermaid
+flowchart TB
+    GH[GitHub 最新公开清单] --> PLAN[ags onboarding plan<br/>绑定 source + content hash]
+    PKG[随版本打包的清单] -. 网络失败时回退 .-> PLAN
+    PLAN --> REVIEW{用户审阅并确认}
+    REVIEW -->|AGS 内核| S1[ags setup]
+    S1 --> S2[ags agents]
+    S2 --> S3[ags skill]
+    S3 --> S4[ags init]
+    S4 --> S5[ags update]
+    REVIEW -->|第三方能力| EXT[Skill / CLI / MCP / Hook<br/>逐项安装与认证]
+    EXT --> INV[capability inventory]
+    INV --> SNAP[HostCapabilitySnapshot<br/>机器本地 hash]
+    SNAP --> CAT[ags://capabilities/current-host<br/>精确可路由目录]
+    S5 -. 重新拉取与复核 .-> PLAN
+
+    style PLAN fill:#e1f5fe
+    style REVIEW fill:#fff3e0
+    style SNAP fill:#f3e5f5
+    style CAT fill:#c8e6c9
+```
+
 ## 怎么工作
 
 AGS 0.3.0 把自然语言理解留在宿主。preflight 后，宿主读取 `ags://capabilities/current-host`，结合完整对话形成 typed `HostRouteProposal`；严格只读的 `ags_route_request` 只校验阶段、授权、精确技能和闭集机器动作。`ags_apply_action` 是唯一 effectful MCP 工具，以一次性 lease/action 引用消费服务端保存的固定动作。Skill Resolver 只按 `HostCapabilitySnapshot` 精确校验 skill/entrypoint，没有关键词、相似度或 fallback。Compiler、Policy、Gate 和 Runner 都不解析自然语言；Runner 只准备 LaunchPlan 并返回 `HOST_EXECUTION_REQUIRED`。
@@ -162,63 +205,55 @@ AGS 场景输入 → preflight
        └─ MachineCliTarget → DecisionLease → 显式 ags_apply_action
 ```
 
-从原始请求生成新任务卡时，**三段门槛**依然生效：
+任务卡编译器的核心用途是：在方案已经确定后，让 AI 把已确认的执行契约写成高质量、
+可验证、可交接的提示词。普通对话中，明确要求生成任务卡并提供已确认契约即可编译，
+不要求宿主处于 Plan mode；授权同会话直接修改时也不强制生成任务卡。
 
-1. **方案 OK** — 用户确认方案方向
-2. **任务卡指令** — 用户明确要求生成任务卡（"方案 OK"≠"可以开工"）
-3. **任务分级路由** — Light / Medium / Heavy，决定执行策略
-
-缺少任务卡指令或已确认交接契约，不得进入任务卡编译。
+若宿主正在 Plan mode，最后一步直接用
+`--host-plan-mode-final --confirmed-handoff-contract` 生成唯一 canonical `## 任务卡`，
+不再另写一份 prose final plan，也不再询问是否生成。用户选择 Execute 后，宿主退出
+Plan mode 并派发同一张已验证任务卡，禁止重新生成。
 
 ```mermaid
-flowchart TD
+flowchart TB
     A[输入] --> B[1. Preflight<br/>ags_preflight / CLI 降级]
-    B --> X{首个非空行是<br/>## 任务卡?}
-    X -->|是| V[Existing Card Validate<br/>ags task validate]
-    V -->|合法| K
-    V -->|非法| V_STOP[STOP<br/>返回校验错误，不生成新卡]
-    X -->|否，原始请求| R[宿主语义选择<br/>HostRouteProposal]
-    R --> MCP[只读 MCP<br/>ags_route_request]
-    MCP --> D0{RouteResolution}
-    D0 -->|DirectResponse| PASS[宿主直接回复]
-    D0 -->|exact SkillTarget| SR[Skill Resolver<br/>HostCapabilitySnapshot 精确校验]
-    D0 -->|held MachineCli| MC[DecisionLease<br/>ags_apply_action]
-    SR --> HOST[宿主加载技能]
-    MC --> K
-    D0 -->|任务卡交接请求| B1[读取记忆胶囊 + 任务记忆]
-    B1 --> C[2. Solution Phase<br/>方案形成]
-    C --> C1[理解 → 诊断 → 形成方案]
-    C1 --> D{用户确认?}
-    D -->|方案 OK| E[3. Execution Contract<br/>执行契约]
-    D -->|修改方案| C
-    E --> F{任务卡指令?}
-    F -->|生成任务卡| G[4. Task-Card Instruction Gate ✅]
-    F -->|未收到指令| F_WAIT[等待 — ags task compile<br/>需显式指令 + 已确认交接契约]
-    F_WAIT --> F
-    G --> H[5. Routing<br/>Light / Medium / Heavy]
-    H --> I[6. Task Card Generation<br/>ags task compile]
-    I --> J[7. Gate Check<br/>ags task validate — 硬门禁]
-    J -->|通过| K[8. Policy Resolution<br/>ags policy resolve — 软解析]
-    J -->|未通过| J_FAIL[修复任务卡]
-    J_FAIL --> I
-    K --> L{stop_before_launch?}
-    L -->|是| L_STOP[停止: 修复或获取批准]
-    L -->|否| M[9. Execution<br/>ags run]
-    M --> N[10. Verification<br/>ags verify]
-    N --> O[11. Receipt<br/>ags receipt generate]
-    O --> P[12. Task Memory<br/>写入记忆胶囊]
+    B --> CAT[2. 读取 current-host<br/>能力目录 + snapshot hash]
+    CAT --> X{首个非空行是<br/>## 任务卡?}
+    X -->|否| H[3. 宿主保留完整对话<br/>按需形成并确认方案]
+    H --> P[4. HostRouteProposal]
+    P --> R{只读 ags_route_request<br/>RouteResolution}
+    R -->|DirectResponse| DR[回复并停止]
+    R -->|SkillTarget| SR[Skill Resolver<br/>精确 skill + entrypoint]
+    R -->|MachineCliTarget| LEASE[DecisionLease<br/>服务端固定 action]
+    R -->|同会话明确授权修改| EXEC[10. 宿主原生执行]
+    R -->|明确任务卡交接<br/>或 Plan mode 最终产物| C[5. Task Compiler]
+    SR --> HC[宿主加载已验证技能<br/>结果返回宿主]
+    LEASE --> APPLY[显式 ags_apply_action]
+    APPLY --> AR[action receipt<br/>返回宿主]
+    C --> CARD[6. 唯一 canonical 任务卡<br/>禁止再生成第二份 plan]
+    X -->|是| V[7. 校验 canonical 任务卡<br/>ags task validate]
+    CARD --> V
+    V -->|合法| K[8. Policy + Gate]
+    V -->|非法| VSTOP[STOP<br/>只返回错误，不生成新卡]
+    K -->|stop_before_launch| KSTOP[STOP<br/>修复或取得必要授权]
+    K -->|允许准备| LP[9. LaunchPlan<br/>HOST_EXECUTION_REQUIRED]
+    LP --> EXEC
+    EXEC --> VERIFY[11. 宿主执行验证]
+    VERIFY --> REPORT[12. 交付报告 + 证据]
+    REPORT -->|有任务卡| CLOSE[task close<br/>card hash + G/AC/V/EV 精确闭环]
+    REPORT -->|直接修改| DONE[向用户交付证据]
+    CLOSE --> ARCHIVE[Receipt + Task Memory<br/>归档并供下次 preflight]
 
-    style R fill:#7e57c2,color:#fff
-    style MCP fill:#9575cd,color:#fff
-    style V fill:#ffcdd2
-    style V_STOP fill:#d32f2f,color:#fff
-    style PASS fill:#c8e6c9
     style B fill:#e1f5fe
-    style C fill:#fff3e0
-    style G fill:#ffeb3b,stroke:#f57f17
-    style J fill:#ffcdd2
+    style CAT fill:#e8f5e9
+    style P fill:#7e57c2,color:#fff
+    style R fill:#9575cd,color:#fff
+    style C fill:#ffeb3b,stroke:#f57f17
+    style V fill:#ffcdd2
+    style VSTOP fill:#d32f2f,color:#fff
     style K fill:#ffcdd2
-    style O fill:#e3f2fd
+    style LP fill:#c8e6c9
+    style CLOSE fill:#b3e5fc
 ```
 
 架构详情见 [docs/architecture.md](docs/architecture.md)。
@@ -252,7 +287,11 @@ flowchart TD
 | `ags verify --scope local` | 结构化验证（local / full / release） |
 | `ags verify lane` | 按 diff 风险分类验证路径 |
 | `ags receipt verify` | 校验执行回执完整性 |
+| `ags task close` | 将交付报告与任务卡 hash、G/AC/V/EV 标识逐项闭环 |
 | `ags mcp serve` | 启动 AGS MCP stdio 服务 |
+| `ags onboarding plan --host <host>` | 基于 GitHub 最新清单或打包回退清单，生成可审阅的 Skill/CLI/MCP/Hook 接入计划 |
+| `ags capability inventory` | 发现本机系统、用户、项目和外部能力，不等于允许路由 |
+| `ags capability snapshot --host <host>` | 生成带 hash 的机器本地可用性快照 |
 | `ags capability verify --host <host> --strict` | 校验必需能力、父技能及内部入口的宿主可见性 |
 
 **Agent 入口：**`/ags` 是 Claude Code 入口，所有 AGS 任务优先通过 AGS MCP 调用 `ags_preflight`，CLI 只作为 MCP 不可用时的降级路径。完整子命令用 `ags <command> --help` 查看。
@@ -317,7 +356,8 @@ AGS 不是我拍脑袋设计出来的。它更像是我被 AI 编程连续打了
 
 ## 跨平台支持
 
-AGS 在 CI 中延续 `ubuntu-latest`、`macos-latest` 和 `windows-latest` 三平台验证。
+AGS 在源码 CI 中验证 Linux、macOS 和 Windows；显式 tag 发布还会构建 Apple
+Silicon、Intel macOS、x86_64 Linux、ARM64 Linux 与 x86_64 Windows 五个平台资产。
 
 - **Rust 内核**跨三平台构建、测试、运行。`ags-platform` crate 统一处理各平台的 home 目录解析和 PATH 查找（Windows 走 `USERPROFILE` + `PATHEXT`，不依赖 Unix `$HOME` 或外部 `which`）。
 - **Bash 脚本**（`scripts/*.sh`）面向 Linux / macOS / WSL / Git Bash，不承诺 Windows 原生 PowerShell / cmd 运行。
@@ -334,6 +374,19 @@ ags verify --scope release
 # 兼容总闸（等价 ags verify --scope local + 命令面冒烟）
 bash scripts/verify.sh
 ```
+
+### 0.3.0 发布顺序
+
+1. 先把 public-safe 源码推送到 GitHub `main`，等待该提交 CI 全绿。
+2. 确认 Cargo workspace、`packages/ags-mcp/package.json` 与
+   `RELEASE_NOTES.md` 都是 `0.3.0`。
+3. 维护者显式创建并推送 `v0.3.0`；日常 CI 和同步脚本都不会自动打 tag。
+4. tag workflow 验证提交属于 `origin/main`，产出五个平台资产、`SHA256SUMS`、
+   provenance attestation 与 GitHub Release。
+5. Release 资产和校验清单齐全后，手动 dispatch npm workflow，输入精确版本
+   `0.3.0`，最后发布 `@agent-governance-suite/mcp`。
+
+推送 stable/public `main` 不等于创建 tag、GitHub Release 或 npm 发布。
 
 ## 第三方技能
 

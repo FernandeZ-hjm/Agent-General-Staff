@@ -32,6 +32,7 @@ use crate::{prompts, resources, tools};
 #[derive(Debug)]
 struct PreflightState {
     preflight_completed: bool,
+    bootstrap_required: bool,
     preflight_agent: Option<String>,
     /// Resolved target path from the successful preflight RESULT (never raw call
     /// arguments). It is the mandatory target binding for route/apply; callers
@@ -44,6 +45,7 @@ impl PreflightState {
     fn new() -> Self {
         Self {
             preflight_completed: false,
+            bootstrap_required: false,
             preflight_agent: None,
             preflight_target: None,
             routing_session: tools::RoutingSession::default(),
@@ -55,12 +57,20 @@ impl PreflightState {
     /// JSON, not the raw call arguments.
     fn mark_completed(&mut self, agent: Option<String>, target: Option<String>) {
         self.preflight_completed = true;
+        self.bootstrap_required = false;
+        self.preflight_agent = agent;
+        self.preflight_target = target;
+    }
+
+    fn mark_bootstrap_required(&mut self, agent: Option<String>, target: Option<String>) {
+        self.preflight_completed = false;
+        self.bootstrap_required = agent.is_some() && target.is_some();
         self.preflight_agent = agent;
         self.preflight_target = target;
     }
 
     fn binding(&self) -> Option<tools::PreflightBinding> {
-        if !self.preflight_completed {
+        if !self.preflight_completed && !self.bootstrap_required {
             return None;
         }
         Some(tools::PreflightBinding {
@@ -113,6 +123,18 @@ fn preflight_context_from_result(result: &str) -> (Option<String>, Option<String
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
     (agent, target)
+}
+
+fn is_bootstrap_required_preflight_result(result: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(result)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("integration_status")
+                .and_then(|status| status.as_str())
+                .map(str::to_string)
+        })
+        .is_some_and(|status| status == "not_integrated")
 }
 
 /// Prompts that enter an AGS lifecycle phase and therefore require preflight.
@@ -282,7 +304,12 @@ fn handle_tools_call(req: &JsonRpcRequest, preflight: &mut PreflightState) -> Js
         .unwrap_or(serde_json::Value::Null);
 
     // ── Initialization Gate: block non-preflight tools before preflight ──
-    if !tools::is_preflight_bootstrap_tool_name(tool_name) && !preflight.preflight_completed {
+    let allowed_in_bootstrap =
+        preflight.bootstrap_required && tools::is_onboarding_bootstrap_tool_name(tool_name);
+    if !tools::is_preflight_bootstrap_tool_name(tool_name)
+        && !preflight.preflight_completed
+        && !allowed_in_bootstrap
+    {
         return JsonRpcResponse::error(req.id.clone(), -32000, PREFLIGHT_GATE_ERROR);
     }
 
@@ -314,6 +341,27 @@ fn handle_tools_call(req: &JsonRpcRequest, preflight: &mut PreflightState) -> Js
                     preflight.preflight_agent.as_deref().unwrap_or("unknown"),
                     preflight.preflight_target.as_deref().unwrap_or("unknown"),
                 ));
+            } else if tools::is_preflight_tool_name(tool_name)
+                && is_bootstrap_required_preflight_result(&result)
+            {
+                let (agent, target) = preflight_context_from_result(&result);
+                preflight.mark_bootstrap_required(agent, target);
+                if preflight.bootstrap_required {
+                    log_error("preflight established restricted bootstrap_required binding");
+                }
+            }
+
+            if tool_name == tools::TOOL_APPLY_ACTION
+                && serde_json::from_str::<serde_json::Value>(&result)
+                    .ok()
+                    .and_then(|value| {
+                        value
+                            .get("requires_repreflight")
+                            .and_then(|flag| flag.as_bool())
+                    })
+                    .unwrap_or(false)
+            {
+                *preflight = PreflightState::new();
             }
 
             let content = vec![serde_json::json!({
@@ -516,8 +564,9 @@ mod tests {
             })
             .collect();
 
-        assert_eq!(names.len(), 8, "AGS MCP should expose exactly 8 tools");
+        assert_eq!(names.len(), 9, "AGS MCP should expose exactly 9 tools");
         assert!(names.contains(&tools::TOOL_PREFLIGHT));
+        assert!(names.contains(&tools::TOOL_ONBOARDING_PLAN));
         assert!(
             names.iter().all(|name| !name.contains('.')),
             "tools/list must not expose dotted tool names: {:?}",
@@ -579,6 +628,10 @@ mod tests {
             !preflight.preflight_completed,
             "failed preflight must not open the gate"
         );
+        assert!(
+            preflight.bootstrap_required,
+            "unintegrated targets should receive only the restricted bootstrap binding"
+        );
 
         let gated_params = json!({"name": "ags_route_request", "arguments": {"request": "after failed preflight"}});
         let gated_req = make_request("tools/call", Some(gated_params));
@@ -588,6 +641,14 @@ mod tests {
             "gated tools must remain blocked after failed preflight"
         );
         assert!(error_contains(&gated_resp, "Initialization Gate"));
+
+        let onboarding_params = json!({"name": "ags_onboarding_plan", "arguments": {}});
+        let onboarding_req = make_request("tools/call", Some(onboarding_params));
+        let onboarding_resp = handle_tools_call(&onboarding_req, &mut preflight);
+        assert!(
+            is_success(&onboarding_resp),
+            "restricted bootstrap binding should allow the read-only onboarding plan"
+        );
     }
 
     #[test]

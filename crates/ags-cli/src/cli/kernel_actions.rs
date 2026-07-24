@@ -11,6 +11,17 @@ pub(crate) enum TaskAction {
         /// Task card files to validate (use "-" for stdin)
         paths: Vec<String>,
     },
+    /// Validate that a delivery report closes every task-card goal,
+    /// acceptance criterion, and verification item, with matching hashes.
+    Close {
+        /// Canonical task-card file
+        task_card: String,
+        /// Delivery-report file
+        delivery_report: String,
+        /// Output format
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
     /// Compile a task intent into a canonical task card (M4).
     ///
     /// Reads a field-structured confirmed handoff contract (or stdin with "-") and deterministically
@@ -48,12 +59,23 @@ pub(crate) enum TaskAction {
         /// executable_allowed=false with block_reason=task_card_not_requested.
         #[arg(long, default_value_t = false)]
         task_card_requested: bool,
+        /// The host has reached the final, decision-complete artifact in its
+        /// Plan mode. The artifact is compiled directly as the canonical AGS
+        /// task card; no extra task-card confirmation prompt is required.
+        ///
+        /// Host UI approval must switch out of Plan mode and dispatch this
+        /// exact card without regeneration. This flag is an alternative to
+        /// --task-card-requested and still requires
+        /// --confirmed-handoff-contract.
+        #[arg(long, default_value_t = false, conflicts_with = "task_card_requested")]
+        host_plan_mode_final: bool,
         /// Structured evidence that solution, scope, verification, and handoff
         /// boundaries have already been confirmed for this task card.
         ///
         /// This does not authorize mutation. Task-card generation additionally
-        /// requires --task-card-requested and is still blocked when the intent
-        /// contains unresolved or reopened design work.
+        /// requires either --task-card-requested or --host-plan-mode-final and
+        /// is still blocked when the intent contains unresolved or reopened
+        /// design work.
         #[arg(long, default_value_t = false)]
         confirmed_handoff_contract: bool,
     },

@@ -21,14 +21,48 @@ fn raw_body(fields: &str) -> String {
 /// compact fields like 路径/读取/关键路径/停止条件 — are kept verbatim as harmless
 /// extra content.
 fn card_body(fields: &str) -> String {
+    let mut fields = fields.to_string();
+    if let Some(goal_start) = fields.find("目标：") {
+        let value_start = goal_start + "目标：".len();
+        let value_end = ["\n非目标：", "\n验证：", "\nVerification gate:", "\n交付："]
+            .iter()
+            .filter_map(|header| {
+                fields[value_start..]
+                    .find(header)
+                    .map(|pos| value_start + pos)
+            })
+            .min()
+            .unwrap_or(fields.len());
+        let original = fields[value_start..value_end]
+            .trim()
+            .trim_start_matches('-')
+            .trim_start_matches(|character: char| {
+                character.is_ascii_digit() || character == '.' || character.is_ascii_whitespace()
+            })
+            .trim()
+            .replace('\n', " ");
+        fields.replace_range(value_start..value_end, &format!("\n- G-01: {original}"));
+    } else {
+        fields.push_str("\n目标：\n- G-01: 验证测试场景\n");
+    }
+    if let Some(gate_start) = fields.find("Verification gate:") {
+        let insert_at = gate_start + "Verification gate:".len();
+        fields.insert_str(
+            insert_at,
+            "\n- commands:\n  - V-01 -> AC-01: cargo test\n- expected evidence:\n  - EV-01 -> AC-01: test pass\n- stop condition:\n  - 失败时停止",
+        );
+    }
+
     let mut s = String::from("## 任务卡\n读取并遵守：\n- 本任务卡\n");
-    s.push_str(fields);
+    s.push_str(&fields);
     if !s.ends_with('\n') {
         s.push('\n');
     }
     // Append classic-only required fields the caller did not supply. Values
     // are deliberately neutral (no protected paths, no modification intent).
     const SCAFFOLD: &[(&str, &str)] = &[
+        ("Contract ID:", "Contract ID: tc-0123456789abcdef\n"),
+        ("Handoff source:", "Handoff source: existing-card\n"),
         ("Review gate:", "Review gate:\n- 按协议执行当前任务级别\n"),
         ("背景：", "背景：测试用例上下文\n"),
         ("项目画像：", "项目画像：无\n"),
@@ -38,8 +72,12 @@ fn card_body(fields: &str) -> String {
         ("相关路径：", "相关路径：\n- .\n"),
         ("本次任务相关文件：", "本次任务相关文件：\n- .\n"),
         (
+            "验收标准：",
+            "验收标准：\n- AC-01 -> G-01: 测试场景达到预期\n",
+        ),
+        (
             "Verification gate:",
-            "Verification gate:\n- commands: cargo test\n",
+            "Verification gate:\n- commands:\n  - V-01 -> AC-01: cargo test\n- expected evidence:\n  - EV-01 -> AC-01: test pass\n- stop condition:\n  - 失败时停止\n",
         ),
     ];
     for (needle, block) in SCAFFOLD {
@@ -54,6 +92,8 @@ fn card_body(fields: &str) -> String {
 fn valid_card_fields() -> String {
     raw_body(
         "读取并遵守：\n- 本任务卡\n\
+             Contract ID: tc-0123456789abcdef\n\
+             Handoff source: existing-card\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -71,18 +111,60 @@ fn valid_card_fields() -> String {
              目标文件夹路径：\n- .\n\
              相关路径：\n- .\n\
              本次任务相关文件：\n- .\n\
-             目标：验证任务卡校验器能正确识别合法输入\n\
+             目标：\n- G-01: 验证任务卡校验器能正确识别合法输入\n\
+             验收标准：\n- AC-01 -> G-01: 校验器接受合法输入\n\
              非目标：不修改任何文件\n\
              验证：\ncargo test --workspace\n\
-             Verification gate:\n- commands: cargo test --workspace\n\
+             Verification gate:\n- commands:\n  - V-01 -> AC-01: cargo test --workspace\n- expected evidence:\n  - EV-01 -> AC-01: test pass\n- stop condition:\n  - 失败时停止\n\
              交付：\n返回测试通过结果\n",
     )
+}
+
+#[test]
+fn canonical_template_has_no_default_skill_tag() {
+    let template = include_str!("../../../protocol/task-card-template.md");
+    assert!(
+        !template.contains("\n[skill: superpowers]\n"),
+        "the canonical card must not wake Superpowers by default"
+    );
+    assert!(!template.contains("必须加载 `superpowers` 父技能"));
+    assert!(template.contains("技能标记是可选的末尾元数据"));
+}
+
+#[test]
+fn closure_contract_rejects_duplicate_goal_ids() {
+    let input = valid_card_fields().replace(
+        "- G-01: 验证任务卡校验器能正确识别合法输入",
+        "- G-01: 验证任务卡校验器能正确识别合法输入\n- G-01: 重复目标",
+    );
+    let errors = validate(&input);
+    assert!(
+        errors.iter().any(
+            |error| error.contains(error_code::CLOSURE_ID_INVALID) && error.contains("重复 ID")
+        ),
+        "duplicate stable IDs must fail closed: {errors:?}"
+    );
+}
+
+#[test]
+fn closure_contract_rejects_dangling_acceptance_mapping() {
+    let input = valid_card_fields().replace("AC-01 -> G-01", "AC-01 -> G-99");
+    let errors = validate(&input);
+    assert!(
+        errors.iter().any(
+            |error| error.contains(error_code::CLOSURE_MAPPING_INCOMPLETE)
+                && error.contains("G-99")
+        ),
+        "dangling AC-to-goal mapping must fail closed: {errors:?}"
+    );
 }
 
 /// Classic card with `Executor: Other` and `Runtime adapter: generic` (legal).
 fn other_generic_card() -> String {
     raw_body(
         "读取并遵守：\n- 本任务卡\n\
+             Contract ID: tc-fedcba9876543210\n\
+             Handoff source: existing-card\n\
              Executor: Other\n\
              Runtime adapter: generic\n\
              Execution surface: cli\n\
@@ -100,10 +182,11 @@ fn other_generic_card() -> String {
              目标文件夹路径：\n- .\n\
              相关路径：\n- .\n\
              本次任务相关文件：\n- .\n\
-             目标：由人工执行器处理\n\
+             目标：\n- G-01: 由人工执行器处理\n\
+             验收标准：\n- AC-01 -> G-01: 人工确认处理完成\n\
              非目标：不涉及自动化\n\
              验证：\n人工确认完成\n\
-             Verification gate:\n- commands: 人工确认\n\
+             Verification gate:\n- commands:\n  - V-01 -> AC-01: 人工确认\n- expected evidence:\n  - EV-01 -> AC-01: 人工签字结果\n- stop condition:\n  - 未确认时停止\n\
              交付：\n返回人工审核结果\n",
     )
 }
@@ -206,6 +289,8 @@ fn reject_unknown_or_inactive_skill_tags() {
         "tdd",
         "verification-before-completion",
         "test-driven-development",
+        "grill-me",
+        "writing-great-skills",
     ] {
         let mut input = valid_card_fields();
         input.push_str(&format!("[skill: {inactive}]\n"));
@@ -226,6 +311,7 @@ fn allow_current_skill_tags() {
     input.push_str("[skill: superpowers]\n");
     input.push_str("[skill: diagnosing-bugs]\n");
     input.push_str("[skill: codebase-design]\n");
+    input.push_str("[skill: grill-with-docs]\n");
     input.push_str("[skill: review]\n");
     let e = validate(&input);
     assert!(e.is_empty(), "current skill tags should pass: {e:?}");
@@ -325,6 +411,8 @@ fn classic_card_mentioning_marker_in_prose_passes() {
     // line), never on full-text contains.
     let input = raw_body(
         "读取并遵守：\n- 本任务卡\n\
+             Contract ID: tc-0123456789abcdef\n\
+             Handoff source: existing-card\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -340,10 +428,11 @@ fn classic_card_mentioning_marker_in_prose_passes() {
              目标文件夹路径：\n- .\n\
              相关路径：\n- .\n\
              本次任务相关文件：\n- .\n\
-             目标：让 AGENT_SUITE_COMPACT_TASK_CARD_V1 不再是合法结构判别符\n\
+             目标：\n- G-01: 让 AGENT_SUITE_COMPACT_TASK_CARD_V1 不再是合法结构判别符\n\
+             验收标准：\n- AC-01 -> G-01: 合法经典任务卡正文可提及 compact 标记\n\
              非目标：不引入第三种格式\n\
              验证：\ncargo test\n\
-             Verification gate:\n- commands: cargo test\n\
+             Verification gate:\n- commands:\n  - V-01 -> AC-01: cargo test\n- expected evidence:\n  - EV-01 -> AC-01: regression test pass\n- stop condition:\n  - 测试失败时停止\n\
              交付：\n返回结果\n",
     );
     let e = validate(&input);
@@ -725,8 +814,6 @@ fn reject_invalid_permission_mode() {
     );
 }
 
-// ── Phase 3: field-combination checks ──────────────────────
-
 #[test]
 fn reject_unsupported_permission_modes() {
     let unsupported_mode = "unsupported-permission-mode";
@@ -755,6 +842,8 @@ fn reject_unsupported_permission_modes() {
         "unsupported Permission mode `{unsupported_mode}` must be rejected: {errors:?}"
     );
 }
+
+// ── Phase 3: field-combination checks ──────────────────────
 
 #[test]
 fn reject_executor_adapter_mismatch() {
@@ -819,8 +908,8 @@ fn reject_other_with_claude_code_adapter() {
 fn accept_heavy_with_execute_and_verify() {
     // Decoupling: Heavy + execute-and-verify is allowed. Task LEVEL is a
     // risk/review tier, not the execution authority, and does not add a
-    // plan-first round. With an independent Review gate declared, validation
-    // must raise neither
+    // plan-first round. With an independent Review
+    // gate declared, validation must raise neither
     // FIELD_COMBINATION_MISMATCH nor HEAVY_EXECUTABLE_MISSING_REVIEW_GATE.
     let input = card_body(
         "路径：\n- .\n\
@@ -987,7 +1076,7 @@ fn accept_heavy_executable_self_check_then_independent_review() {
 fn light_task_with_protected_path_modification_fails() {
     // Light task mentioning protected path + modification keyword
     let input = card_body(
-        "路径：\n- /Volumes/Projects/example-private-suite\n\
+        "路径：\n- /Volumes/Projects/example-private\n\
              Executor: Codex\n\
              Runtime adapter: codex-local\n\
              Execution surface: local-workspace\n\
@@ -1018,10 +1107,10 @@ fn light_task_with_protected_path_modification_fails() {
 #[test]
 fn medium_task_with_protected_path_modification_not_blocked() {
     // Medium + execute-and-verify on protected path: allowed (only Light blocked)
-    // But the protected path check only fires when Light OR plan-only.
+    // The protected path check only fires when Light OR plan-only.
     // Medium + execute-and-verify = OK.
     let input = card_body(
-        "路径：\n- /Volumes/Projects/example-private-suite\n\
+        "路径：\n- /Volumes/Projects/example-private\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -1054,18 +1143,18 @@ fn medium_task_with_protected_path_modification_not_blocked() {
 #[test]
 fn reading_context_capsule_and_declaring_no_private_edits_passes() {
     let input = card_body(
-            "路径：\n- /Volumes/Projects/example-private-suite-rust\n\
+            "路径：\n- /Volumes/Projects/example-private-rust\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
              Permission mode: execute-and-verify\n\
              Parallelism: none\n\
              任务级别：Medium\n\
-             读取：\n- ~/.agents/memory/projects/example-private-suite/context-capsule.md\n\
+             读取：\n- /Users/example/.agents/memory/projects/example-private/context-capsule.md\n\
              任务：升级 Rust 实验舱 task-card-validator 规则能力\n\
              目标：在 Rust 实验舱内增加字段值、组合、质量和风险检查\n\
-             非目标：不修改 /Volumes/Projects/example-private-suite，不修改 /Volumes/Projects/example-stable-suite，不提交，不推送\n\
-             关键路径：\n- /Volumes/Projects/example-private-suite-rust/crates/task-card-validator/src/lib.rs\n\
+             非目标：不修改 /Volumes/Projects/example-private，不修改 /Volumes/Projects/example-stable，不提交，不推送\n\
+             关键路径：\n- /Volumes/Projects/example-private-rust/crates/task-card-validator/src/lib.rs\n\
              验证：\ncargo fmt --check\ncargo test\n\
              停止条件：\n如果测试失败或发现需要修改 private/stable，停止并报告\n\
              交付：\n返回验证结果和修改摘要\n",
@@ -1278,7 +1367,7 @@ fn plan_only_with_no_modify_non_goal_passes() {
     let e = validate(&input);
     assert!(
         e.is_empty(),
-        "plan-only task with no-modify non-goal should pass: {:?}",
+        "plan-only inspection with no-modify non-goal should pass: {:?}",
         e
     );
 }
@@ -1404,7 +1493,7 @@ fn read_input_file_not_found() {
 fn ultracode_with_none_authority_and_normal_task_passes() {
     // Execution effort: ultracode enhances thinking, doesn't grant authority.
     let input = card_body(
-        "路径：\n- /Volumes/Projects/example-private-suite-rust\n\
+        "路径：\n- /Volumes/Projects/example-private-rust\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -1558,7 +1647,7 @@ fn allowed_authority_with_plan_only_fails() {
 #[test]
 fn allowed_authority_with_protected_boundary_fails() {
     let input = card_body(
-        "路径：\n- /Volumes/Projects/example-private-suite\n\
+        "路径：\n- /Volumes/Projects/example-private\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -1571,7 +1660,7 @@ fn allowed_authority_with_protected_boundary_fails() {
              任务：修改 AGENTS.md 文件内容\n\
              目标：同步协议文件到多个位置\n\
              非目标：不修改 rust 实验舱\n\
-             关键路径：\n- /Volumes/Projects/example-private-suite\n\
+             关键路径：\n- /Volumes/Projects/example-private\n\
              验证：\ncargo test\n\
              停止条件：\ntest 失败时停止\n\
              交付：\n返回结果\n",
@@ -1712,7 +1801,7 @@ fn private_rust_path_not_confused_with_private() {
     // example-private-suite-rust must not be false-positived
     // as example-private-suite
     let input = card_body(
-        "路径：\n- /Volumes/Projects/example-private-suite-rust\n\
+        "路径：\n- /Volumes/Projects/example-private-rust\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -1754,7 +1843,7 @@ fn private_rust_path_not_confused_with_private() {
 fn plan_only_ultracode_observe_task_passes() {
     // ultra code + plan-only observe task: thinking intensity ≠ authority
     let input = card_body(
-        "路径：\n- /Volumes/Projects/example-private-suite-rust\n\
+        "路径：\n- /Volumes/Projects/example-private-rust\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -2102,7 +2191,7 @@ fn workflow_sync_check_crate_reference_does_not_require_workflow_authority() {
 #[test]
 fn plan_only_review_card_with_crate_paths_and_patch_stop_language_passes() {
     let input = card_body(
-            "路径：\n- /Volumes/Projects/example-private-suite\n\
+            "路径：\n- /Volumes/Projects/example-private\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -2348,7 +2437,7 @@ fn parallelism_subagent_with_workflow_within_card_passes() {
 fn ultracode_none_authority_normal_rust_task_passes() {
     // Execution effort: ultracode + Workflow authority: none + normal task → passes
     let input = card_body(
-        "路径：\n- /Volumes/Projects/example-private-suite-rust\n\
+        "路径：\n- /Volumes/Projects/example-private-rust\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -2379,7 +2468,7 @@ fn private_rust_path_not_false_positive_v3() {
     // example-private-suite-rust must never be confused with
     // example-private-suite
     let input = card_body(
-        "路径：\n- /Volumes/Projects/example-private-suite-rust\n\
+        "路径：\n- /Volumes/Projects/example-private-rust\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -2409,7 +2498,7 @@ fn private_rust_path_not_false_positive_v3() {
 fn read_context_capsule_no_modify_passes_v3() {
     // Reading context-capsule + non-goal no-touch private/stable → passes
     let input = card_body(
-            "路径：\n- /Volumes/Projects/example-private-suite-rust\n\
+            "路径：\n- /Volumes/Projects/example-private-rust\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -2418,10 +2507,10 @@ fn read_context_capsule_no_modify_passes_v3() {
              Execution effort: normal\n\
              Workflow authority: none\n\
              任务级别：Medium\n\
-             读取：\n- ~/.agents/memory/projects/example-private-suite/context-capsule.md\n\
+             读取：\n- /Users/example/.agents/memory/projects/example-private/context-capsule.md\n\
              任务：升级 Rust 实验舱校验器规则\n\
              目标：增加字段组合和保护边界检查\n\
-             非目标：不修改 /Volumes/Projects/example-private-suite，不修改 /Volumes/Projects/example-stable-suite\n\
+             非目标：不修改 /Volumes/Projects/example-private，不修改 /Volumes/Projects/example-stable\n\
              关键路径：\n- crates/\n\
              验证：\ncargo test --workspace\n\
              停止条件：\ntest 失败时停止\n\
@@ -2549,7 +2638,7 @@ fn workflow_none_with_delegation_keyword_fails() {
 fn allowed_with_stable_path_and_uppercase_update_fails() {
     // Case-insensitive bypass: "Update" (uppercase) + stable path must fail
     let input = card_body(
-        "路径：\n- /Volumes/Projects/example-stable-suite\n\
+        "路径：\n- /Volumes/Projects/example-stable\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -2562,7 +2651,7 @@ fn allowed_with_stable_path_and_uppercase_update_fails() {
              任务：Update stable config\n\
              目标：Change stable bootstrap settings\n\
              非目标：不修改 rust 实验舱\n\
-             关键路径：\n- /Volumes/Projects/example-stable-suite\n\
+             关键路径：\n- /Volumes/Projects/example-stable\n\
              验证：\ncargo test\n\
              停止条件：\ntest 失败时停止\n\
              交付：\n返回结果\n",
@@ -2714,7 +2803,7 @@ fn plan_only_with_positive_modify_still_fails() {
 fn uppercase_update_with_stable_path_and_allowed_fails_direct() {
     // "Update" (uppercase) with stable path + allowed → fail (protected boundary)
     let input = card_body(
-        "路径：\n- /Volumes/Projects/example-stable-suite\n\
+        "路径：\n- /Volumes/Projects/example-stable\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -2727,7 +2816,7 @@ fn uppercase_update_with_stable_path_and_allowed_fails_direct() {
              任务：Update stable configuration files\n\
              目标：Change settings in stable boundary\n\
              非目标：不修改 rust 实验舱\n\
-             关键路径：\n- /Volumes/Projects/example-stable-suite\n\
+             关键路径：\n- /Volumes/Projects/example-stable\n\
              验证：\ncargo test\n\
              停止条件：\ntest 失败时停止\n\
              交付：\n返回结果\n",
@@ -2769,7 +2858,7 @@ fn mod_keywords_still_detect_positive_requests() {
 fn plan_only_with_compound_chinese_negation_passes() {
     // plan-only + 不执行修改 + 需要修改文件时停止 → no false positive
     let input = card_body(
-        "路径：\n- /Volumes/Projects/example-private-suite-rust\n\
+        "路径：\n- /Volumes/Projects/example-private-rust\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -2959,7 +3048,7 @@ fn positive_modify_validator_still_fails_after_negation_fix() {
 #[test]
 fn plan_only_with_developer_stop_and_confirmation_phrases_passes() {
     let input = card_body(
-        "路径：\n- /Volumes/Projects/example-private-suite-rust\n\
+        "路径：\n- /Volumes/Projects/example-private-rust\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -2988,7 +3077,7 @@ fn plan_only_with_developer_stop_and_confirmation_phrases_passes() {
 #[test]
 fn plan_only_with_read_only_audit_phrases_passes() {
     let input = card_body(
-        "路径：\n- /Volumes/Projects/example-private-suite-rust\n\
+        "路径：\n- /Volumes/Projects/example-private-rust\n\
              Executor: Codex\n\
              Runtime adapter: codex-local\n\
              Execution surface: local-workspace\n\
@@ -3017,7 +3106,7 @@ fn plan_only_with_read_only_audit_phrases_passes() {
 #[test]
 fn positive_modify_after_confirmation_language_still_fails() {
     let input = card_body(
-        "路径：\n- /Volumes/Projects/example-private-suite-rust\n\
+        "路径：\n- /Volumes/Projects/example-private-rust\n\
              Executor: Codex\n\
              Runtime adapter: codex-local\n\
              Execution surface: local-workspace\n\
@@ -3088,6 +3177,8 @@ fn reject_more_weak_goal_placeholders() {
 fn full_card_verification_gate_satisfies_verification_quality() {
     let input = "## 任务卡\n\n\
 读取并遵守：\n- AGENTS.md\n- docs/agent-workflow/runtime-adapters.md\n\n\
+Contract ID: tc-0123456789abcdef\n\n\
+Handoff source: existing-card\n\n\
 Executor: Claude Code\n\n\
 Runtime adapter: claude-code\n\n\
 Execution surface: cli\n\n\
@@ -3105,9 +3196,10 @@ Review gate:\n- 按协议执行\n\n\
 目标文件夹路径：\n- .\n\n\
 相关路径：\n- docs/agent-workflow/runtime-adapters.md\n\n\
 本次任务相关文件：\n- docs/agent-workflow/agent-task-protocol.md\n\n\
-目标：\n1. 增加 dry-run 摘要并保持默认行为不变。\n\n\
+目标：\n- G-01: 增加 dry-run 摘要并保持默认行为不变\n\n\
+验收标准：\n- AC-01 -> G-01: dry-run 摘要存在且默认行为保持不变\n\n\
 非目标：\n- 不安装新依赖。\n\n\
-验证：\nVerification gate:\n- commands:\n  - bash -n scripts/example-tool.sh\n- expected evidence:\n  - shell syntax check 通过\n- stop condition:\n  - 风险高于 Medium 时停止\n\n\
+验证：\nVerification gate:\n- commands:\n  - V-01 -> AC-01: bash -n scripts/example-tool.sh\n- expected evidence:\n  - EV-01 -> AC-01: shell syntax check 通过\n- stop condition:\n  - 风险高于 Medium 时停止\n\n\
 交付：\n按协议输出 delivery report。\n";
     let e = validate(input);
     assert!(
@@ -3120,7 +3212,7 @@ Review gate:\n- 按协议执行\n\n\
 #[test]
 fn agent_workflow_doc_paths_do_not_request_workflow_authority() {
     let input = card_body(
-        "路径：\n- /Volumes/Projects/example-private-suite-rust\n\
+        "路径：\n- /Volumes/Projects/example-private-rust\n\
              Executor: Codex\n\
              Runtime adapter: codex-local\n\
              Execution surface: local-workspace\n\
@@ -3150,6 +3242,8 @@ fn agent_workflow_doc_paths_do_not_request_workflow_authority() {
 fn heavy_plan_language_does_not_count_as_direct_modification() {
     let input = "## 任务卡\n\n\
 读取并遵守：\n- AGENTS.md\n\n\
+Contract ID: tc-0123456789abcdef\n\n\
+Handoff source: host-plan-mode\n\n\
 Executor: Cursor\n\n\
 Runtime adapter: cursor\n\n\
 Execution surface: ide\n\n\
@@ -3167,9 +3261,10 @@ Review gate:\n- Heavy review\n\n\
 目标文件夹路径：\n- .\n\n\
 相关路径：\n- docs/agent-workflow/runtime-adapters.md\n\n\
 本次任务相关文件：\n- docs/agent-workflow/task-routing.md\n\n\
-目标：\n1. 说明当前管线结构和风险点。\n2. 给出 root cause / design / implementation plan / verification plan。\n3. 明确哪些文件或数据必须保持只读。\n\n\
+目标：\n- G-01: 说明管线结构、风险、变更规划、验证规划与只读边界\n\n\
+验收标准：\n- AC-01 -> G-01: 计划覆盖结构、风险、变更步骤、验证步骤与只读边界\n\n\
 非目标：\n- 不改代码。\n- 不创建提交。\n\n\
-验证：\nVerification gate:\n- commands:\n  - git status --short\n- expected evidence:\n  - implementation plan and verification plan\n- stop condition:\n  - 任何 mutation 需求，停止并返回用户确认\n\n\
+验证：\nVerification gate:\n- commands:\n  - V-01 -> AC-01: git status --short\n- expected evidence:\n  - EV-01 -> AC-01: implementation plan and verification plan\n- stop condition:\n  - 任何 mutation 需求，停止并返回用户确认\n\n\
 交付：\n按协议输出 delivery report，等待用户审阅。\n";
     let e = validate(input);
     assert!(
@@ -3249,7 +3344,7 @@ fn ultracode_authority_abuse_english_detected() {
 fn ultracode_normal_thinking_no_abuse_passes() {
     // M1: ultracode as pure thinking intensity passes (regression)
     let input = card_body(
-        "路径：\n- /Volumes/Projects/example-private-suite-rust\n\
+        "路径：\n- /Volumes/Projects/example-private-rust\n\
              Executor: Claude Code\n\
              Runtime adapter: claude-code\n\
              Execution surface: cli\n\
@@ -3376,6 +3471,8 @@ fn heavy_plan_only_full_card_with_verification_gate_handoff_passes() {
     // with review handoff must PASS.
     let input = raw_body(
         "读取并遵守：\n- AGENTS.md\n\
+             Contract ID: tc-0123456789abcdef\n\
+             Handoff source: host-plan-mode\n\
              Executor: Cursor\n\
              Runtime adapter: cursor\n\
              Execution surface: ide\n\
@@ -3393,12 +3490,13 @@ fn heavy_plan_only_full_card_with_verification_gate_handoff_passes() {
              目标文件夹路径：\n- .\n\
              相关路径：\n- docs/\n\
              本次任务相关文件：\n- docs/agent-workflow/task-routing.md\n\
-             目标：\n1. 说明当前管线结构和风险点。\n2. 给出 design / implementation plan。\n\
+             目标：\n- G-01: 说明当前管线结构、风险点与实施计划\n\
+             验收标准：\n- AC-01 -> G-01: 计划覆盖当前结构、风险与实施步骤\n\
              非目标：\n- 不改代码。\n- 不创建提交。\n\
              验证：\n\
              Verification gate:\n\
-             - commands:\n   - git status --short\n\
-             - expected evidence:\n   - implementation plan\n\
+             - commands:\n   - V-01 -> AC-01: git status --short\n\
+             - expected evidence:\n   - EV-01 -> AC-01: implementation plan\n\
              - stop condition:\n   - 方案完成后返回用户审阅，等待明确批准\n\
              交付：\n按协议输出 delivery report。\n",
     );

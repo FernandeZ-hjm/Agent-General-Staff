@@ -80,6 +80,8 @@ fn architecture_card() -> SkillCard {
         display_name: "Superpowers".to_string(),
         summary: "Engineering workflow playbooks".to_string(),
         intent_tags: vec!["system-architecture".to_string()],
+        positive_examples: vec!["设计一个跨模块架构".to_string()],
+        negative_examples: vec!["解释现有模块".to_string()],
         entrypoints: vec!["brainstorming".to_string()],
         source_kind: SkillSourceKind::Suite,
         governance: GovernanceState::Active,
@@ -147,6 +149,9 @@ fn snapshot() -> CapabilitySnapshot {
         "sha256:overlay-a",
         "sha256:runtime-a",
         vec![architecture_card()],
+        "https://example.com/third-party-capabilities.yaml",
+        "sha256:third-party",
+        Vec::new(),
         vec![architecture_skill()],
     )
     .unwrap()

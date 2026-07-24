@@ -1,57 +1,53 @@
-## AGS Delivery Report
+## AGS Delivery Report Closure
 
-You have completed task execution. Produce the final delivery report as one
-copyable Markdown fenced block. Use an outer four-backtick `markdown` fence and
-a matching closing four-backtick fence. Do not add prose outside the block.
+Produce the final delivery report as one copyable Markdown fenced block. Use an
+outer four-backtick `markdown` fence and add no prose outside it.
 
 ````markdown
 # 任务交付报告
 
-## 任务状态
-完成 / 部分完成 / 未完成
+Closure schema: 1.0
+Contract ID: <exact task-card Contract ID>
+task-card-hash: <exact LaunchPlan task_card_hash>
+receipt-id: receipt-<first 12 hash characters>
 
-一句话结论：
+状态: completed | partial | blocked
+review-gate: pending-review | passed | n/a
 
-## 改动内容
-修改文件：
-- `path`: 改动摘要
+一句话结论：<summary>
 
-新增文件 / 输出物：
-- `path`: 用途
+## 目标闭环
+- G-01: done | partial | skipped — <result or reason>
 
-删除文件：
-- 无 / `path`: 原因
+## 验收闭环
+- AC-01: pass | fail | not-run — evidence: <command result or artifact>
 
-## 验证结果
-已运行：
-- `command` → 结果
+## 验证闭环
+- V-01: pass | fail | not-run — <exact check and result>
 
-未验证内容：
-- 无 / 说明原因
+## 改动与边界
+- changed: <file and summary>
+- untouched: <non-goal or protected boundary>
+- subtasks: used: <how> | not-used: <reason>
 
-## 风险提示
-- 风险项
+## 未闭环项
+- none
 
-## 下一步建议
-- 建议项
+## 风险与下一步
+- 风险：无 | <risk>
+- 下一步：无 | <action>
+
 ````
 
 ### Requirements:
 
-- The foreground output must be exactly one Markdown code block, so users can
-  copy the whole report into an `.md` file or chat message in one action.
-- Task status: "部分完成 / 等待 Codex review" or "部分完成 / 等待人工 adversarial review"
-  if review gate has not passed. Only write "完成" when both verification AND review gate pass.
-- One-line conclusion: the single most important takeaway.
-- Changed files: every modified, created, and deleted file with a one-line summary.
-- Verification: exact commands run and their results. If something was not verified, say why.
-- Risks: residual risks, unverified assumptions, known limitations.
-- Next steps: what the user or another agent should do next.
-
-### Before delivering:
-
-- Did you run `git status --short`?
-- Did you run the narrowest relevant verification?
-- Did you check the review gate status?
-- If Medium/Heavy: is review gate complete? If not, mark "部分完成".
-- Are project facts, evidence, and reusable methods kept in the correct AGS records?
+- Preserve every `G-*`, `AC-*`, and `V-*` from the task card exactly once.
+- `completed` requires all goals done, acceptance criteria and verification
+  items passed, review closed, and `未闭环项` equal to `none`.
+- `partial` or `blocked` must list the exact set of non-closed `G-*`, `AC-*`,
+  `V-*` IDs (plus `review-gate` when pending), each with a reason; missing,
+  extra, duplicate, or free-form rows fail closure.
+- Save the report, then run
+  `ags task close <task-card> <delivery-report> --format json`.
+- Do not claim completion or archive the receipt unless closure validation
+  returns `valid: true`.

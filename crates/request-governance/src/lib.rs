@@ -73,6 +73,7 @@ pub enum CliCapabilityId {
     PolicyResolve,
     ProjectVerify,
     SkillTagsVerify,
+    SkillAdopt,
     ReceiptVerify,
 }
 
@@ -82,12 +83,33 @@ impl CliCapabilityId {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskCardHandoffSource {
+    #[default]
+    ExplicitHandoff,
+    HostPlanMode,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TypedCliInput {
-    ConfirmedHandoffContract { content: String },
-    TaskCard { content: String },
-    Receipt { content: String },
+    ConfirmedHandoffContract {
+        content: String,
+        #[serde(default)]
+        handoff_source: TaskCardHandoffSource,
+    },
+    TaskCard {
+        content: String,
+    },
+    Receipt {
+        content: String,
+    },
+    SkillAdopt {
+        source: String,
+        host: String,
+        apply: bool,
+    },
     Empty,
 }
 
@@ -328,6 +350,10 @@ pub fn validate_machine_input(
             TypedCliInput::TaskCard { .. }
         ) | (CliCapabilityId::ProjectVerify, TypedCliInput::Empty)
             | (
+                CliCapabilityId::SkillAdopt,
+                TypedCliInput::SkillAdopt { .. }
+            )
+            | (
                 CliCapabilityId::ReceiptVerify,
                 TypedCliInput::Receipt { .. }
             )
@@ -341,10 +367,10 @@ pub fn validate_machine_input(
     }
 
     let content = match input {
-        TypedCliInput::ConfirmedHandoffContract { content }
+        TypedCliInput::ConfirmedHandoffContract { content, .. }
         | TypedCliInput::TaskCard { content }
         | TypedCliInput::Receipt { content } => Some(content),
-        TypedCliInput::Empty => None,
+        TypedCliInput::SkillAdopt { .. } | TypedCliInput::Empty => None,
     };
     if content.is_some_and(|value| value.trim().is_empty()) {
         return Err(ProposalError::new(
@@ -352,6 +378,29 @@ pub fn validate_machine_input(
             "targets.input.content",
             "typed machine input content must not be empty",
         ));
+    }
+    if let TypedCliInput::SkillAdopt { source, host, .. } = input {
+        if source.is_empty()
+            || source.len() > 4096
+            || source.trim() != source
+            || source.chars().any(char::is_control)
+        {
+            return Err(ProposalError::new(
+                "machine_skill_source_invalid",
+                "targets.input.source",
+                "skill adoption source must be 1..4096 characters with no surrounding whitespace or control characters",
+            ));
+        }
+        if !matches!(
+            host.as_str(),
+            "codex" | "claude-code" | "omp" | "codebuddy-code" | "cursor" | "all"
+        ) {
+            return Err(ProposalError::new(
+                "machine_skill_host_invalid",
+                "targets.input.host",
+                "skill adoption host must be codex, claude-code, omp, codebuddy-code, cursor, or all",
+            ));
+        }
     }
     Ok(())
 }
@@ -461,6 +510,21 @@ pub fn validate_proposal(proposal: &HostRouteProposal) -> Result<(), Vec<Proposa
                         "handoff_authority_required",
                         "execution_authority",
                         "task compilation/preparation requires task_card_handoff authority",
+                    ));
+                }
+                if matches!(
+                    (&machine.capability, &machine.input),
+                    (
+                        CliCapabilityId::SkillAdopt,
+                        TypedCliInput::SkillAdopt { apply: true, .. }
+                    )
+                ) && (proposal.phase != ProposalPhase::Execution
+                    || proposal.solution_state != SolutionState::Confirmed)
+                {
+                    errors.push(ProposalError::new(
+                        "skill_adopt_apply_authority_required",
+                        "solution_state",
+                        "skill adoption apply requires execution phase and a confirmed solution",
                     ));
                 }
             }
@@ -739,6 +803,121 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error.code, "machine_input_empty");
+    }
+
+    #[test]
+    fn skill_adopt_requires_its_dedicated_closed_input() {
+        let input = TypedCliInput::SkillAdopt {
+            source: "https://github.com/acme/skills/tree/main/apple-design".to_string(),
+            host: "all".to_string(),
+            apply: false,
+        };
+        assert!(validate_machine_input(CliCapabilityId::SkillAdopt, &input).is_ok());
+        assert!(validate_machine_input(
+            CliCapabilityId::SkillAdopt,
+            &TypedCliInput::SkillAdopt {
+                source: "./apple-design".to_string(),
+                host: "omp".to_string(),
+                apply: false,
+            }
+        )
+        .is_ok());
+        assert_eq!(
+            validate_machine_input(CliCapabilityId::ProjectVerify, &input)
+                .unwrap_err()
+                .code,
+            "machine_input_kind_mismatch"
+        );
+        assert_eq!(
+            validate_machine_input(CliCapabilityId::SkillAdopt, &TypedCliInput::Empty)
+                .unwrap_err()
+                .code,
+            "machine_input_kind_mismatch"
+        );
+    }
+
+    #[test]
+    fn skill_adopt_input_rejects_ambiguous_sources_and_unknown_hosts() {
+        let error = validate_machine_input(
+            CliCapabilityId::SkillAdopt,
+            &TypedCliInput::SkillAdopt {
+                source: " ./apple-design".to_string(),
+                host: "codex".to_string(),
+                apply: true,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "machine_skill_source_invalid");
+
+        let error = validate_machine_input(
+            CliCapabilityId::SkillAdopt,
+            &TypedCliInput::SkillAdopt {
+                source: "./apple-design".to_string(),
+                host: "unknown-host".to_string(),
+                apply: true,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "machine_skill_host_invalid");
+    }
+
+    #[test]
+    fn mutating_skill_adopt_requires_confirmed_solution() {
+        let target = ProposalTarget::MachineCli(MachineCliTarget {
+            capability: CliCapabilityId::SkillAdopt,
+            input: TypedCliInput::SkillAdopt {
+                source: "./apple-design".to_string(),
+                host: "codex".to_string(),
+                apply: true,
+            },
+        });
+        for solution_state in [SolutionState::Open, SolutionState::NotRequired] {
+            let proposal = HostRouteProposal {
+                schema_version: HOST_ROUTE_PROPOSAL_SCHEMA_VERSION.to_string(),
+                request_fingerprint: "sha256:req".to_string(),
+                phase: ProposalPhase::Execution,
+                solution_state,
+                execution_authority: ExecutionAuthority::None,
+                scope_hash: "sha256:scope".to_string(),
+                targets: vec![target.clone()],
+            };
+            assert!(validate_proposal(&proposal)
+                .unwrap_err()
+                .iter()
+                .any(|error| { error.code == "skill_adopt_apply_authority_required" }));
+        }
+
+        let proposal = HostRouteProposal {
+            schema_version: HOST_ROUTE_PROPOSAL_SCHEMA_VERSION.to_string(),
+            request_fingerprint: "sha256:req".to_string(),
+            phase: ProposalPhase::Execution,
+            solution_state: SolutionState::Confirmed,
+            execution_authority: ExecutionAuthority::None,
+            scope_hash: "sha256:scope".to_string(),
+            targets: vec![target],
+        };
+        assert!(validate_proposal(&proposal).is_ok());
+    }
+
+    #[test]
+    fn dry_run_skill_adopt_does_not_require_mutation_authority() {
+        let proposal = HostRouteProposal {
+            schema_version: HOST_ROUTE_PROPOSAL_SCHEMA_VERSION.to_string(),
+            request_fingerprint: "sha256:req".to_string(),
+            phase: ProposalPhase::Execution,
+            solution_state: SolutionState::Open,
+            execution_authority: ExecutionAuthority::None,
+            scope_hash: "sha256:scope".to_string(),
+            targets: vec![ProposalTarget::MachineCli(MachineCliTarget {
+                capability: CliCapabilityId::SkillAdopt,
+                input: TypedCliInput::SkillAdopt {
+                    source: "./apple-design".to_string(),
+                    host: "codex".to_string(),
+                    apply: false,
+                },
+            })],
+        };
+        assert!(validate_proposal(&proposal).is_ok());
     }
 
     #[test]

@@ -10,7 +10,7 @@ An explicit same-session modification instruction such as `开改`, `按这个�
 Independent protected-path, release, external-write, credential, migration,
 destructive-operation, review, and verification boundaries still apply.
 
-### Task-card handoff
+### Explicit task-card handoff
 
 Generate a task card only after an explicit handoff instruction such as:
 
@@ -27,6 +27,25 @@ provided as a typed `HandoffContract` with explicit `task_level`. Request govern
 The compiler gate protects handoff artifact generation. It is not a prerequisite
 for authorized direct local execution.
 
+### Host Plan-mode finalization
+
+When the host is in Plan mode, do not create a separate final-plan document.
+Keep exploring and resolving decisions without mutation until the contract is
+decision-complete. Then:
+
+1. Compile the final artifact with
+   `ags task compile --host-plan-mode-final --confirmed-handoff-contract`.
+2. The artifact itself is the canonical `## 任务卡`.
+3. If the host requires `<proposed_plan>`, use it only as the UI envelope around
+   the exact card.
+4. The Plan UI keeps the exact card pending activation.
+5. Selecting Execute switches the host to Default/execution mode and dispatches
+   the unchanged card plus `task_card_hash`; the execution Agent validates it
+   first and never regenerates it.
+
+`--host-plan-mode-final` replaces the separate task-card-request prompt. It does
+not replace the confirmed contract gate and does not itself authorize mutation.
+
 ### Existing task cards
 
 If the first non-empty line is `## 任务卡`, validate it as an existing handoff
@@ -36,7 +55,8 @@ cards fail closed.
 ### Handoff sequence
 
 1. Confirm solution/diagnosis, scope, verification, and handoff boundaries.
-2. Receive an explicit task-card/handoff instruction.
+2. Receive an explicit task-card/handoff instruction, or reach the final
+   decision-complete host Plan-mode artifact.
 3. Pass both structured gates.
 4. Classify Light/Medium/Heavy from the confirmed contract.
 5. Generate the canonical task card.

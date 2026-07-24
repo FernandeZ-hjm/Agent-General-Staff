@@ -621,7 +621,7 @@ fn read_routing_metadata(repo_root: &Path) -> RoutingRead {
         for section in member_sections {
             if let Some(seq) = doc.get(*section).and_then(|v| v.as_sequence()) {
                 for item in seq {
-                    collect_routing(item, &mut read);
+                    collect_routing(item, &mut read, *section == "skills");
                 }
             }
         }
@@ -639,7 +639,7 @@ fn read_routing_metadata(repo_root: &Path) -> RoutingRead {
 /// without `routing:` is skipped (no synthesis). A malformed `routing:` block is
 /// kept OUT of the map (fail-closed: never routed) but its name is recorded in
 /// `parse_failures` rather than silently swallowed, so schema drift is visible.
-fn collect_routing(item: &serde_yaml::Value, read: &mut RoutingRead) {
+fn collect_routing(item: &serde_yaml::Value, read: &mut RoutingRead, may_require_skill_body: bool) {
     let Some(name) = item.get("name").and_then(|v| v.as_str()) else {
         return;
     };
@@ -671,7 +671,8 @@ fn collect_routing(item: &serde_yaml::Value, read: &mut RoutingRead) {
     };
     match serde_yaml::from_value::<RoutingMetadata>(routing_val.clone()) {
         Ok(meta) => {
-            if item.get("profile").and_then(|v| v.as_str()) == Some("required")
+            if may_require_skill_body
+                && item.get("profile").and_then(|v| v.as_str()) == Some("required")
                 && meta.route_state == RouteState::Routable
                 && meta.parent.is_none()
                 && is_safe_path_component(name)
@@ -5555,7 +5556,7 @@ mod tests {
         write_file(
             &repo.join("manifests/mcp-registry.yaml"),
             "mcps:\n\
-             \x20 - name: context7\n    routing:\n      intent_tags: [docs-lookup]\n      cost_class: network\n      route_priority: 30\n",
+             \x20 - name: context7\n    profile: required\n    routing:\n      route_state: routable\n      intent_tags: [docs-lookup]\n      cost_class: network\n      route_priority: 30\n",
         );
 
         let read = read_routing_metadata(&repo);
@@ -5576,6 +5577,12 @@ mod tests {
         let c7 = map.get("context7").expect("context7 routing present");
         assert_eq!(c7.intent_tags, vec!["docs-lookup".to_string()]);
         assert_eq!(c7.cost_class, CostClass::Network);
+        assert!(
+            read.required_skill_parents
+                .iter()
+                .all(|skill| skill.name != "context7"),
+            "a required MCP registry entry must not synthesize a required skill body"
+        );
 
         // No routing block → absent (single authority, no synthesis).
         assert!(map.get("no-routing-skill").is_none());

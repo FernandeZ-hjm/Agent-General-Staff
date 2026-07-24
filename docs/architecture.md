@@ -17,41 +17,46 @@ flowchart TD
     B --> B0{AGS MCP available?}
     B0 -->|Yes| B1[ags_preflight via AGS MCP]
     B0 -->|No| B1F[CLI fallback: ags session preflight]
-    B1 --> P[HostRouteProposal]
-    B1F --> P
+    B1 --> CAT[current-host capability catalog]
+    B1F --> CAT
+    CAT --> EXIST{Existing canonical task card?}
+    EXIST -->|Yes| J1[ags task validate — hard gate]
+    EXIST -->|No| H[Host owns conversation semantics<br/>and solution formation when needed]
+    H --> P[HostRouteProposal]
     P --> RD[ags_route_request<br/>read-only RouteResolution]
     RD -->|DirectResponse| DIRECT[Host responds]
     RD -->|SkillTarget| SR[Skill Resolver<br/>exact host-snapshot mapping]
     RD -->|MachineCliTarget| FIXED[DecisionLease<br/>explicit ags_apply_action]
     SR --> SKILL[Host loads selected skill]
-    FIXED --> J[Structured capability input]
-    RD -->|Task-card handoff| C[Solution formation if needed]
-    C --> E[Confirmed handoff contract]
-    E --> F{Explicit task-card request?}
-    F -->|Yes| I[Task Card Generation]
-    F -->|No| F_WAIT[Wait; do not compile]
-    I --> J[Gate Check]
-    J --> J1[ags task validate — hard gate]
+    FIXED --> APPLY[Consume server-held fixed action]
+    SKILL -. result returns to host .-> H
+    APPLY -. receipt returns to host .-> H
+    H --> E[Confirmed execution contract]
+    E --> F{Authorized path}
+    F -->|Same-session direct edit| EXEC[Host-native execution]
+    F -->|Explicit handoff request| I[Task Card Generation]
+    F -->|Plan-mode final artifact| I
+    I --> J1
     J1 -->|Pass| K[8. Policy Resolution]
-    J1 -->|Fail| J_FAIL[Fix task card]
-    J_FAIL --> I
+    J1 -->|Fail| J_FAIL[STOP: fix task card<br/>never regenerate from invalid card]
     K --> K1[ags policy resolve — soft resolution]
     K1 --> L{stop_before_launch?}
     L -->|Yes| L_STOP[STOP: fix task card or get approval]
     L -->|No| M[9. LaunchPlan]
-    M --> N[10. Host execution and verification]
-    N --> O[11. Receipt Generation]
-    O --> P[12. Task Memory Update]
-    P --> Q[Done]
+    M --> EXEC
+    EXEC --> N[10. Host verification]
+    N --> O[11. Delivery report + evidence]
+    O --> CLOSE[12. task close<br/>card hash + G/AC/V/EV]
+    CLOSE --> MEM[Receipt + Task Memory Update]
+    MEM --> Q[Done]
 
     style B fill:#e1f5fe
-    style C fill:#fff3e0
     style P fill:#7e57c2,color:#fff
     style E fill:#f3e5f5
-    style J fill:#ffcdd2
+    style J1 fill:#ffcdd2
     style K fill:#ffcdd2
     style M fill:#c8e6c9
-    style O fill:#b3e5fc
+    style CLOSE fill:#b3e5fc
 ```
 
 **Key gates:**
@@ -60,10 +65,10 @@ flowchart TD
 |---|---|---|
 | AGS MCP initialization gate | AGS scenarios before `ags_preflight` completes | Hard, with CLI fallback only if MCP is unavailable |
 | Request contract | DirectResponse is exclusive; otherwise at most one exact SkillTarget and one closed MachineCliTarget coexist | Hard |
-| Task-card instruction gate | Compilation without explicit request and confirmed handoff contract | Hard |
+| Task-card instruction gate | Compilation without either an explicit handoff request or a Plan-mode final artifact, plus a confirmed handoff contract | Hard |
 | Task-card validation | Execution of invalid task cards | Hard |
 | Policy resolution | Execution with wrong permission/parallelism | Soft (downgrades, never rejects) |
-| Verification gate | Delivery claims without evidence | Per task card |
+| Delivery closure | Delivery claims whose card hash or G/AC/V/EV identifier coverage does not match the canonical task card | Hard per task card |
 
 `ags_preflight` is the preferred kernel activation entry when AGS MCP is
 available. `ags session preflight` is the equivalent CLI fallback, not the
@@ -92,6 +97,8 @@ graph TD
     B --> C13[ags-mcp<br/>Host Initialization Adapter]
     B --> C14[request-governance<br/>HostRouteProposal / RouteResolution]
     B --> C15[skill-resolver<br/>Exact SkillTarget Mapping]
+    B --> C16[ags-onboarding<br/>Dynamic Capability Plans]
+    B --> C17[delivery-report-validator<br/>Exact Contract Closure]
 
     C2 --> C1
     C2 --> C8
@@ -104,6 +111,8 @@ graph TD
     C13 --> C6
     C13 --> C14
     C13 --> C15
+    C13 --> C16
+    C17 --> C1
 
     style A fill:#1565c0,color:#fff
     style B fill:#1976d2,color:#fff
@@ -133,6 +142,8 @@ graph TD
 | `ags-mcp` | Expose read-only AGS governance tools/resources/prompts over stdio MCP; requires `ags_preflight` first | MCP hosts: Codex, Claude Code, Cursor, WorkBuddy |
 | `request-governance` | Define and validate typed HostRouteProposal / RouteResolution contracts | `ags-mcp`, `ags-cli` |
 | `skill-resolver` | Resolve an exact SkillTarget against a validated host snapshot without language parsing or fallback | `ags-mcp`, `ags-cli` |
+| `ags-onboarding` | Fetch and hash the public capability manifest, probe the active machine/project, and emit a deterministic reviewed action plan | `ags-mcp`, `ags-cli` |
+| `delivery-report-validator` | Bind a delivery report to the exact task-card hash and close every G/AC/V/EV identifier | `ags-cli` |
 
 ## 3. AGS MCP Host Initialization Adapter
 
@@ -147,13 +158,17 @@ flowchart LR
     AGSMCP[AGS MCP<br/>ags mcp serve --transport stdio]
     PREFLIGHT[ags_preflight<br/>mandatory first call]
     ROUTE[ags_route_request<br/>read-only RouteResolution]
+    APPLY[ags_apply_action<br/>sole effectful tool]
+    ONBOARD[onboarding plan<br/>manifest source + hash]
     TOOLS[Read-only AGS tools<br/>agent instructions / protocol status / task validate / verify local]
     CLI[CLI fallback<br/>ags session preflight]
 
     HOST --> AGSMCP
     AGSMCP --> PREFLIGHT
     PREFLIGHT --> ROUTE
+    PREFLIGHT --> ONBOARD
     PREFLIGHT --> TOOLS
+    ROUTE -->|held action only| APPLY
     HOST -. MCP unavailable .-> CLI
 
     style AGSMCP fill:#1565c0,color:#fff
@@ -174,8 +189,10 @@ flowchart LR
 
 ## 4. Task-Card to Execution Pipeline
 
-This diagram shows the data flow from a raw task card through validation, policy
-resolution, and execution to the final receipt.
+This diagram shows the data flow from a canonical task card through validation
+and policy resolution to a LaunchPlan, then through host-owned execution and
+exact delivery closure. The runner never claims that it executed the host
+action.
 
 ```mermaid
 flowchart LR
@@ -203,25 +220,34 @@ flowchart LR
         RP --> RP_FIELDS["effective_permission_mode<br/>effective_parallelism<br/>effective_execution_surface<br/>allowed_launch_args<br/>stop_before_launch"]
     end
 
-    subgraph Execute["Execution"]
+    subgraph Prepare["Execution Preparation"]
         RUN{stop_before_launch?}
         RP --> RUN
         RUN -->|true| STOP[STOP: refuse launch]
-        RUN -->|false| LAUNCH[Launch executor<br/>with allowed_launch_args]
-        LAUNCH --> EXEC[Execute and verify]
+        RUN -->|false| LAUNCH[LaunchPlan<br/>allowed_launch_args]
+        LAUNCH --> REQUIRED[HOST_EXECUTION_REQUIRED]
     end
 
-    subgraph Receipt
-        RC[receipt crate]
-        EXEC --> RC
-        RC --> RCOUT[Receipt JSON<br/>+ Compliance check]
+    subgraph Host["Host-Owned Work"]
+        REQUIRED --> EXEC[Execute]
+        EXEC --> VERIFY[Verify]
+        VERIFY --> REPORT[Delivery report + evidence]
+    end
+
+    subgraph Closure["Exact Delivery Closure"]
+        REPORT --> CLOSE[delivery-report-validator]
+        TC --> HASH[Task card hash<br/>G/AC/V/EV identifiers]
+        HASH --> CLOSE
+        CLOSE --> RC[Receipt + compliance]
+        RC --> RCOUT[Task memory / archive]
     end
 
     style V fill:#d32f2f,color:#fff
     style PR fill:#f57c00,color:#fff
     style RP fill:#388e3c,color:#fff
     style STOP fill:#d32f2f,color:#fff
-    style RCOUT fill:#1976d2,color:#fff
+    style LAUNCH fill:#388e3c,color:#fff
+    style CLOSE fill:#1976d2,color:#fff
 ```
 
 **The two-gate architecture:**
@@ -275,7 +301,7 @@ flowchart TD
     subgraph "Auto-Archive (Stop Hook)"
         DR --> ARCHIVE[Stop hook detects<br/>delivery report + receipt]
         ARCHIVE --> TM_UPDATE[Update task-memory.md<br/>with latest task summary]
-        ARCHIVE --> TA_WRITE[Write full archive to<br/>task-archive/{{timestamp}}-archive.md]
+        ARCHIVE --> TA_WRITE[Write full archive to<br/>task-archive/timestamp-archive.md]
     end
 
     subgraph "Next Session"

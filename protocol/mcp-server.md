@@ -20,15 +20,21 @@ Human request
 
 任何 AGS 场景的第一调用必须是 `ags_preflight(agent, target?)`；MCP 不可用时才使用 `ags session preflight --for <agent> --target <path>`。preflight 绑定当前连接的 host/target，并返回 current-host resource URI 与 `snapshot_hash`。新 preflight 会清空所有 held actions。
 
+尚未初始化的项目不会进入普通治理态，而会建立受限
+`bootstrap_required` 绑定。该绑定只允许 `ags_onboarding_plan` 与
+`ags_apply_action`；route、task、policy、verify 和 phase prompts 继续 fail closed。
+任一 onboarding apply 后旧绑定和全部 lease 失效，宿主必须重新 preflight。
+
 ## MCP Capabilities
 
-### Tools (8)
+### Tools (9)
 
 | Tool | 副作用 | 作用 |
 |---|---|---|
 | `ags_preflight` | 只读 | 建立连接的宿主/项目绑定 |
 | `ags_protocol_status` | 只读 | 读取协议状态 |
 | `ags_agent_instructions` | 只读 | 读取宿主指令 |
+| `ags_onboarding_plan` | 严格只读 | 评估 public profile，并为可逐项确认的动作建立连接内引用 |
 | `ags_task_validate` | 只读 | 验证现有任务卡 |
 | `ags_policy_resolve` | 只读 | 解析已验证任务卡策略 |
 | `ags_verify_local` | 只读兼容说明 | 返回固定 `ProjectVerify` 动作说明；不启动验证进程 |
@@ -39,6 +45,18 @@ Human request
 真正的 local verification 必须作为 `MachineCliTarget(ProjectVerify)` 经
 `ags_route_request → DecisionLease → ags_apply_action` 执行；兼容工具
 `ags_verify_local` 本身只返回这一迁移说明。
+
+### `ags_onboarding_plan`
+
+该工具只消费 preflight 绑定，不接受路径、命令或 profile 重传。它固定读取
+public onboarding profile和统一第三方能力清单，返回 `absent`、
+`installed-not-visible`、`visible-not-ready`、`active-ready`、
+`blocked-untrusted-source`、`blocked-missing-integrity` 或
+`unsupported-host`。
+
+可执行项目只返回 `item_id + action_id`，不返回可篡改 argv。用户选择一个项目后，
+`ags_apply_action(lease_id, action_id)` 才运行既定的项目 init、官方宿主 registrar、
+受审计 Skill adoption 或固定 npm MCP 注册。一次 lease 只能选择一个项目。
 
 ### `ags_route_request`
 
@@ -86,7 +104,7 @@ SkillTarget 在不与 MachineCli 共存时返回受控 outcome action。`outcome
 
 | Capability | 固定入口 |
 |---|---|
-| `TaskCompile` | `ags task compile - --format json --output report --task-card-requested --confirmed-handoff-contract` |
+| `TaskCompile` | `confirmed_handoff_contract.handoff_source=explicit_handoff` → `ags task compile - --format json --output report --task-card-requested --confirmed-handoff-contract`; `host_plan_mode` → 同一固定入口改用 `--host-plan-mode-final` |
 | `TaskPrepareExecution` | `ags run - --format json` |
 | `TaskValidate` | `ags task validate -` |
 | `PolicyResolve` | `ags policy resolve - --format json` |
@@ -98,7 +116,7 @@ SkillTarget 在不与 MachineCli 共存时返回受控 outcome action。`outcome
 
 ### Resources (6)
 
-新增 `ags://capabilities/current-host`：preflight-bound、只读的 `HostCapabilitySnapshot`。宿主按 session 与 `snapshot_hash` 缓存薄目录，并提交精确 `skill_id` / `entrypoint` / `snapshot_hash`。其他公开资源包括 `ags://global-kernel`、任务协议、路由、模板与 runtime adapter。
+新增 `ags://capabilities/current-host`：preflight-bound、只读的 `HostCapabilitySnapshot`。宿主按 session 与 `snapshot_hash` 缓存薄目录，并提交精确 `skill_id` / `entrypoint` / `snapshot_hash`。第三方能力只有同时满足 `route_state = routable` 与 `availability.state = ready` 才能进入自然语言候选；hook 永远只走宿主事件面。host-native MCP 还必须以宿主当前连接的实时工具可见性为准，不能把仅注册或健康未知当作 ready。其他公开资源包括 `ags://global-kernel`、任务协议、路由、模板与 runtime adapter。
 
 ### Prompts and hosts
 
@@ -107,6 +125,9 @@ SkillTarget 在不与 MachineCli 共存时返回受控 outcome action。`outcome
 ## DecisionLease
 
 Lease 只存在于当前 MCP 连接，绑定 preflight host/target、proposal/scope/registry/snapshot/policy hash。没有任意 TTL；生命周期由连接与事实绑定决定。新 route、新 preflight、连接重置、绑定变化或消费都会使旧 lease 失效。
+
+Onboarding lease 绑定 public profile 的完整 `plan_hash`、item、host 与 target；
+不借用尚未存在的 capability snapshot。apply 后强制重新 preflight。
 
 ## Runner Boundary
 

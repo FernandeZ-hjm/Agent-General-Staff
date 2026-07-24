@@ -251,6 +251,32 @@ fn standalone_skill_tag(line: &str) -> Option<&str> {
 // ── Phase 2: field-value checks ────────────────────────────────────────
 
 pub(crate) fn check_field_values(fields: &HashMap<String, String>, errors: &mut Vec<String>) {
+    if let Some(contract_id) = fields.get("Contract ID:") {
+        let suffix = contract_id.strip_prefix("tc-").unwrap_or("");
+        if suffix.len() != 16
+            || !suffix
+                .chars()
+                .all(|character| character.is_ascii_hexdigit() && !character.is_ascii_uppercase())
+        {
+            errors.push(format!(
+                "[{}] Contract ID 必须为 `tc-` + 16 位小写十六进制字符，当前: `{}`",
+                error_code::CONTRACT_ID_INVALID,
+                contract_id
+            ));
+        }
+    }
+
+    if let Some(source) = fields.get("Handoff source:") {
+        if !VALID_HANDOFF_SOURCES.contains(&source.as_str()) {
+            errors.push(format!(
+                "[{}] Handoff source 值 `{}` 非法，允许: {}",
+                error_code::HANDOFF_SOURCE_INVALID,
+                source,
+                VALID_HANDOFF_SOURCES.join(", ")
+            ));
+        }
+    }
+
     // Executor
     if let Some(v) = fields.get("Executor:") {
         if !VALID_EXECUTORS.contains(&v.as_str()) {
@@ -691,5 +717,169 @@ pub(crate) fn check_content_quality(fields: &HashMap<String, String>, errors: &m
                 error_code::EMPTY_OR_WEAK_SECTION
             ));
         }
+    }
+
+    check_closure_contract(fields, errors);
+}
+
+#[derive(Debug)]
+struct ClosureLine {
+    id: String,
+    target: Option<String>,
+    description: String,
+}
+
+fn parse_closure_lines(block: &str, prefix: &str) -> Vec<ClosureLine> {
+    block
+        .lines()
+        .filter_map(|line| {
+            let body = line.trim().trim_start_matches('-').trim();
+            let (left, description) = body.split_once(':')?;
+            let (id, target) = match left.split_once("->") {
+                Some((id, target)) => (id.trim(), Some(target.trim().to_string())),
+                None => (left.trim(), None),
+            };
+            is_indexed_id(id, prefix).then(|| ClosureLine {
+                id: id.to_string(),
+                target,
+                description: description.trim().to_string(),
+            })
+        })
+        .collect()
+}
+
+fn duplicated_ids(lines: &[ClosureLine]) -> Vec<String> {
+    let mut seen = Vec::<String>::new();
+    let mut duplicated = Vec::<String>::new();
+    for line in lines {
+        if seen.contains(&line.id) && !duplicated.contains(&line.id) {
+            duplicated.push(line.id.clone());
+        } else {
+            seen.push(line.id.clone());
+        }
+    }
+    duplicated
+}
+
+fn check_closure_contract(fields: &HashMap<String, String>, errors: &mut Vec<String>) {
+    let goals = parse_closure_lines(field_val(fields, "目标："), "G-");
+    let criteria = parse_closure_lines(field_val(fields, "验收标准："), "AC-");
+    let gate = field_val(fields, "Verification gate:");
+    let verifications = parse_closure_lines(gate, "V-");
+    let evidence = parse_closure_lines(gate, "EV-");
+
+    for (name, lines) in [
+        ("目标", &goals),
+        ("验收标准", &criteria),
+        ("Verification gate 的验证项", &verifications),
+        ("Verification gate 的证据项", &evidence),
+    ] {
+        if lines.is_empty() {
+            errors.push(format!(
+                "[{}] {} 必须至少声明一个稳定 ID（G-01 / AC-01 / V-01 / EV-01）",
+                error_code::CLOSURE_ID_INVALID,
+                name
+            ));
+        }
+        let duplicates = duplicated_ids(lines);
+        if !duplicates.is_empty() {
+            errors.push(format!(
+                "[{}] {} 包含重复 ID: {}",
+                error_code::CLOSURE_ID_INVALID,
+                name,
+                duplicates.join(", ")
+            ));
+        }
+        for line in lines.iter() {
+            if is_weak_value(&line.description) {
+                errors.push(format!(
+                    "[{}] {} 的 {} 缺少可验收描述",
+                    error_code::EMPTY_OR_WEAK_SECTION,
+                    name,
+                    line.id
+                ));
+            }
+        }
+    }
+
+    for criterion in &criteria {
+        let Some(goal_id) = criterion.target.as_deref() else {
+            errors.push(format!(
+                "[{}] {} 必须使用 `AC-NN -> G-NN: ...` 映射到目标",
+                error_code::CLOSURE_MAPPING_INCOMPLETE,
+                criterion.id
+            ));
+            continue;
+        };
+        if !goals.iter().any(|goal| goal.id == goal_id) {
+            errors.push(format!(
+                "[{}] {} 引用了不存在的目标 {}",
+                error_code::CLOSURE_MAPPING_INCOMPLETE,
+                criterion.id,
+                goal_id
+            ));
+        }
+    }
+
+    for goal in &goals {
+        if !criteria
+            .iter()
+            .any(|criterion| criterion.target.as_deref() == Some(goal.id.as_str()))
+        {
+            errors.push(format!(
+                "[{}] {} 没有对应验收标准",
+                error_code::CLOSURE_MAPPING_INCOMPLETE,
+                goal.id
+            ));
+        }
+    }
+
+    for (kind, lines) in [("验证项", &verifications), ("证据项", &evidence)] {
+        for line in lines {
+            let Some(criterion_id) = line.target.as_deref() else {
+                errors.push(format!(
+                    "[{}] {} {} 必须映射为 `{} -> AC-NN: ...`",
+                    error_code::CLOSURE_MAPPING_INCOMPLETE,
+                    kind,
+                    line.id,
+                    line.id
+                ));
+                continue;
+            };
+            if !criteria
+                .iter()
+                .any(|criterion| criterion.id == criterion_id)
+            {
+                errors.push(format!(
+                    "[{}] {} 引用了不存在的验收标准 {}",
+                    error_code::CLOSURE_MAPPING_INCOMPLETE,
+                    line.id,
+                    criterion_id
+                ));
+            }
+        }
+    }
+
+    for criterion in &criteria {
+        for (kind, lines) in [("V-* 验证项", &verifications), ("EV-* 证据项", &evidence)] {
+            if !lines
+                .iter()
+                .any(|line| line.target.as_deref() == Some(criterion.id.as_str()))
+            {
+                errors.push(format!(
+                    "[{}] {} 缺少 {}",
+                    error_code::CLOSURE_MAPPING_INCOMPLETE,
+                    criterion.id,
+                    kind
+                ));
+            }
+        }
+    }
+
+    if !gate.contains("stop condition:") {
+        errors.push(format!(
+            "[{}] Verification gate 必须声明 `stop condition:`",
+            error_code::CLOSURE_MAPPING_INCOMPLETE
+        ));
     }
 }

@@ -902,7 +902,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
     let (role_description, permissions, stop_conditions, required_reads) =
         match agent_type {
             AgentType::Codex => (
-                "Codex owns ambient preflight, complete conversation context, the only natural-language semantic decision, conditional solution formation, execution decision, and review. It reads `ags://capabilities/current-host` and submits a typed HostRouteProposal to read-only MCP `ags_route_request`. DirectResponse delivers and stops; exact SkillTarget is checked against ActiveSkillTable; MachineCli becomes a connection-held action and only `ags_apply_action` may consume it. An approved contract plus explicit same-session modification instruction enters host-native direct execution without repeating solution formation or compiling a task card. New unresolved solutions require confirmation. Task-card generation requires both an explicit handoff instruction and a confirmed handoff contract; reopened solution work stays in solution formation. `方案 OK` alone authorizes neither mutation path."
+                "Codex owns ambient preflight, complete conversation context, the only natural-language semantic decision, conditional solution formation, execution decision, and review. It reads `ags://capabilities/current-host` and submits a typed HostRouteProposal to read-only MCP `ags_route_request`. DirectResponse delivers and stops; exact SkillTarget is checked against ActiveSkillTable; MachineCli becomes a connection-held action and only `ags_apply_action` may consume it. An approved contract plus explicit same-session modification instruction enters host-native direct execution without repeating solution formation or compiling a task card. New unresolved solutions require confirmation. Explicit task-card generation requires a handoff instruction and confirmed contract. In host Plan mode, the final decision-complete artifact is the canonical task card; approval switches to execution mode and dispatches that exact card without regeneration. Reopened solution work stays in solution formation."
                     .to_string(),
                 AgentPermissions {
                     default_permission_mode: "execute-and-verify".to_string(),
@@ -1027,7 +1027,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
                 ],
             ),
             AgentType::Cursor => (
-                "Cursor owns ambient preflight, complete conversation context, the only natural-language semantic decision, conditional solution formation, execution decision, and review inside its IDE workflow. It reads `ags://capabilities/current-host` and submits a typed HostRouteProposal to read-only MCP `ags_route_request`. DirectResponse delivers and stops; exact SkillTarget is checked against ActiveSkillTable; MachineCli is only consumed by explicit `ags_apply_action`. Explicit same-session modification authorization enters host-native direct execution; task compilation requires a confirmed handoff contract and explicit handoff request. `方案 OK` alone authorizes neither mutation path."
+                "Cursor owns ambient preflight, complete conversation context, the only natural-language semantic decision, conditional solution formation, execution decision, and review inside its IDE workflow. It reads `ags://capabilities/current-host` and submits a typed HostRouteProposal to read-only MCP `ags_route_request`. DirectResponse delivers and stops; exact SkillTarget is checked against ActiveSkillTable; MachineCli is only consumed by explicit `ags_apply_action`. Explicit same-session modification authorization enters host-native direct execution. Explicit task compilation requires a confirmed contract and handoff request; in host Plan mode the final decision-complete artifact is the canonical task card, and approval switches mode before dispatching that exact card without regeneration."
                     .to_string(),
                 AgentPermissions {
                     default_permission_mode: "execute-and-verify".to_string(),
@@ -2480,7 +2480,8 @@ Some other text here.
         assert!(instructions.instructions_text.contains("ags_apply_action"));
         assert!(instructions
             .instructions_text
-            .contains("confirmed handoff contract"));
+            .contains("confirmed contract"));
+        assert!(instructions.instructions_text.contains("host Plan mode"));
     }
 
     #[test]
@@ -2523,7 +2524,8 @@ Some other text here.
             .contains("MachineCli is only consumed"));
         assert!(instructions
             .instructions_text
-            .contains("confirmed handoff contract"));
+            .contains("confirmed contract"));
+        assert!(instructions.instructions_text.contains("host Plan mode"));
     }
 
     #[test]

@@ -63,6 +63,9 @@ skills:
       cost_class: free
       invoke_hint: "[skill: claude-delivery-report]"
       route_priority: 60
+      examples:
+        positive: ["按 Claude Code 交付报告协议汇报任务完成情况"]
+        negative: ["把当前对话交接给下一个 Agent"]
     source:
       type: local
       relationship: suite_local
@@ -166,8 +169,12 @@ skills:
       requires_auth: false
       cost_class: free
       invoke_hint: "[skill: grill-with-docs]"
+      intent_tags: [docs-grounded-grilling, requirements-clarification]
       capability_group: [engineering-process]
       upstream_group: "mattpocock/skills:grill-with-docs"
+      examples:
+        positive: ["结合 ADR 和术语表追问我，把需求对齐"]
+        negative: ["给我一个普通架构建议"]
     source:
       type: upstream_git
       upstream: mattpocock_skills
@@ -498,8 +505,12 @@ skills:
       requires_auth: false
       cost_class: free
       invoke_hint: "[skill: superpowers]"
+      intent_tags: [engineering-workflow, explicit-playbook]
       capability_group: [engineering-process]
       upstream_group: "obra/superpowers"
+      examples:
+        positive: ["显式调用 superpowers 的 verification-before-completion playbook"]
+        negative: ["帮我修这个普通报错"]
     source:
       type: upstream_git
       upstream: superpowers
@@ -549,6 +560,9 @@ skills:
       cost_class: local
       invoke_hint: "[skill: claude-mem]"
       route_priority: 70
+      examples:
+        positive: ["查找 Claude-Mem 里上次会话的相关观察"]
+        negative: ["读取当前仓库的 AGS 任务记忆文件"]
     source:
       type: local_wrapper
       upstream: claude_mem
@@ -573,7 +587,7 @@ skills:
       upstream_group: "lark/feishu-skills"
       examples:
         positive: ["把这个文档发邮件给张三"]
-        negative: []
+        negative: ["在飞书群里给张三发消息"]
   - name: lark-calendar
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
@@ -591,7 +605,7 @@ skills:
       upstream_group: "lark/feishu-skills"
       examples:
         positive: ["帮我查一下飞书日历今天安排"]
-        negative: []
+        negative: ["监听飞书事件回调"]
   - name: lark-doc
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
@@ -608,8 +622,8 @@ skills:
       capability_group: [lark-collab]
       upstream_group: "lark/feishu-skills"
       examples:
-        positive: []
-        negative: []
+        positive: ["读取并编辑这篇飞书云文档"]
+        negative: ["把 Markdown 文件上传到飞书"]
   - name: lark-sheets
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
@@ -626,8 +640,8 @@ skills:
       capability_group: [lark-collab]
       upstream_group: "lark/feishu-skills"
       examples:
-        positive: []
-        negative: []
+        positive: ["在飞书电子表格里追加一行数据"]
+        negative: ["修改这个多维表格 Base 的记录"]
   - name: lark-im
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
@@ -644,8 +658,8 @@ skills:
       capability_group: [lark-collab]
       upstream_group: "lark/feishu-skills"
       examples:
-        positive: []
-        negative: []
+        positive: ["在飞书群里给张三发一条消息"]
+        negative: ["给张三发一封邮件"]
   - name: lark-approval
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
@@ -662,14 +676,14 @@ skills:
       capability_group: [lark-collab]
       upstream_group: "lark/feishu-skills"
       examples:
-        positive: []
-        negative: []
+        positive: ["查一下我当前的飞书审批待办"]
+        negative: ["查一下今天的考勤记录"]
   - name: lark-task
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
     routing:
       route_state: routable
-      intent_tags: [lark-collab]
+      intent_tags: [task-management]
       scope_tags: ["任务", "task"]
       mutation_surface: external-write
       requires_auth: true
@@ -680,14 +694,14 @@ skills:
       capability_group: [lark-collab]
       upstream_group: "lark/feishu-skills"
       examples:
-        positive: []
-        negative: []
+        positive: ["在飞书里创建一个明天下午到期的任务"]
+        negative: ["在飞书日历创建明天下午的日程"]
   - name: lark-wiki
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
     routing:
       route_state: routable
-      intent_tags: [lark-collab]
+      intent_tags: [wiki-knowledge]
       scope_tags: ["知识库", "wiki"]
       mutation_surface: external-write
       requires_auth: true
@@ -698,14 +712,14 @@ skills:
       capability_group: [lark-collab]
       upstream_group: "lark/feishu-skills"
       examples:
-        positive: []
-        negative: []
+        positive: ["在飞书知识库中查找这个页面"]
+        negative: ["读取这个普通飞书云文档"]
   - name: lark-minutes
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
     routing:
       route_state: routable
-      intent_tags: [lark-collab]
+      intent_tags: [meeting-minutes]
       scope_tags: ["纪要", "妙记", "minutes"]
       mutation_surface: external-write
       requires_auth: true
@@ -716,14 +730,14 @@ skills:
       capability_group: [lark-collab]
       upstream_group: "lark/feishu-skills"
       examples:
-        positive: []
-        negative: []
+        positive: ["搜索并读取昨天的飞书妙记"]
+        negative: ["查询昨天视频会议的参会信息"]
   - name: lark-vc
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
     routing:
       route_state: routable
-      intent_tags: [lark-collab]
+      intent_tags: [meeting-history]
       scope_tags: ["视频会议", "vc"]
       mutation_surface: external-write
       requires_auth: true
@@ -734,14 +748,14 @@ skills:
       capability_group: [lark-collab]
       upstream_group: "lark/feishu-skills"
       examples:
-        positive: []
-        negative: []
+        positive: ["查询昨天飞书视频会议的历史记录和纪要"]
+        negative: ["让机器人加入正在进行的飞书会议"]
   - name: lark-drive
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
     routing:
       route_state: routable
-      intent_tags: [lark-collab]
+      intent_tags: [drive-storage]
       scope_tags: ["云盘", "文件", "drive"]
       mutation_surface: external-write
       requires_auth: true
@@ -752,14 +766,14 @@ skills:
       capability_group: [lark-collab]
       upstream_group: "lark/feishu-skills"
       examples:
-        positive: []
-        negative: []
+        positive: ["把这个文件上传到我的飞书云空间"]
+        negative: ["把内容写进飞书云文档正文"]
   - name: lark-contact
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
     routing:
       route_state: routable
-      intent_tags: [lark-collab]
+      intent_tags: [contact-resolution]
       scope_tags: ["通讯录", "联系人", "contact"]
       mutation_surface: external-write
       requires_auth: true
@@ -770,14 +784,14 @@ skills:
       capability_group: [lark-collab]
       upstream_group: "lark/feishu-skills"
       examples:
-        positive: []
-        negative: []
+        positive: ["在飞书通讯录里查张三的 open_id"]
+        negative: ["给张三发送飞书消息"]
   - name: lark-attendance
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
     routing:
       route_state: routable
-      intent_tags: [lark-collab]
+      intent_tags: [attendance]
       scope_tags: ["考勤", "attendance"]
       mutation_surface: external-write
       requires_auth: true
@@ -788,14 +802,14 @@ skills:
       capability_group: [lark-collab]
       upstream_group: "lark/feishu-skills"
       examples:
-        positive: []
-        negative: []
+        positive: ["查一下我这周的飞书考勤打卡记录"]
+        negative: ["查一下我今天的日历安排"]
   - name: lark-okr
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
     routing:
       route_state: routable
-      intent_tags: [lark-collab]
+      intent_tags: [okr-management]
       scope_tags: ["okr", "目标"]
       mutation_surface: external-write
       requires_auth: true
@@ -806,14 +820,14 @@ skills:
       capability_group: [lark-collab]
       upstream_group: "lark/feishu-skills"
       examples:
-        positive: []
-        negative: []
+        positive: ["查看并更新我本周期的飞书 OKR"]
+        negative: ["创建一个飞书任务"]
   - name: lark-event
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
     routing:
       route_state: routable
-      intent_tags: [lark-collab]
+      intent_tags: [event-listening]
       scope_tags: ["日程", "event"]
       mutation_surface: external-write
       requires_auth: true
@@ -824,14 +838,14 @@ skills:
       capability_group: [lark-collab]
       upstream_group: "lark/feishu-skills"
       examples:
-        positive: []
-        negative: []
+        positive: ["监听飞书消息事件并展示收到的事件"]
+        negative: ["创建一个飞书日历日程"]
   - name: lark-base
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
     routing:
       route_state: routable
-      intent_tags: [lark-collab]
+      intent_tags: [base-records]
       scope_tags: ["多维表格", "base"]
       mutation_surface: external-write
       requires_auth: true
@@ -842,14 +856,14 @@ skills:
       capability_group: [lark-collab]
       upstream_group: "lark/feishu-skills"
       examples:
-        positive: []
-        negative: []
+        positive: ["更新这个飞书多维表格 Base 的记录"]
+        negative: ["在飞书电子表格里追加一行"]
   - name: lark-slides
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
     routing:
       route_state: routable
-      intent_tags: [lark-collab]
+      intent_tags: [slides]
       scope_tags: ["幻灯片", "slides"]
       mutation_surface: external-write
       requires_auth: true
@@ -860,14 +874,14 @@ skills:
       capability_group: [lark-collab]
       upstream_group: "lark/feishu-skills"
       examples:
-        positive: []
-        negative: []
+        positive: ["创建并编辑一份飞书幻灯片"]
+        negative: ["创建一篇飞书云文档"]
   - name: lark-whiteboard
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
     routing:
       route_state: routable
-      intent_tags: [lark-collab]
+      intent_tags: [whiteboard]
       scope_tags: ["白板", "whiteboard"]
       mutation_surface: external-write
       requires_auth: true
@@ -878,14 +892,14 @@ skills:
       capability_group: [lark-collab]
       upstream_group: "lark/feishu-skills"
       examples:
-        positive: []
-        negative: []
+        positive: ["导出并编辑飞书画板"]
+        negative: ["编辑飞书幻灯片"]
   - name: lark-markdown
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
     routing:
       route_state: routable
-      intent_tags: [lark-collab]
+      intent_tags: [markdown-sync]
       scope_tags: ["markdown"]
       mutation_surface: external-write
       requires_auth: true
@@ -896,14 +910,14 @@ skills:
       capability_group: [lark-collab]
       upstream_group: "lark/feishu-skills"
       examples:
-        positive: []
-        negative: []
+        positive: ["把这个 Markdown 文件上传并同步到飞书"]
+        negative: ["直接编辑飞书云文档的正文块"]
   - name: lark-apps
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
     routing:
       route_state: routable
-      intent_tags: [lark-collab]
+      intent_tags: [miaoda-apps]
       scope_tags: ["飞书应用", "apps"]
       mutation_surface: external-write
       requires_auth: true
@@ -914,14 +928,14 @@ skills:
       capability_group: [lark-collab]
       upstream_group: "lark/feishu-skills"
       examples:
-        positive: []
-        negative: []
+        positive: ["创建并托管一个飞书妙搭应用"]
+        negative: ["创建一个普通静态网页但不发布到飞书"]
   - name: lark-openapi-explorer
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
     routing:
       route_state: routable
-      intent_tags: [lark-collab]
+      intent_tags: [openapi-exploration]
       scope_tags: ["openapi", "接口探索"]
       mutation_surface: external-write
       requires_auth: true
@@ -932,14 +946,14 @@ skills:
       capability_group: [lark-collab]
       upstream_group: "lark/feishu-skills"
       examples:
-        positive: []
-        negative: []
+        positive: ["探索飞书官方 OpenAPI 里尚未封装的接口"]
+        negative: ["用现成的飞书日历能力查询今天日程"]
   - name: lark-vc-agent
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
     routing:
       route_state: routable
-      intent_tags: [lark-collab]
+      intent_tags: [meeting-agent]
       scope_tags: ["会议助手", "vcagent"]
       mutation_surface: external-write
       requires_auth: true
@@ -950,14 +964,14 @@ skills:
       capability_group: [lark-collab]
       upstream_group: "lark/feishu-skills"
       examples:
-        positive: []
-        negative: []
+        positive: ["让飞书机器人加入正在进行的视频会议"]
+        negative: ["查询昨天的视频会议记录"]
   - name: lark-workflow-meeting-summary
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
     routing:
       route_state: routable
-      intent_tags: [lark-collab]
+      intent_tags: [meeting-summary-workflow]
       scope_tags: ["会议总结", "会议纪要"]
       mutation_surface: external-write
       requires_auth: true
@@ -968,14 +982,14 @@ skills:
       capability_group: [lark-collab]
       upstream_group: "lark/feishu-skills"
       examples:
-        positive: []
-        negative: []
+        positive: ["汇总本周所有飞书会议纪要并生成报告"]
+        negative: ["读取一条已知 note_id 的会议纪要"]
   - name: lark-workflow-standup-report
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
     routing:
       route_state: routable
-      intent_tags: [lark-collab]
+      intent_tags: [standup-report-workflow]
       scope_tags: ["站会", "日报"]
       mutation_surface: external-write
       requires_auth: true
@@ -986,8 +1000,8 @@ skills:
       capability_group: [lark-collab]
       upstream_group: "lark/feishu-skills"
       examples:
-        positive: []
-        negative: []
+        positive: ["汇总今天的日程和待办生成站会日报"]
+        negative: ["只查一下今天的飞书日历"]
   - name: lark-shared
     profile: optional
     source: { type: external_cli_skill, manager: lark-cli }
@@ -1103,6 +1117,9 @@ skills:
       route_priority: 35
       capability_group: [content-writing]
       upstream_group: "personal"
+      examples:
+        positive: ["用产经破壁机的风格写一篇产业财经深稿"]
+        negative: ["只帮我策划几个产业选题"]
   - name: 产经破壁机-选题策划
     profile: personal
     local_path: skill-packs/personal/产经破壁机-选题策划
@@ -1117,6 +1134,9 @@ skills:
       route_priority: 35
       capability_group: [content-writing]
       upstream_group: "personal"
+      examples:
+        positive: ["为产经破壁机策划一组选题和采访角度"]
+        negative: ["直接写成完整的产业财经稿件"]
   - name: 深度科技评论
     profile: personal
     local_path: skill-packs/personal/深度科技评论
@@ -1131,6 +1151,9 @@ skills:
       route_priority: 35
       capability_group: [content-writing]
       upstream_group: "personal"
+      examples:
+        positive: ["写一篇有技术判断的深度科技评论"]
+        negative: ["生成一篇简单产品新闻快讯"]
   - name: 六爻问卦
     profile: personal
     local_path: skill-packs/personal/六爻问卦
@@ -1145,6 +1168,9 @@ skills:
       route_priority: 35
       capability_group: [divination]
       upstream_group: "personal"
+      examples:
+        positive: ["我想用六爻问一件事，请按流程起卦"]
+        negative: ["给我抽一组塔罗牌"]
   - name: 辐射塔罗牌
     profile: personal
     local_path: skill-packs/personal/辐射塔罗牌
@@ -1159,6 +1185,9 @@ skills:
       route_priority: 35
       capability_group: [divination]
       upstream_group: "personal"
+      examples:
+        positive: ["用辐射塔罗牌为这个问题做一次牌阵解读"]
+        negative: ["用六爻为这件事起卦"]
 
 candidate_skills:
   - name: git-guardrails-claude-code
@@ -1354,6 +1383,9 @@ route_targets:
       route_priority: 60
       capability_group: [engineering-process]
       upstream_group: "obra/superpowers:executing-plans"
+      examples:
+        positive: ["执行这份已经批准的实施计划"]
+        negative: ["这个方案还没确认，先帮我梳理"]
   - name: finishing-a-development-branch
     description: Finish and hand off a development branch
     routing:
@@ -1399,6 +1431,9 @@ route_targets:
       route_priority: 45
       capability_group: [code-review, verification]
       upstream_group: "obra/superpowers:requesting-code-review"
+      examples:
+        positive: ["实现完成后请发起一次代码审查"]
+        negative: ["我收到审查意见了，帮我逐条处理"]
   - name: subagent-driven-development
     description: Execute a plan through independent task agents
     routing:
@@ -1447,6 +1482,9 @@ route_targets:
       route_priority: 45
       capability_group: [engineering-process, verification]
       upstream_group: "obra/superpowers:test-driven-development"
+      examples:
+        positive: ["用测试驱动方式实现这个功能"]
+        negative: ["功能已经实现，只补几个回归测试"]
   - name: using-git-worktrees
     description: Create or use an isolated Git worktree
     routing:

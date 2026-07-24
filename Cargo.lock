@@ -7,11 +7,13 @@ name = "ags-cli"
 version = "0.3.0"
 dependencies = [
  "ags-mcp",
+ "ags-onboarding",
  "ags-platform",
  "ags-verify",
  "bootstrap-dry-run",
  "capability-registry",
  "clap",
+ "delivery-report-validator",
  "execution-policy",
  "project-discovery",
  "receipt",
@@ -31,14 +33,26 @@ dependencies = [
 name = "ags-mcp"
 version = "0.3.0"
 dependencies = [
+ "ags-onboarding",
  "ags-verify",
  "execution-policy",
  "project-discovery",
+ "receipt",
  "request-governance",
  "serde",
  "serde_json",
  "skill-resolver",
  "task-card-validator",
+]
+
+[[package]]
+name = "ags-onboarding"
+version = "0.3.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
 ]
 
 [[package]]
@@ -215,6 +229,16 @@ checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
  "typenum",
+]
+
+[[package]]
+name = "delivery-report-validator"
+version = "0.3.0"
+dependencies = [
+ "receipt",
+ "serde",
+ "serde_json",
+ "task-card-validator",
 ]
 
 [[package]]
@@ -552,6 +576,7 @@ dependencies = [
 name = "skill-governance"
 version = "0.3.0"
 dependencies = [
+ "ags-onboarding",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -561,6 +586,7 @@ dependencies = [
 name = "skill-resolver"
 version = "0.3.0"
 dependencies = [
+ "ags-onboarding",
  "ags-platform",
  "request-governance",
  "serde",
@@ -609,6 +635,7 @@ name = "task-compiler"
 version = "0.3.0"
 dependencies = [
  "ags-platform",
+ "receipt",
  "serde",
  "serde_json",
  "task-card-validator",

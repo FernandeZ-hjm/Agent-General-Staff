@@ -1,0 +1,28 @@
+{
+  "name": "@agent-governance-suite/mcp",
+  "version": "0.3.0",
+  "description": "Verified cross-platform launcher for the Agent Governance Suite MCP server",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "ags-mcp": "./bin/ags-mcp.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FernandeZ-hjm/Agent-General-Staff.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}

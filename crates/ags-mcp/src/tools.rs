@@ -8,8 +8,8 @@ use crate::protocol::ToolListResult;
 use request_governance::{
     proposal_hash, sha256, validate_machine_input, validate_proposal, CliCapabilityId,
     DecisionLeaseEvidence, ExecutionAuthority, GovernanceStatus, HostRouteProposal, ProposalError,
-    ProposalTarget, ResolvedTarget, RouteResolution, ServerHeldActionKind, TypedCliInput,
-    ROUTE_RESOLUTION_SCHEMA_VERSION,
+    ProposalTarget, ResolvedTarget, RouteResolution, ServerHeldActionKind, TaskCardHandoffSource,
+    TypedCliInput, ROUTE_RESOLUTION_SCHEMA_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -21,6 +21,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub const TOOL_PREFLIGHT: &str = "ags_preflight";
 pub const TOOL_PROTOCOL_STATUS: &str = "ags_protocol_status";
 pub const TOOL_AGENT_INSTRUCTIONS: &str = "ags_agent_instructions";
+pub const TOOL_ONBOARDING_PLAN: &str = "ags_onboarding_plan";
 pub const TOOL_TASK_VALIDATE: &str = "ags_task_validate";
 pub const TOOL_POLICY_RESOLVE: &str = "ags_policy_resolve";
 pub const TOOL_VERIFY_LOCAL: &str = "ags_verify_local";
@@ -54,6 +55,11 @@ enum HeldActionKind {
         request_fingerprint: String,
         skill_id: String,
         entrypoint: Option<String>,
+    },
+    Onboarding {
+        plan_hash: String,
+        item_id: String,
+        action: ags_onboarding::OnboardingAction,
     },
 }
 
@@ -108,6 +114,10 @@ pub fn is_preflight_bootstrap_tool_name(name: &str) -> bool {
     matches!(name, TOOL_PREFLIGHT | TOOL_AGENT_INSTRUCTIONS)
 }
 
+pub fn is_onboarding_bootstrap_tool_name(name: &str) -> bool {
+    matches!(name, TOOL_ONBOARDING_PLAN | TOOL_APPLY_ACTION)
+}
+
 pub fn list_tools() -> ToolListResult {
     ToolListResult {
         tools: vec![
@@ -139,6 +149,15 @@ pub fn list_tools() -> ToolListResult {
                         "target": { "type": "string" }
                     },
                     "required": ["agent"]
+                }),
+            ),
+            tool_def(
+                TOOL_ONBOARDING_PLAN,
+                "Read-only deterministic public onboarding assessment. In bootstrap_required mode it creates one-shot, connection-local action references for individually applyable items.",
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false
                 }),
             ),
             tool_def(
@@ -241,6 +260,7 @@ pub fn list_tools() -> ToolListResult {
                                         "policy_resolve",
                                         "project_verify",
                                         "skill_tags_verify",
+                                        "skill_adopt",
                                         "receipt_verify"
                                     ]
                                 },
@@ -255,7 +275,12 @@ pub fn list_tools() -> ToolListResult {
                                     "additionalProperties": false,
                                     "properties": {
                                         "kind": { "const": "confirmed_handoff_contract" },
-                                        "content": { "type": "string", "minLength": 1 }
+                                        "content": { "type": "string", "minLength": 1 },
+                                        "handoff_source": {
+                                            "type": "string",
+                                            "enum": ["explicit_handoff", "host_plan_mode"],
+                                            "default": "explicit_handoff"
+                                        }
                                     }
                                 },
                                 {
@@ -274,6 +299,20 @@ pub fn list_tools() -> ToolListResult {
                                     "properties": {
                                         "kind": { "const": "receipt" },
                                         "content": { "type": "string", "minLength": 1 }
+                                    }
+                                },
+                                {
+                                    "type": "object",
+                                    "required": ["kind", "source", "host", "apply"],
+                                    "additionalProperties": false,
+                                    "properties": {
+                                        "kind": { "const": "skill_adopt" },
+                                        "source": { "type": "string", "minLength": 1, "maxLength": 4096 },
+                                        "host": {
+                                            "type": "string",
+                                            "enum": ["codex", "claude-code", "omp", "codebuddy-code", "cursor", "all"]
+                                        },
+                                        "apply": { "type": "boolean" }
                                     }
                                 },
                                 {
@@ -342,6 +381,9 @@ pub fn call_tool(
         TOOL_PREFLIGHT => tool_preflight(arguments),
         TOOL_PROTOCOL_STATUS => tool_protocol_status(arguments),
         TOOL_AGENT_INSTRUCTIONS => tool_agent_instructions(arguments),
+        TOOL_ONBOARDING_PLAN => {
+            tool_onboarding_plan(arguments, required_binding(binding)?, routing_session)
+        }
         TOOL_TASK_VALIDATE => tool_task_validate(arguments),
         TOOL_POLICY_RESOLVE => tool_policy_resolve(arguments),
         TOOL_VERIFY_LOCAL => tool_verify_local(arguments, required_binding(binding)?),
@@ -411,6 +453,113 @@ fn tool_agent_instructions(args: &serde_json::Value) -> Result<String, String> {
         &get_target(args),
         &agent_type,
     ))
+}
+
+#[derive(Debug, Serialize)]
+struct OnboardingActionRef {
+    item_id: String,
+    action_id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct OnboardingPlanResult {
+    schema_version: &'static str,
+    governance_status: GovernanceStatus,
+    binding: &'static str,
+    plan: ags_onboarding::OnboardingPlan,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lease: Option<DecisionLeaseEvidence>,
+    actions: Vec<OnboardingActionRef>,
+}
+
+fn tool_onboarding_plan(
+    args: &serde_json::Value,
+    binding: &PreflightBinding,
+    session: &mut RoutingSession,
+) -> Result<String, String> {
+    if args
+        .as_object()
+        .map(|object| !object.is_empty())
+        .unwrap_or(true)
+    {
+        return Err("ags_onboarding_plan_accepts_no_arguments".to_string());
+    }
+    session.invalidate();
+    let source_root = std::env::var_os("AGS_SOURCE_ROOT")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .filter(|root| root.join("manifests/onboarding-public.yaml").is_file())
+        })
+        .unwrap_or_else(|| binding.target.clone());
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("cannot resolve AGS executable: {error}"))?;
+    let third_party = ags_onboarding::manifest::resolve_third_party_manifest(&source_root)?;
+    let active_skill_ids = if source_root.join("manifests/skills-registry.yaml").is_file() {
+        skill_resolver::build_capability_snapshot_with_roots_and_manifest(
+            &source_root,
+            &binding.host,
+            &skill_resolver::locate_runtime_home(),
+            &binding.host_home,
+            &third_party,
+        )
+        .map_err(|error| format!("skill snapshot build failed: {error:?}"))?
+        .active_skills
+        .into_iter()
+        .map(|skill| skill.skill_id)
+        .collect::<Vec<_>>()
+    } else {
+        // Restricted bootstrap bindings may not have a capability authority
+        // yet. Fail closed: no skill is claimed active, while native host paths
+        // can still be reported as visible-but-not-ready.
+        Vec::new()
+    };
+    let plan = ags_onboarding::assess_public_with_resolution(
+        &ags_onboarding::AssessContext {
+            source_root: &source_root,
+            home: &binding.host_home,
+            target: &binding.target,
+            host: &binding.host,
+            ags_executable: &executable,
+            mcp_connected: true,
+            host_registered: Some(true),
+            registered_mcp_ids: &[],
+            active_skill_ids: &active_skill_ids,
+        },
+        &third_party,
+    )?;
+    let mut actions = Vec::new();
+    for item in &plan.items {
+        if let Some(action) = item.action.clone() {
+            let held = hold_onboarding_action(session, binding, &plan.plan_hash, &item.id, action);
+            actions.push(OnboardingActionRef {
+                item_id: item.id.clone(),
+                action_id: held.action_id.clone(),
+            });
+        }
+    }
+    let lease = session
+        .actions
+        .values()
+        .next()
+        .map(|action| action.evidence.clone());
+    pretty(&OnboardingPlanResult {
+        schema_version: "0.3.0-onboarding-plan-result",
+        governance_status: if plan.bootstrap_required {
+            GovernanceStatus::NeedsUserDecision
+        } else {
+            GovernanceStatus::Ok
+        },
+        binding: if plan.bootstrap_required {
+            "bootstrap_required"
+        } else {
+            "active"
+        },
+        plan,
+        lease,
+        actions,
+    })
 }
 
 fn tool_task_validate(args: &serde_json::Value) -> Result<String, String> {
@@ -938,6 +1087,7 @@ fn typed_input_kind(input: &TypedCliInput) -> &'static str {
         TypedCliInput::ConfirmedHandoffContract { .. } => "confirmed_handoff_contract",
         TypedCliInput::TaskCard { .. } => "task_card",
         TypedCliInput::Receipt { .. } => "receipt",
+        TypedCliInput::SkillAdopt { .. } => "skill_adopt",
         TypedCliInput::Empty => "empty",
     }
 }
@@ -978,6 +1128,11 @@ fn hold_action<'a>(
         } => {
             serde_json::to_string(&(request_fingerprint, skill_id, entrypoint)).unwrap_or_default()
         }
+        HeldActionKind::Onboarding {
+            plan_hash,
+            item_id,
+            action,
+        } => serde_json::to_string(&(plan_hash, item_id, action)).unwrap_or_default(),
     };
     let action_id = stable_id(
         "action",
@@ -1015,12 +1170,84 @@ fn hold_action<'a>(
     session.actions.get(&action_id).expect("inserted action")
 }
 
+fn onboarding_policy_hash(
+    plan_hash: &str,
+    item_id: &str,
+    action: &ags_onboarding::OnboardingAction,
+) -> String {
+    ags_onboarding::action_hash(plan_hash, item_id, action)
+}
+
+fn hold_onboarding_action<'a>(
+    session: &'a mut RoutingSession,
+    binding: &PreflightBinding,
+    plan_hash: &str,
+    item_id: &str,
+    action: ags_onboarding::OnboardingAction,
+) -> &'a HeldAction {
+    let policy_hash = onboarding_policy_hash(plan_hash, item_id, &action);
+    let action_id = stable_id(
+        "onboarding-action",
+        &format!("{plan_hash}\n{item_id}\n{policy_hash}"),
+        &session.connection_nonce,
+        session.generation,
+    );
+    let lease_id = stable_id(
+        "onboarding-lease",
+        plan_hash,
+        &session.connection_nonce,
+        session.generation,
+    );
+    let evidence = DecisionLeaseEvidence {
+        lease_id,
+        decision_id: stable_id(
+            "onboarding-decision",
+            plan_hash,
+            &session.connection_nonce,
+            session.generation,
+        ),
+        proposal_hash: plan_hash.to_string(),
+        scope_hash: sha256(binding.target.to_string_lossy().as_bytes()),
+        host: binding.host.clone(),
+        target: binding.target.to_string_lossy().into_owned(),
+        registry_hash: plan_hash.to_string(),
+        snapshot_hash: "sha256:bootstrap-not-applicable".to_string(),
+        policy_hash: policy_hash.clone(),
+    };
+    session.actions.insert(
+        action_id.clone(),
+        HeldAction {
+            evidence,
+            action_id: action_id.clone(),
+            policy_hash,
+            kind: HeldActionKind::Onboarding {
+                plan_hash: plan_hash.to_string(),
+                item_id: item_id.to_string(),
+                action,
+            },
+            consumed: false,
+        },
+    );
+    session.actions.get(&action_id).expect("inserted action")
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct OutcomeInput {
     status: skill_resolver::SkillOutcome,
     #[serde(default)]
     quality: Option<u8>,
+}
+
+#[derive(Debug, Serialize)]
+struct OnboardingExecutionResult {
+    item_id: String,
+    success: bool,
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    receipt_path: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1033,7 +1260,10 @@ struct ApplyResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     machine_result: Option<MachineCliResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    onboarding_result: Option<OnboardingExecutionResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     outcome_event_id: Option<String>,
+    requires_repreflight: bool,
 }
 
 fn tool_apply_action(
@@ -1092,97 +1322,135 @@ fn tool_apply_action(
             skill_id,
             entrypoint,
         } => outcome_policy_hash(request_fingerprint, skill_id, entrypoint.as_deref()),
+        HeldActionKind::Onboarding {
+            plan_hash,
+            item_id,
+            action,
+        } => onboarding_policy_hash(plan_hash, item_id, action),
     };
     if policy_hash != action.policy_hash || policy_hash != action.evidence.policy_hash {
         return Err("decision_lease_policy_hash_mismatch".to_string());
     }
-    let authority_root = skill_resolver::resolve_capability_authority_root(
-        &binding.target,
-        runtime_home,
-        std::env::var_os("AGS_SOURCE_ROOT").map(PathBuf::from),
-    )
-    .map_err(|error| error.to_string())?;
-    let registry = std::fs::read(authority_root.join("manifests/skills-registry.yaml"))
+    if !matches!(action.kind, HeldActionKind::Onboarding { .. }) {
+        let authority_root = skill_resolver::resolve_capability_authority_root(
+            &binding.target,
+            runtime_home,
+            std::env::var_os("AGS_SOURCE_ROOT").map(PathBuf::from),
+        )
         .map_err(|error| error.to_string())?;
-    if skill_resolver::sha256(&registry) != action.evidence.registry_hash {
-        return Err("decision_lease_registry_hash_mismatch".to_string());
-    }
-    let (snapshot, _) = skill_resolver::load_validated_snapshot_with_roots(
-        &authority_root,
-        runtime_home,
-        &binding.host,
-        &binding.host_home,
-    )
-    .map_err(|_| "skill_snapshot_stale".to_string())?;
-    if snapshot.snapshot_hash != action.evidence.snapshot_hash {
-        return Err("decision_lease_snapshot_hash_mismatch".to_string());
+        let registry = std::fs::read(authority_root.join("manifests/skills-registry.yaml"))
+            .map_err(|error| error.to_string())?;
+        if skill_resolver::sha256(&registry) != action.evidence.registry_hash {
+            return Err("decision_lease_registry_hash_mismatch".to_string());
+        }
+        let (snapshot, _) = skill_resolver::load_validated_snapshot_with_roots(
+            &authority_root,
+            runtime_home,
+            &binding.host,
+            &binding.host_home,
+        )
+        .map_err(|_| "skill_snapshot_stale".to_string())?;
+        if snapshot.snapshot_hash != action.evidence.snapshot_hash {
+            return Err("decision_lease_snapshot_hash_mismatch".to_string());
+        }
     }
 
-    let (machine_result, outcome_event_id, status) = match &action.kind {
-        HeldActionKind::Machine {
-            capability,
-            input,
-            skill_outcome,
-        } => {
-            let outcome = match (skill_outcome, args.get("outcome")) {
-                (Some(_), Some(value)) => Some(
-                    serde_json::from_value::<OutcomeInput>(value.clone())
-                        .map_err(|error| format!("invalid_outcome: {error}"))?,
-                ),
-                (None, Some(_)) => return Err("outcome_not_allowed_for_machine_action".to_string()),
-                (_, None) => None,
-            };
-            let result = invoke_machine_cli(*capability, input, &binding.host, &binding.target)?;
-            let status = if result.success {
-                if capability.is_handoff_capability() {
-                    GovernanceStatus::HostExecutionRequired
+    let (machine_result, onboarding_result, outcome_event_id, status, requires_repreflight) =
+        match &action.kind {
+            HeldActionKind::Machine {
+                capability,
+                input,
+                skill_outcome,
+            } => {
+                let outcome = match (skill_outcome, args.get("outcome")) {
+                    (Some(_), Some(value)) => Some(
+                        serde_json::from_value::<OutcomeInput>(value.clone())
+                            .map_err(|error| format!("invalid_outcome: {error}"))?,
+                    ),
+                    (None, Some(_)) => {
+                        return Err("outcome_not_allowed_for_machine_action".to_string())
+                    }
+                    (_, None) => None,
+                };
+                let result =
+                    invoke_machine_cli(*capability, input, &binding.host, &binding.target)?;
+                let status = if result.success {
+                    if capability.is_handoff_capability() {
+                        GovernanceStatus::HostExecutionRequired
+                    } else {
+                        GovernanceStatus::Ok
+                    }
                 } else {
-                    GovernanceStatus::Ok
-                }
-            } else {
-                GovernanceStatus::BlockedByPolicy
-            };
-            let outcome_event_id = match (skill_outcome, outcome) {
-                (Some(skill), Some(outcome)) => Some(append_outcome_event(
+                    GovernanceStatus::BlockedByPolicy
+                };
+                let outcome_event_id = match (skill_outcome, outcome) {
+                    (Some(skill), Some(outcome)) => Some(append_outcome_event(
+                        runtime_home,
+                        binding,
+                        action,
+                        generation,
+                        skill,
+                        outcome,
+                        &session.connection_nonce,
+                    )?),
+                    _ => None,
+                };
+                (Some(result), None, outcome_event_id, status, false)
+            }
+            HeldActionKind::RecordOutcome {
+                request_fingerprint,
+                skill_id,
+                entrypoint,
+            } => {
+                let outcome: OutcomeInput = serde_json::from_value(
+                    args.get("outcome")
+                        .cloned()
+                        .ok_or_else(|| "outcome_required".to_string())?,
+                )
+                .map_err(|error| format!("invalid_outcome: {error}"))?;
+                let event_id = append_outcome_event(
                     runtime_home,
                     binding,
                     action,
                     generation,
-                    skill,
+                    &SkillOutcomeBinding {
+                        request_fingerprint: request_fingerprint.clone(),
+                        skill_id: skill_id.clone(),
+                        entrypoint: entrypoint.clone(),
+                    },
                     outcome,
                     &session.connection_nonce,
-                )?),
-                _ => None,
-            };
-            (Some(result), outcome_event_id, status)
-        }
-        HeldActionKind::RecordOutcome {
-            request_fingerprint,
-            skill_id,
-            entrypoint,
-        } => {
-            let outcome: OutcomeInput = serde_json::from_value(
-                args.get("outcome")
-                    .cloned()
-                    .ok_or_else(|| "outcome_required".to_string())?,
-            )
-            .map_err(|error| format!("invalid_outcome: {error}"))?;
-            let event_id = append_outcome_event(
-                runtime_home,
-                binding,
-                action,
-                generation,
-                &SkillOutcomeBinding {
-                    request_fingerprint: request_fingerprint.clone(),
-                    skill_id: skill_id.clone(),
-                    entrypoint: entrypoint.clone(),
-                },
-                outcome,
-                &session.connection_nonce,
-            )?;
-            (None, Some(event_id), GovernanceStatus::DoneWithReceipt)
-        }
-    };
+                )?;
+                (
+                    None,
+                    None,
+                    Some(event_id),
+                    GovernanceStatus::DoneWithReceipt,
+                    false,
+                )
+            }
+            HeldActionKind::Onboarding {
+                item_id,
+                action: onboarding_action,
+                ..
+            } => {
+                if args.get("outcome").is_some() {
+                    return Err("outcome_not_allowed_for_onboarding_action".to_string());
+                }
+                let result = invoke_onboarding_action(item_id, onboarding_action)?;
+                let mut result = result;
+                result.receipt_path =
+                    emit_onboarding_receipt(runtime_home, binding, action, &result).ok();
+                let status = if result.success && result.receipt_path.is_some() {
+                    GovernanceStatus::DoneWithReceipt
+                } else if result.success {
+                    GovernanceStatus::Ok
+                } else {
+                    GovernanceStatus::BlockedByPolicy
+                };
+                (None, Some(result), None, status, true)
+            }
+        };
     pretty(&ApplyResult {
         schema_version: "0.3.0-apply-result",
         governance_status: status,
@@ -1190,7 +1458,9 @@ fn tool_apply_action(
         action_id,
         consumed: true,
         machine_result,
+        onboarding_result,
         outcome_event_id,
+        requires_repreflight,
     })
 }
 
@@ -1221,6 +1491,73 @@ fn append_outcome_event(
     Ok(event_id)
 }
 
+fn invoke_onboarding_action(
+    item_id: &str,
+    action: &ags_onboarding::OnboardingAction,
+) -> Result<OnboardingExecutionResult, String> {
+    let executable = std::env::var_os("AGS_CLI_BIN")
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_exe().ok())
+        .ok_or_else(|| "cannot resolve current AGS executable".to_string())?;
+    let output = ags_onboarding::execute_action(action, &executable)?;
+    Ok(OnboardingExecutionResult {
+        item_id: item_id.to_string(),
+        success: output.success,
+        exit_code: output.exit_code,
+        stdout: output.stdout,
+        stderr: output.stderr,
+        receipt_path: None,
+    })
+}
+
+fn emit_onboarding_receipt(
+    runtime_home: &Path,
+    binding: &PreflightBinding,
+    held: &HeldAction,
+    result: &OnboardingExecutionResult,
+) -> Result<String, String> {
+    let rollback = match &held.kind {
+        HeldActionKind::Onboarding { action, .. } => {
+            let steps = ags_onboarding::rollback_advice(action)
+                .into_iter()
+                .map(|advice| receipt::RollbackStep {
+                    affected_path: advice.affected_path,
+                    inverse_op: "manual-confirm".to_string(),
+                    backup_path: None,
+                    inverse_command: advice.inverse_command,
+                    detail: advice.detail,
+                })
+                .collect();
+            receipt::RollbackPlan::manual_confirm(steps)
+        }
+        _ => receipt::RollbackPlan::none(),
+    };
+    let receipt = receipt::build_action_receipt(
+        "mcp-onboarding-apply",
+        Some(&binding.target.to_string_lossy()),
+        receipt::GateResult {
+            decision: if result.success { "allow" } else { "stop" }.to_string(),
+            reason: (!result.success).then(|| format!("onboarding item {} failed", result.item_id)),
+        },
+        vec![],
+        vec![],
+        vec![],
+        vec![receipt::VerificationResult {
+            command: format!("ags_apply_action onboarding item {}", result.item_id),
+            exit_code: result.exit_code.unwrap_or(1),
+            output_hash: receipt::sha256_hex(
+                format!("{}\n{}", result.stdout, result.stderr).as_bytes(),
+            ),
+        }],
+        rollback,
+        if result.success { "applied" } else { "failed" },
+        result.success,
+    );
+    receipt::emit_action_receipt(&runtime_home.join("receipts"), &receipt)
+        .map(|path| path.display().to_string())
+        .map_err(|error| format!("onboarding receipt failed for {}: {error}", held.action_id))
+}
+
 #[derive(Debug, Serialize)]
 struct MachineCliResult {
     capability: CliCapabilityId,
@@ -1243,6 +1580,7 @@ fn invoke_machine_cli(
     let (arguments, stdin) = machine_invocation(capability, input, host, target)?;
     let mut child = Command::new(executable)
         .args(&arguments)
+        .current_dir(target)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1273,23 +1611,32 @@ fn machine_invocation(
     validate_machine_input(capability, input)
         .map_err(|error| format!("{}: {}", error.code, error.message))?;
     let stdin = match input {
-        TypedCliInput::ConfirmedHandoffContract { content }
+        TypedCliInput::ConfirmedHandoffContract { content, .. }
         | TypedCliInput::TaskCard { content }
         | TypedCliInput::Receipt { content } => content.clone(),
-        TypedCliInput::Empty => String::new(),
+        TypedCliInput::SkillAdopt { .. } | TypedCliInput::Empty => String::new(),
     };
     let args = match capability {
-        CliCapabilityId::TaskCompile => vec![
-            "task",
-            "compile",
-            "-",
-            "--format",
-            "json",
-            "--output",
-            "report",
-            "--task-card-requested",
-            "--confirmed-handoff-contract",
-        ],
+        CliCapabilityId::TaskCompile => {
+            let handoff_flag = match input {
+                TypedCliInput::ConfirmedHandoffContract {
+                    handoff_source: TaskCardHandoffSource::HostPlanMode,
+                    ..
+                } => "--host-plan-mode-final",
+                _ => "--task-card-requested",
+            };
+            vec![
+                "task",
+                "compile",
+                "-",
+                "--format",
+                "json",
+                "--output",
+                "report",
+                handoff_flag,
+                "--confirmed-handoff-contract",
+            ]
+        }
         CliCapabilityId::TaskPrepareExecution => vec!["run", "-", "--format", "json"],
         CliCapabilityId::TaskValidate => vec!["task", "validate", "-"],
         CliCapabilityId::PolicyResolve => vec!["policy", "resolve", "-", "--format", "json"],
@@ -1322,6 +1669,30 @@ fn machine_invocation(
                 ],
                 stdin,
             ));
+        }
+        CliCapabilityId::SkillAdopt => {
+            let TypedCliInput::SkillAdopt {
+                source,
+                host,
+                apply,
+            } = input
+            else {
+                unreachable!("validated SkillAdopt input kind");
+            };
+            let mut args = vec![
+                "skill".to_string(),
+                "adopt".to_string(),
+                "--host".to_string(),
+                host.clone(),
+                "--format".to_string(),
+                "json".to_string(),
+            ];
+            if *apply {
+                args.push("--apply".to_string());
+            }
+            args.push("--".to_string());
+            args.push(source.clone());
+            return Ok((args, stdin));
         }
         CliCapabilityId::ReceiptVerify => vec!["receipt", "verify", "-", "--format", "json"],
     };
@@ -1447,6 +1818,8 @@ mod tests {
     fn valid_execution_card() -> String {
         "## 任务卡\n\
 读取并遵守：\n- 本任务卡\n\
+Contract ID: tc-0123456789abcdef\n\
+Handoff source: existing-card\n\
 Executor: Codex\n\
 Runtime adapter: codex-local\n\
 Execution surface: local-workspace\n\
@@ -1464,10 +1837,14 @@ Review gate:\n- 按协议执行当前任务级别\n\
 目标文件夹路径：\n- .\n\
 相关路径：\n- .\n\
 本次任务相关文件：\n- .\n\
-目标：生成宿主执行所需的 LaunchPlan\n\
+目标：\n- G-01: 生成宿主执行所需的 LaunchPlan\n\
+验收标准：\n- AC-01 -> G-01: 路由返回允许执行且包含真实策略哈希\n\
 非目标：不在 AGS Runner 内执行宿主任务\n\
 验证：\ncargo test -p ags-mcp\n\
 Verification gate:\n- commands: cargo test -p ags-mcp\n\
+- commands:\n  - V-01 -> AC-01: cargo test -p ags-mcp\n\
+- expected evidence:\n  - EV-01 -> AC-01: task_prepare 路由返回 OK\n\
+- stop condition:\n  - 策略解析失败时停止\n\
 交付：\n返回 host_execution_required\n"
             .to_string()
     }
@@ -1498,7 +1875,7 @@ Verification gate:\n- commands: cargo test -p ags-mcp\n\
         .unwrap();
         std::fs::write(
             &executable,
-            "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' \"$@\" > \"$AGS_PROCESS_SPY\"\n",
+            "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' \"$@\" > \"$AGS_PROCESS_SPY\"\npwd > \"${AGS_PROCESS_SPY}.cwd\"\n",
         )
         .unwrap();
         #[cfg(unix)]
@@ -1556,7 +1933,11 @@ Verification gate:\n- commands: cargo test -p ags-mcp\n\
     #[test]
     fn tools_expose_read_only_route_and_separate_apply() {
         let tools = list_tools();
-        assert_eq!(tools.tools.len(), 8);
+        assert_eq!(tools.tools.len(), 9);
+        assert!(tools
+            .tools
+            .iter()
+            .any(|tool| tool.name == TOOL_ONBOARDING_PLAN));
         let route = tools
             .tools
             .iter()
@@ -1569,14 +1950,53 @@ Verification gate:\n- commands: cargo test -p ags-mcp\n\
         assert!(capabilities
             .iter()
             .any(|value| value == "task_prepare_execution"));
+        assert!(capabilities.iter().any(|value| value == "skill_adopt"));
         assert!(capabilities.iter().all(|value| value != "task_execute"));
-        assert!(route.inputSchema["$defs"]["TypedCliInput"]["oneOf"]
+        let typed_variants = route.inputSchema["$defs"]["TypedCliInput"]["oneOf"]
             .as_array()
-            .is_some_and(|variants| variants.len() == 4));
+            .expect("typed input variants");
+        assert_eq!(typed_variants.len(), 5);
+        let skill_adopt = typed_variants
+            .iter()
+            .find(|variant| {
+                variant["properties"]["kind"]["const"]
+                    .as_str()
+                    .is_some_and(|kind| kind == "skill_adopt")
+            })
+            .expect("skill_adopt input schema");
+        assert!(skill_adopt["properties"]["host"]["enum"]
+            .as_array()
+            .is_some_and(|hosts| hosts.iter().any(|host| host == "omp")));
         assert!(tools
             .tools
             .iter()
             .any(|tool| tool.name == TOOL_APPLY_ACTION));
+    }
+
+    #[test]
+    fn onboarding_plan_is_public_and_holds_only_closed_actions() {
+        let target =
+            std::env::temp_dir().join(format!("ags-mcp-onboarding-plan-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&target);
+        std::fs::create_dir_all(&target).unwrap();
+        let binding = PreflightBinding {
+            host: "codex".to_string(),
+            target: target.clone(),
+            host_home: target.join("home"),
+        };
+        let mut session = RoutingSession::default();
+        let result = tool_onboarding_plan(&serde_json::json!({}), &binding, &mut session).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(value["plan"]["profile"], "public");
+        assert_eq!(value["binding"], "bootstrap_required");
+        assert!(value["plan"]["excluded_capabilities"]
+            .as_array()
+            .is_some_and(|items| items.is_empty()));
+        assert!(value["actions"]
+            .as_array()
+            .is_some_and(|actions| !actions.is_empty()));
+        assert!(value["lease"]["lease_id"].as_str().is_some());
+        let _ = std::fs::remove_dir_all(target);
     }
 
     #[test]
@@ -1715,13 +2135,32 @@ Verification gate:\n- commands: cargo test -p ags-mcp\n\
             CliCapabilityId::TaskCompile,
             &TypedCliInput::ConfirmedHandoffContract {
                 content: "任务：contract".to_string(),
+                handoff_source: TaskCardHandoffSource::ExplicitHandoff,
             },
             "codex",
             Path::new("."),
         )
         .unwrap();
         assert_eq!(args[0..3], ["task", "compile", "-"]);
+        assert!(args.iter().any(|arg| arg == "--task-card-requested"));
         assert_eq!(stdin, "任务：contract");
+    }
+
+    #[test]
+    fn host_plan_handoff_maps_to_the_plan_final_compiler_flag() {
+        let (args, stdin) = machine_invocation(
+            CliCapabilityId::TaskCompile,
+            &TypedCliInput::ConfirmedHandoffContract {
+                content: "任务：closed plan contract".to_string(),
+                handoff_source: TaskCardHandoffSource::HostPlanMode,
+            },
+            "codex",
+            Path::new("."),
+        )
+        .unwrap();
+        assert!(args.iter().any(|arg| arg == "--host-plan-mode-final"));
+        assert!(!args.iter().any(|arg| arg == "--task-card-requested"));
+        assert_eq!(stdin, "任务：closed plan contract");
     }
 
     #[test]
@@ -1955,6 +2394,27 @@ Verification gate:\n- commands: cargo test -p ags-mcp\n\
         assert_eq!(stdin, "## 任务卡\n");
     }
 
+    #[test]
+    fn skill_adopt_mapping_uses_only_typed_fields_and_fixed_argv() {
+        let source = "https://github.com/acme/skills/tree/main/apple-design;touch /tmp/pwn";
+        let (args, stdin) = machine_invocation(
+            CliCapabilityId::SkillAdopt,
+            &TypedCliInput::SkillAdopt {
+                source: source.to_string(),
+                host: "all".to_string(),
+                apply: true,
+            },
+            "codex",
+            Path::new("/tmp/ags-target"),
+        )
+        .unwrap();
+        assert_eq!(
+            args,
+            vec!["skill", "adopt", "--host", "all", "--format", "json", "--apply", "--", source]
+        );
+        assert!(stdin.is_empty());
+    }
+
     #[cfg(unix)]
     #[test]
     fn route_is_side_effect_free_and_apply_uses_only_fixed_argv_once() {
@@ -2001,6 +2461,15 @@ Verification gate:\n- commands: cargo test -p ags-mcp\n\
                 "--task-card-requested",
                 "--confirmed-handoff-contract"
             ]
+        );
+        assert_eq!(
+            std::fs::canonicalize(
+                std::fs::read_to_string(format!("{}.cwd", spy.display()))
+                    .unwrap()
+                    .trim()
+            )
+            .unwrap(),
+            std::fs::canonicalize(&binding.target).unwrap()
         );
         let replay = tool_apply_action(
             &serde_json::json!({
