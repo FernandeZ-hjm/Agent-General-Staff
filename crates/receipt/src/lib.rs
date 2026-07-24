@@ -529,9 +529,9 @@ pub fn render_receipt_json(receipt: &Receipt) -> String {
 // is `2.0-action-receipt`, so action receipts never collide with task-card
 // receipts (`receipt-` / `2.0-m6` or `2.1-m6`) and verifiers can dispatch by schema.
 //
-// Pure advised-only surfaces such as `ags agents govern` do NOT emit receipts:
-// the operator must see and choose the advised host/tool registrations in the
-// conversation/stdout before any external host registrar is run.
+// Pure advised-only surfaces such as `ags agents govern` without `--apply` do
+// NOT emit receipts. `agents govern --apply` emits one because it writes only
+// AGS-owned native memory adapters; external host registration remains advice.
 
 /// One file write recorded in an action receipt. `op` reuses the skill-console
 /// PlannedWrite vocabulary so receipts and the console speak the same dialect.

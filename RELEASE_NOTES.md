@@ -46,6 +46,15 @@ flowchart LR
         LP --> EXEC[host execution + verification]
         EXEC --> CLOSE[card hash + G/AC/V/EV closure]
     end
+
+    subgraph Memory["Native host memory lifecycle"]
+        START[Claude/Codex/OMP start event] --> INJECT[bounded read-only injection]
+        CLOSE --> END[host close event]
+        END --> RECEIPT[captured / skipped / failed receipt]
+        RECEIPT -->|valid card + delivery closure| ARCHIVE[append task archive + memory]
+        RECEIPT -->|ordinary conversation| SKIP[skip project-memory write]
+        ARCHIVE -. next session .-> START
+    end
 ```
 
 ### Host semantic proposals and explicit apply
@@ -87,6 +96,36 @@ flowchart LR
   final report is checked against the exact card instead of being trusted as a
   narrative completion claim.
 
+### Native host memory closure
+
+- Added separate native lifecycle adapters for Claude Code
+  (`SessionStart` / `Stop`), Codex (`SessionStart` / `SessionEnd`), and OMP
+  (`session_start` / `before_agent_start` plus
+  `agent_settled` / `session_shutdown`). Evidence from one host never satisfies
+  another host's closure.
+- New sessions receive a bounded, read-only project-memory injection. Every
+  supported close event emits a machine-local `captured`, `skipped`, or `failed`
+  receipt; ordinary conversations are skipped and do not update task memory.
+- Project memory is appended only when a canonical task card and its delivery
+  closure are both present. `context-capsule.md` remains manual-only.
+- `ags agents govern --agent <claude-code|codex|omp> --apply` installs only the
+  selected AGS-owned native adapter. External MCP registration remains
+  advice-only. `ags agents verify --host <host> --strict` gates capability
+  visibility and the exact host's memory lifecycle together.
+
+### Concise agent entrypoints
+
+- Root and generated project `AGENTS.md` / `CLAUDE.md` are now thin maps:
+  repository identity, hard boundaries, preflight, and links to task-specific
+  protocol documents. Detailed task-card, host-operation, and memory rules live
+  in referenced Markdown instead of being duplicated in every entrypoint.
+- `ags setup` installs the reusable `ags-core.md`, `ags-task-handoff.md`, and
+  `host-operations.md` rule modules. `ags doctor` checks the split files as one
+  semantic contract.
+- Added `protocol/entrypoint-guidelines.md`, grounded in current OpenAI,
+  Anthropic, and GitHub guidance, including ownership, size budgets, no import
+  cycles, and progressive disclosure.
+
 ### Dynamic onboarding and public distribution
 
 - Added one public onboarding surface for project init, host adapters, Skill,
@@ -105,8 +144,12 @@ flowchart LR
 ### Upgrade and verification
 
 - Existing source installs can update normally, then rerun `ags setup` and
-  host/skill verification. New MCP-only installs can use the npm launcher after
-  the formal GitHub Release and npm publication exist.
+  explicit host/skill verification:
+  `ags setup --yes --force`,
+  `ags agents govern --agent <host> --apply`,
+  `ags agents verify --host <host> --strict`.
+  New MCP-only installs can use the npm launcher after the formal GitHub Release
+  and npm publication exist.
 - Review the effective third-party plan with
   `ags onboarding plan --host <host> --format json`; the result states whether
   its manifest came from GitHub or the packaged fallback and includes the

@@ -62,6 +62,6 @@ pub(in crate::agents) fn cmd_agents_scan(format: &str) {
                 primary
             );
         }
-        println!("\nNext: `ags agents govern` to plan AGS MCP onboarding (advise-only).");
+        println!("\nNext: `ags agents govern` to plan onboarding; add `--agent <host> --apply` only after confirming the native memory-adapter write. MCP registration remains advice-only.");
     }
 }

@@ -155,7 +155,7 @@ pub(crate) fn render_cross_platform_init_text(plan: &CrossPlatformInitPlan) -> S
     let mut lines = vec![
         "Cross-Platform Initialization Wizard".to_string(),
         "====================================".to_string(),
-        "Mode: plan-only (AGS never runs an external host registrar/installer here).".to_string(),
+        "Mode: plan-only by default. External MCP registrars are always advice-only; `ags agents govern --apply` may write only AGS-owned native memory adapters.".to_string(),
         match &plan.primary_agent {
             Some(p) => format!("Primary agent: {p}"),
             None => "Primary agent: none detected".to_string(),
@@ -190,10 +190,7 @@ pub(crate) fn render_cross_platform_init_text(plan: &CrossPlatformInitPlan) -> S
                 .to_string(),
         );
     } else {
-        lines.push(
-            "Cross-platform sync plan (plan-only; nothing is written or registered here):"
-                .to_string(),
-        );
+        lines.push("Cross-platform sync plan (no external registrar is run):".to_string());
         for p in detected {
             lines.push(format!("  → {} ({})", p.id, p.display));
             lines.push(format!(

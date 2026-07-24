@@ -348,29 +348,25 @@ pub(crate) enum AgentsAction {
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
     },
-    /// Plan AGS MCP onboarding (advise-only). 产出 AGS MCP 纳管计划（仅建议）。
+    /// Plan host onboarding; --apply installs AGS-owned memory lifecycle wiring.
     ///
-    /// Default dry-run; with --apply shows the same selectable confirmation
-    /// surface and still writes nothing. AGS never writes host config, never
-    /// runs external registrars (claude mcp add / codex mcp / lark-cli), and
-    /// never writes receipts for advice. 默认 dry-run；--apply 只切到确认视图，
-    /// 不写 receipt，不写宿主配置。
+    /// Default dry-run. `--apply` writes only AGS-owned Claude/Codex lifecycle
+    /// hooks or the OMP extension. External MCP registrars remain advice-only.
     Govern {
-        /// Limit to one host id (claude-code|codex|cursor|workbuddy|codebuddy-code).
+        /// Limit to one host id (claude-code|codex|omp|cursor|workbuddy|codebuddy-code).
         #[arg(long)]
         agent: Option<String>,
-        /// Confirm-view only: print selectable host/tool registration advice.
-        /// AGS still never writes host config or receipts for advice.
+        /// Install the selected supported host's AGS memory lifecycle adapter.
         #[arg(long)]
         apply: bool,
         /// Output format: text (default) or json
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
     },
-    /// Verify a host's AGS visibility (thin-index + AGS MCP).
-    /// 校验某宿主的 AGS 可见性（thin-index + AGS MCP）。
+    /// Verify capability visibility plus the host-native memory lifecycle.
+    /// 校验宿主能力可见性及原生记忆闭环。
     Verify {
-        /// Host to verify: claude-code | codex | codebuddy-code (cursor reserved)
+        /// Host to verify: claude-code | codex | omp | codebuddy-code | cursor
         #[arg(long, default_value = "claude-code")]
         host: String,
         /// Gate mode: exit nonzero unless status is "ok" (post-apply gate).

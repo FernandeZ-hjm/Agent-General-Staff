@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Capture pasted Claude Code task-card runs into local task memory.
+"""Close AGS host sessions and capture completed task-card runs into memory.
 
-Claude Code command hooks receive JSON on stdin. This Stop hook looks for a
-copy-pasted Agent Suite task card and the final delivery report in the current
-transcript, builds a small receipt package, and delegates the actual memory
-write to context-memory.sh.
+Claude Code Stop, Codex SessionEnd, and the OMP lifecycle extension send JSON
+on stdin. The bridge always writes a small close receipt. It archives project
+memory only when a canonical task card and a valid delivery report are paired.
 
 It is intentionally conservative:
 - no task card -> skip
@@ -40,6 +39,52 @@ def log(message: str) -> None:
         handle.write(line)
 
 
+def source_host(hook_input: dict[str, Any]) -> str:
+    explicit = str(hook_input.get("source_host") or os.environ.get("AGS_MEMORY_HOST") or "")
+    if explicit:
+        return safe_slug(explicit)
+    event = str(hook_input.get("hook_event_name") or "")
+    if event == "SessionEnd":
+        return "codex"
+    if event.startswith("session_"):
+        return "omp"
+    return "claude-code"
+
+
+def emit_close_receipt(
+    hook_input: dict[str, Any],
+    status: str,
+    reason: str,
+    receipt_dir: pathlib.Path | None = None,
+) -> None:
+    host = source_host(hook_input)
+    session_id = safe_slug(str(hook_input.get("session_id") or "unknown-session"))
+    root = pathlib.Path(
+        os.environ.get("AGS_MEMORY_CLOSE_RECEIPT_ROOT", "~/.agents/memory-close-receipts")
+    ).expanduser()
+    target = root / host / f"{session_id}.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(
+            {
+                "schema_version": "0.3.0-memory-close-receipt",
+                "created_at": _dt.datetime.now().isoformat(timespec="seconds"),
+                "host": host,
+                "session_id": str(hook_input.get("session_id") or ""),
+                "event": str(hook_input.get("hook_event_name") or ""),
+                "status": status,
+                "reason": reason,
+                "repo_path": str(resolve_repo_path(str(hook_input.get("cwd") or ""))),
+                "capture_receipt": str(receipt_dir) if receipt_dir else "",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def read_hook_input() -> dict[str, Any]:
     raw = sys.stdin.read()
     if not raw.strip():
@@ -68,7 +113,11 @@ def text_from_content(content: Any) -> str:
 
 
 def text_from_entry(entry: dict[str, Any]) -> tuple[str, str]:
-    msg = entry.get("message")
+    msg: Any = entry.get("message")
+    if not isinstance(msg, dict) and entry.get("type") == "response_item":
+        msg = entry.get("payload")
+    if not isinstance(msg, dict) and entry.get("type") == "message":
+        msg = entry
     if not isinstance(msg, dict):
         return "", ""
     role = msg.get("role")
@@ -215,7 +264,8 @@ def mark_captured(fp: str) -> None:
 def write_receipt(repo_path: pathlib.Path, task_card: str, report: str, hook_input: dict[str, Any]) -> pathlib.Path:
     receipt_root = pathlib.Path(os.environ.get("CLAUDE_STOP_MEMORY_RECEIPT_ROOT", "~/.agents/task-receipts")).expanduser()
     repo_slug = safe_slug(repo_path.name)
-    receipt_dir = receipt_root / repo_slug / f"{now_stamp()}-claude-stop-memory"
+    host = source_host(hook_input)
+    receipt_dir = receipt_root / repo_slug / f"{now_stamp()}-{host}-memory"
     receipt_dir.mkdir(parents=True, exist_ok=True)
 
     (receipt_dir / "task-card.md").write_text(task_card + "\n", encoding="utf-8")
@@ -229,7 +279,8 @@ def write_receipt(repo_path: pathlib.Path, task_card: str, report: str, hook_inp
             {
                 "created_at": _dt.datetime.now().isoformat(timespec="seconds"),
                 "repo_path": str(repo_path),
-                "source": "claude-stop-memory-capture",
+                "source": "ags-host-memory-close",
+                "source_host": host,
                 "transcript_path": hook_input.get("transcript_path", ""),
                 "session_id": hook_input.get("session_id", ""),
             },
@@ -387,31 +438,45 @@ def main() -> int:
 
     hook_input = read_hook_input()
     event = hook_input.get("hook_event_name")
-    if event not in ("Stop", "SubagentStop", ""):
+    if event not in (
+        "Stop",
+        "SubagentStop",
+        "SessionEnd",
+        "agent_settled",
+        "session_shutdown",
+        "",
+    ):
         return 0
 
     transcript = hook_input.get("transcript_path")
-    if not isinstance(transcript, str) or not transcript:
-        log("[SKIP] missing transcript_path")
+    transcript_path = pathlib.Path(transcript).expanduser() if isinstance(transcript, str) and transcript else None
+    direct_messages = hook_input.get("messages")
+    if isinstance(direct_messages, list):
+        entries = [item for item in direct_messages if isinstance(item, dict)]
+    elif transcript_path is not None and transcript_path.is_file():
+        entries = read_transcript(transcript_path)
+    else:
+        log("[SKIP] no readable transcript or direct messages")
+        emit_close_receipt(hook_input, "skipped", "no-readable-conversation")
         return 0
 
-    transcript_path = pathlib.Path(transcript).expanduser()
-    if not transcript_path.is_file():
-        log(f"[SKIP] transcript not found: {transcript_path}")
-        return 0
-
-    entries = read_transcript(transcript_path)
     task_card, report = find_task_card_and_report(entries, hook_input)
     if not task_card:
-        log(f"[SKIP] no task card in transcript: {transcript_path}")
+        log(f"[SKIP] no task card in conversation: {transcript_path or 'direct-messages'}")
+        emit_close_receipt(hook_input, "skipped", "no-canonical-task-card")
         return 0
     if not report:
-        log(f"[SKIP] no delivery report in transcript: {transcript_path}")
+        log(f"[SKIP] no delivery report in conversation: {transcript_path or 'direct-messages'}")
+        emit_close_receipt(hook_input, "skipped", "no-delivery-report")
         return 0
 
-    fp = fingerprint(transcript_path, task_card, report)
+    fp_source = transcript_path or pathlib.Path(
+        f"{source_host(hook_input)}-{hook_input.get('session_id', 'unknown')}"
+    )
+    fp = fingerprint(fp_source, task_card, report)
     if already_captured(fp):
-        log(f"[OK] duplicate capture skipped transcript={transcript_path}")
+        log(f"[OK] duplicate capture skipped transcript={transcript_path or 'direct-messages'}")
+        emit_close_receipt(hook_input, "skipped", "duplicate-capture")
         return 0
 
     repo_path = resolve_repo_path(str(hook_input.get("cwd") or ""))
@@ -423,9 +488,13 @@ def main() -> int:
     )
     if not closure["valid"]:
         log(f"[SKIP] delivery closure invalid receipt={receipt_dir}")
+        emit_close_receipt(hook_input, "skipped", "invalid-delivery-closure", receipt_dir)
         return 0
     if capture_memory(receipt_dir, repo_path):
         mark_captured(fp)
+        emit_close_receipt(hook_input, "captured", "valid-delivery-closure", receipt_dir)
+    else:
+        emit_close_receipt(hook_input, "failed", "context-memory-capture-failed", receipt_dir)
     return 0
 
 

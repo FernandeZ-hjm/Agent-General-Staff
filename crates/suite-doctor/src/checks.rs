@@ -292,6 +292,7 @@ fn project_protocol_check(repo_root: &Path) -> Finding {
 
 // ── Context memory checks ──────────────────────────────────────────────
 
+#[allow(dead_code)] // focused legacy Claude-hook diagnostic
 const MEMORY_CAPTURE_MARKER: &str = "claude-stop-memory-capture";
 const RAW_GUARD_MARKER: &str = "raw-tool-call-stop-guard";
 
@@ -384,6 +385,7 @@ fn stop_hook_commands(settings_path: &Path, check_name: &str) -> Result<Vec<Stri
     Ok(commands)
 }
 
+#[allow(dead_code)] // focused legacy Claude-hook diagnostic
 fn memory_pipeline_order(commands: &[String]) -> String {
     let mut seen = Vec::new();
     for command in commands {
@@ -397,28 +399,40 @@ fn memory_pipeline_order(commands: &[String]) -> String {
 }
 
 fn memory_capture_scripts_present_at(home: &Path) -> Finding {
-    let context = home.join(".agents/scripts/context-memory.sh");
-    let bridge = home.join(".agents/scripts/claude-stop-memory-capture.py");
-    let mut missing = Vec::new();
-    if !context.is_file() {
-        missing.push(context.display().to_string());
-    }
-    if !bridge.is_file() {
-        missing.push(bridge.display().to_string());
-    }
+    let check = "memory_capture_scripts_present";
+    let scripts = home.join(".agents/scripts");
+    let raw = scripts.join("raw-tool-call-stop-guard.js");
+    let context = scripts.join("context-memory.sh");
+    let start = scripts.join("context-memory-start.py");
+    let bridge = scripts.join("claude-stop-memory-capture.py");
+    let omp = home.join(".omp/agent/extensions/ags-memory-lifecycle.js");
+    let missing: Vec<&str> = [
+        ("raw-tool-call-stop-guard.js", &raw),
+        ("context-memory.sh", &context),
+        ("context-memory-start.py", &start),
+        ("claude-stop-memory-capture.py", &bridge),
+        (".omp/agent/extensions/ags-memory-lifecycle.js", &omp),
+    ]
+    .into_iter()
+    .filter(|(_, path)| !path.is_file())
+    .map(|(name, _)| name)
+    .collect();
     if missing.is_empty() {
         Finding::pass(
-            "memory-capture-scripts-present",
-            "context memory scripts installed",
+            check,
+            format!(
+                "memory lifecycle scripts and OMP extension present under {}",
+                scripts.display()
+            ),
         )
     } else {
         Finding::warn(
-            "memory-capture-scripts-present",
-            "context memory scripts missing",
+            check,
             format!(
-                "Run `ags setup --yes --register-claude`. Missing: {}",
+                "memory start/capture scripts missing: {}",
                 missing.join(", ")
             ),
+            "Run `ags setup --yes`, then `ags agents govern --apply` to install AGS-owned host memory adapters.",
         )
     }
 }
@@ -434,6 +448,7 @@ pub fn memory_capture_scripts_present() -> Finding {
     memory_capture_scripts_present_at(&home)
 }
 
+#[allow(dead_code)] // focused legacy Claude-hook diagnostic
 pub fn claude_code_memory_capture_wired(repo_root: &Path) -> Finding {
     let check = "memory-capture-stop-hook-wired";
     let settings = repo_root.join(".claude/settings.json");
@@ -580,6 +595,101 @@ pub fn context_capsule_integrity(repo_root: &Path) -> Finding {
         );
     };
     context_capsule_integrity_at(repo_root, &home)
+}
+
+// ── Project memory lifecycle closure (composite) ──────────────────────────
+
+/// Composite check across every detected native host adapter. A Claude closure
+/// cannot hide a missing Codex/OMP closure.
+pub fn project_memory_lifecycle_closure(repo_root: &Path) -> Finding {
+    let identity = project_discovery::detect_project(repo_root);
+    let project_onboarded = identity.project_profile_path.is_some() || identity.is_ags_integrated;
+    let home = ags_platform::home_dir_or_temp();
+    let mut hosts = Vec::new();
+    if home.join(".claude").is_dir()
+        || repo_root.join(".claude").is_dir()
+        || ags_platform::is_on_path("claude")
+    {
+        hosts.push(project_discovery::AgentType::ClaudeCode);
+    }
+    if home.join(".codex").is_dir()
+        || repo_root.join(".codex").is_dir()
+        || ags_platform::is_on_path("codex")
+    {
+        hosts.push(project_discovery::AgentType::Codex);
+    }
+    if home.join(".omp").is_dir()
+        || repo_root.join(".omp").is_dir()
+        || ags_platform::is_on_path("omp")
+    {
+        hosts.push(project_discovery::AgentType::from_str("omp").expect("valid host"));
+    }
+    if hosts.is_empty() {
+        hosts.push(project_discovery::AgentType::ClaudeCode);
+    }
+    let lifecycles: Vec<_> = hosts
+        .iter()
+        .map(|host| project_discovery::compute_memory_lifecycle_for_host(repo_root, host))
+        .collect();
+    if lifecycles
+        .iter()
+        .all(|lifecycle| lifecycle.status == "full")
+    {
+        return Finding::pass(
+            "project_memory_lifecycle_closure",
+            format!(
+                "native memory closure complete for detected hosts: {}",
+                lifecycles
+                    .iter()
+                    .map(|lifecycle| lifecycle.host.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        );
+    }
+    let detail = lifecycles
+        .iter()
+        .map(|lifecycle| {
+            format!(
+                "{}={} ({})",
+                lifecycle.host, lifecycle.status, lifecycle.summary
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    let representative = lifecycles
+        .iter()
+        .find(|lifecycle| lifecycle.status != "full")
+        .expect("at least one incomplete lifecycle");
+    let mut finding = lifecycle_to_finding(representative, project_onboarded);
+    finding.message = "one or more detected hosts lack a complete native memory lifecycle".into();
+    finding.detail = Some(detail);
+    finding
+}
+
+fn lifecycle_to_finding(
+    lifecycle: &project_discovery::MemoryLifecycle,
+    project_onboarded: bool,
+) -> Finding {
+    let check = "project_memory_lifecycle_closure";
+    match lifecycle.status.as_str() {
+        "full" => Finding::pass(check, &lifecycle.summary),
+        "absent" if project_onboarded => Finding::warn(
+            check,
+            "managed project is missing its project memory store",
+            "Run `ags init --target <project>` to recreate the project memory store, then `ags agents govern --agent <host> --apply` to install that host's AGS-owned native adapter.",
+        ),
+        "absent" => Finding::skip(check, &lifecycle.summary),
+        "unbacked" => Finding::warn(check, "memory hooks unbacked", &lifecycle.summary),
+        "read-only" => Finding::warn(check, "memory lifecycle read-only", &lifecycle.summary),
+        "write-only" => Finding::warn(check, "memory lifecycle write-only", &lifecycle.summary),
+        "files-only" => Finding::warn(check, "memory lifecycle files-only", &lifecycle.summary),
+        other => Finding::warn(
+            check,
+            format!("memory lifecycle unknown status: {other}"),
+            &lifecycle.summary,
+        ),
+    }
 }
 
 /// Run all default suite-doctor checks and populate a `HealthReport`.
@@ -995,10 +1105,13 @@ pub fn run_checks(report: &mut HealthReport, repo_root: &Path) {
 
     // ── Context memory checks (advisory, read-only) ────────────────────
     report.add(memory_capture_scripts_present());
-    report.add(claude_code_memory_capture_wired(repo_root));
+    // Host-specific start/close wiring is covered by the composite lifecycle
+    // check below. The legacy Claude-only check remains available for focused
+    // diagnostics but is not duplicated in the default report.
     report.add(raw_tool_call_stop_guard_present(repo_root));
     report.add(project_task_memory_status(repo_root));
     report.add(context_capsule_integrity(repo_root));
+    report.add(project_memory_lifecycle_closure(repo_root));
 }
 
 #[cfg(test)]
@@ -1251,8 +1364,25 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("context-memory.sh"), "#!/usr/bin/env bash\n").unwrap();
         std::fs::write(
+            dir.join("context-memory-start.py"),
+            "#!/usr/bin/env python3\n",
+        )
+        .unwrap();
+        std::fs::write(
             dir.join("claude-stop-memory-capture.py"),
             "#!/usr/bin/env python3\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("raw-tool-call-stop-guard.js"),
+            "#!/usr/bin/env node\n",
+        )
+        .unwrap();
+        let omp = home.join(".omp/agent/extensions");
+        std::fs::create_dir_all(&omp).unwrap();
+        std::fs::write(
+            omp.join("ags-memory-lifecycle.js"),
+            "export default function () {}\n",
         )
         .unwrap();
         let f = memory_capture_scripts_present_at(&home);
@@ -1322,6 +1452,64 @@ mod tests {
         let capsule = context_capsule_integrity_at(&repo, &home);
         assert_eq!(capsule.status, CheckStatus::Warn);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── Memory lifecycle closure composite check ─────────────────────
+
+    fn make_lifecycle(status: &str, summary: &str) -> project_discovery::MemoryLifecycle {
+        project_discovery::MemoryLifecycle {
+            host: "claude-code".to_string(),
+            adapter: "claude-command-hooks".to_string(),
+            adapter_supported: true,
+            status: status.to_string(),
+            files_present: status == "full" || status == "files-only",
+            archive_ready: status == "full",
+            read_wired: matches!(status, "full" | "read-only" | "unbacked"),
+            write_wired: matches!(status, "full" | "write-only" | "unbacked"),
+            scripts_present: matches!(status, "full" | "files-only" | "read-only" | "write-only"),
+            summary: summary.to_string(),
+        }
+    }
+
+    #[test]
+    fn lifecycle_closure_full_passes() {
+        let lifecycle = make_lifecycle("full", "memory closure complete");
+        let finding = lifecycle_to_finding(&lifecycle, true);
+        assert_eq!(finding.status, CheckStatus::Pass);
+        assert_eq!(finding.check_name, "project_memory_lifecycle_closure");
+    }
+
+    #[test]
+    fn lifecycle_closure_absent_skips() {
+        let lifecycle = make_lifecycle("absent", "no project memory");
+        let finding = lifecycle_to_finding(&lifecycle, false);
+        assert_eq!(finding.status, CheckStatus::Skip);
+    }
+
+    #[test]
+    fn lifecycle_closure_absent_warns_for_onboarded_project() {
+        let lifecycle = make_lifecycle("absent", "no project memory");
+        let finding = lifecycle_to_finding(&lifecycle, true);
+        assert_eq!(finding.status, CheckStatus::Warn);
+        assert!(finding.message.contains("managed project"));
+        let detail = finding.detail.as_deref().unwrap_or("");
+        assert!(detail.contains("ags init --target"));
+        assert!(detail.contains("ags agents govern --agent <host> --apply"));
+    }
+
+    #[test]
+    fn lifecycle_closure_degraded_matrix_warns() {
+        for (status, summary) in [
+            ("files-only", "files exist but no hooks"),
+            ("unbacked", "hooks wired but scripts missing"),
+            ("read-only", "can read but not write"),
+            ("write-only", "can write but not read"),
+        ] {
+            let lifecycle = make_lifecycle(status, summary);
+            let finding = lifecycle_to_finding(&lifecycle, true);
+            assert_eq!(finding.status, CheckStatus::Warn, "{status} should warn");
+            assert!(!finding.message.is_empty());
+        }
     }
 
     // ── Finding constructors smoke ────────────────────────────────────

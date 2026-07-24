@@ -18,6 +18,7 @@ AGS 是一套面向本地开发环境的多 Agent 工程治理内核。它用 Ru
 - [快速开始](#快速开始)
 - [60 秒演示](#60-秒演示)
 - [八道闸](#八道闸)
+- [入口与宿主记忆](#入口与宿主记忆)
 - [怎么工作](#怎么工作)
 - [常用命令](#常用命令)
 - [为什么需要 AGS](#为什么需要-ags)
@@ -45,8 +46,12 @@ bash scripts/install.sh
 安装后：
 
 ```bash
-ags doctor            # 检查套件健康
-ags verify --scope local   # 本地验证
+ags agents govern --agent claude-code --apply
+ags agents govern --agent codex --apply
+ags agents govern --agent omp --apply
+ags agents verify --host <claude-code|codex|omp> --strict
+ags doctor
+ags verify --scope local
 ```
 
 <details>
@@ -141,7 +146,10 @@ closed；`ags doctor` 也会把这类宿主路由缺口列为正式失败项。
 
 ### 记忆胶囊
 
-让经验从聊天里逃出来，变成项目资产。每次任务后，AGS 保存任务快照、关键判断、验证结果和上下文摘要。后续 Agent 进项目先读项目画像和任务记忆，不用每轮从零解释需求。项目越大、任务链越长、参与的 Agent 越多，这件事越值钱。
+让经验从聊天里逃出来，变成项目资产。Claude Code、Codex 和 OMP 现在各自使用
+原生生命周期入口：新会话只读注入项目胶囊和任务记忆，结束事件生成 close receipt；
+只有同时存在 canonical 任务卡和有效交付闭环时才写入任务存档。普通聊天会记为
+`skipped`，不会污染项目记忆。一个宿主的 hook 不能替另一个宿主证明闭环。
 
 ### 自检与发布门禁
 
@@ -190,6 +198,26 @@ flowchart TB
     style CAT fill:#c8e6c9
 ```
 
+## 入口与宿主记忆
+
+0.3.0 把“入口说明”和“运行协议”拆开。全局与项目级 `AGENTS.md` / `CLAUDE.md`
+只保留仓库身份、强边界、preflight 入口和按需阅读索引；任务卡、宿主操作、记忆闭环
+等细节放在独立 Markdown 中引用。这样宿主每轮只加载稳定的小入口，相关任务再读取
+对应协议，避免入口膨胀、重复和循环引用。约束与依据见
+[`protocol/entrypoint-guidelines.md`](protocol/entrypoint-guidelines.md)。
+
+宿主记忆闭环是机器级适配、项目级存储：
+
+| 宿主 | 新会话注入 | 结束回访 |
+|---|---|---|
+| Claude Code | `SessionStart` | `Stop` |
+| Codex | `SessionStart` | `SessionEnd` |
+| OMP | `session_start`，下一次 `before_agent_start` 通过 `systemPromptAppend` 注入 | `agent_settled` / `session_shutdown` |
+
+`ags setup --yes --force` 安装共享脚本和精简全局规则模块；
+`ags agents govern --agent <host> --apply` 才显式写入该宿主的 AGS-owned adapter。
+第三方 MCP 注册仍然只给建议，不会被 `--apply` 顺手修改。
+
 ## 怎么工作
 
 AGS 0.3.0 把自然语言理解留在宿主。preflight 后，宿主读取 `ags://capabilities/current-host`，结合完整对话形成 typed `HostRouteProposal`；严格只读的 `ags_route_request` 只校验阶段、授权、精确技能和闭集机器动作。`ags_apply_action` 是唯一 effectful MCP 工具，以一次性 lease/action 引用消费服务端保存的固定动作。Skill Resolver 只按 `HostCapabilitySnapshot` 精确校验 skill/entrypoint，没有关键词、相似度或 fallback。Compiler、Policy、Gate 和 Runner 都不解析自然语言；Runner 只准备 LaunchPlan 并返回 `HOST_EXECUTION_REQUIRED`。
@@ -216,7 +244,11 @@ Plan mode 并派发同一张已验证任务卡，禁止重新生成。
 
 ```mermaid
 flowchart TB
-    A[输入] --> B[1. Preflight<br/>ags_preflight / CLI 降级]
+    A[新会话 / 输入] --> START{原生启动事件}
+    START -->|Claude / Codex| INJECT[只读注入 context capsule<br/>+ task memory]
+    START -->|OMP| OMPWAIT[缓存启动上下文]
+    OMPWAIT --> INJECT
+    INJECT --> B[1. Preflight<br/>ags_preflight / CLI 降级]
     B --> CAT[2. 读取 current-host<br/>能力目录 + snapshot hash]
     CAT --> X{首个非空行是<br/>## 任务卡?}
     X -->|否| H[3. 宿主保留完整对话<br/>按需形成并确认方案]
@@ -242,8 +274,15 @@ flowchart TB
     VERIFY --> REPORT[12. 交付报告 + 证据]
     REPORT -->|有任务卡| CLOSE[task close<br/>card hash + G/AC/V/EV 精确闭环]
     REPORT -->|直接修改| DONE[向用户交付证据]
-    CLOSE --> ARCHIVE[Receipt + Task Memory<br/>归档并供下次 preflight]
+    CLOSE --> END{宿主结束事件}
+    DONE --> END
+    END --> RECEIPT[close receipt<br/>captured / skipped / failed]
+    RECEIPT -->|有效任务卡 + 交付闭环| ARCHIVE[Receipt + Task Memory<br/>追加归档]
+    RECEIPT -->|普通对话或证据不足| SKIP[skipped<br/>不写项目记忆]
+    ARCHIVE -. 下一次新会话召回 .-> START
 
+    style START fill:#e0f2f1
+    style INJECT fill:#b2dfdb
     style B fill:#e1f5fe
     style CAT fill:#e8f5e9
     style P fill:#7e57c2,color:#fff
@@ -254,6 +293,8 @@ flowchart TB
     style K fill:#ffcdd2
     style LP fill:#c8e6c9
     style CLOSE fill:#b3e5fc
+    style RECEIPT fill:#dcedc8
+    style SKIP fill:#eeeeee
 ```
 
 架构详情见 [docs/architecture.md](docs/architecture.md)。

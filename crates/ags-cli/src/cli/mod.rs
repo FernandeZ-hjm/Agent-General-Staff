@@ -213,8 +213,10 @@ pub(crate) enum Commands {
 
     // ── Global agent governance (五段链路第 2 段) ────────────────────
     /// 纳管本机 Agent 宿主. Govern local Agent hosts (Claude Code / Codex /
-    /// Cursor / Tencent Agent): scan, plan AGS MCP onboarding (advise-only),
-    /// and verify host visibility. ags_preflight is the governance entry.
+    /// OMP / Cursor / Tencent Agent): scan, plan AGS MCP onboarding, explicitly
+    /// apply AGS-owned memory adapters, and verify host visibility/lifecycle.
+    /// External MCP registration remains advice-only; ags_preflight is the
+    /// governance entry.
     Agents {
         #[command(subcommand)]
         action: AgentsAction,

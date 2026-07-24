@@ -95,7 +95,7 @@ pub(in crate::setup) fn codex_ags_command_skill_specs() -> &'static [(
             "AGS Agents",
             "纳管本机 Agent 宿主",
             "用 $ags-agents 纳管本机 Agent 宿主。",
-            "纳管本机 Agent 宿主：运行 `ags agents scan` 盘点宿主与 AGS MCP 注册，`ags agents govern` 生成 advise-only 接入方案，`ags agents verify --host <host>` 复核可见性",
+            "纳管本机 Agent 宿主：运行 `ags agents scan` 盘点宿主与 AGS MCP 注册，先用 `ags agents govern --agent <host>` 预览，再经用户确认运行 `--apply` 安装该宿主的 AGS 原生记忆生命周期适配器；MCP 注册仍为 advise-only；最后用 `ags agents verify --host <host>` 复核",
         ),
         (
             "ags-skill",

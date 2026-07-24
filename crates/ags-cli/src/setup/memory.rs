@@ -1,16 +1,16 @@
 //! AGS context-memory product mechanism wiring for `ags setup`.
 //!
-//! Restores the project-memory capture chain as a first-class product:
-//!   - installs the canonical guard/capture scripts to the host script dir,
-//!   - merges the project-memory-capture step into the current AGS workspace's
-//!     Claude Code Stop pipeline (raw guard → project memory capture), while
-//!     preserving every existing hook,
+//! Restores the project-memory injection/capture chain as a first-class product:
+//!   - installs the canonical start/guard/capture scripts to the host script dir,
+//!   - installs the OMP native lifecycle extension,
+//!   - structurally merges Claude Code SessionStart/Stop and Codex
+//!     SessionStart/SessionEnd command hooks without replacing unrelated hooks,
 //!   - bootstraps the current workspace's memory capsule via the installed
 //!     `context-memory.sh` (create-if-missing; never overwrites the capsule).
 //!
 //! Command boundary: this lives in `ags setup` (host/workspace bootstrap).
 //! `ags init` only creates per-project memory files and never installs a host
-//! Stop hook — the installed capture bridge is cwd-aware and resolves each
+//! hook — the installed start/capture bridges are cwd-aware and resolve each
 //! project's memory by repository.
 
 use crate::file_plan::InstallFile;
@@ -20,13 +20,18 @@ use std::path::{Path, PathBuf};
 /// self-contained (no dependency on the suite checkout at install time).
 pub(in crate::setup) const CONTEXT_MEMORY_SH: &str =
     include_str!("../../../../scripts/context-memory.sh");
+pub(in crate::setup) const CONTEXT_MEMORY_START_PY: &str =
+    include_str!("../../../../scripts/context-memory-start.py");
 pub(in crate::setup) const CLAUDE_STOP_MEMORY_CAPTURE_PY: &str =
     include_str!("../../../../scripts/claude-stop-memory-capture.py");
 pub(in crate::setup) const RAW_TOOL_CALL_STOP_GUARD_JS: &str =
     include_str!("../../../../scripts/raw-tool-call-stop-guard.js");
+pub(in crate::setup) const OMP_MEMORY_LIFECYCLE_JS: &str =
+    include_str!("../../../../scripts/ags-memory-lifecycle-omp.js");
 
 /// Marker substrings used for idempotent, structure-preserving hook detection.
 const MEMORY_CAPTURE_MARKER: &str = "claude-stop-memory-capture";
+const MEMORY_START_MARKER: &str = "context-memory-start";
 const RAW_GUARD_MARKER: &str = "raw-tool-call-stop-guard";
 
 /// Host directory the capture scripts are installed into (fork decision:
@@ -38,11 +43,17 @@ pub(in crate::setup) fn host_scripts_dir(home: &Path) -> PathBuf {
 pub(in crate::setup) fn context_memory_script_path(home: &Path) -> PathBuf {
     host_scripts_dir(home).join("context-memory.sh")
 }
+pub(in crate::setup) fn context_memory_start_path(home: &Path) -> PathBuf {
+    host_scripts_dir(home).join("context-memory-start.py")
+}
 pub(in crate::setup) fn claude_stop_memory_capture_path(home: &Path) -> PathBuf {
     host_scripts_dir(home).join("claude-stop-memory-capture.py")
 }
 pub(in crate::setup) fn raw_tool_call_stop_guard_path(home: &Path) -> PathBuf {
     host_scripts_dir(home).join("raw-tool-call-stop-guard.js")
+}
+pub(crate) fn omp_memory_lifecycle_path(home: &Path) -> PathBuf {
+    home.join(".omp/agent/extensions/ags-memory-lifecycle.js")
 }
 
 /// Stop-hook command that runs the project-memory capture bridge. Uses `$HOME`
@@ -50,6 +61,13 @@ pub(in crate::setup) fn raw_tool_call_stop_guard_path(home: &Path) -> PathBuf {
 /// machine-independent.
 pub(in crate::setup) fn memory_capture_command() -> String {
     "python3 \"$HOME/.agents/scripts/claude-stop-memory-capture.py\"".to_string()
+}
+pub(in crate::setup) fn memory_start_command() -> String {
+    "python3 \"$HOME/.agents/scripts/context-memory-start.py\"".to_string()
+}
+pub(crate) fn codex_memory_capture_command() -> String {
+    "AGS_MEMORY_HOST=codex python3 \"$HOME/.agents/scripts/claude-stop-memory-capture.py\""
+        .to_string()
 }
 pub(in crate::setup) fn raw_guard_command() -> String {
     "node \"$HOME/.agents/scripts/raw-tool-call-stop-guard.js\"".to_string()
@@ -73,17 +91,29 @@ pub(in crate::setup) fn memory_script_install_files(home: &Path) -> Vec<InstallF
             mode: Some(0o755),
         },
         InstallFile {
+            path: context_memory_start_path(home),
+            description: "AGS native host project-memory start bridge".to_string(),
+            content: CONTEXT_MEMORY_START_PY.to_string(),
+            mode: Some(0o755),
+        },
+        InstallFile {
             path: claude_stop_memory_capture_path(home),
-            description: "AGS Claude Stop project-memory capture bridge".to_string(),
+            description: "AGS host-neutral project-memory close/capture bridge".to_string(),
             content: CLAUDE_STOP_MEMORY_CAPTURE_PY.to_string(),
             mode: Some(0o755),
+        },
+        InstallFile {
+            path: omp_memory_lifecycle_path(home),
+            description: "AGS OMP native project-memory lifecycle extension".to_string(),
+            content: OMP_MEMORY_LIFECYCLE_JS.to_string(),
+            mode: Some(0o644),
         },
     ]
 }
 
 /// Outcome of merging the memory-capture step into a Stop pipeline value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::setup) enum MergeOutcome {
+pub(crate) enum MergeOutcome {
     /// A memory-capture command already existed — nothing changed.
     AlreadyPresent,
     /// A memory-capture command was inserted into the pipeline.
@@ -128,6 +158,105 @@ fn raw_guard_hook_entry() -> serde_json::Value {
         "command": raw_guard_command(),
         "timeout": 2,
     })
+}
+
+fn memory_start_hook_entry(command: &str) -> serde_json::Value {
+    serde_json::json!({
+        "type": "command",
+        "command": command,
+        "timeout": 5,
+    })
+}
+
+/// Merge a read-only project-memory injection step into `hooks.SessionStart`.
+pub(in crate::setup) fn merge_memory_start(
+    value: &mut serde_json::Value,
+    command: &str,
+) -> MergeOutcome {
+    if !value.is_object() {
+        *value = serde_json::json!({});
+    }
+    let root = value.as_object_mut().expect("object");
+    let hooks = root.entry("hooks").or_insert_with(|| serde_json::json!({}));
+    if !hooks.is_object() {
+        *hooks = serde_json::json!({});
+    }
+    let hooks_obj = hooks.as_object_mut().expect("hooks object");
+    let start = hooks_obj
+        .entry("SessionStart")
+        .or_insert_with(|| serde_json::json!([]));
+    if !start.is_array() {
+        *start = serde_json::json!([]);
+    }
+    let start_arr = start.as_array_mut().expect("SessionStart array");
+    if hooks_contain(start_arr, MEMORY_START_MARKER) {
+        return MergeOutcome::AlreadyPresent;
+    }
+
+    let entry = memory_start_hook_entry(command);
+    if let Some(group) = start_arr
+        .iter_mut()
+        .find(|group| group.get("hooks").and_then(|h| h.as_array()).is_some())
+    {
+        group
+            .get_mut("hooks")
+            .and_then(|h| h.as_array_mut())
+            .expect("nested hooks array")
+            .push(entry);
+    } else {
+        start_arr.push(serde_json::json!({ "hooks": [entry] }));
+    }
+    MergeOutcome::Wired
+}
+
+/// Merge Codex's native SessionStart/SessionEnd lifecycle and retire the
+/// historical per-prompt memory injection hook.
+pub(crate) fn merge_codex_memory_lifecycle(
+    value: &mut serde_json::Value,
+    start_command: &str,
+    close_command: &str,
+) -> MergeOutcome {
+    let mut changed = merge_memory_start(value, start_command) == MergeOutcome::Wired;
+    let root = value.as_object_mut().expect("object");
+    let hooks = root
+        .entry("hooks")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .expect("hooks object");
+
+    if let Some(prompt_groups) = hooks
+        .get_mut("UserPromptSubmit")
+        .and_then(|groups| groups.as_array_mut())
+    {
+        let before = prompt_groups.len();
+        prompt_groups.retain(|group| !group_has_marker(group, "memory-start-context.sh"));
+        changed |= before != prompt_groups.len();
+    }
+
+    let end = hooks
+        .entry("SessionEnd")
+        .or_insert_with(|| serde_json::json!([]));
+    if !end.is_array() {
+        *end = serde_json::json!([]);
+        changed = true;
+    }
+    let end_arr = end.as_array_mut().expect("SessionEnd array");
+    if !hooks_contain(end_arr, MEMORY_CAPTURE_MARKER) {
+        end_arr.push(serde_json::json!({
+            "hooks": [{
+                "type": "command",
+                "command": close_command,
+                "timeout": 3
+            }]
+        }));
+        changed = true;
+    }
+
+    if changed {
+        MergeOutcome::Wired
+    } else {
+        MergeOutcome::AlreadyPresent
+    }
 }
 
 fn insert_raw_guard(stop_arr: &mut Vec<serde_json::Value>) {
@@ -356,6 +485,255 @@ pub(in crate::setup) fn wire_workspace_memory_capture(
     )
 }
 
+/// Wire the read-only project-memory startup injection hook into a workspace
+/// `settings.json`, preserving unrelated SessionStart hooks.
+pub(in crate::setup) fn wire_workspace_memory_start(
+    settings_path: &Path,
+    command: &str,
+    backup_stamp: u64,
+) -> suite_doctor::Finding {
+    let check = "setup-memory-start-hook";
+    let mut value: serde_json::Value = if settings_path.exists() {
+        match std::fs::read_to_string(settings_path)
+            .map_err(|error| error.to_string())
+            .and_then(|raw| serde_json::from_str(&raw).map_err(|error| error.to_string()))
+        {
+            Ok(value) => value,
+            Err(error) => {
+                return suite_doctor::Finding::fail(
+                    check,
+                    format!(
+                        "{} is unreadable or invalid JSON; left unchanged",
+                        settings_path.display()
+                    ),
+                    error,
+                );
+            }
+        }
+    } else {
+        serde_json::json!({})
+    };
+
+    if merge_memory_start(&mut value, command) == MergeOutcome::AlreadyPresent {
+        return suite_doctor::Finding::pass(
+            check,
+            format!(
+                "project memory start hook already wired in {}",
+                settings_path.display()
+            ),
+        );
+    }
+    if let Some(parent) = settings_path.parent() {
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            return suite_doctor::Finding::fail(
+                check,
+                format!("cannot create {}", parent.display()),
+                error.to_string(),
+            );
+        }
+    }
+    if settings_path.exists() {
+        let backup = settings_path.with_extension(format!("json.bak.{backup_stamp}"));
+        if let Err(error) = std::fs::copy(settings_path, backup) {
+            return suite_doctor::Finding::fail(
+                check,
+                format!("backup failed for {}", settings_path.display()),
+                error.to_string(),
+            );
+        }
+    }
+    let mut serialized = serde_json::to_string_pretty(&value).unwrap_or_default();
+    serialized.push('\n');
+    match std::fs::write(settings_path, serialized) {
+        Ok(()) => suite_doctor::Finding::pass(
+            check,
+            format!(
+                "wired project memory start hook into {}",
+                settings_path.display()
+            ),
+        ),
+        Err(error) => suite_doctor::Finding::fail(
+            check,
+            format!("write failed: {}", settings_path.display()),
+            error.to_string(),
+        ),
+    }
+}
+
+pub(crate) fn wire_codex_memory_lifecycle(
+    hooks_path: &Path,
+    backup_stamp: u64,
+) -> suite_doctor::Finding {
+    let check = "agents-codex-memory-lifecycle";
+    let mut value: serde_json::Value = if hooks_path.exists() {
+        match std::fs::read_to_string(hooks_path)
+            .map_err(|error| error.to_string())
+            .and_then(|raw| serde_json::from_str(&raw).map_err(|error| error.to_string()))
+        {
+            Ok(value) => value,
+            Err(error) => {
+                return suite_doctor::Finding::fail(
+                    check,
+                    format!(
+                        "{} is unreadable or invalid JSON; left unchanged",
+                        hooks_path.display()
+                    ),
+                    error,
+                );
+            }
+        }
+    } else {
+        serde_json::json!({})
+    };
+
+    if merge_codex_memory_lifecycle(
+        &mut value,
+        &memory_start_command(),
+        &codex_memory_capture_command(),
+    ) == MergeOutcome::AlreadyPresent
+    {
+        return suite_doctor::Finding::pass(
+            check,
+            format!(
+                "Codex memory lifecycle already wired in {}",
+                hooks_path.display()
+            ),
+        );
+    }
+    if let Some(parent) = hooks_path.parent() {
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            return suite_doctor::Finding::fail(
+                check,
+                format!("cannot create {}", parent.display()),
+                error.to_string(),
+            );
+        }
+    }
+    if hooks_path.exists() {
+        let backup = hooks_path.with_extension(format!("json.bak.{backup_stamp}"));
+        if let Err(error) = std::fs::copy(hooks_path, backup) {
+            return suite_doctor::Finding::fail(
+                check,
+                format!("backup failed for {}", hooks_path.display()),
+                error.to_string(),
+            );
+        }
+    }
+    let mut body = serde_json::to_string_pretty(&value).unwrap_or_default();
+    body.push('\n');
+    match std::fs::write(hooks_path, body) {
+        Ok(()) => suite_doctor::Finding::pass(
+            check,
+            format!(
+                "wired Codex SessionStart + SessionEnd memory lifecycle in {}",
+                hooks_path.display()
+            ),
+        ),
+        Err(error) => suite_doctor::Finding::fail(
+            check,
+            format!("write failed: {}", hooks_path.display()),
+            error.to_string(),
+        ),
+    }
+}
+
+fn ensure_omp_memory_extension(home: &Path, backup_stamp: u64) -> suite_doctor::Finding {
+    let check = "agents-omp-memory-lifecycle";
+    let path = omp_memory_lifecycle_path(home);
+    if std::fs::read_to_string(&path).ok().as_deref() == Some(OMP_MEMORY_LIFECYCLE_JS) {
+        return suite_doctor::Finding::pass(
+            check,
+            format!("OMP memory lifecycle extension ready at {}", path.display()),
+        );
+    }
+    if let Some(parent) = path.parent() {
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            return suite_doctor::Finding::fail(
+                check,
+                format!("cannot create {}", parent.display()),
+                error.to_string(),
+            );
+        }
+    }
+    if path.exists() {
+        let backup = path.with_extension(format!("js.bak.{backup_stamp}"));
+        if let Err(error) = std::fs::copy(&path, backup) {
+            return suite_doctor::Finding::fail(
+                check,
+                format!("backup failed for {}", path.display()),
+                error.to_string(),
+            );
+        }
+    }
+    match std::fs::write(&path, OMP_MEMORY_LIFECYCLE_JS) {
+        Ok(()) => suite_doctor::Finding::pass(
+            check,
+            format!(
+                "installed OMP native memory lifecycle extension at {}",
+                path.display()
+            ),
+        ),
+        Err(error) => suite_doctor::Finding::fail(
+            check,
+            format!("write failed: {}", path.display()),
+            error.to_string(),
+        ),
+    }
+}
+
+/// Explicit `ags agents govern --apply` adapter write. External MCP
+/// registration remains advice-only.
+pub(crate) fn apply_host_memory_adapter(
+    report: &mut suite_doctor::HealthReport,
+    home: &Path,
+    workspace_root: &Path,
+    host: &str,
+    backup_stamp: u64,
+) {
+    let supported = match host {
+        "claude-code" => {
+            let settings = home.join(".claude/settings.json");
+            report.add(wire_workspace_memory_start(
+                &settings,
+                &memory_start_command(),
+                backup_stamp,
+            ));
+            report.add(wire_workspace_memory_capture(
+                &settings,
+                &memory_capture_command(),
+                backup_stamp.saturating_add(1),
+            ));
+            true
+        }
+        "codex" => {
+            report.add(wire_codex_memory_lifecycle(
+                &home.join(".codex/hooks.json"),
+                backup_stamp,
+            ));
+            true
+        }
+        "omp" => {
+            report.add(ensure_omp_memory_extension(home, backup_stamp));
+            true
+        }
+        other => {
+            report.add(suite_doctor::Finding::fail(
+                "agents-memory-lifecycle-unsupported",
+                format!("no AGS native memory lifecycle adapter for `{other}`"),
+                "Supported adapters: claude-code, codex, omp.",
+            ));
+            false
+        }
+    };
+    if supported {
+        report.add(bootstrap_workspace_memory_with(
+            &context_memory_script_path(home),
+            workspace_root,
+            None,
+        ));
+    }
+}
+
 /// Bootstrap the current workspace's memory capsule by invoking the installed
 /// `context-memory.sh init`. Create-if-missing; the script never overwrites the
 /// capsule. Fail-closed on the `--register-claude` apply path: a missing script
@@ -424,10 +802,15 @@ fn add_workspace_memory_capture_inner(
     memory_root: Option<&Path>,
 ) {
     let settings_path = workspace_root.join(".claude").join("settings.json");
+    report.add(wire_workspace_memory_start(
+        &settings_path,
+        &memory_start_command(),
+        backup_stamp,
+    ));
     report.add(wire_workspace_memory_capture(
         &settings_path,
         &memory_capture_command(),
-        backup_stamp,
+        backup_stamp.saturating_add(1),
     ));
     let script_path = context_memory_script_path(home);
     report.add(bootstrap_workspace_memory_with(
@@ -446,11 +829,18 @@ pub(in crate::setup) fn render_memory_capture_plan(
     register_claude: bool,
 ) -> String {
     let settings_path = workspace_root.join(".claude").join("settings.json");
-    let (raw_wired, memory_wired) = std::fs::read_to_string(&settings_path)
+    let (start_wired, raw_wired, memory_wired) = std::fs::read_to_string(&settings_path)
         .ok()
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
         .map(|v| {
-            v.get("hooks")
+            let start_wired = v
+                .get("hooks")
+                .and_then(|h| h.get("SessionStart"))
+                .and_then(|s| s.as_array())
+                .map(|start| hooks_contain(start, MEMORY_START_MARKER))
+                .unwrap_or(false);
+            let (raw_wired, memory_wired) = v
+                .get("hooks")
                 .and_then(|h| h.get("Stop"))
                 .and_then(|s| s.as_array())
                 .map(|stop| {
@@ -459,20 +849,34 @@ pub(in crate::setup) fn render_memory_capture_plan(
                         hooks_contain(stop, MEMORY_CAPTURE_MARKER),
                     )
                 })
-                .unwrap_or((false, false))
+                .unwrap_or((false, false));
+            (start_wired, raw_wired, memory_wired)
         })
-        .unwrap_or((false, false));
+        .unwrap_or((false, false, false));
 
     let mut lines = vec!["Memory capture chain (project memory):".to_string()];
     lines.push(format!(
-        "  - Scripts: {} , {} , {}",
+        "  - Shared scripts: {} , {} , {} , {}",
         raw_tool_call_stop_guard_path(home).display(),
         context_memory_script_path(home).display(),
+        context_memory_start_path(home).display(),
         claude_stop_memory_capture_path(home).display()
+    ));
+    lines.push(format!(
+        "  - OMP native extension: {}",
+        omp_memory_lifecycle_path(home).display()
+    ));
+    lines.push(format!(
+        "  - Workspace SessionStart config: {}",
+        settings_path.display()
     ));
     lines.push(format!(
         "  - Workspace Stop config: {}",
         settings_path.display()
+    ));
+    lines.push(format!(
+        "  - Current state: project memory start hook {}",
+        if start_wired { "WIRED" } else { "MISSING" }
     ));
     lines.push(format!(
         "  - Current state: raw guard {}",
@@ -483,14 +887,14 @@ pub(in crate::setup) fn render_memory_capture_plan(
         if memory_wired { "WIRED" } else { "MISSING" }
     ));
     if register_claude {
-        if raw_wired && memory_wired {
+        if start_wired && raw_wired && memory_wired {
             lines.push(
-                "  - Action: scripts refreshed; Stop pipeline already wired (idempotent)."
+                "  - Action: scripts refreshed; SessionStart + Stop pipelines already wired (idempotent)."
                     .to_string(),
             );
         } else {
             lines.push(
-                "  - Action: install scripts + repair Stop pipeline (raw guard → project memory capture), backing up the prior settings.json."
+                "  - Action: install scripts + repair SessionStart injection and Stop pipeline (raw guard → project memory capture), backing up the prior settings.json."
                     .to_string(),
             );
         }
@@ -500,7 +904,7 @@ pub(in crate::setup) fn render_memory_capture_plan(
         );
     } else {
         lines.push(
-            "  - Action: pass --register-claude to install scripts and wire/repair the Stop pipeline + bootstrap the workspace capsule."
+            "  - Action: setup refreshes shared scripts + OMP extension. Use `ags agents govern --agent <claude-code|codex|omp> --apply` for explicit native host wiring; use --register-claude only for the legacy Claude MCP/workspace path."
                 .to_string(),
         );
     }
@@ -558,6 +962,105 @@ mod tests {
             .iter()
             .map(|h| h["command"].as_str().unwrap().to_string())
             .collect()
+    }
+
+    fn settings_event_commands(value: &serde_json::Value, event: &str) -> Vec<String> {
+        value["hooks"][event]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|group| {
+                let mut commands = Vec::new();
+                if let Some(command) = group.get("command").and_then(|value| value.as_str()) {
+                    commands.push(command.to_string());
+                }
+                if let Some(hooks) = group.get("hooks").and_then(|value| value.as_array()) {
+                    commands.extend(hooks.iter().filter_map(|hook| {
+                        hook.get("command")
+                            .and_then(|value| value.as_str())
+                            .map(str::to_string)
+                    }));
+                }
+                commands
+            })
+            .collect()
+    }
+
+    #[test]
+    fn start_hook_is_idempotent_and_preserves_existing_hooks() {
+        let mut value = serde_json::json!({
+            "hooks": {
+                "SessionStart": [
+                    {"hooks": [{"type": "command", "command": "node /x/keep-start.js"}]}
+                ]
+            },
+            "_keep": true
+        });
+        assert_eq!(
+            merge_memory_start(&mut value, &memory_start_command()),
+            MergeOutcome::Wired
+        );
+        assert_eq!(
+            merge_memory_start(&mut value, &memory_start_command()),
+            MergeOutcome::AlreadyPresent
+        );
+        let commands = settings_event_commands(&value, "SessionStart");
+        assert!(commands
+            .iter()
+            .any(|command| command.contains("keep-start.js")));
+        assert_eq!(
+            commands
+                .iter()
+                .filter(|command| command.contains(MEMORY_START_MARKER))
+                .count(),
+            1
+        );
+        assert_eq!(value["_keep"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn codex_lifecycle_uses_native_start_and_end_hooks() {
+        let mut value = serde_json::json!({
+            "hooks": {
+                "UserPromptSubmit": [
+                    {"hooks": [{"command": "bash ~/.agents/scripts/memory-start-context.sh"}]},
+                    {"hooks": [{"command": "node /x/keep-prompt.js"}]}
+                ]
+            }
+        });
+        assert_eq!(
+            merge_codex_memory_lifecycle(
+                &mut value,
+                &memory_start_command(),
+                &codex_memory_capture_command()
+            ),
+            MergeOutcome::Wired
+        );
+        assert_eq!(
+            merge_codex_memory_lifecycle(
+                &mut value,
+                &memory_start_command(),
+                &codex_memory_capture_command()
+            ),
+            MergeOutcome::AlreadyPresent
+        );
+        let serialized = serde_json::to_string(&value).unwrap();
+        assert!(!serialized.contains("memory-start-context.sh"));
+        assert!(serialized.contains("keep-prompt.js"));
+        assert_eq!(
+            settings_event_commands(&value, "SessionStart")
+                .iter()
+                .filter(|command| command.contains(MEMORY_START_MARKER))
+                .count(),
+            1
+        );
+        assert_eq!(
+            settings_event_commands(&value, "SessionEnd")
+                .iter()
+                .filter(|command| command.contains(MEMORY_CAPTURE_MARKER))
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -644,20 +1147,30 @@ mod tests {
     fn install_files_target_agents_scripts_with_mode() {
         let home = tmp("install-files");
         let files = memory_script_install_files(&home);
-        assert_eq!(files.len(), 3);
+        assert_eq!(files.len(), 5);
         assert!(files[0]
             .path
             .ends_with(".agents/scripts/raw-tool-call-stop-guard.js"));
         assert!(files[1].path.ends_with(".agents/scripts/context-memory.sh"));
         assert!(files[2]
             .path
+            .ends_with(".agents/scripts/context-memory-start.py"));
+        assert!(files[3]
+            .path
             .ends_with(".agents/scripts/claude-stop-memory-capture.py"));
+        assert!(files[4]
+            .path
+            .ends_with(".omp/agent/extensions/ags-memory-lifecycle.js"));
         assert_eq!(files[0].mode, Some(0o755));
         assert_eq!(files[1].mode, Some(0o755));
         assert_eq!(files[2].mode, Some(0o755));
+        assert_eq!(files[3].mode, Some(0o755));
+        assert_eq!(files[4].mode, Some(0o644));
         assert!(files[0].content.contains("hasRawToolCallLeak"));
         assert!(files[1].content.contains("context-memory.sh"));
-        assert!(files[2].content.contains("claude-stop-memory-capture"));
+        assert!(files[2].content.contains("context-memory-start"));
+        assert!(files[3].content.contains("claude-stop-memory-capture"));
+        assert!(files[4].content.contains("session_shutdown"));
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -1047,8 +1560,10 @@ review-gate: n/a\n\
             "hook_event_name": "Stop",
             "transcript_path": transcript.to_str().unwrap(),
             "cwd": repo.to_str().unwrap(),
+            "session_id": "pairing-session",
         })
         .to_string();
+        let close_receipts = base.join("close-receipts");
 
         let run = |stdin: &str| {
             use std::io::Write;
@@ -1060,6 +1575,7 @@ review-gate: n/a\n\
                 .env("CLAUDE_STOP_MEMORY_RECEIPT_ROOT", base.join("receipts"))
                 .env("CLAUDE_STOP_MEMORY_STATE_DIR", base.join("state"))
                 .env("CLAUDE_STOP_MEMORY_LOG_DIR", base.join("logs"))
+                .env("AGS_MEMORY_CLOSE_RECEIPT_ROOT", &close_receipts)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -1083,6 +1599,10 @@ review-gate: n/a\n\
             !task_memory.exists(),
             "a new unfinished card must not be paired with a stale report"
         );
+        let close_receipt = close_receipts.join("claude-code/pairing-session.json");
+        let skipped: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&close_receipt).unwrap()).unwrap();
+        assert_eq!(skipped["status"], "skipped");
 
         // Append the NEW report → now the NEW card pairs with the NEW report.
         let prev = std::fs::read_to_string(&transcript).unwrap();
@@ -1103,6 +1623,9 @@ review-gate: n/a\n\
         let tm = std::fs::read_to_string(&task_memory).unwrap();
         assert!(tm.contains("NEW-TASK"), "captured the NEW task; got: {tm}");
         assert!(!tm.contains("OLD-TASK"), "must not capture the OLD task");
+        let captured: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&close_receipt).unwrap()).unwrap();
+        assert_eq!(captured["status"], "captured");
         let _ = std::fs::remove_dir_all(&base);
     }
 }

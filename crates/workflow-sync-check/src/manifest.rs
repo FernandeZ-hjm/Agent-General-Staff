@@ -32,6 +32,7 @@ pub const FULL_MANIFEST: SyncManifest = SyncManifest {
         "protocol/README.md",
         "protocol/agent-task-protocol.md",
         "protocol/context-memory.md",
+        "protocol/entrypoint-guidelines.md",
         "protocol/cursor-skill-index.md",
         "protocol/evolution-memory.md",
         "protocol/project-profile.md",
@@ -42,6 +43,9 @@ pub const FULL_MANIFEST: SyncManifest = SyncManifest {
         "governance/skill-sync.md",
         "governance/mcp-adoption-log.yaml",
         "manifests/mcp-registry.yaml",
+        "templates/global-entry/ags-core.md",
+        "templates/global-entry/ags-task-handoff.md",
+        "templates/global-entry/host-operations.md",
     ],
     protocol_dir: "protocol",
 };
@@ -69,6 +73,7 @@ pub const PUBLIC_MANIFEST: SyncManifest = SyncManifest {
         "packages/ags-mcp/test/launcher.test.js",
         "packages/ags-mcp/README.md",
         "protocol/agent-task-protocol.md",
+        "protocol/entrypoint-guidelines.md",
         "protocol/mcp-server.md",
         "protocol/runtime-adapters.md",
         "protocol/task-card-template.md",
@@ -81,12 +86,17 @@ pub const PUBLIC_MANIFEST: SyncManifest = SyncManifest {
         "templates/memory/task-memory.md",
         "templates/memory/archive-index.md",
         "templates/memory/task-archive/README.md",
+        "templates/global-entry/ags-core.md",
+        "templates/global-entry/ags-task-handoff.md",
+        "templates/global-entry/host-operations.md",
         "scripts/install.sh",
         "scripts/validate.sh",
         "scripts/run-task-card.sh",
         "scripts/verify.sh",
         "scripts/context-memory.sh",
+        "scripts/context-memory-start.py",
         "scripts/claude-stop-memory-capture.py",
+        "scripts/ags-memory-lifecycle-omp.js",
         "scripts/raw-tool-call-stop-guard.js",
         "scripts/stop-archive-hook.sh",
         "manifests/suite.yaml",
@@ -302,8 +312,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn full_manifest_has_19_files() {
-        assert_eq!(FULL_MANIFEST.required_files.len(), 19);
+    fn full_manifest_has_23_files() {
+        assert_eq!(FULL_MANIFEST.required_files.len(), 23);
     }
 
     #[test]
@@ -314,11 +324,17 @@ mod tests {
             "CLAUDE.md",
             "WORKSPACE.md",
             "AGENT_SUITE_PROTOCOL.md",
+            "protocol/entrypoint-guidelines.md",
             "RELEASE_NOTES.md",
             "templates/memory/context-capsule.md",
             "templates/memory/task-memory.md",
+            "templates/global-entry/ags-core.md",
+            "templates/global-entry/ags-task-handoff.md",
+            "templates/global-entry/host-operations.md",
             "scripts/context-memory.sh",
+            "scripts/context-memory-start.py",
             "scripts/claude-stop-memory-capture.py",
+            "scripts/ags-memory-lifecycle-omp.js",
             "scripts/raw-tool-call-stop-guard.js",
             "scripts/stop-archive-hook.sh",
             "governance/skill-adoption-log.yaml",
@@ -346,7 +362,7 @@ mod tests {
     #[test]
     fn stable_uses_full_manifest() {
         let m = manifest_for(&ProjectKind::Stable);
-        assert_eq!(m.required_files.len(), 19);
+        assert_eq!(m.required_files.len(), 23);
     }
 
     #[test]
@@ -458,7 +474,7 @@ mod tests {
     #[test]
     fn custom_target_uses_full_manifest() {
         let m = manifest_for(&ProjectKind::Custom("test".into()));
-        assert_eq!(m.required_files.len(), 19);
+        assert_eq!(m.required_files.len(), 23);
     }
 
     // ── verify_release_manifest tests ─────────────────────────────────

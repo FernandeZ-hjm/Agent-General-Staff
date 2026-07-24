@@ -140,15 +140,16 @@ pub(in crate::setup) fn global_entry_protocol_plan(
         .to_string(),
         confirm_needed: true,
     });
-    // Class 2 — host global entries (advise-only; AGS never writes host config).
+    // Class 2 — host global entries. External registration is advice-only;
+    // native memory adapters are managed separately by `ags agents govern`.
     for spec in AGENT_PLATFORM_SPECS {
         let config_targets = spec.config_subdirs.join(" / ");
         out.push(GlobalEntryTemplate {
             id: format!("host:{} ({})", spec.id, spec.display),
             class: "host-entry",
             target_path: format!("{config_targets} config (advise only)"),
-            write_method: "advise-only",
-            status: "advise-only".to_string(),
+            write_method: "advise-only-mcp; explicit-memory-adapter-apply",
+            status: "host-governance".to_string(),
             confirm_needed: false,
         });
     }
@@ -169,7 +170,7 @@ pub(in crate::setup) fn render_global_entry_protocol_text(
     let mut lines = vec![
         "Global Entry Protocol Templates".to_string(),
         "===============================".to_string(),
-        "Mode: plan-only by default. AGS-self templates are confirm-gated by `--yes`; host entries are advise-only — AGS never writes host config (~/.claude, ~/.codex, WorkBuddy, CodeBuddy).".to_string(),
+        "Mode: plan-only by default. AGS-self templates are confirm-gated by `--yes`; external host MCP registration is advice-only. `ags agents govern --apply` may write only AGS-owned native memory lifecycle adapters.".to_string(),
     ];
     for class in ["ags-self", "host-entry", "project-init"] {
         let group: Vec<&GlobalEntryTemplate> =

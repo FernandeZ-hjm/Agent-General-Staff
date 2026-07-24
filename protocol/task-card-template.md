@@ -216,7 +216,7 @@ Verification gate:
 - `本次任务相关文件`：列出本次涉及的 skill 源目录、proposal、adoption log 或 ignore list。
 - `项目画像`：如存在，填写 `config/agent-project-profile.yaml`；不要复制无关画像内容。
 - `记忆胶囊`：如存在，填写 `$HOME/.agents/memory/projects/<project-slug>/context-capsule.md`；不要复制长记忆。AGS start hook 已注入时以注入上下文为准；hook 不可用时，开始执行前同步读取同目录 `task-memory.md`。
-- `任务存档`：如存在，填写 `$HOME/.agents/memory/projects/<project-slug>/task-memory.md`；没有任务记忆时填 `无`。任务开始由 Start hook 链路（`context-memory-start.py`）只读注入 capsule / `task-memory.md`；任务结束后由 Stop hook 链路（`claude-stop-memory-capture.py` → `context-memory.sh capture`）归档完整收据并刷新本机 `task-memory.md`；这些链路由 `ags setup --yes --register-claude` 安装脚本并挂载到工作区 SessionStart/Stop pipeline，`context-capsule.md` 绝不被自动覆盖。若本机尚未运行 setup 安装该链路，任务卡不得假设记忆注入或刷新会自动发生；可重新运行 setup 或由人工读取/沉淀。
+- `任务存档`：如存在，填写 `$HOME/.agents/memory/projects/<project-slug>/task-memory.md`；没有任务记忆时填 `无`。任务开始由宿主原生 start adapter 通过 `context-memory-start.py` 只读注入 capsule / `task-memory.md`；会话或任务结束由宿主原生 close adapter 调用兼容名 `claude-stop-memory-capture.py`，只有合法交付闭环才经 `context-memory.sh capture` 归档并刷新本机 `task-memory.md`，普通对话只写 `skipped` close receipt。Claude Code 使用 SessionStart/Stop，Codex 使用 SessionStart/SessionEnd，OMP 使用原生 extension。共享脚本由 `ags setup --yes --force` 安装，宿主 wiring 由 `ags agents govern --agent <host> --apply` 显式纳管；`context-capsule.md` 绝不被自动覆盖。
 - `适用治理文档`：填写项目内治理文档；如无项目治理文档，填写 `AGENT_SUITE_PROTOCOL.md`。
 - `非目标`：明确不得写 `$HOME/.agents/skills`、`$HOME/.codex/skills`、`$HOME/.codex/plugins/cache`，不得运行 `lark-cli update`、`npx skills add/remove/update`，不得接管外部官方 CLI 或项目自管输出层技能，不得自动应用 patch。
 - `实施要求`：说明默认先 scan / dry-run，人工确认后才能 adopt / ignore。

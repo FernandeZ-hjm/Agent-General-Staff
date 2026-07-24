@@ -464,9 +464,11 @@ Execution notes:
 - Do not revert unrelated dirty changes.
 - Run the narrowest meaningful verification before claiming completion.
 - Stop review hooks are deprecated. Codex keeps `UserPromptSubmit` skill-alias
-  sync and memory-context hooks, while Claude Code keeps those hooks plus the
-  `PreToolUse(Bash)` RTK hook and the non-blocking Stop memory-capture hook.
-  Reviews are explicit task-card or human gates.
+  sync, but project memory loads once through native `SessionStart` and closes
+  through bounded `SessionEnd`; the retired per-prompt memory shell hook is
+  removed during host governance. Claude Code uses native SessionStart/Stop;
+  OMP uses its native lifecycle extension. Reviews remain explicit task-card or
+  human gates and are separate from memory closure.
 
 Parallelism mapping:
 

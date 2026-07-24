@@ -2,7 +2,7 @@
 
 mod apply;
 mod global_entry;
-mod memory;
+pub(crate) mod memory;
 mod plan;
 mod recommendations;
 pub(crate) mod rollback;
@@ -313,6 +313,6 @@ fn print_setup_agent_governance_next_step() {
         println!("  Governable Agent hosts detected: {}", detected.join(", "));
     }
     println!("  • `ags agents scan`    inventory hosts + AGS MCP registration");
-    println!("  • `ags agents govern`  plan AGS MCP onboarding (advise-only)");
+    println!("  • `ags agents govern`  preview onboarding; add `--agent <host> --apply` for AGS-owned memory wiring");
     println!("  • then `ags skill` to govern skills, `ags init` to onboard a project.");
 }

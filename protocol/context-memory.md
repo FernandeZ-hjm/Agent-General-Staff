@@ -1,7 +1,9 @@
 # Context Memory
 
-Context memory provides cross-conversation continuity for Codex, Cursor, and
-Claude Code without changing the cache-stable task-card skeleton.
+Context memory provides cross-conversation continuity through native adapters
+for Claude Code, Codex, and OMP without changing the cache-stable task-card
+skeleton. Other hosts use the explicit read/capture fallback until they have a
+native adapter and must not report `full`.
 
 ## Default Store
 
@@ -103,47 +105,55 @@ Memory capture is append-only and conservative:
 
 ## Host and Memory Integration
 
-Task-start context read:
+The lifecycle is host-specific. A hook from one host is never accepted as
+evidence for another host.
 
-- At task start, the executing agent reads `context-capsule.md` and
-  `task-memory.md` for the current repository when the task card names them.
-- This read is read-only and must not write memory files.
-- Automatic injection through host `UserPromptSubmit` hooks is planned (not yet
-  implemented). Until then, the task-start read is driven by AGS preflight and
-  the executor's documented startup steps, not by an installed prompt hook.
+| Host | Start/read adapter | Close adapter |
+|---|---|---|
+| Claude Code | `SessionStart` command hook | `Stop` command hook |
+| Codex | `SessionStart` command hook | `SessionEnd` command hook (maximum 3 seconds) |
+| OMP | extension `session_start`, injected once on the next `before_agent_start` through `systemPromptAppend` | extension `agent_settled` / `session_shutdown` |
 
-Task-end capture:
+All adapters use the same bounded reader and conservative close/capture bridge:
 
-The paste-to-Claude `Stop`-hook capture path is **implemented** as a first-class
-product mechanism. The canonical scripts live in the suite:
+- `scripts/context-memory-start.py` resolves the current repository and emits
+  `hookSpecificOutput.additionalContext`. It never writes project memory.
+- `scripts/claude-stop-memory-capture.py` is the compatibility-named,
+  host-neutral close bridge. It accepts Claude, Codex, and OMP event envelopes.
+  Every supported close event writes a small receipt under
+  `$HOME/.agents/memory-close-receipts/<host>/`; its status is `captured`,
+  `skipped`, or `failed`. A normal conversation without a canonical task card is
+  recorded as `skipped`; it does not pollute task memory.
+- Only a paired canonical task card plus valid delivery closure is archived and
+  delegated to `context-memory.sh capture`.
+- `scripts/ags-memory-lifecycle-omp.js` is the OMP native extension installed at
+  `$HOME/.omp/agent/extensions/ags-memory-lifecycle.js`.
+- `scripts/raw-tool-call-stop-guard.js` remains Claude-specific and independent
+  from memory capture.
 
-- `scripts/raw-tool-call-stop-guard.js` — a Claude Code `Stop` hook guard that
-  catches raw tool-call markup leaks before the turn ends.
-- `scripts/context-memory.sh` — `status` / `init` / `capture RECEIPT_DIR`.
-  `init` creates the project memory store and capsule (create-if-missing);
-  `capture` archives a receipt under `task-archive/` and refreshes
-  `task-memory.md`. It never overwrites `context-capsule.md`.
-- `scripts/claude-stop-memory-capture.py` — a Claude Code `Stop` hook that reads
-  the transcript, detects a pasted task card plus its delivery report, builds a
-  local receipt package, and delegates the write to `context-memory.sh capture`.
-  It is conservative: no task card → skip; no delivery report → skip; duplicate
-  transcript → skip; the capsule is never written directly.
+Preflight reports the exact requested host, adapter, and closure state.
+`full` requires that host's native start and close wiring, backing scripts,
+memory files, and archive directory. Unsupported hosts report `unsupported`;
+they never inherit another host's result.
 
 Command responsibilities:
 
-- `ags setup --yes --register-claude` installs the raw guard plus both memory
-  scripts to
-  `$HOME/.agents/scripts/`, merges the capture step into the current AGS
-  workspace's Claude `Stop` pipeline (order: raw guard → project memory capture)
-  while preserving existing hooks, and
-  bootstraps the workspace capsule via `context-memory.sh init`.
+- `ags setup --yes --force` installs or refreshes the shared scripts and OMP
+  extension. The compatibility `--register-claude` path still reconciles Claude
+  MCP plus current-workspace hooks.
+- `ags agents govern --agent <claude-code|codex|omp> --apply` performs the
+  explicit host-adapter write. It structurally preserves unrelated hooks,
+  backs up changed JSON or extension files, and bootstraps the current
+  repository's memory store. External MCP registration remains advice-only.
+- Codex migration removes only the retired AGS
+  `UserPromptSubmit -> memory-start-context.sh` entry; memory then loads once at
+  `SessionStart`. Other user hooks remain intact.
 - `ags init` creates the per-project memory store (capsule, `task-memory.md`,
-  `task-archive/`) and registers the project. It does **not** install host
-  hooks: the installed capture bridge is cwd-aware and resolves each project's
-  memory by repository, so one host-level hook serves every onboarded project.
-- `ags doctor` reports the chain state: capture scripts present, Stop hook
-  wired, raw guard preserved, `task-memory.md` freshness, and capsule
-  design-purpose integrity.
+  `task-archive/`) and registers the project. Host adapters remain machine-level
+  and repository-aware.
+- `ags doctor` aggregates every detected supported host; one complete Claude
+  chain cannot hide missing Codex or OMP wiring. `ags session preflight --for
+  <host>` reports the requested host only.
 
 Boundary notes:
 
@@ -152,10 +162,9 @@ Boundary notes:
   or generate a delivery report. `scripts/run-task-card.sh` is a thin wrapper
   over that read-only preparation surface. The host owns post-execution memory,
   receipt, and delivery-report writes.
-- A transient compile/learning pipeline and `learning-gaps/` proposal capture
-  remain planned (not yet implemented). When added, any such proposals must not
-  be promoted into rules without human review.
-- The capture path must not overwrite `context-capsule.md`.
+- The startup reader, close bridge, Claude/Codex hooks, and OMP extension are
+  distinct adapters over the same project-memory authority.
+- No capture path may overwrite `context-capsule.md`.
 
 Use `--no-memory` only when a task run should intentionally skip local memory
 capture.

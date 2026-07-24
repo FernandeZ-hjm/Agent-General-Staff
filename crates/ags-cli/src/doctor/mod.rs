@@ -37,22 +37,35 @@ fn capability_routing_report(target: &Path) -> suite_doctor::HealthReport {
     report
 }
 
-fn host_entry_semantic_report(policy_path: &Path) -> suite_doctor::HealthReport {
+fn host_entry_semantic_report(core_path: &Path) -> suite_doctor::HealthReport {
     let mut report = suite_doctor::HealthReport::new("host-entry-semantics");
-    let content = match std::fs::read_to_string(policy_path) {
+    let core = match std::fs::read_to_string(core_path) {
         Ok(content) => content,
         Err(error) => {
             report.add(suite_doctor::Finding::warn(
                 "host-entry-semantics",
+                format!("shared host entry is unavailable: {}", core_path.display()),
+                error.to_string(),
+            ));
+            return report;
+        }
+    };
+    let handoff_path = core_path.with_file_name("ags-task-handoff.md");
+    let handoff = match std::fs::read_to_string(&handoff_path) {
+        Ok(content) => content,
+        Err(error) => {
+            report.add(suite_doctor::Finding::fail(
+                "host-entry-semantics",
                 format!(
-                    "installed host entry policy is unavailable: {}",
-                    policy_path.display()
+                    "shared host entry companion is unavailable: {}",
+                    handoff_path.display()
                 ),
                 error.to_string(),
             ));
             return report;
         }
     };
+    let content = format!("{core}\n{handoff}");
 
     let forbidden = [
         "AGS 0.2.8 入口",
@@ -66,26 +79,32 @@ fn host_entry_semantic_report(policy_path: &Path) -> suite_doctor::HealthReport 
         .copied()
         .filter(|marker| content.contains(marker))
         .collect();
-    let required = [
+    let core_required = [
         "HostRouteProposal",
         "RouteResolution",
         "ags://capabilities/current-host",
-        "OMP Plan mode",
-        "task_card_hash",
-        "validates the existing card first",
+        "ags-task-handoff.md",
+        "verification-before-completion",
     ];
-    let missing: Vec<&str> = required
+    let handoff_required = ["OMP Plan 单卡出口", "task_card_hash", "validate-first"];
+    let mut missing: Vec<&str> = core_required
         .iter()
         .copied()
-        .filter(|marker| !content.contains(marker))
+        .filter(|marker| !core.contains(marker))
         .collect();
+    missing.extend(
+        handoff_required
+            .iter()
+            .copied()
+            .filter(|marker| !handoff.contains(marker)),
+    );
 
     if stale.is_empty() && missing.is_empty() {
         report.add(suite_doctor::Finding::pass(
             "host-entry-semantics",
             format!(
-                "installed host entry policy uses AGS 0.3 typed routing and OMP Plan single-card semantics: {}",
-                policy_path.display()
+                "concise shared host entry references typed routing and task-handoff semantics: {}",
+                core_path.display()
             ),
         ));
     } else {
@@ -99,8 +118,8 @@ fn host_entry_semantic_report(policy_path: &Path) -> suite_doctor::HealthReport 
         report.add(suite_doctor::Finding::fail(
             "host-entry-semantics",
             format!(
-                "installed host entry policy has semantic drift: {}",
-                policy_path.display()
+                "shared host entry has semantic drift: {}",
+                core_path.display()
             ),
             detail.join("; "),
         ));
@@ -117,8 +136,9 @@ pub(crate) fn cmd_doctor(format: &str, repair: bool, dry_run: bool, target: &Pat
         let kernel = crate::setup::private_install_health_report(&runtime_home);
         let project = suite_doctor::run(target);
         let capability = capability_routing_report(target);
-        let host_entry =
-            host_entry_semantic_report(&runtime_home.join("hosts/host-entry-policy.md"));
+        let host_entry = host_entry_semantic_report(
+            &crate::context::home_dir().join(".agents/rules/ags-core.md"),
+        );
         let mut report = compose_doctor_report(kernel, project);
         report.findings.extend(capability.findings);
         report.findings.extend(host_entry.findings);
@@ -198,26 +218,36 @@ mod tests {
             std::env::temp_dir().join(format!("ags-host-entry-doctor-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).unwrap();
-        let policy = base.join("host-entry-policy.md");
+        let core = base.join("ags-core.md");
+        let handoff = base.join("ags-task-handoff.md");
 
         fs::write(
-            &policy,
+            &core,
             "AGS 0.2.8 入口\nRequestDecision\n把完整当前请求交给 `ags_route_request`\n",
         )
         .unwrap();
-        let stale = host_entry_semantic_report(&policy);
+        fs::write(&handoff, "legacy").unwrap();
+        let stale = host_entry_semantic_report(&core);
         assert_eq!(stale.exit_code(), 1);
         assert!(stale.findings[0].message.contains("semantic drift"));
 
         fs::write(
-            &policy,
+            &core,
             "HostRouteProposal RouteResolution ags://capabilities/current-host\n\
-             OMP Plan mode task_card_hash validates the existing card first\n",
+             ags-task-handoff.md verification-before-completion\n",
         )
         .unwrap();
-        let current = host_entry_semantic_report(&policy);
+        fs::write(
+            &handoff,
+            "## OMP Plan 单卡出口\n\
+             task_card_hash validate-first\n",
+        )
+        .unwrap();
+        let current = host_entry_semantic_report(&core);
         assert_eq!(current.exit_code(), 0);
-        assert!(current.findings[0].message.contains("AGS 0.3"));
+        assert!(current.findings[0]
+            .message
+            .contains("concise shared host entry"));
         let _ = fs::remove_dir_all(&base);
     }
 }

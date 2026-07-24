@@ -1,97 +1,59 @@
 # AGENTS.md
 
-Before responding or executing tasks in this repository, also read and follow:
+## Repository contract
 
-- `CLAUDE.md` — Rust core suite protocol.
+This checkout is the public distributable edition of Agent General Staff 0.3.
+It is self-contained and must not depend on private repositories, machine-local
+state, credentials, or unpublished skill bodies.
 
-@CLAUDE.md
-
-## AGS: Standing Engineering Hub
-
-Agent General Staff (AGS) is a standing engineering hub. After preflight, the
-host reads `ags://capabilities/current-host`, keeps the complete conversation
-context, and submits a typed `HostRouteProposal` to read-only
-`ags_route_request`. AGS validates phase, authority, one exact `SkillTarget`,
-and one closed `MachineCliTarget`; it never interprets natural language.
-`DirectResponse` is exclusive. `ags_apply_action` is the sole effectful MCP
-tool and consumes a connection-bound, server-held action by lease/action ID.
-Compiler, Policy, Gate, and Runner consume structured contracts only.
-
-When AGS MCP is available, every AGS-related task must explicitly call the MCP
-`ags_preflight` tool first. CLI preflight is a fallback path only when MCP is not
-available.
-
-Do not jump to Light / Medium / Heavy classification from raw user requests.
-Preflight is always required, but solution formation is conditional: use an
-already supplied and approved solution when one exists; otherwise form one before
-classification. "方案 OK" confirms the design but does not authorize mutation.
-An explicit same-session modification
-instruction enters `direct-edit`; an explicit task-card/handoff instruction enters
-task-card generation. A host Plan mode uses its final decision-complete artifact
-as that handoff instruction: the artifact itself is the canonical task card, not
-a separate plan document. The task card template (`protocol/task-card-template.md`)
-takes a confirmed handoff contract as input, not raw chat messages. `ags task
-compile` requires `--confirmed-handoff-contract` plus either
-`--task-card-requested` or `--host-plan-mode-final` because it generates a
-handoff artifact. Plan UI approval switches out of Plan mode and dispatches the
-exact validated card without regeneration;
-task cards are not a prerequisite for authorized host-native direct edits.
-
-An input whose first non-empty line is the canonical `## 任务卡` header is an
-existing execution contract, not a raw request. Validate it before request
-classification: a valid card continues to policy resolution and the runner; an
-invalid card stops with validation errors and must never fall through to task-card
-generation.
-
-Task cards have exactly two permission modes: `plan-only` and
-`execute-and-verify`. Light and Medium default to direct execution. Heavy
-defaults to `plan-only`, but an explicitly authorized Heavy
-`execute-and-verify` card executes and verifies directly; Heavy adds only its
-independent review gate. Destructive, external-write, credential, migration,
-and release boundaries remain independent stop conditions.
-
-## Protocol Authority
-
-This repository is the **public distributable edition** of the Agent Governance
-Suite. Canonical protocol files live under `protocol/` and are self-contained
-within this repository. No private infrastructure or private repositories are
-required to build, run, or use AGS.
-
-## Kernel Activation — Session Preflight
-
-`ags session preflight` is the default kernel activation wake-up entry point.
-`ags mcp serve --transport stdio` is the public MCP server entry point.
-`ags verify --scope local|full|release` is the structured verification entry point
-with stable `CheckItem` model and machine-readable JSON output. `scripts/verify.sh`
-is a compatibility wrapper that delegates to `ags verify --scope local`.
-
-Before executing any task, agents should run:
+Before AGS-governed work, call MCP `ags_preflight` or run:
 
 ```bash
-ags session preflight --for codex     # Codex pre-execution lifecycle
-ags session preflight --for claude-code  # Claude Code execution
-ags session preflight --for cursor    # Cursor IDE workflow
+ags session preflight --for <agent> --target .
 ```
 
-This aggregates project identity, protocol status, agent instructions, memory
-paths, stop conditions, warnings, failures, and next steps into a single
-read-only report. It does NOT depend on skill governance — core kernel
-activation is independent of third-party skill governance.
+The host reads `ags://capabilities/current-host`, interprets the complete user
+context, and submits one typed `HostRouteProposal` to read-only
+`ags_route_request`. `ags_apply_action` may consume only the returned
+connection-bound action. Existing `## 任务卡` input is validated before request
+classification.
 
-See `CLAUDE.md` M2 Agent Awareness Commands section for all M2 read-only
-commands.
+## Hard boundaries
 
-## Project Entry Integration
+- Do not publish local memory, receipts, credentials, build output, host config,
+  or machine-specific paths.
+- Do not modify protocol, release, protected, destructive, external-write, or
+  credential boundaries without matching authorization.
+- AGS MCP is the suite host adapter, not a governed third-party MCP.
+- `agents govern --apply` may install only AGS-owned host memory adapters;
+  external MCP registration remains advice-only.
+- Task-card permission is only `plan-only` or `execute-and-verify`; Heavy adds an
+  independent review gate.
+- Preserve unrelated working-tree changes and user-owned entry-file content.
 
-User projects often already have their own `AGENTS.md` and `CLAUDE.md`. Do not
-replace those files with the public suite copies. To integrate AGS into a user
-project, use the incremental managed-block workflow:
+## Read when relevant
+
+- Repository and publication boundary: `WORKSPACE.md`
+- Entrypoint size and ownership: `protocol/entrypoint-guidelines.md`
+- Governance overview: `AGENT_SUITE_PROTOCOL.md`
+- Task lifecycle and cards: `protocol/agent-task-protocol.md`,
+  `protocol/task-card-template.md`, `protocol/task-routing.md`
+- Host adapters and memory closure: `protocol/runtime-adapters.md`,
+  `protocol/context-memory.md`
+- MCP contract: `protocol/mcp-server.md`
+- Skills and capabilities: `protocol/skill-governance.md`
+
+## Verification
+
+Use the narrowest relevant check during development. Before delivery:
 
 ```bash
-ags project integrate --target /path/to/repo --dry-run
-ags project integrate --target /path/to/repo --confirm
+cargo fmt --check
+RUSTFLAGS="-D warnings" cargo test
+cargo build --release
+bash scripts/verify.sh
+git diff --check
 ```
 
-The integration command preserves user-authored content, updates only the
-`<!-- AGS:BEGIN managed-entry v2 -->` block when present, and stops on conflicting
-entry-file instructions instead of overwriting them.
+After context compaction, re-check the current request, repository root, and
+`git status --short` before editing.

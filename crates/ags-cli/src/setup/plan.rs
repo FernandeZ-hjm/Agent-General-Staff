@@ -304,6 +304,31 @@ Each command skill routes through AGS preflight before acting.\n",
     ];
     files.extend(super::memory::memory_script_install_files(&home_dir()));
 
+    // AGS-owned global rule modules. Host-global AGENTS.md / CLAUDE.md stay
+    // operator-controlled and may reference these concise, stable modules.
+    for (name, description) in [
+        ("ags-core.md", "AGS concise global core rules"),
+        (
+            "ags-task-handoff.md",
+            "AGS task-card and Plan handoff rules",
+        ),
+        (
+            "host-operations.md",
+            "AGS remote, GUI, install, and temporary-file rules",
+        ),
+    ] {
+        if let Ok(content) =
+            std::fs::read_to_string(source_root.join("templates/global-entry").join(name))
+        {
+            files.push(InstallFile {
+                path: home_dir().join(".agents/rules").join(name),
+                description: description.to_string(),
+                content,
+                mode: None,
+            });
+        }
+    }
+
     for (name, display_name, short_description, default_prompt, summary) in
         codex_ags_command_skill_specs()
     {
@@ -578,6 +603,12 @@ mod install_plan_tests {
         assert!(manifest.content.contains("ags-skill"));
         assert!(manifest.content.contains(".claude/commands/ags.md"));
         assert!(!manifest.content.contains(".codex/skills/ags/SKILL.md"));
+        for name in ["ags-core.md", "ags-task-handoff.md", "host-operations.md"] {
+            assert!(
+                plan.files.iter().any(|file| file.path.ends_with(name)),
+                "global rule module must be installed: {name}"
+            );
+        }
         for (name, _, _, _, _) in codex_ags_command_skill_specs() {
             assert!(plan
                 .files
