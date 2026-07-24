@@ -582,92 +582,6 @@ pub fn context_capsule_integrity(repo_root: &Path) -> Finding {
     context_capsule_integrity_at(repo_root, &home)
 }
 
-/// Check that `manifests/templates/runtime-profiles.template.yaml` exists.
-pub fn runtime_profile_template_exists(repo_root: &Path) -> Finding {
-    let path = repo_root.join("manifests/templates/runtime-profiles.template.yaml");
-    if path.exists() {
-        Finding::info(
-            "runtime_profile_template_exists",
-            "manifests/templates/runtime-profiles.template.yaml found",
-        )
-    } else {
-        Finding::warn(
-            "runtime_profile_template_exists",
-            "manifests/templates/runtime-profiles.template.yaml missing",
-            format!(
-                "Portable runtime profile template not found at {}. Bootstrap and migration may lack runtime profile support.",
-                path.display()
-            ),
-        )
-    }
-}
-
-/// Check that `manifests/templates/hooks/codex-planner-recall.template.json` exists.
-pub fn codex_planner_hook_template_exists(repo_root: &Path) -> Finding {
-    let path = repo_root.join("manifests/templates/hooks/codex-planner-recall.template.json");
-    if path.exists() {
-        Finding::info(
-            "codex_planner_hook_template_exists",
-            "manifests/templates/hooks/codex-planner-recall.template.json found",
-        )
-    } else {
-        Finding::warn(
-            "codex_planner_hook_template_exists",
-            "manifests/templates/hooks/codex-planner-recall.template.json missing",
-            format!(
-                "Codex planner hook template not found at {}. Planner pre-solution recall setup may be incomplete.",
-                path.display()
-            ),
-        )
-    }
-}
-
-/// Check that `manifests/templates/hooks/claude-code-executor-stop.template.js`
-/// exists and passes `node --check`.
-pub fn claude_code_stop_hook_template_exists(repo_root: &Path) -> Finding {
-    let path = repo_root.join("manifests/templates/hooks/claude-code-executor-stop.template.js");
-    if !path.exists() {
-        return Finding::warn(
-            "claude_code_stop_hook_template_exists",
-            "manifests/templates/hooks/claude-code-executor-stop.template.js missing",
-            format!(
-                "Claude Code Stop hook template not found at {}. Bootstrap and migration may lack hook support.",
-                path.display()
-            ),
-        );
-    }
-
-    match Command::new("node")
-        .args([
-            "--check",
-            "manifests/templates/hooks/claude-code-executor-stop.template.js",
-        ])
-        .current_dir(repo_root)
-        .output()
-    {
-        Ok(output) => {
-            if output.status.success() {
-                Finding::info(
-                    "claude_code_stop_hook_template_exists",
-                    "manifests/templates/hooks/claude-code-executor-stop.template.js found and syntax OK",
-                )
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                Finding::warn(
-                    "claude_code_stop_hook_template_exists",
-                    "claude-code-executor-stop.template.js syntax error",
-                    format!("node --check failed: {}", stderr.trim()),
-                )
-            }
-        }
-        Err(e) => Finding::warn(
-            "claude_code_stop_hook_template_exists",
-            "node not available",
-            format!("Cannot run node --check on template: {e}"),
-        ),
-    }
-}
-
 /// Run all default suite-doctor checks and populate a `HealthReport`.
 ///
 /// The `repo_root` is typically the current working directory or a
@@ -1000,9 +914,6 @@ pub fn run_checks(report: &mut HealthReport, repo_root: &Path) {
         }
         report.add(runtime_profile_declared(repo_root));
         report.add(mcp_registry_codegraph_adopted(repo_root));
-        report.add(runtime_profile_template_exists(repo_root));
-        report.add(codex_planner_hook_template_exists(repo_root));
-        report.add(claude_code_stop_hook_template_exists(repo_root));
     }
 
     // ── Context memory checks (advisory, read-only) ────────────────────
@@ -1410,77 +1321,6 @@ mod tests {
         assert_ne!(f.severity, Severity::Fail);
         assert_eq!(f.check_name, "mcp_registry_codegraph_adopted");
     }
-    // ── Template existence tests ───────────────────────────────────────
-
-    #[test]
-    fn runtime_profile_template_exists_in_ags_repo() {
-        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap();
-        let f = runtime_profile_template_exists(repo_root);
-        assert_eq!(f.status, CheckStatus::Warn);
-        assert_eq!(f.check_name, "runtime_profile_template_exists");
-    }
-
-    #[test]
-    fn runtime_profile_template_fail_on_missing() {
-        let tmp = std::env::temp_dir().join("ags-template-missing-test");
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp).unwrap();
-        let f = runtime_profile_template_exists(&tmp);
-        assert_eq!(f.status, CheckStatus::Warn);
-        assert!(f.message.contains("missing"));
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn codex_planner_hook_template_exists_in_ags_repo() {
-        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap();
-        let f = codex_planner_hook_template_exists(repo_root);
-        assert_eq!(f.status, CheckStatus::Warn);
-        assert_eq!(f.check_name, "codex_planner_hook_template_exists");
-    }
-
-    #[test]
-    fn codex_planner_hook_template_fail_on_missing() {
-        let tmp = std::env::temp_dir().join("ags-planner-template-missing-test");
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp).unwrap();
-        let f = codex_planner_hook_template_exists(&tmp);
-        assert_eq!(f.status, CheckStatus::Warn);
-        assert!(f.message.contains("missing"));
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn claude_code_stop_hook_template_exists_in_ags_repo() {
-        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap();
-        let f = claude_code_stop_hook_template_exists(repo_root);
-        assert_eq!(f.status, CheckStatus::Warn);
-        assert_eq!(f.check_name, "claude_code_stop_hook_template_exists");
-    }
-
-    #[test]
-    fn claude_code_stop_hook_template_fail_on_missing() {
-        let tmp = std::env::temp_dir().join("ags-stop-template-missing-test");
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp).unwrap();
-        let f = claude_code_stop_hook_template_exists(&tmp);
-        assert_eq!(f.status, CheckStatus::Warn);
-        assert!(f.message.contains("missing"));
-        let _ = std::fs::remove_dir_all(&tmp);
-    }
-
     #[test]
     fn managed_project_doctor_skips_source_quality_checks() {
         let tmp = std::env::temp_dir().join(format!(
