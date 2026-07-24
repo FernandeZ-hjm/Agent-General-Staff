@@ -1366,11 +1366,11 @@ fi
 rm -rf "$GE_TARGET"
 
 echo -n "[....] host entry policy uses typed routing + OMP Plan single-card semantics "
-if rg -q 'HostRouteProposal' crates/ags-cli/src/setup/templates.rs \
-    && rg -q 'RouteResolution' crates/ags-cli/src/setup/templates.rs \
-    && rg -q 'OMP Plan mode' crates/ags-cli/src/setup/templates.rs \
-    && rg -q 'task_card_hash' crates/ags-cli/src/setup/templates.rs \
-    && ! rg -n 'RequestDecision|把完整当前请求交给 `ags_route_request`|AGS 0\.2\.8 入口' \
+if grep -q 'HostRouteProposal' crates/ags-cli/src/setup/templates.rs \
+    && grep -q 'RouteResolution' crates/ags-cli/src/setup/templates.rs \
+    && grep -q 'OMP Plan mode' crates/ags-cli/src/setup/templates.rs \
+    && grep -q 'task_card_hash' crates/ags-cli/src/setup/templates.rs \
+    && ! grep -n -E 'RequestDecision|把完整当前请求交给 `ags_route_request`|AGS 0\.2\.8 入口' \
         crates/ags-cli/src/setup/templates.rs crates/ags-cli/src/setup/global_entry.rs > /tmp/verify-host-entry-drift.txt 2>&1; then
     echo "OK"
 else
