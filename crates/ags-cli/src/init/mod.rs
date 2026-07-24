@@ -150,7 +150,7 @@ fn project_init_plan_with_protocol(
     let mut warnings = Vec::new();
 
     let ags_block = format!(
-        "\n## Agent Governance Suite\n\nThis project is governed by AGS {AGS_VERSION}.\n\n- Run `ags doctor --target .` to diagnose local governance health.\n- AGS MCP hosts must call `ags_preflight` before other AGS tools.\n- CLI fallback: `ags session preflight --for <agent-id> --target .`.\n- Read `ags://capabilities/current-host`; the host uses complete context to create a typed `HostRouteProposal`.\n- `ags_route_request` is strictly read-only; it validates exclusive DirectResponse or at most one exact SkillTarget plus one MachineCliTarget.\n- `ags_apply_action` is the only effectful MCP tool and consumes a connection-bound lease/action reference.\n- Skill Resolver, Compiler, Policy, Gate, and Runner never parse natural language.\n- Task-card generation requires both an explicit handoff request and a confirmed handoff contract.\n- Existing `## 任务卡` input validates before policy/gate/LaunchPlan.\n- Runner returns `HOST_EXECUTION_REQUIRED`; it does not execute or verify the task.\n- Task-card permission has exactly two modes: `plan-only` and `execute-and-verify`; Heavy adds an independent review gate.\n- Protocol entry points: `AGENT_SUITE_PROTOCOL.md`, `protocol/agent-task-protocol.md`, `protocol/task-routing.md`.\n"
+        "\n## Agent Governance Suite\n\nThis project is governed by AGS {AGS_VERSION}.\n\n- Run `ags doctor --target .` to diagnose local governance health.\n- AGS MCP hosts must call `ags_preflight` before other AGS tools.\n- CLI fallback: `ags session preflight --for <agent-id> --target .`.\n- Read `ags://capabilities/current-host`; the host uses complete context to create a typed `HostRouteProposal`.\n- `ags_route_request` is strictly read-only; it validates exclusive DirectResponse or at most one exact SkillTarget plus one MachineCliTarget.\n- `ags_apply_action` is the only effectful MCP tool and consumes a connection-bound lease/action reference.\n- Skill Resolver, Compiler, Policy, Gate, and Runner never parse natural language.\n- Task-card generation requires both an explicit handoff request and a confirmed handoff contract.\n- Existing `## 任务卡` input validates before policy/gate/LaunchPlan.\n- In OMP Plan mode, keep unresolved requirements in solution formation; the final plan is the single canonical `## 任务卡`. Selecting Execute dispatches that exact card and `task_card_hash` to the execution Agent, which validates the existing card first and must not regenerate it.\n- Runner returns `HOST_EXECUTION_REQUIRED`; it does not execute or verify the task.\n- Task-card permission has exactly two modes: `plan-only` and `execute-and-verify`; Heavy adds an independent review gate.\n- Protocol entry points: `AGENT_SUITE_PROTOCOL.md`, `protocol/agent-task-protocol.md`, `protocol/task-routing.md`.\n"
     );
 
     files.push(InstallFile {
@@ -170,14 +170,14 @@ fn project_init_plan_with_protocol(
         path: canonical.join("CLAUDE.md"),
         description: "Claude Code AGS execution protocol entrypoint".to_string(),
         content: format!(
-            "# CLAUDE.md\n\nThis project is governed by Agent Governance Suite {AGS_VERSION}.\n\nBefore task execution, call MCP `ags_preflight` or use `ags session preflight --for claude-code --target .`. Read `ags://capabilities/current-host`, use complete conversation context to create a typed HostRouteProposal, and submit it to strictly read-only `ags_route_request`. DirectResponse is exclusive; one exact SkillTarget and one MachineCliTarget may coexist. Only `ags_apply_action` consumes a connection-held action. Skill Resolver, Compiler, Policy, Gate, and Runner do not parse raw language. Existing `## 任务卡` input validates before policy/gate/LaunchPlan. New task-card generation requires an explicit handoff request plus a confirmed handoff contract. Follow `protocol/agent-task-protocol.md`.\n"
+            "# CLAUDE.md\n\nThis project is governed by Agent Governance Suite {AGS_VERSION}.\n\nBefore task execution, call MCP `ags_preflight` or use `ags session preflight --for claude-code --target .`. Read `ags://capabilities/current-host`, use complete conversation context to create a typed HostRouteProposal, and submit it to strictly read-only `ags_route_request`. DirectResponse is exclusive; one exact SkillTarget and one MachineCliTarget may coexist. Only `ags_apply_action` consumes a connection-held action. Skill Resolver, Compiler, Policy, Gate, and Runner do not parse raw language. Existing `## 任务卡` input validates before policy/gate/LaunchPlan. New task-card generation requires an explicit handoff request plus a confirmed handoff contract. In OMP Plan mode, unresolved requirements remain in solution formation and the final plan is the single canonical `## 任务卡`; selecting Execute dispatches the exact card and `task_card_hash` to the execution Agent for validate-first execution without regeneration. Follow `protocol/agent-task-protocol.md`.\n"
         ),
         mode: None,
     });
     append_files.push(InstallFile {
         path: canonical.join("CLAUDE.md"),
         description: "append AGS execution protocol block to existing CLAUDE.md".to_string(),
-        content: format!("\n## Agent Governance Suite\n\nThis project is governed by AGS {AGS_VERSION}. Run `ags_preflight` before execution, read `ags://capabilities/current-host`, and let the host create a typed HostRouteProposal from complete context. `ags_route_request` is strictly read-only; only `ags_apply_action` consumes connection-held fixed actions. DirectResponse is exclusive; an exact SkillTarget and MachineCliTarget may coexist. Skill Resolver, Compiler, Policy, Gate, and Runner consume structured input only. Existing task cards validate before LaunchPlan; new task-card generation requires explicit handoff intent plus a confirmed contract. Follow `protocol/agent-task-protocol.md`.\n"),
+        content: format!("\n## Agent Governance Suite\n\nThis project is governed by AGS {AGS_VERSION}. Run `ags_preflight` before execution, read `ags://capabilities/current-host`, and let the host create a typed HostRouteProposal from complete context. `ags_route_request` is strictly read-only; only `ags_apply_action` consumes connection-held fixed actions. DirectResponse is exclusive; an exact SkillTarget and MachineCliTarget may coexist. Skill Resolver, Compiler, Policy, Gate, and Runner consume structured input only. Existing task cards validate before LaunchPlan; new task-card generation requires explicit handoff intent plus a confirmed contract. In OMP Plan mode, the final plan is the single canonical `## 任务卡`; selecting Execute passes the exact card and `task_card_hash` to the execution Agent for validate-first execution without regeneration. Follow `protocol/agent-task-protocol.md`.\n"),
         mode: None,
     });
 
@@ -1248,6 +1248,12 @@ mod project_init_relocated_tests {
             assert!(lower.contains("existing"));
             assert!(lower.contains("validat"));
             assert!(lower.contains("before"));
+            assert!(file.content.contains("OMP Plan mode"));
+            assert!(file.content.contains("single canonical `## 任务卡`"));
+            assert!(file.content.contains("task_card_hash"));
+            assert!(
+                lower.contains("without regeneration") || lower.contains("must not regenerate")
+            );
         }
 
         for file in entry_files
