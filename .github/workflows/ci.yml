@@ -58,8 +58,10 @@ jobs:
 
       # Rust-native local verify — canonical cross-platform gate. Windows and macOS
       # run this Rust entry (NOT the Bash verify.sh) so portability is exercised off Linux.
+      # Invoke the already-built release binary directly: on Windows, launching verify
+      # through `cargo run` keeps target/debug/ags.exe locked while verify invokes Cargo.
       - name: Verify (Rust-native local)
-        run: cargo run -q -p ags-cli -- verify --scope local --format text
+        run: ./target/release/ags verify --scope local --format text
 
       # Supply-chain gate (repo-local deny.toml) + full Bash verify — Ubuntu only.
       - name: Install cargo-deny
