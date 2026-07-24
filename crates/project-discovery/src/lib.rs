@@ -2876,65 +2876,42 @@ Some other text here.
     // ── Session Preflight tests ───────────────────────────────────────
 
     #[test]
-    fn test_session_preflight_codex() {
+    fn test_session_preflight_host_matrix() {
         let root = repo_root();
-        let preflight = run_session_preflight(&root, &AgentType::Codex);
-        assert_eq!(preflight.for_agent, "codex");
-        assert_eq!(preflight.agent_display_name, "Codex");
-        assert!(preflight.is_ags_suite);
-        assert_eq!(preflight.integration_status, IntegrationStatus::Suite);
-        assert!(preflight.validator_available);
-        assert!(!preflight.stop_conditions.is_empty());
-        assert!(!preflight.verification_commands.is_empty());
-        // Suite repo should be OK or Warning (not Stop)
-        assert_ne!(preflight.overall_status, PreflightStatus::Stop);
-        assert_eq!(preflight.exit_code, 0);
-    }
+        let cases = [
+            (AgentType::Codex, "codex", "Codex"),
+            (AgentType::ClaudeCode, "claude-code", "Claude Code"),
+            (AgentType::Cursor, "cursor", "Cursor"),
+            (
+                AgentType::from_str("workbuddy").unwrap(),
+                "workbuddy",
+                "Tencent Agent (WorkBuddy)",
+            ),
+            (
+                AgentType::from_str("CodeBuddy-Code").unwrap(),
+                "codebuddy-code",
+                "Tencent Agent (CodeBuddy-Code)",
+            ),
+            (
+                AgentType::from_str("Tencent Agent").unwrap(),
+                "tencent-agent",
+                "Tencent Agent",
+            ),
+        ];
 
-    #[test]
-    fn test_session_preflight_claude_code() {
-        let root = repo_root();
-        let preflight = run_session_preflight(&root, &AgentType::ClaudeCode);
-        assert_eq!(preflight.for_agent, "claude-code");
-        assert_eq!(preflight.agent_display_name, "Claude Code");
-        assert!(preflight.is_ags_suite);
-        assert!(preflight.validator_available);
-        assert_eq!(preflight.default_permission_mode, "execute-and-verify");
-        assert_ne!(preflight.overall_status, PreflightStatus::Stop);
-    }
-
-    #[test]
-    fn test_session_preflight_cursor() {
-        let root = repo_root();
-        let preflight = run_session_preflight(&root, &AgentType::Cursor);
-        assert_eq!(preflight.for_agent, "cursor");
-        assert_eq!(preflight.agent_display_name, "Cursor");
-        assert!(preflight.is_ags_suite);
-    }
-
-    #[test]
-    fn test_session_preflight_generic_workbuddy() {
-        let root = repo_root();
-        let preflight = run_session_preflight(&root, &AgentType::from_str("workbuddy").unwrap());
-        assert_eq!(preflight.for_agent, "workbuddy");
-        assert_eq!(preflight.agent_display_name, "Tencent Agent (WorkBuddy)");
-        assert!(preflight.is_ags_suite);
-        assert_ne!(preflight.overall_status, PreflightStatus::Stop);
-    }
-
-    #[test]
-    fn test_session_preflight_tencent_agent_clients() {
-        let root = repo_root();
-        // CodeBuddy-Code resolves and triggers preflight with branded display.
-        let cb = run_session_preflight(&root, &AgentType::from_str("CodeBuddy-Code").unwrap());
-        assert_eq!(cb.for_agent, "codebuddy-code");
-        assert_eq!(cb.agent_display_name, "Tencent Agent (CodeBuddy-Code)");
-        assert!(cb.is_ags_suite);
-        assert_ne!(cb.overall_status, PreflightStatus::Stop);
-        // The Tencent Agent umbrella id itself resolves.
-        let ta = run_session_preflight(&root, &AgentType::from_str("Tencent Agent").unwrap());
-        assert_eq!(ta.for_agent, "tencent-agent");
-        assert_eq!(ta.agent_display_name, "Tencent Agent");
+        for (agent, canonical, display_name) in cases {
+            let preflight = run_session_preflight(&root, &agent);
+            assert_eq!(preflight.for_agent, canonical);
+            assert_eq!(preflight.agent_display_name, display_name);
+            assert!(preflight.is_ags_suite);
+            assert_eq!(preflight.integration_status, IntegrationStatus::Suite);
+            assert!(preflight.validator_available);
+            assert!(!preflight.stop_conditions.is_empty());
+            assert!(!preflight.verification_commands.is_empty());
+            assert_eq!(preflight.default_permission_mode, "execute-and-verify");
+            assert_ne!(preflight.overall_status, PreflightStatus::Stop);
+            assert_eq!(preflight.exit_code, 0);
+        }
     }
 
     #[test]

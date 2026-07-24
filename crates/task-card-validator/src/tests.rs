@@ -139,43 +139,43 @@ fn first_non_empty_line_skips_blanks() {
 }
 
 #[test]
-fn reject_whitespace_padded_header_leading() {
-    let input = format!(
-        " ## 任务卡\nAGENT_SUITE_COMPACT_TASK_CARD_V1\n{}",
-        valid_card_fields()
-    );
-    let e = validate(&input);
-    assert!(!e.is_empty(), "should reject leading-space header");
-    assert!(
-        e[0].contains("首行必须为"),
-        "should report wrong first line: {:?}",
-        e
-    );
-}
-
-#[test]
-fn reject_whitespace_padded_header_trailing() {
-    let input = format!(
-        "## 任务卡 \nAGENT_SUITE_COMPACT_TASK_CARD_V1\n{}",
-        valid_card_fields()
-    );
-    let e = validate(&input);
-    assert!(!e.is_empty(), "should reject trailing-space header");
-    assert!(
-        e[0].contains("首行必须为"),
-        "should report wrong first line: {:?}",
-        e
-    );
+fn reject_whitespace_padded_headers() {
+    for header in [" ## 任务卡", "## 任务卡 "] {
+        let input = format!(
+            "{header}\nAGENT_SUITE_COMPACT_TASK_CARD_V1\n{}",
+            valid_card_fields()
+        );
+        let errors = validate(&input);
+        assert!(
+            !errors.is_empty(),
+            "should reject padded header: {header:?}"
+        );
+        assert!(
+            errors[0].contains("首行必须为"),
+            "should report wrong first line for {header:?}: {errors:?}"
+        );
+    }
 }
 
 // ── text fence rejection ───────────────────────────────────
 
 #[test]
-fn reject_backtick_text_fence() {
-    let mut input = valid_card_fields();
-    input.push_str("```text\nbad stuff\n```\n");
-    let e = validate(&input);
-    assert!(e.iter().any(|m| m.contains("text")), "errors: {:?}", e);
+fn reject_text_fence_matrix() {
+    for fence in [
+        "```text\nbad stuff\n```\n",
+        "````text\nbad stuff\n````\n",
+        "`````text\nbad stuff\n`````\n",
+        "~~~~text\nbad stuff\n~~~~\n",
+        "~~~~~text\nbad stuff\n~~~~~\n",
+    ] {
+        let mut input = valid_card_fields();
+        input.push_str(fence);
+        let errors = validate(&input);
+        assert!(
+            errors.iter().any(|message| message.contains("text")),
+            "should reject text fence {fence:?}: {errors:?}"
+        );
+    }
 }
 
 #[test]
@@ -184,57 +184,6 @@ fn allow_non_text_fences() {
     input.push_str("```rust\nlet x = 1;\n```\n");
     let e = validate(&input);
     assert!(e.is_empty(), "unexpected errors: {:?}", e);
-}
-
-#[test]
-fn reject_four_backtick_text_fence() {
-    let mut input = valid_card_fields();
-    input.push_str("````text\nbad stuff\n````\n");
-    let e = validate(&input);
-    assert!(
-        e.iter().any(|m| m.contains("text")),
-        "should reject 4-backtick text fence: {:?}",
-        e
-    );
-}
-
-#[test]
-fn reject_five_backtick_text_fence() {
-    let mut input = valid_card_fields();
-    input.push_str("`````text\nbad stuff\n`````\n");
-    let e = validate(&input);
-    assert!(
-        e.iter().any(|m| m.contains("text")),
-        "should reject 5-backtick text fence: {:?}",
-        e
-    );
-}
-
-// ── tilde text fence ─────────────────────────────────────────
-
-#[test]
-fn reject_five_tilde_text_fence() {
-    // Rust validator detects tilde text fences (4+ ~ then "text").
-    let mut input = valid_card_fields();
-    input.push_str("~~~~~text\nbad stuff\n~~~~~\n");
-    let e = validate(&input);
-    assert!(
-        e.iter().any(|m| m.contains("text")),
-        "should reject 5-tilde text fence: {:?}",
-        e
-    );
-}
-
-#[test]
-fn reject_four_tilde_text_fence() {
-    let mut input = valid_card_fields();
-    input.push_str("~~~~text\nbad stuff\n~~~~\n");
-    let e = validate(&input);
-    assert!(
-        e.iter().any(|m| m.contains("text")),
-        "should reject 4-tilde text fence: {:?}",
-        e
-    );
 }
 
 #[test]

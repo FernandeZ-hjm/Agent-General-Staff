@@ -1553,23 +1553,26 @@ mod tests {
     // ═════════════════════════════════════════════════════════════════════
 
     #[test]
-    fn gate_check_light_execute_returns_allow() {
-        let input = light_execute_input();
-        let output = gate_check(&input);
-        assert_eq!(output.decision, GateDecision::Allow);
-        assert_eq!(output.schema_version, "2.0-m4");
-    }
-
-    #[test]
-    fn gate_check_heavy_plan_only_returns_allow() {
-        // Heavy plan-only remains non-mutating and is safe to launch for planning.
-        let input = TaskPolicyInput {
-            permission_mode: "plan-only".into(),
-            task_level: "Heavy".into(),
-            ..light_execute_input()
-        };
-        let output = gate_check(&input);
-        assert_eq!(output.decision, GateDecision::Allow);
+    fn gate_check_allow_matrix() {
+        let cases = [
+            ("Light", "execute-and-verify"),
+            ("Medium", "execute-and-verify"),
+            ("Heavy", "plan-only"),
+        ];
+        for (task_level, permission_mode) in cases {
+            let input = TaskPolicyInput {
+                permission_mode: permission_mode.into(),
+                task_level: task_level.into(),
+                ..light_execute_input()
+            };
+            let output = gate_check(&input);
+            assert_eq!(
+                output.decision,
+                GateDecision::Allow,
+                "{task_level} + {permission_mode} should be allowed"
+            );
+            assert_eq!(output.schema_version, "2.0-m4");
+        }
     }
 
     #[test]
@@ -1586,30 +1589,6 @@ mod tests {
             output.resolved_policy.effective_permission_mode,
             PermissionMode::ExecuteAndVerify
         );
-    }
-
-    #[test]
-    fn gate_check_heavy_execute_and_verify_returns_allow() {
-        // Heavy execute-and-verify runs directly.
-        let input = TaskPolicyInput {
-            permission_mode: "execute-and-verify".into(),
-            task_level: "Heavy".into(),
-            ..light_execute_input()
-        };
-        let output = gate_check(&input);
-        assert_eq!(output.decision, GateDecision::Allow);
-    }
-
-    #[test]
-    fn gate_check_medium_execute_and_verify_returns_allow() {
-        // Medium execute-and-verify runs directly.
-        let input = TaskPolicyInput {
-            permission_mode: "execute-and-verify".into(),
-            task_level: "Medium".into(),
-            ..light_execute_input()
-        };
-        let output = gate_check(&input);
-        assert_eq!(output.decision, GateDecision::Allow);
     }
 
     #[test]
