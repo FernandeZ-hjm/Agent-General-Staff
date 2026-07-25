@@ -294,6 +294,7 @@ impl McpClient {
         );
     }
 
+    #[cfg(unix)]
     fn wait_for_exit(&mut self) -> bool {
         for _ in 0..40 {
             if self.child.try_wait().unwrap().is_some() {

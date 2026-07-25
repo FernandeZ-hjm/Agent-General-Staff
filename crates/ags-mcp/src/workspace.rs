@@ -899,11 +899,11 @@ fn ensure_private_dir(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn set_private_file(path: &Path) {
+fn set_private_file(_path: &Path) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+        let _ = fs::set_permissions(_path, fs::Permissions::from_mode(0o600));
     }
 }
 
