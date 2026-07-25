@@ -409,15 +409,15 @@ pub(crate) enum VerifyAction {
 }
 
 // ── MCP Server ─────────────────────────────────────────────────────────────
-/// MCP server operations — run AGS as an MCP server.
+/// MCP server operations — run AGS as an MCP workspace adapter.
 ///
 /// First version supports stdio transport only. The server exposes
 /// AGS governance tools, resources, and prompts for MCP hosts
-/// (Tencent Agent, Codex, Cursor, Claude Code) to call as a global
+/// (Tencent Agent, Codex, OMP, Cursor, Claude Code) to call as a global
 /// governance capability.
 #[derive(Subcommand)]
 pub(crate) enum McpAction {
-    /// Start the AGS MCP server on stdio.
+    /// Start the thin AGS MCP adapter on stdio.
     ///
     /// Reads line-delimited JSON-RPC 2.0 messages from stdin and writes
     /// responses to stdout. Stderr is reserved for server logging.
@@ -427,6 +427,12 @@ pub(crate) enum McpAction {
         /// Transport protocol — only "stdio" is supported in v1.
         #[arg(long, default_value = "stdio", value_parser = ["stdio"])]
         transport: String,
+    },
+    /// Internal workspace daemon entrypoint used by the stdio adapter.
+    #[command(hide = true)]
+    WorkspaceDaemon {
+        #[arg(long)]
+        workspace: PathBuf,
     },
 }
 /// `ags hooks` — manage repo-owned git hooks (opt-in, explicit confirmation).

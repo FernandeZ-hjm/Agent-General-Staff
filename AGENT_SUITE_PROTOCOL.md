@@ -35,6 +35,11 @@ AGS 定位为开发相关工作中的**常驻工程中枢**，不是需要用户
 `$ags-skill` / `$ags-doctor` 命令技能，以及 `ags mcp serve` 提供的 MCP 内核桥。
 凡是 AGS 相关任务，都必须优先通过 AGS MCP 显式调用 `ags_preflight`；CLI 预检只作为
 MCP 不可用时的降级路径。
+`ags mcp serve` 是薄 stdio adapter，连接或启动按工作区 canonical path 唯一键控的
+AGS daemon。host 不参与实例键；Codex、Claude Code、Cursor 与 OMP 是同一工作区
+服务的不同客户端。每个客户端拥有独立 `session_id`、preflight binding 和
+DecisionLease，能力快照由 daemon 单点缓存并原子更新。断开客户端不等于关闭
+daemon；升级必须先停止旧实例，再启动新二进制。
 开发请求到达时，宿主在 preflight 后读取当前宿主能力薄目录，结合完整对话形成
 typed `HostRouteProposal` 并交给严格只读的 `ags_route_request`。自然语言语义判断只在
 宿主发生；Skill Resolver 只按 snapshot 精确校验 skill/entrypoint，不做关键词或

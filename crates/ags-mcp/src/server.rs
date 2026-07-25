@@ -1,8 +1,8 @@
-//! stdio JSON-RPC server loop for AGS MCP.
+//! Daemon-side JSON-RPC session loop for AGS MCP.
 //!
-//! Reads JSON-RPC messages from stdin, dispatches to tool/resource/prompt
-//! handlers, and writes JSON-RPC responses to stdout. Stderr is reserved
-//! for logging and must never contain JSON-RPC messages.
+//! Reads JSON-RPC messages from one workspace-daemon client stream, dispatches
+//! to tool/resource/prompt handlers, and writes responses to that stream.
+//! The separate stdio adapter only proxies bytes.
 //!
 //! # Initialization Gate (Hard Enforcement)
 //!
@@ -13,8 +13,9 @@
 //! allowed. The current-host capability resource is read-only but remains
 //! preflight-bound because it represents one specific host/target pair.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 
@@ -22,6 +23,7 @@ use crate::protocol::{
     InitializeResult, JsonRpcRequest, JsonRpcResponse, PromptsCapability, ResourcesCapability,
     ServerCapabilities, ServerInfo, ToolsCapability, MCP_VERSION, SERVER_NAME, SERVER_VERSION,
 };
+use crate::workspace::WorkspaceState;
 use crate::{prompts, resources, tools};
 
 // ── Preflight State ─────────────────────────────────────────────────────────
@@ -30,8 +32,8 @@ use crate::{prompts, resources, tools};
 ///
 /// After MCP `initialize`, the server requires `ags_preflight` (MCP tool)
 /// or CLI fallback before any other governed tool or phase-gated prompt.
-/// State is scoped to the stdio connection — it is destroyed when the
-/// connection ends.
+/// State is scoped to one daemon client session and is destroyed when that
+/// client disconnects. The workspace daemon itself may outlive every client.
 #[derive(Debug)]
 struct PreflightState {
     preflight_completed: bool,
@@ -43,14 +45,20 @@ struct PreflightState {
     preflight_target: Option<String>,
     routing_session: tools::RoutingSession,
     runtime_process: RuntimeProcessIdentity,
+    workspace: Arc<WorkspaceState>,
+    session_id: String,
 }
 
 impl PreflightState {
+    #[cfg(test)]
     fn new() -> Self {
         Self::with_runtime_process(RuntimeProcessIdentity::capture())
     }
 
+    #[cfg(test)]
     fn with_runtime_process(runtime_process: RuntimeProcessIdentity) -> Self {
+        let workspace = WorkspaceState::standalone();
+        let session_id = format!("standalone-{}", std::process::id());
         Self {
             preflight_completed: false,
             bootstrap_required: false,
@@ -58,6 +66,25 @@ impl PreflightState {
             preflight_target: None,
             routing_session: tools::RoutingSession::default(),
             runtime_process,
+            workspace,
+            session_id,
+        }
+    }
+
+    fn for_workspace(
+        workspace: Arc<WorkspaceState>,
+        session_id: String,
+        runtime_process: RuntimeProcessIdentity,
+    ) -> Self {
+        Self {
+            preflight_completed: false,
+            bootstrap_required: false,
+            preflight_agent: None,
+            preflight_target: None,
+            routing_session: tools::RoutingSession::for_session(&session_id),
+            runtime_process,
+            workspace,
+            session_id,
         }
     }
 
@@ -104,7 +131,7 @@ impl PreflightState {
 }
 
 #[derive(Debug, Clone)]
-struct RuntimeProcessIdentity {
+pub(crate) struct RuntimeProcessIdentity {
     executable: Option<PathBuf>,
     started_hash: Option<String>,
 }
@@ -117,7 +144,7 @@ struct RuntimeProcessStaleEvidence {
 }
 
 impl RuntimeProcessIdentity {
-    fn capture() -> Self {
+    pub(crate) fn capture() -> Self {
         let executable = std::env::current_exe().ok();
         let started_hash = executable.as_deref().and_then(executable_sha256);
         Self {
@@ -197,7 +224,7 @@ fn attach_runtime_process_stale(result: &str, evidence: &RuntimeProcessStaleEvid
         );
     }
 
-    let warning = "AGS MCP runtime process is stale after an executable upgrade; DirectResponse remains available, but SkillTarget and MachineCli routing are blocked until the host restarts this MCP connection.";
+    let warning = "AGS workspace daemon is stale after an executable upgrade; DirectResponse remains available, but SkillTarget and MachineCli routing are blocked until the host reconnects through the stdio adapter.";
     let warnings = object
         .entry("warnings".to_string())
         .or_insert_with(|| serde_json::json!([]));
@@ -225,7 +252,7 @@ fn attach_runtime_process_stale(result: &str, evidence: &RuntimeProcessStaleEvid
     });
     let mut next_steps = vec![
         serde_json::json!(
-            "⚠ Restart or reconnect the AGS MCP server so the host loads the installed executable."
+            "⚠ Reconnect the AGS MCP stdio adapter so it stops the old workspace daemon before starting the installed executable."
         ),
         serde_json::json!(
             "  Do not refresh the capability snapshot for this condition; rerun ags_preflight after reconnecting."
@@ -312,6 +339,49 @@ fn is_bootstrap_required_preflight_result(result: &str) -> bool {
         .is_some_and(|status| status == "not_integrated")
 }
 
+fn attach_workspace_service(result: &str, preflight: &PreflightState) -> String {
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(result) else {
+        return result.to_string();
+    };
+    let Some(object) = value.as_object_mut() else {
+        return result.to_string();
+    };
+    let requested_target = object
+        .get("target")
+        .and_then(|target| target.as_str())
+        .unwrap_or("<missing>")
+        .to_string();
+    let target_matches = requested_target != "<missing>"
+        && preflight
+            .workspace
+            .target_matches(Path::new(&requested_target));
+    object.insert(
+        "workspace_service".to_string(),
+        serde_json::json!({
+            "status": if target_matches { "ready" } else { "target_mismatch" },
+            "workspace": preflight.workspace.root(),
+            "instance_key": preflight.workspace.instance_key(),
+            "session_id": preflight.session_id,
+        }),
+    );
+    if !target_matches {
+        object.insert("overall_status".to_string(), serde_json::json!("stop"));
+        object.insert("should_stop".to_string(), serde_json::json!(true));
+        object.insert("exit_code".to_string(), serde_json::json!(1));
+        let failure = format!(
+            "workspace_target_mismatch: service={} requested={requested_target}",
+            preflight.workspace.root().display()
+        );
+        let failures = object
+            .entry("failures".to_string())
+            .or_insert_with(|| serde_json::json!([]));
+        if let Some(failures) = failures.as_array_mut() {
+            failures.push(serde_json::json!(failure));
+        }
+    }
+    serde_json::to_string_pretty(&value).unwrap_or_else(|_| result.to_string())
+}
+
 /// Prompts that enter an AGS lifecycle phase and therefore require preflight.
 const PHASE_GATED_PROMPTS: &[&str] = &["ags_solution_phase", "ags_task_card_request_gate"];
 
@@ -324,16 +394,19 @@ const PREFLIGHT_GATE_ERROR: &str =
 
 // ── Server Loop ─────────────────────────────────────────────────────────────
 
-/// Run the MCP server loop on stdio.
+/// Run one MCP session over a daemon-owned reader/writer pair.
 ///
-/// Reads line-delimited JSON-RPC messages from stdin, dispatches each to
-/// the appropriate handler, and writes the response to stdout. Returns
-/// when stdin is closed or an unrecoverable error occurs.
-pub fn run_mcp_server() {
-    let stdin = std::io::stdin();
-    let reader = BufReader::new(stdin.lock());
+/// Workspace state is shared across clients, while initialization, preflight
+/// binding and DecisionLease storage remain session-local.
+pub(crate) fn run_mcp_session<R: BufRead, W: Write>(
+    reader: R,
+    mut writer: W,
+    workspace: Arc<WorkspaceState>,
+    session_id: String,
+    runtime_process: RuntimeProcessIdentity,
+) {
     let mut initialized = false;
-    let mut preflight = PreflightState::new();
+    let mut preflight = PreflightState::for_workspace(workspace, session_id, runtime_process);
 
     for line in reader.lines() {
         let line = match line {
@@ -371,7 +444,7 @@ pub fn run_mcp_server() {
                 } else {
                     dispatch_request(&req, &mut initialized, &mut preflight)
                 };
-                write_response(&response);
+                write_response(&mut writer, &response);
             }
             Err(_) => {
                 // Try parsing as notification
@@ -388,7 +461,7 @@ pub fn run_mcp_server() {
                         log_error(&format!("cannot parse message: {} — raw: {}", e, trimmed));
                         // Write a parse error response without an id
                         let err = JsonRpcResponse::error(None, -32700, "Parse error");
-                        write_response(&err);
+                        write_response(&mut writer, &err);
                     }
                 }
             }
@@ -496,12 +569,16 @@ fn handle_tools_call(req: &JsonRpcRequest, preflight: &mut PreflightState) -> Js
     }
 
     let binding = preflight.binding();
+    let workspace = Arc::clone(&preflight.workspace);
+    let capability_source: Option<&dyn tools::CapabilityCatalogSource> =
+        workspace.is_daemon_owned().then_some(workspace.as_ref());
 
     match tools::call_tool(
         tool_name,
         &arguments,
         binding.as_ref(),
         &mut preflight.routing_session,
+        capability_source,
     ) {
         Ok(result) => {
             let result = if tools::is_preflight_tool_name(tool_name) {
@@ -511,6 +588,11 @@ fn handle_tools_call(req: &JsonRpcRequest, preflight: &mut PreflightState) -> Js
                 } else {
                     result
                 }
+            } else {
+                result
+            };
+            let result = if tools::is_preflight_tool_name(tool_name) {
+                attach_workspace_service(&result, preflight)
             } else {
                 result
             };
@@ -594,10 +676,7 @@ fn handle_resources_read(req: &JsonRpcRequest, preflight: &PreflightState) -> Js
         let Some(binding) = preflight.binding() else {
             return JsonRpcResponse::error(req.id.clone(), -32000, PREFLIGHT_GATE_ERROR);
         };
-        return match tools::read_current_host_catalog(
-            &binding,
-            &skill_resolver::locate_runtime_home(),
-        ) {
+        return match preflight.workspace.read_catalog(&binding) {
             Ok(snapshot) => {
                 let text = serde_json::to_string_pretty(&snapshot)
                     .unwrap_or_else(|error| format!("{{\"error\":\"{error}\"}}"));
@@ -667,16 +746,15 @@ fn handle_prompts_get(req: &JsonRpcRequest, preflight: &PreflightState) -> JsonR
 
 // ── I/O helpers ──────────────────────────────────────────────────────────────
 
-fn write_response(response: &JsonRpcResponse) {
+fn write_response(writer: &mut impl Write, response: &JsonRpcResponse) {
     let json = serde_json::to_string(response).unwrap_or_else(|e| {
         format!(
             r#"{{"jsonrpc":"2.0","id":null,"error":{{"code":-32603,"message":"Serialization error: {}"}}}}"#,
             e
         )
     });
-    let mut stdout = std::io::stdout().lock();
-    let _ = writeln!(stdout, "{}", json);
-    let _ = stdout.flush();
+    let _ = writeln!(writer, "{}", json);
+    let _ = writer.flush();
 }
 
 fn log_error(msg: &str) {

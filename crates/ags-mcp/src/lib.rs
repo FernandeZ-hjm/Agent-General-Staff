@@ -1,9 +1,10 @@
 //! AGS MCP Server — host initialization adapter and mandatory governance
 //! interface over MCP (Model Context Protocol).
 //!
-//! Exposes AGS governance tools, resources, and prompts via stdio JSON-RPC,
-//! enabling Tencent Agent (WorkBuddy, CodeBuddy-Code), Codex, Cursor, Claude
-//! Code and other MCP hosts to call AGS governance gates as a global capability.
+//! Exposes AGS governance tools, resources, and prompts through a thin stdio
+//! JSON-RPC adapter backed by one daemon per canonical workspace, enabling
+//! Tencent Agent (WorkBuddy, CodeBuddy-Code), Codex, OMP, Cursor, Claude Code
+//! and other MCP hosts to call AGS governance gates as a global capability.
 //!
 //! # Initialization Gate
 //!
@@ -30,5 +31,6 @@ mod protocol;
 mod resources;
 mod server;
 mod tools;
+mod workspace;
 
-pub use server::run_mcp_server;
+pub use workspace::{run_stdio_adapter, run_workspace_daemon};

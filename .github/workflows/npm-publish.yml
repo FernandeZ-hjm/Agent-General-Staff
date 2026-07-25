@@ -24,6 +24,13 @@ jobs:
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
+      - name: Install npm with trusted publishing support
+        run: npm install --global npm@11.12.1
+      - name: Normalize and verify package metadata
+        working-directory: packages/ags-mcp
+        run: |
+          npm pkg fix
+          git diff --exit-code -- package.json
       - name: Verify package and release versions
         shell: bash
         run: |

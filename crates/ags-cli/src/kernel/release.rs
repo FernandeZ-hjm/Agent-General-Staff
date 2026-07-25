@@ -396,4 +396,45 @@ mod release_package_tests {
 
         let _ = fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn public_release_package_excludes_workspace_service_runtime() {
+        let root = unique_temp_repo("ags-release-package-workspace-service");
+        fs::create_dir_all(root.join("workspace-services")).unwrap();
+        fs::write(root.join("Cargo.toml"), "[workspace]\n").unwrap();
+        fs::write(
+            root.join("workspace-services/workspace.capabilities.json"),
+            "runtime state\n",
+        )
+        .unwrap();
+
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .arg("init")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .arg("add")
+            .arg(".")
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let (plan, failed) = release_package_plan(&root, "public-full", true);
+        assert!(!failed);
+        let included: Vec<&str> = plan["included_files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect();
+        assert_eq!(included, vec!["Cargo.toml"]);
+        assert_eq!(plan["excluded_files"].as_array().unwrap().len(), 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
 }

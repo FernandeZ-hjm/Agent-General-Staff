@@ -64,7 +64,7 @@ flowchart LR
   closed machine targets without interpreting raw text.
 - `ags_route_request` is strictly read-only and rejects legacy raw requests.
   `ags_apply_action` is the sole effectful MCP tool and consumes a one-shot,
-  connection-bound held action by lease/action ID.
+  daemon-client-session-bound held action by lease/action ID.
 - Added deterministic per-host capability catalogs, exact skill/entrypoint
   validation, machine-private adopt/ignore/rollback overlays, auth availability
   gates, and non-sensitive skill outcome/activity records.
@@ -137,13 +137,15 @@ flowchart LR
 - Added the npm MCP launcher and explicit release chain: public `main` CI first,
   maintainer-created `v0.3.0` tag second, five-platform assets plus
   `SHA256SUMS`/provenance third, and manual asset-gated npm publication last.
+- npm publication uses GitHub OIDC trusted publishing with a pinned compatible
+  npm CLI and normalized package metadata; no long-lived npm token is stored.
 - Release workflows never create tags. A public `main` push alone does not
   create a GitHub Release or publish npm.
-- Added process-level MCP E2E coverage for Codex, Claude Code, Cursor, and OMP
-  across reconnects and multiple projects. A running MCP process now detects
-  when its on-disk executable has been replaced, reports
-  `runtime_process_stale`, and requires reconnect instead of misdirecting the
-  user to refresh an already-current capability snapshot.
+- Added one canonical-path-keyed workspace daemon behind a thin stdio adapter.
+  Codex, Claude Code, Cursor, and OMP share workspace capability state while
+  retaining isolated sessions, preflight bindings, and DecisionLeases.
+  Process-level E2E covers reconnects, cross-project snapshots, foreign lease
+  rejection, idle recycling, and stop-before-restart executable upgrades.
 
 ### Upgrade and verification
 
@@ -162,10 +164,9 @@ flowchart LR
   `ags capability verify --host <host> --strict` and `ags doctor`. A manifest
   entry, an installed binary, or a visible skill by itself is not proof that the
   capability is safely routable.
-- If preflight reports `runtime_process_stale`, restart or reconnect the AGS MCP
-  server and rerun preflight. Do not refresh the capability snapshot for that
-  condition; `snapshot_stale` and `runtime_process_stale` have distinct recovery
-  actions.
+- On upgrade, reconnect the thin stdio adapter; it stops the old workspace
+  daemon before starting the installed executable. A `snapshot_stale` condition
+  still requires an explicit snapshot refresh and a new preflight.
 - Maintainer order is strict: public-safe `main` + green CI → explicit
   `v0.3.0` tag → five platform assets and `SHA256SUMS` + provenance → manual,
   exact-version npm dispatch. Each arrow is a separate authorization boundary.

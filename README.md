@@ -168,6 +168,10 @@ launcher 会按 OS/架构下载同版本预编译 `ags`，核对 `SHA256SUMS`，
 `ags onboarding plan --host <host>` 查看项目、宿主、Skill、CLI、MCP 与 Hook 的
 逐项接入建议；它不会静默安装第三方能力。
 
+npm 发布使用 GitHub OIDC trusted publishing 与 provenance，不在仓库或 Actions
+中保存长期 npm token；发布 workflow 会先固定到支持 trusted publishing 的 npm
+版本，并规范化校验 package metadata。
+
 0.3.0 的第三方能力清单不是写死在提示词里的副本。onboarding 读取固定到
 `821fb728b58c131c70a82dad51ccf83eb0372413` 的
 [已审阅公开清单](https://github.com/FernandeZ-hjm/Agent-General-Staff/blob/821fb728b58c131c70a82dad51ccf83eb0372413/manifests/third-party-capabilities.yaml)，
@@ -221,6 +225,12 @@ flowchart TB
 ## 怎么工作
 
 AGS 0.3.0 把自然语言理解留在宿主。preflight 后，宿主读取 `ags://capabilities/current-host`，结合完整对话形成 typed `HostRouteProposal`；严格只读的 `ags_route_request` 只校验阶段、授权、精确技能和闭集机器动作。`ags_apply_action` 是唯一 effectful MCP 工具，以一次性 lease/action 引用消费服务端保存的固定动作。Skill Resolver 只按 `HostCapabilitySnapshot` 精确校验 skill/entrypoint，没有关键词、相似度或 fallback。Compiler、Policy、Gate 和 Runner 都不解析自然语言；Runner 只准备 LaunchPlan 并返回 `HOST_EXECUTION_REQUIRED`。
+
+`ags mcp serve` 现在是薄 stdio adapter：它按工作区 canonical path
+connect-or-start 唯一 daemon。Codex、Claude Code、Cursor 与 OMP 在同一工作区共享
+daemon 管理的能力快照，但各自保留独立 `session_id`、preflight binding 与
+DecisionLease。客户端断开不杀 daemon；空闲后才回收。二进制升级时先停旧 daemon，
+再用新版本重启，禁止新旧实例并存。
 
 ```text
 AGS 场景输入 → preflight
@@ -427,6 +437,7 @@ bash scripts/verify.sh
    `release/latest` 移动到该 tag 的精确提交。
 5. Release 资产和校验清单齐全后，手动 dispatch npm workflow，输入精确版本
    `0.3.0`，发布 `@agent-governance-suite/mcp` 并确认 npm `latest=0.3.0`。
+   workflow 使用 GitHub OIDC trusted publishing，不使用长期 npm token。
 
 推送 stable/public `main` 不等于创建 tag、GitHub Release 或 npm 发布。
 

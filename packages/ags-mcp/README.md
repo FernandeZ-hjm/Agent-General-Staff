@@ -12,7 +12,13 @@ executes `ags mcp serve --transport stdio` directly (`shell: false`). A cached
 same-version binary continues to work offline. Rust and Cargo are needed only
 for AGS source development.
 
-No npm publication happens automatically from this repository. The npm scope
-must be created and publication must be explicitly authorized.
+The stdio process is a thin proxy to the unique daemon keyed by the canonical
+workspace path. Codex, Claude Code, Cursor, and OMP clients share workspace
+capability state while retaining independent sessions, preflight bindings, and
+DecisionLeases.
+
+Publication is an explicit post-Release workflow protected by the npm
+environment and npm trusted publishing (GitHub OIDC); no long-lived npm token is
+stored in the repository.
 
 This launcher is licensed under `GPL-3.0-only`; see `LICENSE`.

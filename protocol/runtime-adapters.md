@@ -60,15 +60,17 @@ approval). Request governance does not change that mapping.
 Two distinct layers must not be conflated. The `default_permission_mode` reported
 by `ags agent instructions` / `ags session preflight` (for example,
 `execute-and-verify` for governed hosts) is the host's **interactive discovery baseline** —
-descriptive metadata surfaced during preflight, not an enforced write gate (AGS
-MCP is read-only and stateless). The **enforced** write gate is the
+descriptive metadata surfaced during preflight, not an enforced write gate.
+AGS MCP keeps workspace capability state in one canonical-path daemon and keeps
+preflight/lease state isolated per client session; its route operation remains
+strictly read-only. The **enforced** write gate is the
 execution-policy resolver acting on a task card's `Runtime adapter` field: M9 caps
 `generic` at `plan-only` without explicit approval. A Tencent Agent client
 (WorkBuddy / CodeBuddy-Code) carried as a generic host therefore still has its
 actual task-card writes gated at `plan-only` by M9, regardless of the discovery
 baseline shown in agent instructions. `ags_route_request` itself is strictly
 read-only; `ags_apply_action` is the sole effectful MCP tool and only consumes a
-connection-bound fixed action.
+daemon-client-session-bound fixed action.
 
 **Task-card handoff gate**: explicit handoff uses
 `--task-card-requested --confirmed-handoff-contract`. A host Plan mode final

@@ -10,6 +10,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 failures=0
+VERIFY_SCOPE="${AGS_VERIFY_SCOPE:-full}"
+
+case "$VERIFY_SCOPE" in
+    local | full | release) ;;
+    *)
+        echo "invalid AGS_VERIFY_SCOPE: $VERIFY_SCOPE (expected local, full, or release)" >&2
+        exit 2
+        ;;
+esac
 
 run_gate() {
     local label="$1"
@@ -46,9 +55,10 @@ echo "Repo: $REPO_ROOT"
 echo
 
 # Canonical structured verification. This already runs workspace fmt, tests,
-# release build, fixtures, governance YAML, preflight, and scoped drift checks.
-run_gate "ags verify --scope full" \
-    cargo run -q -p ags-cli -- verify --scope full --format text
+# release build, fixtures, governance YAML and preflight. Full adds drift
+# checks; release adds the fail-closed public release boundary.
+run_gate "ags verify --scope $VERIFY_SCOPE" \
+    cargo run -q -p ags-cli -- verify --scope "$VERIFY_SCOPE" --format text
 
 # External supply-chain authority. Missing cargo-deny is fail-closed.
 echo "--- cargo deny check ---"

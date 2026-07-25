@@ -53,7 +53,7 @@ Skill Resolver 不读自然语言、不相似匹配、不 fallback。`SkillDeman
 
 ### 5. Read-only Resolve / Explicit Apply
 
-`ags_route_request` 必须零进程启动、零文件写入。需要 AGS 机器动作时，服务器只保存当前连接内的固定 action，返回 `action_id` 与 `DecisionLease`；宿主随后显式调用：
+`ags_route_request` 必须零进程启动、零文件写入。需要 AGS 机器动作时，服务器只保存当前 daemon client session 内的固定 action，返回 `action_id` 与 `DecisionLease`；宿主随后显式调用：
 
 ```text
 ags_apply_action(lease_id, action_id, optional outcome)
@@ -132,7 +132,7 @@ preflight、route、apply、CLI、Runner 与 receipt 共享 `GovernanceStatus`�
 - 宿主 Agent：保留上下文、做语义提案、执行 host-native 工作。
 - AGS Request Governance：验证 typed proposal，不解释自然语言。
 - Skill Resolver：验证精确 skill/entrypoint/snapshot。
-- AGS MCP：preflight、只读 resolve、连接内租约与显式 apply。
+- AGS MCP：preflight、只读 resolve、daemon client session 内租约与显式 apply。
 - Compiler / Policy / Gate / Runner：只消费结构化输入。
 
 ## 验证规则

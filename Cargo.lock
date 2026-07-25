@@ -36,6 +36,7 @@ dependencies = [
  "ags-onboarding",
  "ags-verify",
  "execution-policy",
+ "getrandom",
  "project-discovery",
  "receipt",
  "request-governance",
@@ -44,6 +45,7 @@ dependencies = [
  "sha2",
  "skill-resolver",
  "task-card-validator",
+ "tempfile",
 ]
 
 [[package]]

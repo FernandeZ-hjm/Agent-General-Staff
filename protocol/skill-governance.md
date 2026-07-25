@@ -85,7 +85,7 @@ activity：
 - Active 连续 30 天无 outcome，或最后 outcome 超过 90 天：`Cold`；
 - 其他：`Warm`。
 
-Cold 只提示，不影响 snapshot hash/lease，不自动 ignore/retire。每个不与 MachineCli 共存的精确 SkillTarget 都会得到一个连接内受控 outcome action，solution formation 与 direct-edit 使用同一记录路径。route correction 用旧 decision 的 `outcome=abandoned` 表示，宿主须在提交新 route 前消费旧 outcome action；离线评估按相同 `request_fingerprint` 关联前后 decision。correction 与 outcome 都不得自动改 registry、overlay 或生产路由。
+Cold 只提示，不影响 snapshot hash/lease，不自动 ignore/retire。每个不与 MachineCli 共存的精确 SkillTarget 都会得到一个 daemon client session 内受控 outcome action，solution formation 与 direct-edit 使用同一记录路径。route correction 用旧 decision 的 `outcome=abandoned` 表示，宿主须在提交新 route 前消费旧 outcome action；离线评估按相同 `request_fingerprint` 关联前后 decision。correction 与 outcome 都不得自动改 registry、overlay 或生产路由。
 
 ## Task Card Gate
 

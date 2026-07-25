@@ -5,7 +5,7 @@
   "license": "GPL-3.0-only",
   "type": "module",
   "bin": {
-    "ags-mcp": "./bin/ags-mcp.js"
+    "ags-mcp": "bin/ags-mcp.js"
   },
   "files": [
     "bin/",

@@ -1,7 +1,19 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import path from "node:path";
 import { parseExpectedChecksum, releaseTarget, safeArchiveOutput } from "../src/launcher.js";
+
+test("publishes a canonical executable bin entry", () => {
+  const packageJson = JSON.parse(
+    readFileSync(new URL("../package.json", import.meta.url), "utf8")
+  );
+  assert.equal(packageJson.bin["ags-mcp"], "bin/ags-mcp.js");
+  assert.match(
+    readFileSync(new URL("../bin/ags-mcp.js", import.meta.url), "utf8"),
+    /^#!\/usr\/bin\/env node\n/u
+  );
+});
 
 test("maps every supported release platform", () => {
   assert.equal(releaseTarget("darwin", "arm64").triple, "aarch64-apple-darwin");

@@ -150,6 +150,7 @@ pub const PUBLIC_FORBIDDEN_PAYLOAD: &[&str] = &[
     "decision-leases/",
     "auth-state/",
     "receipts/",
+    "workspace-services/",
     ".ags/",
 ];
 
@@ -401,6 +402,7 @@ mod tests {
             "decision-leases/current.json",
             "auth-state/codex.json",
             "receipts/ar-runtime.json",
+            "workspace-services/workspace.capabilities.json",
             ".ags/runtime/skill-registry/user-overlay.yaml",
         ] {
             assert!(

@@ -37,6 +37,20 @@ pub struct PreflightBinding {
     pub host_home: PathBuf,
 }
 
+pub trait CapabilityCatalogSource {
+    fn capability_reference(&self, target: &Path, host: &str) -> serde_json::Value;
+    fn load_validated_snapshot(
+        &self,
+        binding: &PreflightBinding,
+    ) -> Result<
+        (
+            skill_resolver::HostCapabilitySnapshot,
+            skill_resolver::ActiveSkillTable,
+        ),
+        String,
+    >;
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct SkillOutcomeBinding {
     request_fingerprint: String,
@@ -72,8 +86,8 @@ struct HeldAction {
     consumed: bool,
 }
 
-/// Per-MCP-connection route state. A new preflight or route clears all prior
-/// actions; callers can never carry an action across connections.
+/// Per-daemon-client-session route state. A new preflight or route clears all
+/// prior actions; callers can never carry an action across sessions.
 #[derive(Debug)]
 pub struct RoutingSession {
     connection_nonce: String,
@@ -100,6 +114,14 @@ impl Default for RoutingSession {
 }
 
 impl RoutingSession {
+    pub fn for_session(session_id: &str) -> Self {
+        Self {
+            connection_nonce: sha256(format!("workspace-session\n{session_id}").as_bytes()),
+            generation: 0,
+            actions: HashMap::new(),
+        }
+    }
+
     pub fn invalidate(&mut self) {
         self.generation = self.generation.saturating_add(1);
         self.actions.clear();
@@ -153,7 +175,7 @@ pub fn list_tools() -> ToolListResult {
             ),
             tool_def(
                 TOOL_ONBOARDING_PLAN,
-                "Read-only deterministic public onboarding assessment. In bootstrap_required mode it creates one-shot, connection-local action references for individually applyable items.",
+                "Read-only deterministic public onboarding assessment. In bootstrap_required mode it creates one-shot, daemon-client-session-local action references for individually applyable items.",
                 serde_json::json!({
                     "type": "object",
                     "properties": {},
@@ -194,7 +216,7 @@ pub fn list_tools() -> ToolListResult {
             ),
             tool_def(
                 TOOL_ROUTE_REQUEST,
-                "Read-only typed request governance. The host interprets conversation context and submits an exact proposal; AGS validates it and creates connection-local action references.",
+                "Read-only typed request governance. The host interprets conversation context and submits an exact proposal; AGS validates it and creates daemon-client-session-local action references.",
                 serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -376,9 +398,10 @@ pub fn call_tool(
     arguments: &serde_json::Value,
     binding: Option<&PreflightBinding>,
     routing_session: &mut RoutingSession,
+    capability_source: Option<&dyn CapabilityCatalogSource>,
 ) -> Result<String, String> {
     match name {
-        TOOL_PREFLIGHT => tool_preflight(arguments),
+        TOOL_PREFLIGHT => tool_preflight(arguments, capability_source),
         TOOL_PROTOCOL_STATUS => tool_protocol_status(arguments),
         TOOL_AGENT_INSTRUCTIONS => tool_agent_instructions(arguments),
         TOOL_ONBOARDING_PLAN => {
@@ -387,17 +410,19 @@ pub fn call_tool(
         TOOL_TASK_VALIDATE => tool_task_validate(arguments),
         TOOL_POLICY_RESOLVE => tool_policy_resolve(arguments),
         TOOL_VERIFY_LOCAL => tool_verify_local(arguments, required_binding(binding)?),
-        TOOL_ROUTE_REQUEST => tool_route_request(
+        TOOL_ROUTE_REQUEST => tool_route_request_with_source(
             arguments,
             required_binding(binding)?,
             routing_session,
             &skill_resolver::locate_runtime_home(),
+            capability_source,
         ),
-        TOOL_APPLY_ACTION => tool_apply_action(
+        TOOL_APPLY_ACTION => tool_apply_action_with_source(
             arguments,
             required_binding(binding)?,
             routing_session,
             &skill_resolver::locate_runtime_home(),
+            capability_source,
         ),
         other => Err(format!("Unknown tool: {other}")),
     }
@@ -407,7 +432,10 @@ fn required_binding(binding: Option<&PreflightBinding>) -> Result<&PreflightBind
     binding.ok_or_else(|| "preflight_binding_missing".to_string())
 }
 
-fn tool_preflight(args: &serde_json::Value) -> Result<String, String> {
+fn tool_preflight(
+    args: &serde_json::Value,
+    capability_source: Option<&dyn CapabilityCatalogSource>,
+) -> Result<String, String> {
     let agent = get_string(args, "agent")?;
     let agent_type = project_discovery::AgentType::from_str(&agent)
         .map_err(|error| format!("Invalid agent: {error}"))?;
@@ -418,7 +446,10 @@ fn tool_preflight(args: &serde_json::Value) -> Result<String, String> {
     if let Some(object) = value.as_object_mut() {
         object.insert("agent".to_string(), serde_json::json!(agent_type.as_str()));
     }
-    let capability = capability_reference(&resolved_target, agent_type.as_str());
+    let capability = capability_source.map_or_else(
+        || capability_reference(&resolved_target, agent_type.as_str()),
+        |source| source.capability_reference(&resolved_target, agent_type.as_str()),
+    );
     attach_capability_catalog(&mut value, capability);
     pretty(&value)
 }
@@ -704,11 +735,22 @@ fn tool_verify_local(
     }))
 }
 
+#[cfg(test)]
 fn tool_route_request(
     args: &serde_json::Value,
     binding: &PreflightBinding,
     session: &mut RoutingSession,
     runtime_home: &Path,
+) -> Result<String, String> {
+    tool_route_request_with_source(args, binding, session, runtime_home, None)
+}
+
+fn tool_route_request_with_source(
+    args: &serde_json::Value,
+    binding: &PreflightBinding,
+    session: &mut RoutingSession,
+    runtime_home: &Path,
+    capability_source: Option<&dyn CapabilityCatalogSource>,
 ) -> Result<String, String> {
     // Every route attempt starts a new decision generation, including malformed
     // or legacy input. A caller cannot probe a new route shape while retaining
@@ -847,12 +889,19 @@ fn tool_route_request(
         _ => None,
     });
     let current_snapshot = if let Some(root) = authority_root.as_deref() {
-        match skill_resolver::load_validated_snapshot_with_roots(
-            root,
-            runtime_home,
-            &binding.host,
-            &binding.host_home,
-        ) {
+        let loaded = capability_source.map_or_else(
+            || {
+                skill_resolver::load_validated_snapshot_with_roots(
+                    root,
+                    runtime_home,
+                    &binding.host,
+                    &binding.host_home,
+                )
+                .map_err(|_| "skill_snapshot_stale".to_string())
+            },
+            |source| source.load_validated_snapshot(binding),
+        );
+        match loaded {
             Ok(snapshot) => snapshot,
             Err(_) => {
                 return blocked_route(
@@ -1351,11 +1400,22 @@ struct ApplyResult {
     requires_repreflight: bool,
 }
 
+#[cfg(test)]
 fn tool_apply_action(
     args: &serde_json::Value,
     binding: &PreflightBinding,
     session: &mut RoutingSession,
     runtime_home: &Path,
+) -> Result<String, String> {
+    tool_apply_action_with_source(args, binding, session, runtime_home, None)
+}
+
+fn tool_apply_action_with_source(
+    args: &serde_json::Value,
+    binding: &PreflightBinding,
+    session: &mut RoutingSession,
+    runtime_home: &Path,
+    capability_source: Option<&dyn CapabilityCatalogSource>,
 ) -> Result<String, String> {
     let lease_id = get_string(args, "lease_id")?;
     let action_id = get_string(args, "action_id")?;
@@ -1380,7 +1440,7 @@ fn tool_apply_action(
     let action = session
         .actions
         .get(&action_id)
-        .expect("validated held action remains connection-local");
+        .expect("validated held action remains daemon-client-session-local");
     let unexpected_fields = args
         .as_object()
         .map(|object| {
@@ -1428,13 +1488,18 @@ fn tool_apply_action(
         if skill_resolver::sha256(&registry) != action.evidence.registry_hash {
             return Err("decision_lease_registry_hash_mismatch".to_string());
         }
-        let (snapshot, _) = skill_resolver::load_validated_snapshot_with_roots(
-            &authority_root,
-            runtime_home,
-            &binding.host,
-            &binding.host_home,
-        )
-        .map_err(|_| "skill_snapshot_stale".to_string())?;
+        let (snapshot, _) = capability_source.map_or_else(
+            || {
+                skill_resolver::load_validated_snapshot_with_roots(
+                    &authority_root,
+                    runtime_home,
+                    &binding.host,
+                    &binding.host_home,
+                )
+                .map_err(|_| "skill_snapshot_stale".to_string())
+            },
+            |source| source.load_validated_snapshot(binding),
+        )?;
         if snapshot.snapshot_hash != action.evidence.snapshot_hash {
             return Err("decision_lease_snapshot_hash_mismatch".to_string());
         }
@@ -1782,22 +1847,6 @@ fn machine_invocation(
         CliCapabilityId::ReceiptVerify => vec!["receipt", "verify", "-", "--format", "json"],
     };
     Ok((args.into_iter().map(str::to_string).collect(), stdin))
-}
-
-pub fn read_current_host_catalog(
-    binding: &PreflightBinding,
-    runtime_home: &Path,
-) -> Result<skill_resolver::HostCapabilitySnapshot, String> {
-    let authority = skill_resolver::resolve_capability_authority_root(
-        &binding.target,
-        runtime_home,
-        std::env::var_os("AGS_SOURCE_ROOT").map(PathBuf::from),
-    )
-    .map_err(|error| error.to_string())?;
-    let (snapshot, _) =
-        skill_resolver::load_validated_snapshot(&authority, runtime_home, &binding.host)
-            .map_err(|_| "skill_snapshot_stale".to_string())?;
-    Ok(snapshot)
 }
 
 fn stable_id(prefix: &str, basis: &str, connection_nonce: &str, generation: u64) -> String {
