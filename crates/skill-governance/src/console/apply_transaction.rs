@@ -984,7 +984,32 @@ pub(super) fn make_symlink(_target: &Path, _link: &Path) -> std::io::Result<()> 
 /// Remove a host entry (symlink or real dir). A missing path is success.
 pub(super) fn remove_host_entry(path: &Path) -> std::io::Result<()> {
     match std::fs::symlink_metadata(path) {
-        Ok(m) if m.file_type().is_symlink() => std::fs::remove_file(path),
+        Ok(m) if m.file_type().is_symlink() => {
+            #[cfg(windows)]
+            {
+                match std::fs::remove_file(path) {
+                    Ok(()) => Ok(()),
+                    Err(file_error)
+                        if file_error.kind() == std::io::ErrorKind::PermissionDenied =>
+                    {
+                        match std::fs::remove_dir(path) {
+                            Ok(()) => Ok(()),
+                            Err(dir_error)
+                                if dir_error.kind() == std::io::ErrorKind::NotADirectory =>
+                            {
+                                Err(file_error)
+                            }
+                            Err(dir_error) => Err(dir_error),
+                        }
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                std::fs::remove_file(path)
+            }
+        }
         Ok(m) if m.is_dir() => std::fs::remove_dir_all(path),
         Ok(_) => std::fs::remove_file(path),
         Err(_) => Ok(()),
