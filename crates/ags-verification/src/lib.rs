@@ -1504,6 +1504,9 @@ mod tests {
     fn release_version_surfaces_accept_aligned_product_metadata() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("packages/ags-mcp")).unwrap();
+        std::fs::create_dir_all(dir.path().join("manifests")).unwrap();
+        std::fs::create_dir_all(dir.path().join("crates/ags-governance-decision/src")).unwrap();
+        std::fs::create_dir_all(dir.path().join("crates/ags-task-contract/src")).unwrap();
         std::fs::write(
             dir.path().join("packages/ags-mcp/package.json"),
             format!(
@@ -1542,6 +1545,25 @@ mod tests {
             ("SECURITY.md", "| 0.3.x | Yes |".to_string()),
             ("LICENSE", "GPL-3.0-only".to_string()),
             ("packages/ags-mcp/LICENSE", "GPL-3.0-only".to_string()),
+            (
+                "manifests/suite.yaml",
+                format!("suite:\n  version: \"{}\"", env!("CARGO_PKG_VERSION")),
+            ),
+            (
+                "manifests/mcp-registry.yaml",
+                format!(
+                    "version: \"{}\"\nlicense: \"GPL-3.0-only\"",
+                    env!("CARGO_PKG_VERSION")
+                ),
+            ),
+            (
+                "crates/ags-governance-decision/src/lib.rs",
+                "0.3.0-host-route-proposal".to_string(),
+            ),
+            (
+                "crates/ags-task-contract/src/lib.rs",
+                "0.3.0-handoff-contract".to_string(),
+            ),
         ] {
             std::fs::write(dir.path().join(relative), content).unwrap();
         }
