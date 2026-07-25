@@ -14,7 +14,10 @@ import tempfile
 import time
 from pathlib import Path
 
-SAMPLES = 9
+# A p95 over nine observations degenerates to the single maximum and turns
+# scheduler jitter into a release verdict. Twenty-one remains a small fixed
+# sample while making p95 independent of one isolated outlier.
+SAMPLES = 21
 
 
 def percentile(values: list[float], fraction: float) -> float:

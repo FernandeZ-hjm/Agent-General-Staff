@@ -23,6 +23,7 @@ const REGISTRY_SCHEMA: &str = "0.3.0-workspace-service";
 const WIRE_SCHEMA: &str = "ags-workspace-service/1";
 const DEFAULT_IDLE_MS: u64 = 30 * 60 * 1000;
 const START_TIMEOUT: Duration = Duration::from_secs(10);
+const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct WorkspaceRegistry {
@@ -511,7 +512,7 @@ pub fn run_workspace_daemon(
                 });
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_millis(50));
+                std::thread::sleep(ACCEPT_POLL_INTERVAL);
             }
             Err(error) => return Err(format!("workspace daemon accept failed: {error}")),
         }
