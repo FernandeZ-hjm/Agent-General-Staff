@@ -466,20 +466,16 @@ pub fn run_workspace_daemon(workspace: &Path) -> Result<(), String> {
                 stream
                     .set_nonblocking(false)
                     .map_err(|error| format!("accepted stream blocking mode failed: {error}"))?;
+                let activity = SessionActivity::begin(
+                    Arc::clone(&active_sessions),
+                    Arc::clone(&last_activity),
+                );
                 let registry = registry.clone();
                 let state = Arc::clone(&state);
                 let shutdown = Arc::clone(&shutdown);
-                let active_sessions = Arc::clone(&active_sessions);
-                let last_activity = Arc::clone(&last_activity);
                 let _connection = std::thread::spawn(move || {
-                    if let Err(error) = handle_connection(
-                        stream,
-                        registry,
-                        state,
-                        shutdown,
-                        active_sessions,
-                        last_activity,
-                    ) {
+                    let _activity = activity;
+                    if let Err(error) = handle_connection(stream, registry, state, shutdown) {
                         let _ = writeln!(
                             std::io::stderr(),
                             "[ags-mcp] workspace daemon connection failed: {error}"
@@ -508,8 +504,6 @@ fn handle_connection(
     registry: WorkspaceRegistry,
     state: Arc<WorkspaceState>,
     shutdown: Arc<AtomicBool>,
-    active_sessions: Arc<AtomicUsize>,
-    last_activity: Arc<AtomicU64>,
 ) -> Result<(), String> {
     let mut reader = BufReader::new(
         stream
@@ -553,7 +547,6 @@ fn handle_connection(
             executable_hash: registry.executable_hash,
         },
     )?;
-    let _activity = SessionActivity::begin(active_sessions, last_activity);
     run_mcp_session(
         reader,
         writer,
