@@ -79,7 +79,8 @@ mod tests {
     use super::*;
 
     fn sample_report() -> HealthReport {
-        let mut report = HealthReport::new("Suite Diagnostics v0.3.0");
+        let mut report =
+            HealthReport::new(&format!("Suite Diagnostics v{}", env!("CARGO_PKG_VERSION")));
         report.add(Finding::pass("cargo-fmt", "cargo fmt --check passed"));
         report.add(Finding::fail(
             "cargo-test",
@@ -91,7 +92,10 @@ mod tests {
             "uncommitted changes in workspace",
             "3 files modified: Cargo.toml, src/lib.rs, README.md",
         ));
-        report.add(Finding::info("suite-version", "suite-doctor v0.3.0"));
+        report.add(Finding::info(
+            "suite-version",
+            &format!("suite-doctor v{}", env!("CARGO_PKG_VERSION")),
+        ));
         report.add(Finding::skip(
             "network-check",
             "skipped: no network prerequisites configured",
@@ -118,7 +122,7 @@ mod tests {
         let text = render_text(&report);
 
         assert!(text.contains("Suite Diagnostic Report"));
-        assert!(text.contains("Suite Diagnostics v0.3.0"));
+        assert!(text.contains(&format!("Suite Diagnostics v{}", env!("CARGO_PKG_VERSION"))));
         assert!(text.contains("FAIL"));
         assert!(text.contains("1 fail"));
         assert!(text.contains("2 pass"));
@@ -181,7 +185,10 @@ mod tests {
         let json = render_json(&report);
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(parsed["title"], "Suite Diagnostics v0.3.0");
+        assert_eq!(
+            parsed["title"],
+            format!("Suite Diagnostics v{}", env!("CARGO_PKG_VERSION"))
+        );
         assert_eq!(parsed["findings"].as_array().unwrap().len(), 5);
     }
 

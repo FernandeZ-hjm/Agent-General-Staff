@@ -1,11 +1,13 @@
 # Agent Suite Protocol
 
-本文件是 Agent General Staff 公开版协议概述。Canonical 协议文件位于本仓库
+本文件是 Agent General Staff 公开版治理控制面协议概述。Canonical 协议文件位于本仓库
 `protocol/` 目录下，自包含，不依赖私有基础设施或私有仓库。
 
-Current product version: **0.3.0**.
+Current product version: **0.3.1**.
 
-这是 Agent General Staff Public Edition 的当前正式产品版本。协议中的
+这是 Agent General Staff Public Edition 的当前 latest 产品版本。AGS 负责准入、
+授权、策略、验证、回执、能力快照和记忆闭环，不提供任务队列、Agent 调度器、
+并行执行器或多 Agent 协商。协议中的
 `2.0-*` schema 标识和下文历史 `2.x` release 标题属于独立的 wire/history
 版本面，不代表当前产品版本。
 

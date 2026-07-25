@@ -4,10 +4,15 @@
 //! inline (reading `$HOME`, hardcoding `/tmp`, shelling out to `which`) so the
 //! core CLI and libraries stay portable across Unix and Windows.
 //!
-//! Zero third-party dependencies — `std` only.
+//! This crate is the only place where AGS domain crates should need to know
+//! about operating-system path, file replacement, executable, or hashing
+//! details.
 
 use std::ffi::OsString;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+
+use sha2::{Digest, Sha256};
 
 /// Resolve the current user's home directory in a cross-platform way.
 ///
@@ -29,7 +34,7 @@ fn home_dir_impl() -> Option<PathBuf> {
     }
     if let (Some(drive), Some(path)) = (non_empty_var_os("HOMEDRIVE"), non_empty_var_os("HOMEPATH"))
     {
-        let mut joined = drive;
+        let mut joined = OsString::from(drive);
         joined.push(path);
         return Some(PathBuf::from(joined));
     }
@@ -55,6 +60,63 @@ pub fn home_dir_or_temp() -> PathBuf {
 /// Cross-platform temporary-directory root (`std::env::temp_dir`).
 pub fn temp_root() -> PathBuf {
     std::env::temp_dir()
+}
+
+/// Resolve a path to the canonical workspace root.
+///
+/// A nested path belongs to the nearest ancestor containing `.git`; otherwise
+/// the canonicalized path itself is the workspace. This identity deliberately
+/// excludes the host so Codex, Claude Code, Cursor, and OMP share one service.
+pub fn canonical_workspace_root(path: &Path) -> Result<PathBuf, String> {
+    let canonical = path
+        .canonicalize()
+        .map_err(|error| format!("workspace canonicalization failed: {error}"))?;
+    for candidate in canonical.ancestors() {
+        if candidate.join(".git").exists() {
+            return Ok(candidate.to_path_buf());
+        }
+    }
+    Ok(canonical)
+}
+
+/// Stable SHA-256 digest with the suite's canonical prefix.
+pub fn sha256(bytes: impl AsRef<[u8]>) -> String {
+    format!("sha256:{:x}", Sha256::digest(bytes.as_ref()))
+}
+
+/// Hash a file without exposing filesystem details to domain crates.
+pub fn sha256_file(path: &Path) -> Result<String, String> {
+    let bytes = std::fs::read(path)
+        .map_err(|error| format!("file hash read failed for {}: {error}", path.display()))?;
+    Ok(sha256(bytes))
+}
+
+/// Atomically replace a file with fully flushed bytes in the same directory.
+pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "atomic write path has no parent".to_string())?;
+    std::fs::create_dir_all(parent)
+        .map_err(|error| format!("atomic write mkdir failed: {error}"))?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|error| format!("atomic write stage failed: {error}"))?;
+    temp.write_all(bytes)
+        .and_then(|_| temp.flush())
+        .and_then(|_| temp.as_file().sync_all())
+        .map_err(|error| format!("atomic write failed: {error}"))?;
+    set_private_file(temp.path());
+    temp.persist(path)
+        .map_err(|error| format!("atomic replace failed: {}", error.error))?;
+    set_private_file(path);
+    Ok(())
+}
+
+fn set_private_file(_path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(_path, std::fs::Permissions::from_mode(0o600));
+    }
 }
 
 /// Look up an executable on `PATH`, returning the first match.
@@ -190,5 +252,24 @@ mod tests {
         let found = find_in_path_within("ags-not-exec", Some(path_var.as_os_str()));
         let _ = std::fs::remove_dir_all(&dir);
         assert!(found.is_none());
+    }
+
+    #[test]
+    fn atomic_write_replaces_complete_content() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("bundle.json");
+        std::fs::write(&path, b"old").unwrap();
+        atomic_write(&path, b"new-complete-bundle").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"new-complete-bundle");
+    }
+
+    #[test]
+    fn atomic_write_failure_does_not_disguise_a_directory_as_success() {
+        let root = tempfile::tempdir().unwrap();
+        let destination = root.path().join("bundle.json");
+        std::fs::create_dir_all(&destination).unwrap();
+        let error = atomic_write(&destination, b"candidate").unwrap_err();
+        assert!(error.contains("atomic replace failed"));
+        assert!(destination.is_dir());
     }
 }

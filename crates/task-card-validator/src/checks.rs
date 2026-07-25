@@ -8,7 +8,11 @@ use super::*;
 /// action-bearing sections).
 pub(crate) const WORKFLOW_REQUEST_KEYWORDS: &[&str] = &[
     // English — delegation
-    "workflow",
+    "use workflow",
+    "使用 workflow",
+    "run workflow",
+    "start workflow",
+    "execute through workflow",
     "dynamic workflow",
     "dynamic workflows",
     "subagent",
@@ -24,7 +28,9 @@ pub(crate) const WORKFLOW_REQUEST_KEYWORDS: &[&str] = &[
     "子代理",
     "多会话",
     "动态工作流",
-    "工作流",
+    "使用工作流",
+    "启动工作流",
+    "通过工作流执行",
 ];
 
 /// Keywords that imply parallelism/delegation in task body text (used for
@@ -44,7 +50,6 @@ pub(crate) const PARALLELISM_BODY_KEYWORDS: &[&str] = &[
     "子代理",
     "多会话",
     "动态工作流",
-    "工作流",
 ];
 
 /// Keywords that indicate the exhaustive execution-effort tier is being abused as

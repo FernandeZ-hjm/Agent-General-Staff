@@ -13,7 +13,7 @@
 //!     render_json, render_text, CheckStatus, Finding, HealthReport, Severity,
 //! };
 //!
-//! let mut report = HealthReport::new("Suite Doctor v0.3.0");
+//! let mut report = HealthReport::new("Suite Doctor");
 //! report.add(Finding::pass("kernel-runtime", "runtime assets present"));
 //! report.add(Finding::fail("project-protocol", "validator missing",
 //!     "Run `ags init --target <project>` to refresh the projection."));

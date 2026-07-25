@@ -7,11 +7,31 @@ Current releases ship the `ags` CLI, canonical task-card protocols,
 execution-policy checks, release-boundary verification, memory-capsule
 templates, and public skill-governance workflows.
 
-The current stable/latest product version is `0.3.0`, with formal release tag
-`v0.3.0`. Once the separately authorized npm publication completes, npm
-`latest` must also resolve to `0.3.0`.
+The current stable/latest product version is `0.3.1`, with formal release tag
+`v0.3.1`. npm `latest` resolves to `0.3.1`.
 Older `2.x` headings below are preserved as historical product release labels
 and are not rewritten.
+
+## Release 0.3.1
+
+0.3.1 is a compatibility-preserving architecture release:
+
+- Reorganized the governance kernel into twelve primary domain boundaries and
+  split the largest capability, workspace-discovery, skill-console, and MCP
+  modules by responsibility.
+- Added one connect-or-start workspace daemon keyed only by canonical workspace
+  path. Codex, Claude Code, Cursor, and OMP share one atomic capability bundle
+  while keeping separate session, preflight, and DecisionLease state.
+- Fixed false `skill_snapshot_stale` results after successful refresh, lease
+  replay and cross-boundary isolation, premature lease consumption on malformed
+  apply, and task-card false positives for ordinary release-workflow prose.
+- Preserved the complete v0.3.0 human CLI and internal Machine CLI help
+  contracts. Only `ags --version` changes to 0.3.1.
+- Added four-host reconnect/cross-project E2E, a fixed-sample performance gate,
+  and version-surface checks that distinguish current product versions from
+  compatibility schema IDs and historical releases.
+- Kept the public distribution GPL-3.0-only and pinned onboarding capability
+  metadata to an immutable reviewed source.
 
 ## Release 0.3.0
 

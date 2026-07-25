@@ -9,4 +9,4 @@ description = "Validate AGS task-card to delivery-report closure"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 task-card-validator = { path = "../task-card-validator" }
-receipt = { path = "../receipt" }
+receipt = { package = "ags-evidence", path = "../ags-evidence" }

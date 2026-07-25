@@ -1932,11 +1932,10 @@ fn plan_only_permission_with_allowed_authority_fails() {
     );
 }
 
-// ── Phase 7 round 3: workflow keyword bypass regression ─────
+// ── Phase 7 round 3: workflow intent regression ──────────────
 
 #[test]
-fn workflow_none_with_bare_workflow_in_task_fails() {
-    // Workflow authority: none + bare "workflow" keyword in action section
+fn workflow_none_with_a_positive_workflow_request_fails() {
     let input = card_body(
         "路径：\n- .\n\
              Executor: Claude Code\n\
@@ -1957,11 +1956,40 @@ fn workflow_none_with_bare_workflow_in_task_fails() {
              交付：\n返回结果\n",
     );
     let e = validate(&input);
-    assert!(!e.is_empty(), "bare workflow keyword should fail");
+    assert!(!e.is_empty(), "positive workflow request should fail");
     assert!(
         e.iter()
             .any(|m| m.contains(error_code::WORKFLOW_AUTHORITY_REQUIRED)),
         "should have WORKFLOW_AUTHORITY_REQUIRED: {:?}",
+        e
+    );
+}
+
+#[test]
+fn workflow_none_allows_repository_and_release_workflow_nouns() {
+    let input = card_body(
+        "路径：\n- .\n\
+             Executor: Claude Code\n\
+             Runtime adapter: claude-code\n\
+             Execution surface: cli\n\
+             Permission mode: execute-and-verify\n\
+             Parallelism: none\n\
+             Execution effort: normal\n\
+             Workflow authority: none\n\
+             任务级别：Medium\n\
+             读取：\n- .github/workflows/release.yml\n\
+             任务：修复 release workflow 的版本检查\n\
+             目标：保持 GitHub workflow 与发布文档一致\n\
+             非目标：不使用 subagent 或动态工作流\n\
+             关键路径：\n- .github/workflows/release.yml\n\
+             验证：\ncargo test\n\
+             停止条件：\ntest 失败时停止\n\
+             交付：\n返回 release workflow 修改结果\n",
+    );
+    let e = validate(&input);
+    assert!(
+        e.is_empty(),
+        "repository/release workflow nouns must not request delegation: {:?}",
         e
     );
 }

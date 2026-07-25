@@ -133,6 +133,18 @@ impl TestEnvironment {
         snapshot
     }
 
+    fn install_test_skill(&self, skill_id: &str) {
+        let skill_dir = self.home.join(".agents").join("skills").join(skill_id);
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            format!(
+                "---\nname: {skill_id}\ndescription: Hermetic capability refresh fixture.\n---\n\n# {skill_id}\n"
+            ),
+        )
+        .unwrap();
+    }
+
     fn connect(&self, cwd: &Path) -> McpClient {
         self.connect_with_executable(cwd, &self.ags)
     }
@@ -442,6 +454,101 @@ fn registered_hosts_share_one_workspace_service_but_keep_sessions_and_leases_iso
     let snapshot = other_workspace.current_host_snapshot();
     assert_eq!(snapshot["host"], "codex");
     assert_eq!(snapshot["snapshot_hash"], expected_hashes[0]);
+}
+
+#[test]
+fn refreshed_snapshot_rebinds_the_existing_workspace_session() {
+    let environment = TestEnvironment::new();
+    let initial = environment.write_snapshot("codex");
+
+    let mut client = environment.connect(&environment.project_a);
+    client.initialize("codex");
+    let first_preflight = client.preflight("codex", &environment.project_a);
+    assert_eq!(first_preflight["capability_catalog"]["status"], "ready");
+    assert_eq!(
+        first_preflight["capability_catalog"]["snapshot_hash"],
+        initial["snapshot_hash"]
+    );
+
+    environment.install_test_skill("e2e-refresh-skill");
+    let refreshed = environment.write_snapshot("codex");
+    assert_ne!(
+        refreshed["snapshot_hash"], initial["snapshot_hash"],
+        "capability mutation did not produce a new snapshot"
+    );
+
+    let rebound = client.preflight("codex", &environment.project_a);
+    assert_eq!(rebound["capability_catalog"]["status"], "ready");
+    assert_eq!(
+        rebound["capability_catalog"]["snapshot_hash"],
+        refreshed["snapshot_hash"]
+    );
+    let current = client.current_host_snapshot();
+    assert_eq!(current["snapshot_hash"], refreshed["snapshot_hash"]);
+    assert!(
+        current["catalog"].as_array().is_some_and(|cards| cards
+            .iter()
+            .any(|card| card["skill_id"].as_str() == Some("e2e-refresh-skill"))),
+        "refreshed current-host catalog omitted the new skill"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn crashed_workspace_daemon_is_replaced_without_reusing_its_session() {
+    let environment = TestEnvironment::new();
+    environment.write_snapshot("codex");
+
+    let mut client = environment.connect(&environment.project_a);
+    client.initialize("codex");
+    let first = client.preflight("codex", &environment.project_a);
+    let instance_key = first["workspace_service"]["instance_key"].as_str().unwrap();
+    let first_session = first["workspace_service"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let registry_path = environment
+        .runtime
+        .join("workspace-services")
+        .join(format!("{instance_key}.json"));
+    let first_pid = serde_json::from_slice::<Value>(&fs::read(&registry_path).unwrap()).unwrap()
+        ["pid"]
+        .as_u64()
+        .unwrap();
+
+    assert!(Command::new("kill")
+        .args(["-TERM", &first_pid.to_string()])
+        .status()
+        .unwrap()
+        .success());
+    for _ in 0..40 {
+        if !Command::new("kill")
+            .args(["-0", &first_pid.to_string()])
+            .status()
+            .is_ok_and(|status| status.success())
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    drop(client);
+
+    let mut recovered = environment.connect(&environment.project_a);
+    recovered.initialize("codex");
+    let second = recovered.preflight("codex", &environment.project_a);
+    assert_eq!(
+        second["workspace_service"]["instance_key"],
+        first["workspace_service"]["instance_key"]
+    );
+    assert_ne!(
+        second["workspace_service"]["session_id"].as_str().unwrap(),
+        first_session
+    );
+    let second_pid = serde_json::from_slice::<Value>(&fs::read(&registry_path).unwrap()).unwrap()
+        ["pid"]
+        .as_u64()
+        .unwrap();
+    assert_ne!(second_pid, first_pid);
 }
 
 #[cfg(unix)]

@@ -3,75 +3,158 @@
 version = 4
 
 [[package]]
-name = "ags-cli"
-version = "0.3.0"
+name = "ags-capability-governance"
+version = "0.3.1"
 dependencies = [
- "ags-mcp",
- "ags-onboarding",
+ "ags-governance-decision",
+ "ags-lifecycle",
  "ags-platform",
- "ags-verify",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "skill-governance",
+]
+
+[[package]]
+name = "ags-cli"
+version = "0.3.1"
+dependencies = [
+ "ags-capability-governance",
+ "ags-evidence",
+ "ags-governance-decision",
+ "ags-lifecycle",
+ "ags-mcp",
+ "ags-platform",
+ "ags-task-contract",
+ "ags-verification",
+ "ags-workspace-facts",
  "bootstrap-dry-run",
  "capability-registry",
  "clap",
  "delivery-report-validator",
  "execution-policy",
- "project-discovery",
- "receipt",
- "request-governance",
  "runner",
  "serde",
  "serde_json",
  "skill-governance",
- "skill-resolver",
  "suite-doctor",
  "task-card-validator",
- "task-compiler",
  "workflow-sync-check",
+]
+
+[[package]]
+name = "ags-evidence"
+version = "0.3.1"
+dependencies = [
+ "ags-governance-decision",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
+name = "ags-governance-decision"
+version = "0.3.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "ags-host-integration"
+version = "0.3.1"
+dependencies = [
+ "ags-platform",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "ags-lifecycle"
+version = "0.3.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
 ]
 
 [[package]]
 name = "ags-mcp"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
- "ags-onboarding",
- "ags-verify",
+ "ags-capability-governance",
+ "ags-evidence",
+ "ags-governance-decision",
+ "ags-lifecycle",
+ "ags-session",
+ "ags-verification",
+ "ags-workspace-facts",
  "execution-policy",
  "getrandom",
- "project-discovery",
- "receipt",
- "request-governance",
  "serde",
  "serde_json",
  "sha2",
- "skill-resolver",
  "task-card-validator",
  "tempfile",
 ]
 
 [[package]]
-name = "ags-onboarding"
-version = "0.3.0"
+name = "ags-platform"
+version = "0.3.1"
 dependencies = [
- "serde",
- "serde_json",
- "serde_yaml",
  "sha2",
+ "tempfile",
 ]
 
 [[package]]
-name = "ags-platform"
-version = "0.3.0"
+name = "ags-session"
+version = "0.3.1"
+dependencies = [
+ "ags-capability-governance",
+ "ags-platform",
+ "getrandom",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
 
 [[package]]
-name = "ags-verify"
-version = "0.3.0"
+name = "ags-task-contract"
+version = "0.3.1"
 dependencies = [
- "request-governance",
+ "ags-evidence",
+ "ags-platform",
+ "serde",
+ "serde_json",
+ "task-card-validator",
+]
+
+[[package]]
+name = "ags-verification"
+version = "0.3.1"
+dependencies = [
+ "ags-governance-decision",
  "serde",
  "serde_json",
  "serde_yaml",
  "tempfile",
  "workflow-sync-check",
+]
+
+[[package]]
+name = "ags-workspace-facts"
+version = "0.3.1"
+dependencies = [
+ "ags-governance-decision",
+ "ags-host-integration",
+ "ags-platform",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -147,7 +230,7 @@ dependencies = [
 
 [[package]]
 name = "bootstrap-dry-run"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "ags-platform",
  "serde",
@@ -158,7 +241,7 @@ dependencies = [
 
 [[package]]
 name = "capability-registry"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -238,9 +321,9 @@ dependencies = [
 
 [[package]]
 name = "delivery-report-validator"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
- "receipt",
+ "ags-evidence",
  "serde",
  "serde_json",
  "task-card-validator",
@@ -274,7 +357,7 @@ dependencies = [
 
 [[package]]
 name = "execution-policy"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -428,16 +511,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "project-discovery"
-version = "0.3.0"
-dependencies = [
- "ags-platform",
- "request-governance",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "quote"
 version = "1.0.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -453,35 +526,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
-name = "receipt"
-version = "0.3.0"
-dependencies = [
- "request-governance",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
-]
-
-[[package]]
-name = "request-governance"
-version = "0.3.0"
-dependencies = [
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
 name = "runner"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
+ "ags-capability-governance",
+ "ags-evidence",
+ "ags-governance-decision",
  "execution-policy",
- "receipt",
- "request-governance",
  "serde",
  "serde_json",
- "skill-resolver",
  "task-card-validator",
 ]
 
@@ -579,26 +632,12 @@ dependencies = [
 
 [[package]]
 name = "skill-governance"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
- "ags-onboarding",
+ "ags-lifecycle",
  "serde",
  "serde_json",
  "serde_yaml",
-]
-
-[[package]]
-name = "skill-resolver"
-version = "0.3.0"
-dependencies = [
- "ags-onboarding",
- "ags-platform",
- "request-governance",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "skill-governance",
 ]
 
 [[package]]
@@ -609,15 +648,15 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "suite-doctor"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
+ "ags-capability-governance",
  "ags-platform",
- "project-discovery",
+ "ags-workspace-facts",
  "serde",
  "serde_json",
  "serde_yaml",
  "skill-governance",
- "skill-resolver",
 ]
 
 [[package]]
@@ -633,18 +672,7 @@ dependencies = [
 
 [[package]]
 name = "task-card-validator"
-version = "0.3.0"
-
-[[package]]
-name = "task-compiler"
-version = "0.3.0"
-dependencies = [
- "ags-platform",
- "receipt",
- "serde",
- "serde_json",
- "task-card-validator",
-]
+version = "0.3.1"
 
 [[package]]
 name = "tempfile"
@@ -858,7 +886,7 @@ dependencies = [
 
 [[package]]
 name = "workflow-sync-check"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde",
  "serde_json",

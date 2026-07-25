@@ -23,8 +23,8 @@ use crate::protocol::{
     InitializeResult, JsonRpcRequest, JsonRpcResponse, PromptsCapability, ResourcesCapability,
     ServerCapabilities, ServerInfo, ToolsCapability, MCP_VERSION, SERVER_NAME, SERVER_VERSION,
 };
-use crate::workspace::WorkspaceState;
 use crate::{prompts, resources, tools};
+use ags_session::WorkspaceState;
 
 // ── Preflight State ─────────────────────────────────────────────────────────
 

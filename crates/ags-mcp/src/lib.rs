@@ -11,14 +11,14 @@
 //! `ags_preflight` is the **mandatory first call** for all AGS scenarios.
 //! Hosts MUST complete preflight (MCP or CLI fallback `ags session preflight
 //! --for <agent>`) before invoking any other AGS tool. `ags_route_request`
-//! consumes a typed host proposal as a strictly read-only governance resolver,
-//! NOT as a preflight substitute or natural-language router.
+//! validates a typed host proposal read-only; it is NOT a preflight substitute
+//! and never interprets raw natural language.
 //!
 //! # Identity
 //!
 //! AGS MCP is the suite's own host adapter — NOT a governed third-party MCP.
 //! In `manifests/mcp-registry.yaml`, `ags` resides under `suite_interfaces:`,
-//! not alongside governed MCPs such as `context7` under `mcps:`.
+//! not alongside governed third-party MCPs under `mcps:`.
 //!
 //! # Usage
 //!
@@ -31,6 +31,34 @@ mod protocol;
 mod resources;
 mod server;
 mod tools;
-mod workspace;
 
-pub use workspace::{run_stdio_adapter, run_workspace_daemon};
+pub use ags_session::run_stdio_adapter;
+
+use std::io::BufReader;
+use std::net::TcpStream;
+use std::path::Path;
+use std::sync::Arc;
+
+struct McpSessionHandler;
+
+impl ags_session::WorkspaceSessionHandler for McpSessionHandler {
+    fn run(
+        &self,
+        reader: BufReader<TcpStream>,
+        writer: TcpStream,
+        workspace: Arc<ags_session::WorkspaceState>,
+        session_id: String,
+    ) {
+        server::run_mcp_session(
+            reader,
+            writer,
+            workspace,
+            session_id,
+            server::RuntimeProcessIdentity::capture(),
+        );
+    }
+}
+
+pub fn run_workspace_daemon(workspace: &Path) -> Result<(), String> {
+    ags_session::run_workspace_daemon(workspace, Arc::new(McpSessionHandler))
+}

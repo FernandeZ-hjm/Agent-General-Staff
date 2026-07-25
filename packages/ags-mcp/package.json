@@ -1,6 +1,6 @@
 {
   "name": "@agent-governance-suite/mcp",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Verified cross-platform launcher for the Agent General Staff MCP server",
   "license": "GPL-3.0-only",
   "type": "module",

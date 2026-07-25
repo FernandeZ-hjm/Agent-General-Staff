@@ -16,12 +16,12 @@
 schema_version: "2.0-skill"
 suite:
   name: "agent-general-staff"
-  version: "0.3.0-public"
+  version: "0.3.1"
   description: >
-    Agent General Staff 0.3.0 public edition — Rust-native governance
-    kernel and CLI for multi-agent engineering workflows. All core governance
-    capabilities included. Optional third-party development skills available
-    for confirmed install only.
+    Agent General Staff 0.3.1 public edition — Rust-native governance control
+    plane for multi-agent development. It governs admission, authority, policy,
+    evidence, capability state, and lifecycle; it is not an Agent scheduler.
+    Optional third-party development skills require confirmed installation.
   required: []
   optional:
     # The host submits a typed HostRouteProposal. Skill Resolver validates exact

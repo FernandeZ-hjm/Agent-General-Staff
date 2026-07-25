@@ -11,22 +11,22 @@ path = "src/main.rs"
 
 [dependencies]
 task-card-validator = { path = "../task-card-validator" }
-request-governance = { path = "../request-governance" }
+request-governance = { package = "ags-governance-decision", path = "../ags-governance-decision" }
 workflow-sync-check = { path = "../workflow-sync-check" }
 suite-doctor = { path = "../suite-doctor" }
 bootstrap-dry-run = { path = "../bootstrap-dry-run" }
 execution-policy = { path = "../execution-policy" }
-project-discovery = { path = "../project-discovery" }
-task-compiler = { path = "../task-compiler" }
+project-discovery = { package = "ags-workspace-facts", path = "../ags-workspace-facts" }
+task-compiler = { package = "ags-task-contract", path = "../ags-task-contract" }
 capability-registry = { path = "../capability-registry" }
-receipt = { path = "../receipt" }
-ags-verify = { path = "../ags-verify" }
+receipt = { package = "ags-evidence", path = "../ags-evidence" }
+ags-verify = { package = "ags-verification", path = "../ags-verification" }
 runner = { path = "../runner" }
 skill-governance = { path = "../skill-governance" }
-skill-resolver = { path = "../skill-resolver" }
+skill-resolver = { package = "ags-capability-governance", path = "../ags-capability-governance" }
 ags-mcp = { path = "../ags-mcp" }
 ags-platform = { path = "../ags-platform" }
-ags-onboarding = { path = "../ags-onboarding" }
+ags-onboarding = { package = "ags-lifecycle", path = "../ags-lifecycle" }
 delivery-report-validator = { path = "../delivery-report-validator" }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

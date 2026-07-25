@@ -1,469 +1,245 @@
 # Agent General Staff (AGS)
 
 [![CI](https://github.com/FernandeZ-hjm/Agent-General-Staff/actions/workflows/ci.yml/badge.svg)](https://github.com/FernandeZ-hjm/Agent-General-Staff/actions/workflows/ci.yml)
-[![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
+[![License: GPL-3.0-only](https://img.shields.io/badge/License-GPL--3.0--only-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg)](https://www.rust-lang.org/)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-blue.svg)]()
 
 [中文](README.md) | [English](README.en.md)
 
-**给一群越来越能干、越来越便宜的 AI 程序员，装一道工程安检门。**
+AGS 是一个面向多 Agent 开发的治理控制面。它负责准入、授权、策略、验证、回执、
+能力快照和记忆闭环；它不负责组建 Agent 团队，也不提供任务队列、调度器、并行执行器
+或 Agent 间协商。
 
-AGS 是一套面向本地开发环境的多 Agent 工程治理内核。它用 Rust 写成单二进制（无运行时依赖），通过任务卡、执行策略、验证门禁和记忆胶囊，把 Codex、Claude Code、Cursor 等不同 AI Agent 框架纳入同一套可验证、可审计的工程秩序。
+当前 latest 产品版本是 **v0.3.1**，许可证为
+**GPL-3.0-only**。
 
-它不是又一个 Agent，也不是一堆工具的合订本。它解决的是多个 Agent 一起进真实项目时的**治理问题**：谁可以做什么，什么时候必须停，任务怎么交接，执行怎么验证，上下文怎么延续。
+## 它解决什么
 
-## 目录
+Codex、Claude Code、Cursor 和 OMP 都可以在同一个代码库工作，但宿主能力强并不等于
+工程边界清楚。AGS 把容易漂移的自然语言执行过程压缩成可验证的治理链路：
 
-- [快速开始](#快速开始)
-- [60 秒演示](#60-秒演示)
-- [八道闸](#八道闸)
-- [入口与宿主记忆](#入口与宿主记忆)
-- [怎么工作](#怎么工作)
-- [常用命令](#常用命令)
-- [为什么需要 AGS](#为什么需要-ags)
-- [设计哲学](#设计哲学)
-- [验证](#验证)
-- [第三方技能](#第三方技能)
-- [了解更多](#了解更多)
-- [许可证](#许可证)
+```text
+项目预检
+  → 宿主提交类型化提案
+  → AGS 校验权限、策略与精确能力
+  → 宿主执行
+  → 验证、回执与交付闭环
+```
+
+AGS 的边界是：
+
+- 宿主理解用户语义；AGS 不解析原始自然语言来猜技能或权限。
+- AGS 校验封闭的 `HostRouteProposal`，只接受精确能力标识和固定机器动作。
+- `ags_route_request` 只读；唯一 effectful MCP 工具是
+  `ags_apply_action`，并且只消费一次性、session-bound lease。
+- Runner 只准备结构化 LaunchPlan，不伪装成已经执行或验证。
+- 缺少任务卡、能力、认证、快照或验证证据时 fail closed。
 
 ## 快速开始
 
-```bash
-# 前置：Rust 工具链
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
+### 从源码安装
 
-# 克隆 + 安装
+```bash
 git clone https://github.com/FernandeZ-hjm/Agent-General-Staff.git
 cd Agent-General-Staff
 bash scripts/install.sh
 ```
 
-安装脚本会构建 `ags` 并执行 `ags setup --yes --force`，写入公开安全的本机入口和 MCP 片段。不安装第三方技能，不引入私有运行时。
-
-安装后：
+脚本会构建 `ags` 并执行公开安全的本机 setup。也可以手动构建：
 
 ```bash
-ags agents govern --agent claude-code --apply
-ags agents govern --agent codex --apply
-ags agents govern --agent omp --apply
-ags agents verify --host <claude-code|codex|omp> --strict
-ags doctor
-ags verify --scope local
-```
-
-<details>
-<summary><strong>从源码构建（不用安装脚本）</strong></summary>
-
-**Linux / macOS：**
-
-```bash
-cargo build --release
+cargo build --release --locked
 export PATH="$PWD/target/release:$PATH"
-ags verify --scope local
+ags --version
 ```
 
-**Windows（PowerShell）：**
+### 作为 MCP launcher 使用
 
-```powershell
-cargo build --release
-$env:Path = "$PWD\target\release;$env:Path"
-.\target\release\ags.exe verify --scope local
-```
-
-`scripts/install.sh` 和 `scripts/update.sh` 是 Bash 便捷脚本，面向 Linux / macOS / WSL / Git Bash。Windows 原生环境走上面的 Cargo + PowerShell 路径。
-
-</details>
-
-<details>
-<summary><strong>更新 AGS</strong></summary>
-
-```bash
-# 只检查，不安装
-bash scripts/update.sh --check --max-age-days 1
-
-# 显式更新：拉取最新源码，重装，跑验证
-bash scripts/update.sh --apply
-```
-
-更新后 `ags --version` 仍显示旧版本？运行 `command -v ags` 确认 shell 实际调用的是哪个二进制。安装和更新脚本会在结束时报告路径，并在旧二进制抢占 PATH 时给出修复提示。
-
-</details>
-
-## 60 秒演示
-
-```bash
-# 1. 项目预检：Agent 进项目前，先知道自己在哪
-ags session preflight --for claude-code --target .
-
-# 2. 套件健康诊断
-ags doctor
-
-# 3. 校验任务卡 + 解析执行策略
-ags task validate examples/task-cards/medium-demo-task.md
-ags policy resolve examples/task-cards/medium-demo-task.md
-
-# 4. 结构化验证
-ags verify --scope local
-```
-
-更多样例见 [examples/](examples/)，评估实验见 [evals/](evals/)。
-
-## 八道闸
-
-AGS 不是靠一个功能管住 Agent，而是在工程链路的八个位置各放了一道闸。每道闸解决一个被 AI 编程反复打过的具体的坑。
-
-### 任务卡治理
-
-任务卡不是 prompt。它是 Agent 动手前必须签的工程合同——写清目标、非目标、权限模式、执行边界、验证方式、交付格式。有合同在，Agent 就不能从用户一句话里自由发挥。
-
-### 执行策略解析
-
-Agent 不该自己决定能做什么。AGS 根据任务卡解析执行策略：只读、计划优先、执行并验证、还是必须先停下来等人工确认。策略先行，执行在后。
-
-### 项目预检
-
-Agent 进项目前先做体检。`ags session preflight` 读取项目身份、协议状态、记忆路径、停止条件、验证命令和缺口提示——不靠猜。
-
-### 验证门禁
-
-用验证结果说话，不接受口头"我完成了"。`ags verify` 检查格式、测试、构建、任务卡 fixture、YAML、协议状态和发布边界，结果以统一格式输出——人能看，Agent 和 CI 也能读。
-
-### 执行回执
-
-每次执行留一张可追溯的回执。`ags receipt` 记录任务卡、执行策略、验证结果、退出码和 review gate 状态。不是仪式——是让每次 Agent 执行都能被回看。
-
-### 技能治理
-
-第三方技能可以推荐，但不替你默认安装。`ags skill` 提供管理控制台：`inventory` 审计本地技能资产、`verify` 检查宿主可见性、`propose` 干跑提案、`adopt` / `ignore` 确认式写入。每次变更有记录、有确认、有边界。
-
-`ags capability verify --host <host> --strict` 使用安装时记录的 AGS source authority
-计算固定 expected 集合，不会因为从不同项目目录运行就缩小检查范围。required 第三方
-父技能缺失、内部 playbook 不完整，或旧 playbook 被错误暴露为独立技能时都会 fail
-closed；`ags doctor` 也会把这类宿主路由缺口列为正式失败项。
-
-### 记忆胶囊
-
-让经验从聊天里逃出来，变成项目资产。Claude Code、Codex 和 OMP 现在各自使用
-原生生命周期入口：新会话只读注入项目胶囊和任务记忆，结束事件生成 close receipt；
-只有同时存在 canonical 任务卡和有效交付闭环时才写入任务存档。普通聊天会记为
-`skipped`，不会污染项目记忆。一个宿主的 hook 不能替另一个宿主证明闭环。
-
-### 自检与发布门禁
-
-仓库内置 `deny.toml`（RustSec 漏洞通报 + 许可证白名单 + crates.io 唯一来源），`cargo deny` 接入 CI 和 `scripts/verify.sh`，失败即关闭。`ags verify lane` 和 lane-decision helper 按 diff 风险选择 minimal / standard / full / release 验证路径，公开发布还会检查 public-full 边界，避免私有运行时、本机路径或构建产物混进发布面。
-
-### 作为 MCP 安装
-
-正式 Release 与 npm launcher 发布后，普通用户不需要先安装 Rust/Cargo：
+正式 Release 的预编译资产可通过 npm launcher 启动：
 
 ```bash
 npx -y @agent-governance-suite/mcp
 ```
 
-launcher 会按 OS/架构下载同版本预编译 `ags`，核对 `SHA256SUMS`，缓存验证后的
-二进制，并以无 shell 子进程启动 `ags mcp serve --transport stdio`。首次连接后可用
-`ags onboarding plan --host <host>` 查看项目、宿主、Skill、CLI、MCP 与 Hook 的
-逐项接入建议；它不会静默安装第三方能力。
+launcher 根据 OS/架构下载同版本二进制，校验 `SHA256SUMS` 后以无 shell 子进程启动
+MCP stdio adapter。npm 包通过 GitHub OIDC trusted publishing 发布，不保存长期 npm
+token。
 
-npm 发布使用 GitHub OIDC trusted publishing 与 provenance，不在仓库或 Actions
-中保存长期 npm token；发布 workflow 会先固定到支持 trusted publishing 的 npm
-版本，并规范化校验 package metadata。
+### 推荐流程
 
-0.3.0 的第三方能力清单不是写死在提示词里的副本。onboarding 读取固定到
-`821fb728b58c131c70a82dad51ccf83eb0372413` 的
-[已审阅公开清单](https://github.com/FernandeZ-hjm/Agent-General-Staff/blob/821fb728b58c131c70a82dad51ccf83eb0372413/manifests/third-party-capabilities.yaml)，
-并校验预期 SHA-256；网络不可用时才回退到随当前版本打包的清单。清单只
-描述来源、安装方式、探测方式、认证/健康要求和路由元数据，不会把远端内容当脚本执行。
-Skill、CLI、MCP 与 Hook 都要经过用户确认、真实安装探测和宿主可见性校验，才会进入
-机器本地快照。
-
-```mermaid
-flowchart TB
-    GH[GitHub 不可变已审阅清单] --> PLAN[ags onboarding plan<br/>校验 source + expected hash]
-    PKG[随版本打包的清单] -. 网络失败时回退 .-> PLAN
-    PLAN --> REVIEW{用户审阅并确认}
-    REVIEW -->|AGS 内核| S1[ags setup]
-    S1 --> S2[ags agents]
-    S2 --> S3[ags skill]
-    S3 --> S4[ags init]
-    S4 --> S5[ags update]
-    REVIEW -->|第三方能力| EXT[Skill / CLI / MCP / Hook<br/>逐项安装与认证]
-    EXT --> INV[capability inventory]
-    INV --> SNAP[HostCapabilitySnapshot<br/>机器本地 hash]
-    SNAP --> CAT[ags://capabilities/current-host<br/>精确可路由目录]
-    S5 -. 重新拉取与复核 .-> PLAN
-
-    style PLAN fill:#e1f5fe
-    style REVIEW fill:#fff3e0
-    style SNAP fill:#f3e5f5
-    style CAT fill:#c8e6c9
+```bash
+ags setup --yes --force
+ags agents govern --agent codex --apply
+ags agents govern --agent claude-code --apply
+ags agents govern --agent omp --apply
+ags init --target .
+ags doctor --target .
+ags verify --scope local
 ```
 
-## 入口与宿主记忆
+所有会写入的生命周期命令仍然遵守 dry-run 或显式 `--apply` / `--yes` 约束。
 
-0.3.0 把“入口说明”和“运行协议”拆开。全局与项目级 `AGENTS.md` / `CLAUDE.md`
-只保留仓库身份、强边界、preflight 入口和按需阅读索引；任务卡、宿主操作、记忆闭环
-等细节放在独立 Markdown 中引用。这样宿主每轮只加载稳定的小入口，相关任务再读取
-对应协议，避免入口膨胀、重复和循环引用。约束与依据见
-[`protocol/entrypoint-guidelines.md`](protocol/entrypoint-guidelines.md)。
+## 人类命令面
 
-宿主记忆闭环是机器级适配、项目级存储：
-
-| 宿主 | 新会话注入 | 结束回访 |
-|---|---|---|
-| Claude Code | `SessionStart` | `Stop` |
-| Codex | `SessionStart` | `SessionEnd` |
-| OMP | `session_start`，下一次 `before_agent_start` 通过 `systemPromptAppend` 注入 | `agent_settled` / `session_shutdown` |
-
-`ags setup --yes --force` 安装共享脚本和精简全局规则模块；
-`ags agents govern --agent <host> --apply` 才显式写入该宿主的 AGS-owned adapter。
-第三方 MCP 注册仍然只给建议，不会被 `--apply` 顺手修改。
-
-## 怎么工作
-
-AGS 0.3.0 把自然语言理解留在宿主。preflight 后，宿主读取 `ags://capabilities/current-host`，结合完整对话形成 typed `HostRouteProposal`；严格只读的 `ags_route_request` 只校验阶段、授权、精确技能和闭集机器动作。`ags_apply_action` 是唯一 effectful MCP 工具，以一次性 lease/action 引用消费服务端保存的固定动作。Skill Resolver 只按 `HostCapabilitySnapshot` 精确校验 skill/entrypoint，没有关键词、相似度或 fallback。Compiler、Policy、Gate 和 Runner 都不解析自然语言；Runner 只准备 LaunchPlan 并返回 `HOST_EXECUTION_REQUIRED`。
-
-`ags mcp serve` 现在是薄 stdio adapter：它按工作区 canonical path
-connect-or-start 唯一 daemon。Codex、Claude Code、Cursor 与 OMP 在同一工作区共享
-daemon 管理的能力快照，但各自保留独立 `session_id`、preflight binding 与
-DecisionLease。客户端断开不杀 daemon；空闲后才回收。二进制升级时先停旧 daemon，
-再用新版本重启，禁止新旧实例并存。
+v0.3.1 保持 v0.3.0 的完整 Clap 命令树、参数、别名、默认值、stdout/stderr、
+退出码和 JSON schema。唯一预期变化是：
 
 ```text
-AGS 场景输入 → preflight
-  ├─ 已有 canonical 任务卡 → 先校验
-  │    ├─ 合法 → 策略解析 → Gate → LaunchPlan → 宿主执行/验证
-  │    └─ 非法 → 停止并返回校验错误，不得回落到新任务卡生成
-  └─ 原始请求 → 宿主语义提案 → 只读 ags_route_request
-       ├─ DirectResponse → 宿主回复
-       ├─ exact SkillTarget → Skill Resolver → 宿主技能
-       └─ MachineCliTarget → DecisionLease → 显式 ags_apply_action
+ags --version
+0.3.0 → 0.3.1
 ```
 
-任务卡编译器的核心用途是：在方案已经确定后，让 AI 把已确认的执行契约写成高质量、
-可验证、可交接的提示词。普通对话中，明确要求生成任务卡并提供已确认契约即可编译，
-不要求宿主处于 Plan mode；授权同会话直接修改时也不强制生成任务卡。
-
-若宿主正在 Plan mode，最后一步直接用
-`--host-plan-mode-final --confirmed-handoff-contract` 生成唯一 canonical `## 任务卡`，
-不再另写一份 prose final plan，也不再询问是否生成。用户选择 Execute 后，宿主退出
-Plan mode 并派发同一张已验证任务卡，禁止重新生成。
-
-```mermaid
-flowchart TB
-    A[新会话 / 输入] --> START{原生启动事件}
-    START -->|Claude / Codex| INJECT[只读注入 context capsule<br/>+ task memory]
-    START -->|OMP| OMPWAIT[缓存启动上下文]
-    OMPWAIT --> INJECT
-    INJECT --> B[1. Preflight<br/>ags_preflight / CLI 降级]
-    B --> CAT[2. 读取 current-host<br/>能力目录 + snapshot hash]
-    CAT --> X{首个非空行是<br/>## 任务卡?}
-    X -->|否| H[3. 宿主保留完整对话<br/>按需形成并确认方案]
-    H --> P[4. HostRouteProposal]
-    P --> R{只读 ags_route_request<br/>RouteResolution}
-    R -->|DirectResponse| DR[回复并停止]
-    R -->|SkillTarget| SR[Skill Resolver<br/>精确 skill + entrypoint]
-    R -->|MachineCliTarget| LEASE[DecisionLease<br/>服务端固定 action]
-    R -->|同会话明确授权修改| EXEC[10. 宿主原生执行]
-    R -->|明确任务卡交接<br/>或 Plan mode 最终产物| C[5. Task Compiler]
-    SR --> HC[宿主加载已验证技能<br/>结果返回宿主]
-    LEASE --> APPLY[显式 ags_apply_action]
-    APPLY --> AR[action receipt<br/>返回宿主]
-    C --> CARD[6. 唯一 canonical 任务卡<br/>禁止再生成第二份 plan]
-    X -->|是| V[7. 校验 canonical 任务卡<br/>ags task validate]
-    CARD --> V
-    V -->|合法| K[8. Policy + Gate]
-    V -->|非法| VSTOP[STOP<br/>只返回错误，不生成新卡]
-    K -->|stop_before_launch| KSTOP[STOP<br/>修复或取得必要授权]
-    K -->|允许准备| LP[9. LaunchPlan<br/>HOST_EXECUTION_REQUIRED]
-    LP --> EXEC
-    EXEC --> VERIFY[11. 宿主执行验证]
-    VERIFY --> REPORT[12. 交付报告 + 证据]
-    REPORT -->|有任务卡| CLOSE[task close<br/>card hash + G/AC/V/EV 精确闭环]
-    REPORT -->|直接修改| DONE[向用户交付证据]
-    CLOSE --> END{宿主结束事件}
-    DONE --> END
-    END --> RECEIPT[close receipt<br/>captured / skipped / failed]
-    RECEIPT -->|有效任务卡 + 交付闭环| ARCHIVE[Receipt + Task Memory<br/>追加归档]
-    RECEIPT -->|普通对话或证据不足| SKIP[skipped<br/>不写项目记忆]
-    ARCHIVE -. 下一次新会话召回 .-> START
-
-    style START fill:#e0f2f1
-    style INJECT fill:#b2dfdb
-    style B fill:#e1f5fe
-    style CAT fill:#e8f5e9
-    style P fill:#7e57c2,color:#fff
-    style R fill:#9575cd,color:#fff
-    style C fill:#ffeb3b,stroke:#f57f17
-    style V fill:#ffcdd2
-    style VSTOP fill:#d32f2f,color:#fff
-    style K fill:#ffcdd2
-    style LP fill:#c8e6c9
-    style CLOSE fill:#b3e5fc
-    style RECEIPT fill:#dcedc8
-    style SKIP fill:#eeeeee
-```
-
-架构详情见 [docs/architecture.md](docs/architecture.md)。
-
-## 常用命令
-
-0.3.0 采用宿主语义提案 + 五段链路 CLI 架构：5 个人类命令面覆盖全局治理生命周期；机器动作只有在只读 route 生成一次性租约后，才由显式 apply 消费。
-
-### 五段链路（全局管理）
-
-| 段 | 命令 | 作用 |
-|---|---|---|
-| 1 | `ags setup` | 安装/升级本机 AGS 治理内核 |
-| 2 | `ags agents` | 纳管本机 Agent 宿主（scan / govern / verify） |
-| 3 | `ags skill` | 纳管本机技能本体（inventory / dedupe / verify） |
-| 4 | `ags init` | 将目标项目接入 AGS 治理 |
-| 5 | `ags update` | 统一更新内核 / Agent / 技能 / 项目 |
-
-### 内核（治理闭环）
+顶层人类命令保持不变：
 
 | 命令 | 作用 |
 |---|---|
-| `ags session preflight` | 项目预检——Agent 唤醒入口（MCP 降级路径） |
-| `ags task validate` | 校验任务卡格式与语义 |
-| `ags task compile` | 编译执行契约为规范任务卡 |
-| `ags policy resolve` | 解析执行策略 |
-| `ags policy check` | 校验 + 解析，按 gate 结果 exit |
-| `ags policy explain` | 逐条输出策略规则解释 |
-| `ags gate check` | Runner 级 gate 决策 |
-| `ags run` | 任务卡执行管线（resolver-first） |
-| `ags verify --scope local` | 结构化验证（local / full / release） |
-| `ags verify lane` | 按 diff 风险分类验证路径 |
-| `ags receipt verify` | 校验执行回执完整性 |
-| `ags task close` | 将交付报告与任务卡 hash、G/AC/V/EV 标识逐项闭环 |
-| `ags mcp serve` | 启动 AGS MCP stdio 服务 |
-| `ags onboarding plan --host <host>` | 基于 GitHub 最新清单或打包回退清单，生成可审阅的 Skill/CLI/MCP/Hook 接入计划 |
-| `ags capability inventory` | 发现本机系统、用户、项目和外部能力，不等于允许路由 |
-| `ags capability snapshot --host <host>` | 生成带 hash 的机器本地可用性快照 |
-| `ags capability verify --host <host> --strict` | 校验必需能力、父技能及内部入口的宿主可见性 |
+| `ags setup` | 安装或升级本机治理内核 |
+| `ags onboarding` | 评估并逐项确认公开 onboarding |
+| `ags init` | 将项目接入 AGS 协议与入口 |
+| `ags doctor` | 诊断 runtime、宿主、项目与能力链路 |
+| `ags agents` | 扫描、纳管并验证 Agent 宿主 |
+| `ags capability` | 能力 inventory、snapshot 与宿主可见性 |
+| `ags skill` | 技能本体、入口、更新与回滚治理 |
+| `ags update` | 更新内核、runtime、宿主、技能与项目投影 |
 
-**Agent 入口：**`/ags` 是 Claude Code 入口，所有 AGS 任务优先通过 AGS MCP 调用 `ags_preflight`，CLI 只作为 MCP 不可用时的降级路径。完整子命令用 `ags <command> --help` 查看。
+内部 MCP/Machine CLI 没有被提升为新的人类命令。现有脚本和项目入口无需迁移。
 
-## 为什么需要 AGS
+## v0.3.1 Workspace Service
 
-我一开始以为，AI 编程最大的问题是模型不够聪明。后来发现不是。问题是它太聪明、太勤快、太敢干。
+MCP stdio 进程现在是薄适配器：
 
-你让它改一个函数，它顺手重构半个模块。你让它做只读审计，它看着看着就想帮你修。你说"这个方案可以"，它理解成"那我开工了"。你让它完成任务，它告诉你"完成了"——没有测试、没有证据，也没有一份能回看的记录。
+```text
+MCP stdio adapter
+        ↓ connect-or-start
+canonical workspace path → 唯一 AGS workspace daemon
+        ├── Codex session
+        ├── Claude Code session
+        ├── Cursor session
+        └── OMP session
+```
 
-这些坑后来都变成了 AGS 里的具体闸门：
+- daemon 实例键只有 workspace canonical path，不包含 host。
+- 同一工作区共享一份原子发布的能力 bundle，避免重复扫描。
+- 每个对话保留独立 `session_id`、preflight binding 和 DecisionLease。
+- 技能刷新采用候选 bundle 校验、原子替换、发布新 hash；旧绑定得到明确失效结果，
+  重新 preflight 后立即接受新 hash。
+- lease 跨宿主、跨 session、跨 workspace 或重放都会拒绝。
+- 客户端断开不会立刻终止 daemon；无会话且超过 idle TTL 后回收。
+- 二进制升级严格 stop-before-restart，不允许不同版本共同服务同一工作区。
 
-| 踩过的坑 | 长出的闸门 |
+这部分是内部运行架构变化，不要求用户学习新命令。
+
+## 12 个主要边界
+
+| crate | 职责 |
 |---|---|
-| 只读任务被越权改代码 | 执行策略解析 + 门禁 |
-| 说"完成了"却没验证 | 验证门禁 + 执行回执 |
-| 换个对话就失忆，同一个坑再踩一遍 | 记忆胶囊 |
-| 技能、钩子、MCP 配置互相污染 | 统一技能治理 |
+| `ags-platform` | 路径、文件系统、进程、哈希与原子写入 |
+| `ags-workspace-facts` | canonical workspace、发现和配置事实 |
+| `ags-host-integration` | Codex、Claude Code、Cursor、OMP 宿主适配 |
+| `ags-capability-governance` | 能力清单、精确解析、技能生命周期和快照 |
+| `ags-task-contract` | 任务卡、编译、验证与交接契约 |
+| `ags-governance-decision` | 类型化提案、策略、授权和 route decision |
+| `ags-session` | workspace service、session、preflight 和 lease |
+| `ags-evidence` | receipt、delivery report 和证据模型 |
+| `ags-verification` | doctor、local/release verify 和同步检查 |
+| `ags-lifecycle` | setup、init、onboarding、update 和 rollback |
+| `ags-cli` | 保持兼容的人类 CLI 薄适配层 |
+| `ags-mcp` | MCP 协议转换、连接和错误映射 |
 
-往更底层看，这是个控制问题。大模型是一个高增益但会漂移的元件。工程能做的，不是造一个永不出错的模型，而是在它外面套一道回路：让它少猜一点、少自由发挥一点，多按任务卡、协议、验证和记忆来协作。模型能力会波动，工程流程负责兜底。
+治理规则不放在 CLI 或 MCP 适配层中，也不保留新旧两套路由实现。
 
-## 设计哲学
+## 真实支持范围
 
-<details>
-<summary><strong>起源：我只是想管几个插件</strong></summary>
+| 能力 | Codex | Claude Code | Cursor | OMP |
+|---|---:|---:|---:|---:|
+| 同一 workspace daemon | 是 | 是 | 是 | 是 |
+| 独立 session/preflight/lease | 是 | 是 | 是 | 是 |
+| 能力快照刷新与重连 | 是 | 是 | 是 | 是 |
+| 技能入口探测 | 是 | 是 | 是 | 是 |
+| 宿主原生记忆生命周期 | 是 | 是 | 受宿主能力限制 | 是 |
 
-我是个 AI 编程新手。跟很多人一样，刚上手那阵特别容易上头——社交网络上有人晒神级技能、MCP、钩子、各种配置文件，我看见就想装。今天一个代码审查插件，明天一个任务记忆系统，后天一个自动化钩子，不装好像就落后了。
+四宿主 E2E 覆盖同工作区单 daemon、跨项目隔离、snapshot refresh、stdio 重连、
+lease 重放/越界拒绝、idle recycle、升级重启和损坏 bundle 错误。
 
-插件一多，问题就来了。谁来管版本？第三方技能怎么更新，才不会破坏我本地已经跑通的环境？MCP、钩子、项目规则、智能体配置会不会互相打架？我本来只想写个小脚本，把这些本地插件管起来。一个月后，它变成了我的第一个开源项目。
+源码 CI 覆盖 Linux、macOS、Windows。tag 发布构建 Apple Silicon、Intel macOS、
+x86_64 Linux、ARM64 Linux 和 x86_64 Windows 资产。
 
-后来我发现它和微软的 [AGT（Agent Governance Toolkit）](https://github.com/microsoft/agent-governance-toolkit) 撞了名。AGT 管的是 Agent 执行时的策略闸门，在工具调用、API、文件操作落地前做拦截；AGS 管的是 Agent 工程协作的整条生命周期——预检、方案、任务卡、执行策略、验证、回执、记忆。名字撞得近，但撞到了同一个时代命题：AI 程序员越来越能干，人类怎么管。
+## 安全与供应链
 
-AGS 不是我拍脑袋设计出来的。它更像是我被 AI 编程连续打了几顿之后，身体自己长出来的一套防御系统。
+- 固定 argv，不使用 shell 字符串拼接执行治理动作。
+- 任务卡、策略、路径、符号链接、内容 hash 和一次性 lease 均有 fail-closed 校验。
+- onboarding 清单固定到不可变 Git commit，并校验预期 SHA-256；网络失败时才使用
+  当前版本内置的已审阅清单。
+- Release 包含 `SHA256SUMS` 和 provenance；npm 使用 trusted publisher。
+- `cargo-deny`、Clippy strict mode、release boundary 和 public-private guard 都是发布门禁。
+- 公开 tracked payload 不包含本机路径、runtime 状态、第三方技能本体或私有实现。
 
-</details>
+## 明确限制
 
-<details>
-<summary><strong>五条宪章</strong></summary>
+AGS 目前不是：
 
-详解见 [docs/philosophy.md](docs/philosophy.md)，这里给骨架：
+- AutoGen、LangGraph 一类执行编排框架；
+- Agent 任务队列、资源配额或并行调度器；
+- 自动理解用户意图的自然语言安全证明器；
+- 真实 Agent 执行结果的替代品。
 
-| 宪章 | 一句话 | 在 AGS 里变成了 |
-|---|---|---|
-| 一·不迷信单一 AI | Codex、Claude Code、Cursor 都强，但强的地方不一样 | 给所有 Agent 一套共同工程秩序 |
-| 二·AI 听不全人话 | 提示词是聊天语言，不是工程合同 | 任务卡才是工程合同 |
-| 三·执行不是一条直线 | 它有时天才，有时走神 | 留下过程；让错误不要悄悄发生 |
-| 四·高光判断该被沉淀 | 宝贵的不是模型输出，是人在方案阶段的判断 | 记忆胶囊 |
-| 五·模型搭配，干活不累 | 顶级模型贵，平价模型放飞又不稳 | 顶级做判断，平价做执行，AGS 管全程 |
-
-</details>
-
-<details>
-<summary><strong>给平价模型装一个方舟反应炉</strong></summary>
-
-顶级模型好用但贵。平价模型便宜，完全放飞又容易不稳。AGS 做的，是给平价模型套上工程流程：明确任务、明确边界、明确验收。顶级模型负责关键判断，平价模型负责大量具体执行，AGS 管住全过程，交付后再让更强的模型查漏补缺。
-
-单看一次输出，它不能让平价模型变成顶级模型。但在持续多轮的工程链路里，有任务卡约束、有验证门禁、有执行回执兜底的平价模型，交付稳定性远高于无约束的放飞状态。这个差距随任务链长度递增。
-
-像给平价模型装了一个方舟反应炉：核心不大，但能让预算机体迸发出接近顶配的续航。
-
-</details>
-
-## 跨平台支持
-
-AGS 在源码 CI 中验证 Linux、macOS 和 Windows；显式 tag 发布还会构建 Apple
-Silicon、Intel macOS、x86_64 Linux、ARM64 Linux 与 x86_64 Windows 五个平台资产。
-
-- **Rust 内核**跨三平台构建、测试、运行。`ags-platform` crate 统一处理各平台的 home 目录解析和 PATH 查找（Windows 走 `USERPROFILE` + `PATHEXT`，不依赖 Unix `$HOME` 或外部 `which`）。
-- **Bash 脚本**（`scripts/*.sh`）面向 Linux / macOS / WSL / Git Bash，不承诺 Windows 原生 PowerShell / cmd 运行。
+类型化提案可以证明提案内部是否合法，不能证明宿主一定正确理解了用户意图。真实交付
+仍然需要宿主执行、项目验证和证据闭环。
 
 ## 验证
 
+日常使用：
+
 ```bash
-# 本地验证：格式、测试、构建、fixture、YAML、preflight
+ags doctor --target .
 ags verify --scope local
-
-# 发布边界验证：公开清单完整性 + tracked 源泄露扫描 + bootstrap 产物边界
-ags verify --scope release
-
-# 兼容总闸（等价 ags verify --scope local + 命令面冒烟）
-bash scripts/verify.sh
 ```
 
-### 0.3.0 发布顺序
+源码贡献：
 
-1. 先把 public-safe 源码推送到 GitHub `main`，等待该提交 CI 全绿。
-2. 确认 Cargo workspace、`packages/ags-mcp/package.json` 与
-   `RELEASE_NOTES.md` 都是 `0.3.0`。
-3. 维护者显式创建并推送 `v0.3.0`；日常 CI 和同步脚本都不会自动打 tag。
-4. tag workflow 验证提交属于 `origin/main`，产出五个平台资产、`SHA256SUMS`、
-   provenance attestation 与 GitHub Release；Release 成功后才把
-   `release/latest` 移动到该 tag 的精确提交。
-5. Release 资产和校验清单齐全后，手动 dispatch npm workflow，输入精确版本
-   `0.3.0`，发布 `@agent-governance-suite/mcp` 并确认 npm `latest=0.3.0`。
-   workflow 使用 GitHub OIDC trusted publishing，不使用长期 npm token。
+```bash
+cargo fmt --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
+cargo build --release --locked
+bash scripts/verify.sh
+git diff --check
+```
 
-推送 stable/public `main` 不等于创建 tag、GitHub Release 或 npm 发布。
+发布门禁还会检查：
 
-## 第三方技能
+- v0.3.0 → v0.3.1 人类命令面和 Machine CLI fixture；
+- workspace daemon/session/lease/snapshot E2E；
+- 产品版本、协议/schema 版本和历史版本分组；
+- public release boundary、npm launcher 和私有标记扫描。
 
-AGS 可以推荐第三方开发技能，但不会默认安装。
+### 0.3.1 发布顺序
 
-第三方技能会改变 Agent 行为，也可能影响本地开发环境。AGS 的态度是：可以推荐，可以检查，可以记录，但必须由用户显式确认。推荐列表见 `docs/skill-recommendations.md`，Superpowers 相关技能的来源和 MIT License 说明见 `THIRD_PARTY_NOTICES.md`。
+1. public-safe `main` 的精确提交通过全部 GitHub Actions。
+2. Cargo、npm、suite manifest、MCP `serverInfo`、README 和 Release Notes 都是
+   `0.3.1`，wire/schema 兼容标识保持原值。
+3. 在该提交创建 annotated `v0.3.1` tag。
+4. tag workflow 产出五平台资产、`SHA256SUMS` 和 provenance，并创建 GitHub Release。
+5. 手动触发 OIDC npm workflow，确认 registry `0.3.1` 且
+   `latest` 指向 `0.3.1`。
 
-## 了解更多
+推送 `main` 不等于完成 tag、Release 或 npm 发布。
 
-- [docs/philosophy.md](docs/philosophy.md) — 五条宪章详解与控制论思路
-- [docs/architecture.md](docs/architecture.md) — 架构：生命周期、MCP 初始化门禁、crate 依赖图、执行链路、记忆胶囊机制
-- [docs/comparison.md](docs/comparison.md) — AGS 与其他治理方案的对比
-- [examples/](examples/) — 公开安全样例：demo 项目、任务卡、输出样例、合成 receipt
-- [evals/](evals/) — 可复现评估实验：越权拦截、无验证交付、方案即执行
-- [RELEASE_NOTES.md](RELEASE_NOTES.md) — 当前版本能力与历史发布说明
-- [GitHub Releases](https://github.com/FernandeZ-hjm/Agent-General-Staff/releases) — 经 tag 触发验证后发布的正式版本
-- [COMMERCIAL.md](COMMERCIAL.md) — GPL-3.0 许可证下的商业使用、署名和品牌说明
+## 文档
+
+- [架构](docs/architecture.md)
+- [MCP 协议](protocol/mcp-server.md)
+- [任务协议](protocol/agent-task-protocol.md)
+- [技能治理](protocol/skill-governance.md)
+- [Release Notes](RELEASE_NOTES.md)
+- [安全策略](SECURITY.md)
+- [商业与 GPL 说明](COMMERCIAL.md)
 
 ## 许可证
 
-AGS（Agent General Staff，原名 Agent Governance Suite）使用 GNU General Public License v3.0 only (GPL-3.0-only)。
+AGS 使用 **GNU General Public License v3.0 only (GPL-3.0-only)**。
 
-你可以下载、阅读、复制、修改和分发 AGS。**核心条件：如果你分发 AGS 或其衍生作品，接收方必须也能获得 GPL-3.0-only 下的完整源代码。** 纯内部使用不触发该义务。`NOTICE.md` 和 `THIRD_PARTY_NOTICES.md` 记录项目署名和第三方材料来源，分发时应保留。"Agent General Staff" 和 "AGS" 名称可用于真实署名和兼容性说明，不代表授予品牌背书或商标授权。
-
----
-
-AGS 是给 AI 程序员装的一道安检门——不是让它更自由，而是让它进真实项目时知道边界、留下记录、接受验收，把经验带到下一次任务。
+可以使用、研究、修改和分发；分发 AGS 或其衍生作品时，必须按 GPL-3.0-only 向接收方
+提供相应完整源代码。纯内部使用本身不触发分发义务。第三方材料的许可证与署名见
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

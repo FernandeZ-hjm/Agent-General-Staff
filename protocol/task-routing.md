@@ -1,6 +1,6 @@
 # Agent Task Routing
 
-> AGS 0.3.0 的需求治理协议。自然语言语义判断属于宿主；AGS 只校验 typed proposal 和确定性准入。
+> AGS 0.3.1 的需求治理协议。自然语言语义判断属于宿主；AGS 只校验 typed proposal 和确定性准入。
 
 ## 唯一链路
 
@@ -15,7 +15,7 @@ preflight
 → 若且仅若存在 ServerHeldAction：ags_apply_action(lease_id, action_id)
 ```
 
-AGS 0.3.0 没有原始文本关键词路由。`ags_route_request` 不接受 `{request: ...}`，不启动进程、不写文件，也不在失败时回退到 substring、BM25、embedding、`SkillDemand` 或第二套路由器。
+AGS 0.3.1 没有原始文本关键词路由。`ags_route_request` 不接受 `{request: ...}`，不启动进程、不写文件，也不在失败时回退到 substring、BM25、embedding、`SkillDemand` 或第二套路由器。
 
 ## HostRouteProposal
 
