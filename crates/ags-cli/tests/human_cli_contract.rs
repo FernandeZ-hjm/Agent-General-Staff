@@ -16,6 +16,18 @@ fn ags() -> Command {
     Command::new(env!("CARGO_BIN_EXE_ags"))
 }
 
+fn normalized_help(stdout: Vec<u8>) -> String {
+    String::from_utf8(stdout).unwrap().replace("ags.exe", "ags")
+}
+
+#[test]
+fn platform_executable_suffix_is_not_command_surface_drift() {
+    assert_eq!(
+        normalized_help(b"Usage: ags.exe skill --help\n".to_vec()),
+        "Usage: ags skill --help\n"
+    );
+}
+
 #[test]
 fn v031_preserves_the_v030_machine_cli_contract() {
     let fixture = std::fs::read_to_string(concat!(
@@ -49,7 +61,7 @@ fn v031_preserves_the_v030_machine_cli_contract() {
             .unwrap();
         assert!(output.status.success(), "Machine CLI help failed at {path}");
         assert_eq!(
-            String::from_utf8(output.stdout).unwrap(),
+            normalized_help(output.stdout),
             *expected,
             "Machine CLI drift at {path}"
         );
@@ -77,7 +89,7 @@ fn v031_preserves_the_complete_v030_human_command_surface() {
             .unwrap();
         assert!(output.status.success(), "help failed for {path:?}");
         assert_eq!(
-            String::from_utf8(output.stdout).unwrap(),
+            normalized_help(output.stdout),
             *expected,
             "human CLI drift at {path:?}"
         );
