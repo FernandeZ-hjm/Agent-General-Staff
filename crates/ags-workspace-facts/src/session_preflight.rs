@@ -84,7 +84,8 @@ pub fn run_session_preflight(target: &Path, agent_type: &AgentType) -> SessionPr
 
     let identity = detect_project(&canonical);
     let protocol_status = check_protocol_status(&canonical);
-    let instructions = generate_agent_instructions(&canonical, agent_type);
+    let instructions =
+        generate_agent_instructions_from_facts(&canonical, agent_type, &identity, &protocol_status);
 
     // ── Memory paths ─────────────────────────────────────────────────────
     let capsule_path = identity.memory_capsule_path.clone();

@@ -55,6 +55,16 @@ pub struct AgentPermissions {
 pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> AgentInstructions {
     let canonical = std::fs::canonicalize(target).unwrap_or_else(|_| target.to_path_buf());
     let identity = detect_project(&canonical);
+    let protocol_status = check_protocol_status(&canonical);
+    generate_agent_instructions_from_facts(&canonical, agent_type, &identity, &protocol_status)
+}
+
+pub(super) fn generate_agent_instructions_from_facts(
+    canonical: &Path,
+    agent_type: &AgentType,
+    identity: &ProjectIdentity,
+    protocol_status: &ProtocolStatus,
+) -> AgentInstructions {
     let project_name = canonical
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -310,16 +320,15 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
         .collect();
 
     // ── Target-aware verification commands ──────────────────────────────
-    let verification_commands = detect_verification_commands(&canonical);
+    let verification_commands = protocol_status.verify_requirements.clone();
 
     // ── Protocol status for integration context ─────────────────────────
-    let protocol_status = check_protocol_status(&canonical);
     let protocol_failures = protocol_status.failures.clone();
     let protocol_warnings = protocol_status.warnings.clone();
     let integration_gaps = identity.gaps.clone();
 
     // ── Determine stop behavior ─────────────────────────────────────────
-    let (should_stop, stop_reasons, exit_code) = match identity.integration_status {
+    let (should_stop, stop_reasons, exit_code) = match &identity.integration_status {
         IntegrationStatus::Suite | IntegrationStatus::Integrated => {
             // Still check for critical protocol failures
             let critical_failures: Vec<String> = protocol_failures
@@ -385,7 +394,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
     let instructions_text = build_instructions_text(
         agent_type,
         &project_name,
-        &identity,
+        identity,
         &role_description,
         &required_reads,
         &stop_conditions,
@@ -402,7 +411,7 @@ pub fn generate_agent_instructions(target: &Path, agent_type: &AgentType) -> Age
     AgentInstructions {
         agent_type: agent_type.as_str().to_string(),
         agent_display_name: agent_type.display_name(),
-        target: canonical,
+        target: canonical.to_path_buf(),
         project_name,
         is_ags_suite: identity.is_ags_suite,
         integration_status: identity.integration_status.clone(),
