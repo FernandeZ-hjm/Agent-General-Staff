@@ -63,22 +63,23 @@ scripts/                    # Public-safe scripts
   verify.sh
 
 crates/                     # Rust crates (public-safe core)
-  ags-cli/                  # Unified CLI entry point
-  ags-mcp/                  # AGS MCP host initialization adapter
-  request-governance/       # Typed HostRouteProposal / RouteResolution contracts
-  skill-resolver/           # Exact SkillTarget resolution against host snapshots
-  task-card-validator/      # Task-card validation
-  execution-policy/         # Execution policy resolver
-  suite-doctor/             # Suite health diagnostics
-  bootstrap-dry-run/        # Bootstrap simulation
-  workflow-sync-check/      # Protocol drift checker
-  ags-verify/               # Scoped verification
-  project-discovery/        # Project/agent detection
-  receipt/                  # Execution receipt generation and verification
-  runner/                   # Policy-resolved executor launch
-  task-compiler/            # Execution contract to task-card compiler
-  skill-governance/         # Skill recommendation and governance
-  capability-registry/      # Local capability detection
+  ags-platform/               # Paths, filesystem, hashes, atomic writes
+  ags-workspace-facts/        # Canonical workspace and project facts
+  ags-host-integration/       # Codex, Claude Code, Cursor, OMP adapters
+  ags-capability-governance/  # Capability inventory, resolution, snapshots
+  ags-task-contract/          # Task-card compile and handoff contracts
+  ags-governance-decision/    # Typed proposals, policy, route decisions
+  ags-session/                # Workspace service and client session state
+  ags-evidence/               # Receipts and delivery evidence
+  ags-verification/           # Doctor, release, sync, version checks
+  ags-lifecycle/              # Setup, init, onboarding, update, rollback
+  ags-cli/                    # Stable human and Machine CLI adapters
+  ags-mcp/                    # Thin MCP/stdio protocol adapter
+  task-card-validator/        # Subordinate task-card validation
+  execution-policy/           # Subordinate policy resolution
+  skill-governance/           # Subordinate skill lifecycle implementation
+  workflow-sync-check/        # Subordinate A-to-public boundary checker
+  runner/                     # Host-execution launch-plan preparation
 
 docs/                       # Documentation
   skill-recommendations.md
@@ -89,7 +90,7 @@ tests/                      # Test fixtures
 
 ## Release Identity
 
-Release line: AGS 0.3 Public Edition.
+Latest release: AGS v0.3.1 Public Edition.
 
 Repository name: `agent-governance-suite`.
 

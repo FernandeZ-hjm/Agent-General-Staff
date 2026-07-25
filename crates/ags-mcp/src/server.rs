@@ -36,17 +36,8 @@ use ags_session::WorkspaceState;
 /// client disconnects. The workspace daemon itself may outlive every client.
 #[derive(Debug)]
 struct PreflightState {
-    preflight_completed: bool,
-    bootstrap_required: bool,
-    preflight_agent: Option<String>,
-    /// Resolved target path from the successful preflight RESULT (never raw call
-    /// arguments). It is the mandatory target binding for route/apply; callers
-    /// cannot override it in either tool.
-    preflight_target: Option<String>,
-    routing_session: tools::RoutingSession,
+    governance: ags_session::WorkspaceClientSession<tools::HeldAction>,
     runtime_process: RuntimeProcessIdentity,
-    workspace: Arc<WorkspaceState>,
-    session_id: String,
 }
 
 impl PreflightState {
@@ -57,17 +48,9 @@ impl PreflightState {
 
     #[cfg(test)]
     fn with_runtime_process(runtime_process: RuntimeProcessIdentity) -> Self {
-        let workspace = WorkspaceState::standalone();
-        let session_id = format!("standalone-{}", std::process::id());
         Self {
-            preflight_completed: false,
-            bootstrap_required: false,
-            preflight_agent: None,
-            preflight_target: None,
-            routing_session: tools::RoutingSession::default(),
+            governance: ags_session::WorkspaceClientSession::standalone(host_home()),
             runtime_process,
-            workspace,
-            session_id,
         }
     }
 
@@ -77,14 +60,12 @@ impl PreflightState {
         runtime_process: RuntimeProcessIdentity,
     ) -> Self {
         Self {
-            preflight_completed: false,
-            bootstrap_required: false,
-            preflight_agent: None,
-            preflight_target: None,
-            routing_session: tools::RoutingSession::for_session(&session_id),
+            governance: ags_session::WorkspaceClientSession::new(
+                workspace,
+                session_id,
+                host_home(),
+            ),
             runtime_process,
-            workspace,
-            session_id,
         }
     }
 
@@ -92,42 +73,29 @@ impl PreflightState {
     /// executable loaded when this process started. Re-initializing a stdio
     /// connection must not make an old process look like a newly loaded binary.
     fn reset_session(&mut self) {
-        self.preflight_completed = false;
-        self.bootstrap_required = false;
-        self.preflight_agent = None;
-        self.preflight_target = None;
-        self.routing_session.invalidate();
+        self.governance.reset();
     }
 
     /// Record a successful preflight. `agent` is the NORMALIZED agent and
     /// `target` is the RESOLVED target — both taken from the preflight result
     /// JSON, not the raw call arguments.
     fn mark_completed(&mut self, agent: Option<String>, target: Option<String>) {
-        self.preflight_completed = true;
-        self.bootstrap_required = false;
-        self.preflight_agent = agent;
-        self.preflight_target = target;
+        self.governance.mark_completed(agent, target);
     }
 
     fn mark_bootstrap_required(&mut self, agent: Option<String>, target: Option<String>) {
-        self.preflight_completed = false;
-        self.bootstrap_required = agent.is_some() && target.is_some();
-        self.preflight_agent = agent;
-        self.preflight_target = target;
+        self.governance.mark_bootstrap_required(agent, target);
     }
 
     fn binding(&self) -> Option<tools::PreflightBinding> {
-        if !self.preflight_completed && !self.bootstrap_required {
-            return None;
-        }
-        Some(tools::PreflightBinding {
-            host: self.preflight_agent.clone()?,
-            target: self.preflight_target.as_deref()?.into(),
-            host_home: std::env::var_os("HOME")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| std::path::PathBuf::from(".")),
-        })
+        self.governance.binding()
     }
+}
+
+fn host_home() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 #[derive(Debug, Clone)]
@@ -353,15 +321,16 @@ fn attach_workspace_service(result: &str, preflight: &PreflightState) -> String 
         .to_string();
     let target_matches = requested_target != "<missing>"
         && preflight
-            .workspace
+            .governance
+            .workspace()
             .target_matches(Path::new(&requested_target));
     object.insert(
         "workspace_service".to_string(),
         serde_json::json!({
             "status": if target_matches { "ready" } else { "target_mismatch" },
-            "workspace": preflight.workspace.root(),
-            "instance_key": preflight.workspace.instance_key(),
-            "session_id": preflight.session_id,
+            "workspace": preflight.governance.workspace().root(),
+            "instance_key": preflight.governance.workspace().instance_key(),
+            "session_id": preflight.governance.session_id(),
         }),
     );
     if !target_matches {
@@ -370,7 +339,7 @@ fn attach_workspace_service(result: &str, preflight: &PreflightState) -> String 
         object.insert("exit_code".to_string(), serde_json::json!(1));
         let failure = format!(
             "workspace_target_mismatch: service={} requested={requested_target}",
-            preflight.workspace.root().display()
+            preflight.governance.workspace().root().display()
         );
         let failures = object
             .entry("failures".to_string())
@@ -553,10 +522,10 @@ fn handle_tools_call(req: &JsonRpcRequest, preflight: &mut PreflightState) -> Js
         .unwrap_or(serde_json::Value::Null);
 
     // ── Initialization Gate: block non-preflight tools before preflight ──
-    let allowed_in_bootstrap =
-        preflight.bootstrap_required && tools::is_onboarding_bootstrap_tool_name(tool_name);
+    let allowed_in_bootstrap = preflight.governance.is_bootstrap_required()
+        && tools::is_onboarding_bootstrap_tool_name(tool_name);
     if !tools::is_preflight_bootstrap_tool_name(tool_name)
-        && !preflight.preflight_completed
+        && !preflight.governance.is_preflight_completed()
         && !allowed_in_bootstrap
     {
         return JsonRpcResponse::error(req.id.clone(), -32000, PREFLIGHT_GATE_ERROR);
@@ -565,11 +534,11 @@ fn handle_tools_call(req: &JsonRpcRequest, preflight: &mut PreflightState) -> Js
     // Every preflight attempt invalidates actions from the preceding binding,
     // even when the new preflight ultimately reports a stop condition.
     if tools::is_preflight_tool_name(tool_name) {
-        preflight.routing_session.invalidate();
+        preflight.governance.invalidate_actions();
     }
 
     let binding = preflight.binding();
-    let workspace = Arc::clone(&preflight.workspace);
+    let workspace = Arc::clone(preflight.governance.workspace());
     let capability_source: Option<&dyn tools::CapabilityCatalogSource> =
         workspace.is_daemon_owned().then_some(workspace.as_ref());
 
@@ -577,7 +546,7 @@ fn handle_tools_call(req: &JsonRpcRequest, preflight: &mut PreflightState) -> Js
         tool_name,
         &arguments,
         binding.as_ref(),
-        &mut preflight.routing_session,
+        preflight.governance.action_store_mut(),
         capability_source,
     ) {
         Ok(result) => {
@@ -613,15 +582,15 @@ fn handle_tools_call(req: &JsonRpcRequest, preflight: &mut PreflightState) -> Js
                 preflight.mark_completed(agent, target);
                 log_error(&format!(
                     "preflight completed for agent: {} target: {}",
-                    preflight.preflight_agent.as_deref().unwrap_or("unknown"),
-                    preflight.preflight_target.as_deref().unwrap_or("unknown"),
+                    preflight.governance.preflight_agent().unwrap_or("unknown"),
+                    preflight.governance.preflight_target().unwrap_or("unknown"),
                 ));
             } else if tools::is_preflight_tool_name(tool_name)
                 && is_bootstrap_required_preflight_result(&result)
             {
                 let (agent, target) = preflight_context_from_result(&result);
                 preflight.mark_bootstrap_required(agent, target);
-                if preflight.bootstrap_required {
+                if preflight.governance.is_bootstrap_required() {
                     log_error("preflight established restricted bootstrap_required binding");
                 }
             }
@@ -676,7 +645,7 @@ fn handle_resources_read(req: &JsonRpcRequest, preflight: &PreflightState) -> Js
         let Some(binding) = preflight.binding() else {
             return JsonRpcResponse::error(req.id.clone(), -32000, PREFLIGHT_GATE_ERROR);
         };
-        return match preflight.workspace.read_catalog(&binding) {
+        return match preflight.governance.workspace().read_catalog(&binding) {
             Ok(snapshot) => {
                 let text = serde_json::to_string_pretty(&snapshot)
                     .unwrap_or_else(|error| format!("{{\"error\":\"{error}\"}}"));
@@ -726,7 +695,8 @@ fn handle_prompts_get(req: &JsonRpcRequest, preflight: &PreflightState) -> JsonR
     };
 
     // ── Initialization Gate: block phase-gated prompts before preflight ──
-    if PHASE_GATED_PROMPTS.contains(&prompt_name) && !preflight.preflight_completed {
+    if PHASE_GATED_PROMPTS.contains(&prompt_name) && !preflight.governance.is_preflight_completed()
+    {
         return JsonRpcResponse::error(req.id.clone(), -32000, PREFLIGHT_GATE_ERROR);
     }
 
@@ -909,7 +879,8 @@ mod tests {
             "next steps must distinguish restart from snapshot refresh"
         );
         assert!(
-            !preflight.preflight_completed && !preflight.bootstrap_required,
+            !preflight.governance.is_preflight_completed()
+                && !preflight.governance.is_bootstrap_required(),
             "stale runtime must keep every governed binding closed"
         );
 
@@ -972,18 +943,18 @@ mod tests {
             "preflight must be allowed before preflight"
         );
         assert!(
-            preflight.preflight_completed,
+            preflight.governance.is_preflight_completed(),
             "preflight state must be marked completed"
         );
         assert_eq!(
-            preflight.preflight_agent.as_deref(),
+            preflight.governance.preflight_agent(),
             Some("claude-code"),
             "preflight agent must be recorded"
         );
         // Target must be recorded from the RESOLVED preflight result, not raw args.
         let recorded_target = preflight
-            .preflight_target
-            .as_deref()
+            .governance
+            .preflight_target()
             .expect("preflight target must be recorded from the result");
         assert_eq!(
             recorded_target,
@@ -1009,11 +980,11 @@ mod tests {
         let resp = handle_tools_call(&req, &mut preflight);
         assert!(is_success(&resp), "failed preflight still returns a report");
         assert!(
-            !preflight.preflight_completed,
+            !preflight.governance.is_preflight_completed(),
             "failed preflight must not open the gate"
         );
         assert!(
-            preflight.bootstrap_required,
+            preflight.governance.is_bootstrap_required(),
             "unintegrated targets should receive only the restricted bootstrap binding"
         );
 
@@ -1065,7 +1036,7 @@ mod tests {
             "ags_agent_instructions must be available as a read-only bootstrap helper"
         );
         assert!(
-            !preflight.preflight_completed,
+            !preflight.governance.is_preflight_completed(),
             "agent instructions must not satisfy the initialization gate"
         );
 
@@ -1105,7 +1076,7 @@ mod tests {
         });
         let req1 = make_request("tools/call", Some(params1));
         let _ = handle_tools_call(&req1, &mut preflight);
-        assert_eq!(preflight.preflight_agent.as_deref(), Some("codex"));
+        assert_eq!(preflight.governance.preflight_agent(), Some("codex"));
 
         // Second preflight with different agent
         let params2 = json!({
@@ -1116,7 +1087,7 @@ mod tests {
         let resp2 = handle_tools_call(&req2, &mut preflight);
         assert!(is_success(&resp2), "repeated preflight must succeed");
         assert_eq!(
-            preflight.preflight_agent.as_deref(),
+            preflight.governance.preflight_agent(),
             Some("claude-code"),
             "agent must be updated on repeat preflight"
         );
@@ -1233,15 +1204,15 @@ mod tests {
         assert!(is_success(&resp), "initialize must succeed");
         assert!(initialized, "initialized flag must be set");
         assert!(
-            !preflight.preflight_completed,
+            !preflight.governance.is_preflight_completed(),
             "preflight state must be reset on initialize"
         );
         assert!(
-            preflight.preflight_agent.is_none(),
+            preflight.governance.preflight_agent().is_none(),
             "preflight agent must be cleared on initialize"
         );
         assert!(
-            preflight.preflight_target.is_none(),
+            preflight.governance.preflight_target().is_none(),
             "preflight target must be cleared on initialize"
         );
         assert_eq!(
@@ -1262,8 +1233,8 @@ mod tests {
         let pf_req = make_request("tools/call", Some(pf_params));
         let pf_resp = handle_tools_call(&pf_req, &mut preflight);
         assert!(is_success(&pf_resp), "preflight must succeed");
-        assert_eq!(preflight.preflight_agent.as_deref(), Some("codex"));
-        assert!(preflight.preflight_target.is_some());
+        assert_eq!(preflight.governance.preflight_agent(), Some("codex"));
+        assert!(preflight.governance.preflight_target().is_some());
 
         let sc_params = json!({
             "name": "ags_route_request",
@@ -1296,7 +1267,10 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(text).expect("valid json");
 
         assert_eq!(v["host"], "codex");
-        assert_eq!(v["target"], preflight.preflight_target.as_deref().unwrap());
+        assert_eq!(
+            v["target"],
+            preflight.governance.preflight_target().unwrap()
+        );
         assert_eq!(v["resolved_targets"][0]["kind"], "direct_response");
     }
 

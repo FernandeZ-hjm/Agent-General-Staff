@@ -874,7 +874,7 @@ fn new_route_and_new_connection_invalidate_old_lease() {
 }
 
 #[test]
-fn tamper_binding_and_registry_fail_closed_and_consume_action() {
+fn shape_failure_is_non_consuming_but_binding_and_registry_failures_consume() {
     let (base, binding, runtime, _, _) = machine_fixture("tamper");
 
     let mut session = RoutingSession::default();
@@ -900,15 +900,9 @@ fn tamper_binding_and_registry_fail_closed_and_consume_action() {
         .unwrap_err(),
         "held_action_tampering_rejected"
     );
-    assert_eq!(
-        tool_apply_action(
-            &serde_json::json!({"lease_id": lease_id, "action_id": action_id}),
-            &binding,
-            &mut session,
-            &runtime,
-        )
-        .unwrap_err(),
-        "decision_lease_invalid_or_consumed"
+    assert!(
+        !session.actions.get(&action_id).unwrap().consumed,
+        "shape-invalid input must be repairable before the lease consumption point"
     );
 
     let route = tool_route_request(

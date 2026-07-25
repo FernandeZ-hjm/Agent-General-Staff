@@ -24,8 +24,8 @@ mod wire;
 #[allow(unused_imports)]
 pub(crate) use wire::{
     call_tool, is_onboarding_bootstrap_tool_name, is_preflight_bootstrap_tool_name,
-    is_preflight_tool_name, list_tools, CapabilityCatalogSource, PreflightBinding, RoutingSession,
-    CURRENT_HOST_CAPABILITIES_URI, TOOL_AGENT_INSTRUCTIONS, TOOL_APPLY_ACTION,
+    is_preflight_tool_name, list_tools, CapabilityCatalogSource, HeldAction, PreflightBinding,
+    RoutingSession, CURRENT_HOST_CAPABILITIES_URI, TOOL_AGENT_INSTRUCTIONS, TOOL_APPLY_ACTION,
     TOOL_ONBOARDING_PLAN, TOOL_POLICY_RESOLVE, TOOL_PREFLIGHT, TOOL_PROTOCOL_STATUS,
     TOOL_ROUTE_REQUEST, TOOL_TASK_VALIDATE, TOOL_VERIFY_LOCAL,
 };

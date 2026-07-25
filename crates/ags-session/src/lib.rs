@@ -5,11 +5,13 @@
 //! isolated per client session.
 
 mod action_store;
+mod client_session;
 mod workspace_service;
 
 use std::path::{Path, PathBuf};
 
 pub use action_store::SessionActionStore;
+pub use client_session::WorkspaceClientSession;
 pub use workspace_service::{
     run_stdio_adapter, run_workspace_daemon, WorkspaceSessionHandler, WorkspaceState,
 };
