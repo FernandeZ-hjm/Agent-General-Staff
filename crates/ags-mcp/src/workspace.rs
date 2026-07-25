@@ -872,6 +872,14 @@ fn now_millis() -> u64 {
 }
 
 fn process_is_alive(pid: u32) -> bool {
+    // POSIX process identifiers are positive signed integers. In particular,
+    // passing u32::MAX to `kill` can be parsed as -1 on Linux and report
+    // success for an entirely different process set, leaving a stale lock
+    // permanently owned. Windows also reserves PID 0, so reject both sentinel
+    // shapes before invoking the platform probe.
+    if pid == 0 || pid > i32::MAX as u32 {
+        return false;
+    }
     #[cfg(unix)]
     {
         Command::new("kill")
