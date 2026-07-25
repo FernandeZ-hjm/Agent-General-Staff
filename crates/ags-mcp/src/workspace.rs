@@ -561,10 +561,14 @@ fn connect_or_start(workspace: &Path) -> Result<(TcpStream, WorkspaceRegistry), 
     let runtime_home = skill_resolver::locate_runtime_home();
     let paths = ServicePaths::new(&runtime_home, workspace)?;
     ensure_private_dir(&paths.dir)?;
+    let fast_connected = connect_registered(&paths, workspace)?;
     let executable_hash = current_executable_hash()?;
 
-    if let Some(connected) = connect_current(&paths, workspace, &executable_hash)? {
-        return Ok(connected);
+    if let Some((stream, registry)) = fast_connected {
+        if registry.executable_hash == executable_hash {
+            return Ok((stream, registry));
+        }
+        drop(stream);
     }
 
     let deadline = Instant::now() + START_TIMEOUT;
@@ -645,14 +649,25 @@ fn connect_current(
     workspace: &Path,
     executable_hash: &str,
 ) -> Result<Option<(TcpStream, WorkspaceRegistry)>, String> {
+    let Some((stream, registry)) = connect_registered(paths, workspace)? else {
+        return Ok(None);
+    };
+    if registry.executable_hash != executable_hash {
+        drop(stream);
+        return Ok(None);
+    }
+    Ok(Some((stream, registry)))
+}
+
+fn connect_registered(
+    paths: &ServicePaths,
+    workspace: &Path,
+) -> Result<Option<(TcpStream, WorkspaceRegistry)>, String> {
     let Some(registry) = read_registry(&paths.registry)? else {
         return Ok(None);
     };
     if registry.schema_version != REGISTRY_SCHEMA || registry.workspace != workspace {
         return Err("workspace daemon registry identity mismatch".to_string());
-    }
-    if registry.executable_hash != executable_hash {
-        return Ok(None);
     }
     match TcpStream::connect(&registry.endpoint) {
         Ok(stream) => Ok(Some((stream, registry))),
