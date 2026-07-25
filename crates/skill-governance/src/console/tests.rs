@@ -1,10 +1,9 @@
-use super::*;
-use super::*;
 #[allow(unused_imports)]
 use super::{
     actions::*, apply_transaction::*, dedupe::*, host_probe::*, host_verify::*, inventory::*,
     model::*, rendering::*, sync::*,
 };
+use std::path::{Path, PathBuf};
 
 #[test]
 fn analyze_duplicates_detects_name_collision_dry_run() {

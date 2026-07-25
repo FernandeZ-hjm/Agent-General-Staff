@@ -3,9 +3,15 @@ use super::protocol_audit::*;
 use super::rendering::*;
 use super::session_preflight::*;
 use super::workspace_facts::*;
-use super::*;
-use super::*;
 use ags_host_integration::*;
+use std::path::{Path, PathBuf};
+
+const TEST_CLAUDE_MEMORY_SCRIPTS: &[&str] = &[
+    "context-memory.sh",
+    "context-memory-start.py",
+    "claude-stop-memory-capture.py",
+    "raw-tool-call-stop-guard.js",
+];
 
 // ── Project memory lifecycle closure ────────────────────────────────
 
@@ -38,7 +44,7 @@ fn ml_write_memory_files(home: &Path, slug: &str, archive: bool) {
 fn ml_write_scripts(home: &Path) {
     let dir = home.join(".agents/scripts");
     std::fs::create_dir_all(&dir).unwrap();
-    for n in CLAUDE_MEMORY_SCRIPTS {
+    for n in TEST_CLAUDE_MEMORY_SCRIPTS {
         std::fs::write(dir.join(n), "x").unwrap();
     }
 }
