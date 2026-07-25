@@ -2,7 +2,7 @@ use crate::cli::VerifyAction;
 use std::path::Path;
 
 /// Shared dispatch: `verify` and backward-compatible `verify run`.
-fn cmd_verify_run(scope: &str, format: &str, target: &Path) {
+fn cmd_verify_run(scope: &str, format: &str, target: &Path, public_root: Option<&Path>) {
     if !target.exists() {
         eprintln!("verify: target does not exist — {}", target.display());
         std::process::exit(1);
@@ -16,7 +16,10 @@ fn cmd_verify_run(scope: &str, format: &str, target: &Path) {
         }
     };
 
-    let report = ags_verify::run_verify(scope, target);
+    let options = ags_verify::VerificationOptions {
+        public_root: public_root.map(Path::to_path_buf),
+    };
+    let report = ags_verify::run_verify_with_options(scope, target, &options);
 
     match format {
         "json" => println!("{}", ags_verify::render_json(&report)),
@@ -73,18 +76,25 @@ fn cmd_verify_lane(range: &str, format: &str, target: &Path) {
 
 // ── main ──────────────────────────────────────────────────────────────────
 
-pub(crate) fn run(action: Option<VerifyAction>, scope: &str, format: &str, target: &Path) {
+pub(crate) fn run(
+    action: Option<VerifyAction>,
+    scope: &str,
+    format: &str,
+    target: &Path,
+    public_root: Option<&Path>,
+) {
     match action {
         Some(VerifyAction::Run {
             scope,
             format,
             target,
-        }) => cmd_verify_run(&scope, &format, &target),
+            public_root,
+        }) => cmd_verify_run(&scope, &format, &target, public_root.as_deref()),
         Some(VerifyAction::Lane {
             range,
             format,
             target,
         }) => cmd_verify_lane(&range, &format, &target),
-        None => cmd_verify_run(scope, format, target),
+        None => cmd_verify_run(scope, format, target, public_root),
     }
 }

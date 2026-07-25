@@ -28,7 +28,10 @@ jobs:
         shell: bash
         run: |
           package_version="$(node -p "require('./packages/ags-mcp/package.json').version")"
+          package_license="$(node -p "require('./packages/ags-mcp/package.json').license")"
           test "$package_version" = "${{ inputs.version }}"
+          test "$package_license" = "GPL-3.0-only"
+          test -f packages/ags-mcp/LICENSE
           test "$GITHUB_REPOSITORY" = "FernandeZ-hjm/Agent-General-Staff"
           tag="v${{ inputs.version }}"
           assets="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
@@ -59,3 +62,17 @@ jobs:
       - run: npm test --prefix packages/ags-mcp
       - run: npm publish --provenance --access public
         working-directory: packages/ags-mcp
+      - name: Verify npm latest channel
+        shell: bash
+        run: |
+          expected="${{ inputs.version }}"
+          for attempt in 1 2 3 4 5; do
+            published="$(npm view @agent-governance-suite/mcp version 2>/dev/null || true)"
+            latest="$(npm view @agent-governance-suite/mcp dist-tags.latest 2>/dev/null || true)"
+            if [[ "$published" == "$expected" && "$latest" == "$expected" ]]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "npm registry did not expose version=$expected on dist-tag latest" >&2
+          exit 1

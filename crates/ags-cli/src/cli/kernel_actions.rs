@@ -363,8 +363,9 @@ pub(crate) enum SessionAction {
 ///
 /// Runs scoped verification checks with stable `CheckItem` model output.
 /// `local` focuses on in-repo checks (fmt, test, build, fixtures, YAML,
-/// preflight). `full` adds drift checks against stable and public targets.
-/// `release` focuses on public-full sanitized boundary checks.
+/// preflight). `full` adds advisory local drift checks, `release` validates a
+/// public source tree, and `promotion` compares a source to an explicit public
+/// worktree.
 #[derive(Subcommand)]
 pub(crate) enum VerifyAction {
     /// Run verification checks for the given scope.
@@ -372,10 +373,11 @@ pub(crate) enum VerifyAction {
     /// Scope determines which checks run:
     ///   local   — fmt, test, build, fixtures, YAML, preflight
     ///   full    — local + drift checks (stable, public)
-    ///   release — release-focused boundary checks
+    ///   release   — self-contained public release checks
+    ///   promotion — source-to-public checks with --public-root
     Run {
-        /// Verification scope: local, full, or release
-        #[arg(long, default_value = "local", value_parser = ["local", "full", "release"])]
+        /// Verification scope: local, full, release, or promotion
+        #[arg(long, default_value = "local", value_parser = ["local", "full", "release", "promotion"])]
         scope: String,
         /// Output format: text (default) or json
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
@@ -383,6 +385,9 @@ pub(crate) enum VerifyAction {
         /// Target repository path, or private runtime home with --profile private.
         #[arg(long, default_value = ".")]
         target: PathBuf,
+        /// Explicit public worktree for promotion verification.
+        #[arg(long)]
+        public_root: Option<PathBuf>,
     },
     /// Classify the change lane for a git diff range (diff-aware verification).
     ///

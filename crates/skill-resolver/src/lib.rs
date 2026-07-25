@@ -1101,6 +1101,7 @@ fn external_candidate_card(
         .find(|capability| capability.kind == ManagedKind::Skill && capability.name == skill_id)
         .ok_or_else(|| "skill_candidate_not_found".to_string())?;
     Ok(skill_card(
+        manifest_root,
         capability,
         None,
         None,
@@ -1435,15 +1436,28 @@ struct SkillFileMetadata {
     version: String,
 }
 
-fn load_skill_file_metadata(capability: &ManagedCapability) -> SkillFileMetadata {
-    let Some(source) = capability.source.as_deref() else {
+fn capability_source_path(manifest_root: &Path, capability: &ManagedCapability) -> Option<PathBuf> {
+    capability.source.as_deref().map(|source| {
+        let path = Path::new(source);
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            manifest_root.join(path)
+        }
+    })
+}
+
+fn load_skill_file_metadata(
+    manifest_root: &Path,
+    capability: &ManagedCapability,
+) -> SkillFileMetadata {
+    let Some(path) = capability_source_path(manifest_root, capability) else {
         return SkillFileMetadata::default();
     };
-    let path = Path::new(source);
     let skill_md = if path.is_dir() {
         path.join("SKILL.md")
     } else {
-        path.to_path_buf()
+        path
     };
     load_skill_metadata_path(&skill_md)
 }
@@ -1666,7 +1680,7 @@ pub fn build_capability_snapshot_with_roots_and_manifest(
             .get(capability.name.as_str())
             .cloned()
             .unwrap_or_default();
-        let file_requires_auth = load_skill_file_metadata(capability).requires_auth;
+        let file_requires_auth = load_skill_file_metadata(manifest_root, capability).requires_auth;
         let auth_state = auth_state_for(
             registry
                 .and_then(|item| item.routing.as_ref())
@@ -1676,6 +1690,7 @@ pub fn build_capability_snapshot_with_roots_and_manifest(
             auth_states.skills.get(&capability.name).copied(),
         );
         let mut card = skill_card(
+            manifest_root,
             capability,
             registry,
             overlay_entry,
@@ -2094,13 +2109,14 @@ fn auth_state_for(requires_auth: bool, observed: Option<AuthState>) -> AuthState
 }
 
 fn skill_card(
+    manifest_root: &Path,
     capability: &ManagedCapability,
     registry: Option<&RegistrySkill>,
     overlay: Option<&UserOverlayEntry>,
     legacy_routes: &[DemandRoute],
     auth_state: AuthState,
 ) -> SkillCard {
-    let file_metadata = load_skill_file_metadata(capability);
+    let file_metadata = load_skill_file_metadata(manifest_root, capability);
     let routing = registry.and_then(|item| item.routing.as_ref());
     let retired = routing.is_some_and(|routing| routing.route_state == RouteState::Retired);
     let ignored = overlay.is_some_and(|entry| entry.state == OverlayEntryState::Ignored)
@@ -2148,7 +2164,7 @@ fn skill_card(
     if matches!(auth_state, AuthState::Missing | AuthState::Unknown) {
         reasons.push("auth_required".to_string());
     }
-    if overlay.is_some_and(|entry| entry.source_hash != source_hash(capability)) {
+    if overlay.is_some_and(|entry| entry.source_hash != source_hash(manifest_root, capability)) {
         reasons.push("source_hash_changed".to_string());
     }
 
@@ -2263,7 +2279,7 @@ fn skill_card(
         source_hash: overlay
             .map(|entry| entry.source_hash.clone())
             .filter(|hash| !hash.is_empty())
-            .unwrap_or_else(|| source_hash(capability)),
+            .unwrap_or_else(|| source_hash(manifest_root, capability)),
     }
 }
 
@@ -2287,18 +2303,17 @@ fn source_kind(capability: &ManagedCapability) -> SkillSourceKind {
     }
 }
 
-fn source_hash(capability: &ManagedCapability) -> String {
-    let Some(source) = capability.source.as_deref() else {
+fn source_hash(manifest_root: &Path, capability: &ManagedCapability) -> String {
+    let Some(path) = capability_source_path(manifest_root, capability) else {
         return sha256(capability.name.as_bytes());
     };
-    let path = Path::new(source);
     let mut canonical = b"ags-skill-source-v1\n".to_vec();
     let hashed = if path.is_dir() {
-        append_source_directory(path, path, &mut canonical)
+        append_source_directory(&path, &path, &mut canonical)
     } else {
         append_source_node(
             path.parent().unwrap_or_else(|| Path::new(".")),
-            path,
+            &path,
             &mut canonical,
         )
     };
@@ -2814,6 +2829,45 @@ mod tests {
             version: "registry".to_string(),
             source_hash: "sha256:source".to_string(),
         }
+    }
+
+    #[test]
+    fn relative_suite_skill_sources_resolve_from_manifest_root() {
+        let base =
+            std::env::temp_dir().join(format!("ags-relative-suite-source-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let body = base.join("global-skills/demo");
+        std::fs::create_dir_all(&body).unwrap();
+        std::fs::write(
+            body.join("SKILL.md"),
+            "---\nname: demo\ndescription: Stable suite metadata.\nintent_tags: [demo]\n---\n",
+        )
+        .unwrap();
+        let capability = ManagedCapability {
+            kind: ManagedKind::Skill,
+            name: "demo".to_string(),
+            source: Some("global-skills/demo".to_string()),
+            profile: Some("required".to_string()),
+            managed_status: ManagedStatus::SuiteManaged,
+            registry_status: RegistryStatus::Registered,
+            canonical_present: true,
+            expected_hosts: Vec::new(),
+            host_visibility: Vec::new(),
+            health_status: HealthStatus::Healthy,
+            actions: Vec::new(),
+            risk_notes: Vec::new(),
+            routing: None,
+        };
+
+        let metadata = load_skill_file_metadata(&base, &capability);
+        assert_eq!(metadata.description, "Stable suite metadata.");
+        assert_eq!(metadata.intent_tags, vec!["demo"]);
+        assert_eq!(
+            source_hash(&base, &capability),
+            hash_skill_source(&body).unwrap()
+        );
+
+        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]

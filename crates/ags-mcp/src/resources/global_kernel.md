@@ -40,7 +40,7 @@ The host is the only natural-language semantic node. AGS rejects legacy raw requ
 
 ## Skill Resolution
 
-Skill Resolver validates exact identifiers against a preflight-bound `HostCapabilitySnapshot`. It has no keyword, similarity, or fallback path. Missing or stale state fails closed; refresh explicitly with `ags capability snapshot --host <host> --write`.
+Skill Resolver validates exact identifiers against a preflight-bound `HostCapabilitySnapshot`. It has no keyword, similarity, or fallback path. Missing or stale state fails closed. A stale preflight stays bound for `DirectResponse`, reports `NEEDS_USER_DECISION` plus `capability_catalog.refresh.argv`, and blocks `SkillTarget` / `MachineCliTarget` until the user explicitly authorizes the machine-local snapshot write and the host runs preflight again. Preflight never refreshes the snapshot silently.
 
 ## Runner Boundary
 

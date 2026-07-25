@@ -18,7 +18,7 @@ Human request
 
 ## Initialization Gate
 
-任何 AGS 场景的第一调用必须是 `ags_preflight(agent, target?)`；MCP 不可用时才使用 `ags session preflight --for <agent> --target <path>`。preflight 绑定当前连接的 host/target，并返回 current-host resource URI 与 `snapshot_hash`。新 preflight 会清空所有 held actions。
+任何 AGS 场景的第一调用必须是 `ags_preflight(agent, target?)`；MCP 不可用时才使用 `ags session preflight --for <agent> --target <path>`。preflight 绑定当前连接的 host/target，并返回 current-host resource URI 与 `snapshot_hash`。新 preflight 会清空所有 held actions。若动态目录已变化而持久化快照失效，preflight 必须返回 `overall_status=warning`、`governance_status=NEEDS_USER_DECISION`、`refresh_required=true` 与结构化刷新 argv；不得继续显示 “All clear”。该 warning 不阻断 `DirectResponse`，但 `SkillTarget` / `MachineCliTarget` 在用户明确刷新并重新 preflight 前继续 fail closed。preflight 本身不自动写快照。
 
 尚未初始化的项目不会进入普通治理态，而会建立受限
 `bootstrap_required` 绑定。该绑定只允许 `ags_onboarding_plan` 与
@@ -116,7 +116,7 @@ SkillTarget 在不与 MachineCli 共存时返回受控 outcome action。`outcome
 
 ### Resources (6)
 
-新增 `ags://capabilities/current-host`：preflight-bound、只读的 `HostCapabilitySnapshot`。宿主按 session 与 `snapshot_hash` 缓存薄目录，并提交精确 `skill_id` / `entrypoint` / `snapshot_hash`。第三方能力只有同时满足 `route_state = routable` 与 `availability.state = ready` 才能进入自然语言候选；hook 永远只走宿主事件面。host-native MCP 还必须以宿主当前连接的实时工具可见性为准，不能把仅注册或健康未知当作 ready。其他公开资源包括 `ags://global-kernel`、任务协议、路由、模板与 runtime adapter。
+新增 `ags://capabilities/current-host`：preflight-bound、只读的 `HostCapabilitySnapshot`。宿主按 session 与 `snapshot_hash` 缓存薄目录，并提交精确 `skill_id` / `entrypoint` / `snapshot_hash`。第三方能力只有同时满足 `route_state = routable` 与 `availability.state = ready` 才能进入自然语言候选；hook 永远只走宿主事件面。host-native MCP 还必须以宿主当前连接的实时工具可见性为准，不能把仅注册或健康未知当作 ready。快照失效时，preflight 的 `capability_catalog.refresh.argv` 给出显式机器本地刷新参数；宿主须先取得用户确认，执行后重新 preflight 并读取新的 `snapshot_hash`。其他公开资源包括 `ags://global-kernel`、任务协议、路由、模板与 runtime adapter。
 
 ### Prompts and hosts
 

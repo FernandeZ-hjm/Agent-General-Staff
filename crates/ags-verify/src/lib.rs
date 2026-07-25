@@ -41,8 +41,10 @@ pub enum Scope {
     Local,
     /// Local + drift checks against stable and public targets.
     Full,
-    /// Release-focused: public-full sanitized boundary checks.
+    /// Self-contained checks for a public release source tree.
     Release,
+    /// Private/stable source to explicit public target promotion checks.
+    Promotion,
 }
 
 impl Scope {
@@ -52,8 +54,9 @@ impl Scope {
             "local" => Ok(Scope::Local),
             "full" => Ok(Scope::Full),
             "release" => Ok(Scope::Release),
+            "promotion" => Ok(Scope::Promotion),
             other => Err(format!(
-                "invalid scope: '{}'. Expected one of: local, full, release",
+                "invalid scope: '{}'. Expected one of: local, full, release, promotion",
                 other
             )),
         }
@@ -66,8 +69,16 @@ impl std::fmt::Display for Scope {
             Scope::Local => write!(f, "local"),
             Scope::Full => write!(f, "full"),
             Scope::Release => write!(f, "release"),
+            Scope::Promotion => write!(f, "promotion"),
         }
     }
+}
+
+/// Explicit inputs for verification scopes that cross repository boundaries.
+#[derive(Debug, Clone, Default)]
+pub struct VerificationOptions {
+    /// Public worktree used only by `Scope::Promotion`.
+    pub public_root: Option<PathBuf>,
 }
 
 /// Check status.
@@ -210,7 +221,9 @@ pub struct VerificationSummary {
 impl VerificationReport {
     /// Whether all blocking checks passed. Advisory WARN items do not fail the report.
     pub fn passed(&self) -> bool {
-        self.summary.errors == 0
+        let required_scope_skipped =
+            matches!(self.scope, Scope::Release | Scope::Promotion) && self.summary.skipped > 0;
+        self.summary.errors == 0 && !required_scope_skipped
     }
 
     /// Exit code: 0 if all blocking checks passed, 1 if any ERROR failed.
@@ -756,20 +769,26 @@ fn check_private_vs_public_boundary(repo_root: &Path) -> CheckItem {
     }
 }
 
-fn check_release_boundary(repo_root: &Path) -> Vec<CheckItem> {
-    let public_root = "/Volumes/AI Project/ai-dev-env-bootstrap";
-    let mut items = Vec::new();
-
-    if !Path::new(public_root).exists() {
-        items.push(CheckItem::skip(
-            "release-public-root",
-            "release",
-            &format!("Public root not found: {}", public_root),
-        ));
-        return items;
+fn check_promotion_boundary(repo_root: &Path, public_root: Option<&Path>) -> Vec<CheckItem> {
+    let Some(public_root) = public_root else {
+        return vec![CheckItem::fail(
+            "promotion-public-root-required",
+            "promotion",
+            "Promotion verification requires an explicit public root.",
+            "Pass `--public-root <path>` for the exact public worktree under review.",
+        )];
+    };
+    if !public_root.is_dir() {
+        return vec![CheckItem::fail(
+            "promotion-public-root",
+            "promotion",
+            &format!("Public root is not a directory: {}", public_root.display()),
+            "Provide an existing public worktree path; promotion never guesses a machine-local path.",
+        )];
     }
 
-    // Check 1: Run sync check with public target
+    let public_root_arg = public_root.to_string_lossy().to_string();
+    let source_root_arg = repo_root.to_string_lossy().to_string();
     let (code, stdout, stderr) = run_command(
         repo_root,
         "cargo",
@@ -782,9 +801,9 @@ fn check_release_boundary(repo_root: &Path) -> Vec<CheckItem> {
             "sync",
             "check",
             "--source",
-            &repo_root.to_string_lossy(),
+            &source_root_arg,
             "--target",
-            public_root,
+            &public_root_arg,
             "--target-name",
             "public-full-sanitized",
             "--format",
@@ -793,37 +812,192 @@ fn check_release_boundary(repo_root: &Path) -> Vec<CheckItem> {
         &[],
     );
 
-    let output = format!("{}\n{}", stdout, stderr);
-    let has_violation = output.contains("INVARIANT_MISSING")
-        || output.contains("INVARIANT_CONTRADICTED")
-        || output.contains("PUBLIC_FORBIDDEN_PAYLOAD");
-
+    let output = format!("{stdout}\n{stderr}");
+    let mut items = Vec::new();
     if code == 0 {
         items.push(CheckItem::pass(
-            "release-boundary-sync",
-            "release",
-            "Public-full sanitized sync check passed — no boundary violations.",
+            "promotion-boundary-sync",
+            "promotion",
+            "Explicit private/stable to public boundary check passed.",
         ));
-    } else if has_violation {
-        items.push(CheckItem::fail(
-            "release-boundary-sync",
-            "release",
+    } else if let Some(redactions) = allowlisted_promotion_redaction_count(&stdout) {
+        items.push(CheckItem::pass(
+            "promotion-boundary-sync",
+            "promotion",
             &format!(
-                "Public-full sanitized boundary violation: {}",
-                truncate(&output, 500)
+                "Explicit public boundary contains {redactions} classified legal redaction drift(s) and no blocking drift."
             ),
-            "Fix boundary violations before release. Check INVARIANT and PUBLIC_FORBIDDEN_PAYLOAD.",
         ));
     } else {
-        items.push(CheckItem::warn(
-            "release-boundary-sync",
-            "release",
-            "Public-full sanitized allowlist gap — review before release.",
-            "Update public promotion allowlist.",
-        ));
+        items.push(
+            CheckItem::fail(
+                "promotion-boundary-sync",
+                "promotion",
+                &format!(
+                    "Explicit public promotion boundary check failed (exit {code}): {}",
+                    truncate(&output, 500)
+                ),
+                "Resolve invariant, allowlist, or forbidden-payload drift before promotion.",
+            )
+            .with_command(&format!(
+                "ags sync check --source {} --target {} --target-name public-full-sanitized",
+                repo_root.display(),
+                public_root.display()
+            ))
+            .with_exit_code(code),
+        );
     }
 
-    // Check 2: Verify bootstrap --apply produces a sanitized public payload
+    let manifest = workflow_sync_check::manifest::verify_release_manifest(public_root);
+    if manifest.passed {
+        items.push(CheckItem::pass(
+            "promotion-public-manifest",
+            "promotion",
+            "Explicit public target satisfies the tracked public release manifest.",
+        ));
+    } else {
+        items.push(CheckItem::fail(
+            "promotion-public-manifest",
+            "promotion",
+            &format!(
+                "Public target manifest failed: missing=[{}], forbidden=[{}]",
+                manifest.required_missing.join(", "),
+                manifest.forbidden_found.join(", ")
+            ),
+            "Fix the public target manifest before promotion.",
+        ));
+    }
+    let mut version = check_release_version_surfaces(public_root);
+    version.scope = "promotion".to_string();
+    version.id = "promotion-version-surfaces".to_string();
+    items.push(version);
+    items
+}
+
+fn allowlisted_promotion_redaction_count(output: &str) -> Option<usize> {
+    let payload: serde_json::Value = serde_json::from_str(output).ok()?;
+    let projects = payload.get("projects")?.as_array()?;
+    let mut count = 0;
+    for project in projects {
+        for drift in project.get("drifts")?.as_array()? {
+            let is_legal = drift.get("code").and_then(|value| value.as_str())
+                == Some("DRIFT_LEGAL_REDACTION")
+                && drift.get("kind").and_then(|value| value.as_str()) == Some("legal_redaction")
+                && drift.get("severity").and_then(|value| value.as_str()) == Some("info");
+            if !is_legal {
+                return None;
+            }
+            count += 1;
+        }
+    }
+    (count > 0).then_some(count)
+}
+
+fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
+    const VERSION: &str = env!("CARGO_PKG_VERSION");
+    const LICENSE: &str = "GPL-3.0-only";
+
+    let mut errors = Vec::new();
+    let package_path = repo_root.join("packages/ags-mcp/package.json");
+    match std::fs::read_to_string(&package_path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+    {
+        Some(package) => {
+            if package.get("version").and_then(|value| value.as_str()) != Some(VERSION) {
+                errors.push(format!(
+                    "packages/ags-mcp/package.json version must be {VERSION}"
+                ));
+            }
+            if package.get("license").and_then(|value| value.as_str()) != Some(LICENSE) {
+                errors.push(format!(
+                    "packages/ags-mcp/package.json license must be {LICENSE}"
+                ));
+            }
+        }
+        None => errors.push("packages/ags-mcp/package.json is missing or invalid JSON".to_string()),
+    }
+
+    match std::fs::read_to_string(repo_root.join("Cargo.toml")) {
+        Ok(content)
+            if content.contains(&format!("version = \"{VERSION}\""))
+                && content.contains(&format!("license = \"{LICENSE}\"")) => {}
+        Ok(_) => errors.push(format!(
+            "Cargo.toml workspace package must declare version {VERSION} and license {LICENSE}"
+        )),
+        Err(_) => errors.push("Cargo.toml is missing or unreadable".to_string()),
+    }
+
+    let supported_series = VERSION
+        .rsplit_once('.')
+        .map(|(series, _)| format!("| {series}.x | Yes |"))
+        .unwrap_or_else(|| format!("| {VERSION} | Yes |"));
+    let required_text = [
+        (
+            "AGENT_SUITE_PROTOCOL.md",
+            format!("Current product version: **{VERSION}**."),
+        ),
+        ("RELEASE_NOTES.md", format!("## Release {VERSION}")),
+        ("README.md", format!("### {VERSION} 发布顺序")),
+        ("packages/ags-mcp/README.md", format!("`v{VERSION}` GitHub")),
+        ("SECURITY.md", supported_series),
+    ];
+    for (relative, marker) in required_text {
+        match std::fs::read_to_string(repo_root.join(relative)) {
+            Ok(content) if content.contains(&marker) => {}
+            Ok(_) => errors.push(format!("{relative} is missing marker: {marker}")),
+            Err(_) => errors.push(format!("{relative} is missing or unreadable")),
+        }
+    }
+
+    if !repo_root.join("LICENSE").is_file() {
+        errors.push("root GPL LICENSE is missing".to_string());
+    }
+    if !repo_root.join("packages/ags-mcp/LICENSE").is_file() {
+        errors.push("npm launcher GPL LICENSE is missing".to_string());
+    }
+
+    if errors.is_empty() {
+        CheckItem::pass(
+            "release-version-surfaces",
+            "release",
+            &format!("Product version {VERSION} and {LICENSE} license surfaces are aligned."),
+        )
+    } else {
+        CheckItem::fail(
+            "release-version-surfaces",
+            "release",
+            &errors.join("; "),
+            "Align current public product/version/license surfaces; historical release headings and wire schema IDs remain independent.",
+        )
+    }
+}
+
+fn check_release_boundary(repo_root: &Path) -> Vec<CheckItem> {
+    let mut items = Vec::new();
+
+    let manifest = workflow_sync_check::manifest::verify_release_manifest(repo_root);
+    if manifest.passed {
+        items.push(CheckItem::pass(
+            "release-public-manifest",
+            "release",
+            "Required public files are present and no forbidden tracked payload was found.",
+        ));
+    } else {
+        items.push(CheckItem::fail(
+            "release-public-manifest",
+            "release",
+            &format!(
+                "Public release manifest failed: missing=[{}], forbidden=[{}]",
+                manifest.required_missing.join(", "),
+                manifest.forbidden_found.join(", ")
+            ),
+            "Restore every required public file and remove forbidden tracked payload before release.",
+        ));
+    }
+    items.push(check_release_version_surfaces(repo_root));
+
+    // Check 2: Verify bootstrap --apply produces a sanitized public payload.
     let tmpdir = std::env::temp_dir().join(format!("ags-verify-release-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&tmpdir);
 
@@ -998,6 +1172,15 @@ impl CheckItem {
 
 /// Run all verification checks for the given scope and return a report.
 pub fn run_verify(scope: Scope, repo_root: &Path) -> VerificationReport {
+    run_verify_with_options(scope, repo_root, &VerificationOptions::default())
+}
+
+/// Run verification with explicit cross-repository inputs.
+pub fn run_verify_with_options(
+    scope: Scope,
+    repo_root: &Path,
+    options: &VerificationOptions,
+) -> VerificationReport {
     let repo_root = canonical_repo_root(repo_root);
     let mut items: Vec<CheckItem> = Vec::new();
 
@@ -1009,7 +1192,7 @@ pub fn run_verify(scope: Scope, repo_root: &Path) -> VerificationReport {
     items.extend(check_governance_yaml(&repo_root));
     items.push(check_session_preflight(&repo_root));
     // Full scope — add drift checks
-    if matches!(scope, Scope::Full) || matches!(scope, Scope::Release) {
+    if matches!(scope, Scope::Full) {
         items.push(check_private_vs_stable_drift(&repo_root));
         items.push(check_private_vs_public_boundary(&repo_root));
     }
@@ -1017,6 +1200,12 @@ pub fn run_verify(scope: Scope, repo_root: &Path) -> VerificationReport {
     // Release scope — add release-specific checks
     if matches!(scope, Scope::Release) {
         items.extend(check_release_boundary(&repo_root));
+    }
+    if matches!(scope, Scope::Promotion) {
+        items.extend(check_promotion_boundary(
+            &repo_root,
+            options.public_root.as_deref(),
+        ));
     }
 
     // Build summary
@@ -1167,6 +1356,7 @@ mod tests {
         assert_eq!(Scope::from_str("local").unwrap(), Scope::Local);
         assert_eq!(Scope::from_str("full").unwrap(), Scope::Full);
         assert_eq!(Scope::from_str("release").unwrap(), Scope::Release);
+        assert_eq!(Scope::from_str("promotion").unwrap(), Scope::Promotion);
         assert!(Scope::from_str("invalid").is_err());
     }
 
@@ -1175,6 +1365,7 @@ mod tests {
         assert_eq!(Scope::Local.to_string(), "local");
         assert_eq!(Scope::Full.to_string(), "full");
         assert_eq!(Scope::Release.to_string(), "release");
+        assert_eq!(Scope::Promotion.to_string(), "promotion");
     }
 
     #[test]
@@ -1234,6 +1425,101 @@ mod tests {
         };
         assert!(report.passed());
         assert_eq!(report.exit_code(), 0);
+    }
+
+    #[test]
+    fn release_report_with_required_skip_fails_closed() {
+        let report = VerificationReport {
+            schema_version: "2.0-verify".to_string(),
+            scope: Scope::Release,
+            repo_root: "/tmp".to_string(),
+            items: vec![CheckItem::skip(
+                "release-public-root",
+                "release",
+                "required release input unavailable",
+            )],
+            summary: VerificationSummary {
+                total: 1,
+                passed: 0,
+                failed: 0,
+                skipped: 1,
+                errors: 0,
+                warnings: 0,
+            },
+        };
+
+        assert!(!report.passed());
+        assert_eq!(report.exit_code(), 1);
+    }
+
+    #[test]
+    fn promotion_requires_explicit_public_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let items = check_promotion_boundary(dir.path(), None);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, "promotion-public-root-required");
+        assert_eq!(items[0].status, CheckStatus::Fail);
+        assert_eq!(items[0].severity, Severity::Error);
+    }
+
+    #[test]
+    fn promotion_accepts_only_structured_legal_redactions() {
+        let safe = r#"{"projects":[{"drifts":[{"code":"DRIFT_LEGAL_REDACTION","kind":"legal_redaction","severity":"info"}]}]}"#;
+        assert_eq!(allowlisted_promotion_redaction_count(safe), Some(1));
+
+        let blocking = r#"{"projects":[{"drifts":[{"code":"INVARIANT_MISSING","kind":"invariant","severity":"error"}]}]}"#;
+        assert_eq!(allowlisted_promotion_redaction_count(blocking), None);
+        assert_eq!(allowlisted_promotion_redaction_count("not-json"), None);
+    }
+
+    #[test]
+    fn release_version_surfaces_accept_aligned_product_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("packages/ags-mcp")).unwrap();
+        std::fs::write(
+            dir.path().join("packages/ags-mcp/package.json"),
+            format!(
+                r#"{{"version":"{}","license":"GPL-3.0-only"}}"#,
+                env!("CARGO_PKG_VERSION")
+            ),
+        )
+        .unwrap();
+        for (relative, content) in [
+            (
+                "AGENT_SUITE_PROTOCOL.md",
+                format!(
+                    "Current product version: **{}**.",
+                    env!("CARGO_PKG_VERSION")
+                ),
+            ),
+            (
+                "RELEASE_NOTES.md",
+                format!("## Release {}", env!("CARGO_PKG_VERSION")),
+            ),
+            (
+                "README.md",
+                format!("### {} 发布顺序", env!("CARGO_PKG_VERSION")),
+            ),
+            (
+                "packages/ags-mcp/README.md",
+                format!("`v{}` GitHub", env!("CARGO_PKG_VERSION")),
+            ),
+            (
+                "Cargo.toml",
+                format!(
+                    "[workspace.package]\nversion = \"{}\"\nlicense = \"GPL-3.0-only\"",
+                    env!("CARGO_PKG_VERSION")
+                ),
+            ),
+            ("SECURITY.md", "| 0.3.x | Yes |".to_string()),
+            ("LICENSE", "GPL-3.0-only".to_string()),
+            ("packages/ags-mcp/LICENSE", "GPL-3.0-only".to_string()),
+        ] {
+            std::fs::write(dir.path().join(relative), content).unwrap();
+        }
+
+        let item = check_release_version_surfaces(dir.path());
+        assert_eq!(item.status, CheckStatus::Pass, "{}", item.evidence);
     }
 
     #[test]

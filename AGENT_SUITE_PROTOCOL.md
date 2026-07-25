@@ -3,7 +3,11 @@
 本文件是 Agent General Staff 公开版协议概述。Canonical 协议文件位于本仓库
 `protocol/` 目录下，自包含，不依赖私有基础设施或私有仓库。
 
-Release line: **Agent General Staff 2.0 Public Edition**.
+Current product version: **0.3.0**.
+
+这是 Agent General Staff Public Edition 的当前正式产品版本。协议中的
+`2.0-*` schema 标识和下文历史 `2.x` release 标题属于独立的 wire/history
+版本面，不代表当前产品版本。
 
 ## 本仓角色
 
@@ -22,7 +26,9 @@ Release line: **Agent General Staff 2.0 Public Edition**.
 - `ags project detect` / `ags protocol status` / `ags agent instructions` — M2 Agent 感知能力（只读）
 - `ags project integrate --dry-run|--confirm` — 增量融合 AGS 托管入口块到用户项目入口文件，不覆盖用户自有内容
 - `ags session preflight --for codex|claude-code|cursor` — 聚合 Agent 唤醒检查（CLI 降级/独立检查入口，不依赖 skill governance）
-- `ags verify --scope local|full|release` — 结构化验证入口，提供稳定 CheckItem 模型和 text/json 双格式报告
+- `ags verify --scope local|full|release|promotion` — 结构化验证入口；`release`
+  自包含验证公开源码树，`promotion` 只在显式提供 public worktree 时验证 A→B
+  边界，二者都提供稳定 CheckItem 模型和 text/json 双格式报告
 
 AGS 定位为开发相关工作中的**常驻工程中枢**，不是需要用户单独唤出的 CLI 工具箱。
 公开版的用户入口包含 Claude Code `/ags`、Codex `$ags-setup` / `$ags-init` /

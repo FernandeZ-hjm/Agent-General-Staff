@@ -353,8 +353,8 @@ pub(crate) enum Commands {
     /// Run scoped verification checks — structured, machine-readable reports
     #[command(hide = true)]
     Verify {
-        /// Verification scope: local, full, or release
-        #[arg(long, default_value = "local", value_parser = ["local", "full", "release"])]
+        /// Verification scope: local, full, release, or promotion
+        #[arg(long, default_value = "local", value_parser = ["local", "full", "release", "promotion"])]
         scope: String,
         /// Verification profile. `private` verifies the local AGS runtime home.
         #[arg(long, value_parser = ["private"])]
@@ -365,6 +365,9 @@ pub(crate) enum Commands {
         /// Target repository path (default: current directory)
         #[arg(long, default_value = ".")]
         target: PathBuf,
+        /// Explicit public worktree for `--scope promotion`.
+        #[arg(long)]
+        public_root: Option<PathBuf>,
         #[command(subcommand)]
         action: Option<VerifyAction>,
     },

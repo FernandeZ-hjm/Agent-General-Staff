@@ -1,8 +1,8 @@
 {
   "name": "@agent-governance-suite/mcp",
   "version": "0.3.0",
-  "description": "Verified cross-platform launcher for the Agent Governance Suite MCP server",
-  "license": "MIT",
+  "description": "Verified cross-platform launcher for the Agent General Staff MCP server",
+  "license": "GPL-3.0-only",
   "type": "module",
   "bin": {
     "ags-mcp": "./bin/ags-mcp.js"
@@ -10,7 +10,8 @@
   "files": [
     "bin/",
     "src/",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=18"

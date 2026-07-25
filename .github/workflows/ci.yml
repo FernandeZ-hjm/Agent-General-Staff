@@ -76,3 +76,7 @@ jobs:
       - name: Supply-chain + full verify (Bash)
         if: matrix.os == 'ubuntu-latest'
         run: bash scripts/verify.sh
+
+      - name: Verify public release boundary
+        if: matrix.os == 'ubuntu-latest'
+        run: ./target/release/ags verify --scope release --format text

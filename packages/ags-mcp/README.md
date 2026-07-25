@@ -1,6 +1,6 @@
 # `@agent-governance-suite/mcp`
 
-Run the local AGS MCP host adapter without a Rust toolchain:
+Run the local Agent General Staff MCP host adapter without a Rust toolchain:
 
 ```bash
 npx -y @agent-governance-suite/mcp
@@ -14,3 +14,5 @@ for AGS source development.
 
 No npm publication happens automatically from this repository. The npm scope
 must be created and publication must be explicitly authorized.
+
+This launcher is licensed under `GPL-3.0-only`; see `LICENSE`.

@@ -170,6 +170,7 @@ fn run_cli() {
             profile,
             format,
             target,
+            public_root,
         } => {
             if let Some(profile) = profile {
                 let install_target = if target == *"." {
@@ -179,7 +180,7 @@ fn run_cli() {
                 };
                 setup::cmd_private_verify(&profile, install_target, &format);
             }
-            kernel::verify::run(action, &scope, &format, &target);
+            kernel::verify::run(action, &scope, &format, &target, public_root.as_deref());
         }
 
         // ── M0 backward-compatible aliases (hidden from help) ──

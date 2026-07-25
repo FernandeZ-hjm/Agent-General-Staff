@@ -423,9 +423,10 @@ bash scripts/verify.sh
    `RELEASE_NOTES.md` 都是 `0.3.0`。
 3. 维护者显式创建并推送 `v0.3.0`；日常 CI 和同步脚本都不会自动打 tag。
 4. tag workflow 验证提交属于 `origin/main`，产出五个平台资产、`SHA256SUMS`、
-   provenance attestation 与 GitHub Release。
+   provenance attestation 与 GitHub Release；Release 成功后才把
+   `release/latest` 移动到该 tag 的精确提交。
 5. Release 资产和校验清单齐全后，手动 dispatch npm workflow，输入精确版本
-   `0.3.0`，最后发布 `@agent-governance-suite/mcp`。
+   `0.3.0`，发布 `@agent-governance-suite/mcp` 并确认 npm `latest=0.3.0`。
 
 推送 stable/public `main` 不等于创建 tag、GitHub Release 或 npm 发布。
 

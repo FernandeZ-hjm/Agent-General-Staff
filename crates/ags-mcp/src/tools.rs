@@ -417,10 +417,72 @@ fn tool_preflight(args: &serde_json::Value) -> Result<String, String> {
     let mut value = serde_json::to_value(report).map_err(json_error)?;
     if let Some(object) = value.as_object_mut() {
         object.insert("agent".to_string(), serde_json::json!(agent_type.as_str()));
-        let capability = capability_reference(&resolved_target, agent_type.as_str());
-        object.insert("capability_catalog".to_string(), capability);
     }
+    let capability = capability_reference(&resolved_target, agent_type.as_str());
+    attach_capability_catalog(&mut value, capability);
     pretty(&value)
+}
+
+fn attach_capability_catalog(report: &mut serde_json::Value, capability: serde_json::Value) {
+    let Some(object) = report.as_object_mut() else {
+        return;
+    };
+    let snapshot_stale = capability
+        .get("status")
+        .and_then(|status| status.as_str())
+        .is_some_and(|status| status == "snapshot_stale");
+    object.insert("capability_catalog".to_string(), capability);
+    if !snapshot_stale {
+        return;
+    }
+
+    let already_stopped = object
+        .get("overall_status")
+        .and_then(|status| status.as_str())
+        .is_some_and(|status| status == "stop");
+    if !already_stopped {
+        object.insert("overall_status".to_string(), serde_json::json!("warning"));
+        object.insert(
+            "governance_status".to_string(),
+            serde_json::json!(GovernanceStatus::NeedsUserDecision),
+        );
+    }
+
+    let warning = "Host capability snapshot is stale; DirectResponse remains available, but SkillTarget and MachineCli routing are blocked until an explicit refresh and re-preflight.";
+    let warnings = object
+        .entry("warnings".to_string())
+        .or_insert_with(|| serde_json::json!([]));
+    if let Some(warnings) = warnings.as_array_mut() {
+        if !warnings
+            .iter()
+            .any(|entry| entry.as_str().is_some_and(|entry| entry == warning))
+        {
+            warnings.push(serde_json::json!(warning));
+        }
+    }
+
+    let mut existing_steps = object
+        .get("next_steps")
+        .and_then(|steps| steps.as_array())
+        .cloned()
+        .unwrap_or_default();
+    existing_steps.retain(|step| {
+        step.as_str()
+            .is_none_or(|text| !text.contains("All clear") && !text.contains("may execute tasks"))
+    });
+    let mut next_steps = vec![
+        serde_json::json!(
+            "⚠ Capability snapshot refresh requires user confirmation before governed routing."
+        ),
+        serde_json::json!(
+            "  Review capability_catalog.refresh.argv, run it explicitly, then rerun ags_preflight."
+        ),
+    ];
+    next_steps.append(&mut existing_steps);
+    object.insert(
+        "next_steps".to_string(),
+        serde_json::Value::Array(next_steps),
+    );
 }
 
 fn capability_reference(target: &Path, host: &str) -> serde_json::Value {
@@ -434,11 +496,34 @@ fn capability_reference(target: &Path, host: &str) -> serde_json::Value {
         .as_ref()
         .ok()
         .and_then(|root| skill_resolver::load_validated_snapshot(root, &runtime_home, host).ok());
-    serde_json::json!({
-        "uri": CURRENT_HOST_CAPABILITIES_URI,
-        "status": if loaded.is_some() { "ready" } else { "snapshot_stale" },
-        "snapshot_hash": loaded.as_ref().map(|(snapshot, _)| snapshot.snapshot_hash.clone())
-    })
+    if let Some((snapshot, _)) = loaded {
+        serde_json::json!({
+            "uri": CURRENT_HOST_CAPABILITIES_URI,
+            "status": "ready",
+            "snapshot_hash": snapshot.snapshot_hash,
+            "refresh_required": false
+        })
+    } else {
+        serde_json::json!({
+            "uri": CURRENT_HOST_CAPABILITIES_URI,
+            "status": "snapshot_stale",
+            "snapshot_hash": null,
+            "refresh_required": true,
+            "refresh": {
+                "argv": [
+                    "ags",
+                    "capability",
+                    "snapshot",
+                    "--host",
+                    host,
+                    "--target",
+                    target.to_string_lossy(),
+                    "--write"
+                ],
+                "requires_repreflight": true
+            }
+        })
+    }
 }
 
 fn tool_protocol_status(args: &serde_json::Value) -> Result<String, String> {
@@ -1782,6 +1867,86 @@ mod tests {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from(".")),
         }
+    }
+
+    #[test]
+    fn stale_capability_snapshot_downgrades_false_green_preflight() {
+        let mut report = serde_json::json!({
+            "overall_status": "ok",
+            "governance_status": "OK",
+            "should_stop": false,
+            "warnings": [],
+            "next_steps": [
+                "✓ All clear — project is fully integrated.",
+                "  Codex may execute tasks per AGS governance lifecycle."
+            ]
+        });
+        let capability = serde_json::json!({
+            "uri": CURRENT_HOST_CAPABILITIES_URI,
+            "status": "snapshot_stale",
+            "snapshot_hash": null,
+            "refresh_required": true,
+            "refresh": {
+                "argv": [
+                    "ags",
+                    "capability",
+                    "snapshot",
+                    "--host",
+                    "codex",
+                    "--target",
+                    "/tmp/project",
+                    "--write"
+                ],
+                "requires_repreflight": true
+            }
+        });
+
+        attach_capability_catalog(&mut report, capability);
+
+        assert_eq!(report["overall_status"], "warning");
+        assert_eq!(report["governance_status"], "NEEDS_USER_DECISION");
+        assert_eq!(report["should_stop"], false);
+        assert!(report["warnings"]
+            .as_array()
+            .is_some_and(|warnings| warnings.iter().any(|warning| {
+                warning
+                    .as_str()
+                    .is_some_and(|text| text.contains("capability snapshot is stale"))
+            })));
+        assert!(report["next_steps"]
+            .as_array()
+            .is_some_and(|steps| steps.iter().all(|step| {
+                step.as_str().is_none_or(|text| {
+                    !text.contains("All clear") && !text.contains("may execute tasks")
+                })
+            })));
+    }
+
+    #[test]
+    fn ready_capability_snapshot_preserves_green_preflight() {
+        let mut report = serde_json::json!({
+            "overall_status": "ok",
+            "governance_status": "OK",
+            "should_stop": false,
+            "warnings": [],
+            "next_steps": ["✓ All clear — project is fully integrated."]
+        });
+        let capability = serde_json::json!({
+            "uri": CURRENT_HOST_CAPABILITIES_URI,
+            "status": "ready",
+            "snapshot_hash": "sha256:snapshot",
+            "refresh_required": false
+        });
+
+        attach_capability_catalog(&mut report, capability);
+
+        assert_eq!(report["overall_status"], "ok");
+        assert_eq!(report["governance_status"], "OK");
+        assert!(report["warnings"].as_array().is_some_and(Vec::is_empty));
+        assert_eq!(
+            report["capability_catalog"]["snapshot_hash"],
+            "sha256:snapshot"
+        );
     }
 
     fn direct_proposal() -> serde_json::Value {

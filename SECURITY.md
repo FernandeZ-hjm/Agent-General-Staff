@@ -26,5 +26,7 @@ If you find a security vulnerability in AGS, please report it privately:
 
 | Version | Supported |
 |---|---|
-| 2.7.x | Yes |
-| < 2.7 | No |
+| 0.3.x | Yes |
+| < 0.3 | No |
+
+历史 `2.x` tag 不属于当前受支持产品线。

@@ -82,6 +82,12 @@ pub fn default_public_allowlist() -> Allowlist {
             public_rewritten_doc("governance/skill-ignore-list.yaml"),
             public_rewritten_doc("manifests/suite.yaml"),
             public_target_only_file("LICENSE"),
+            public_target_only_file("SECURITY.md"),
+            public_target_only_file("NOTICE.md"),
+            public_target_only_file("THIRD_PARTY_NOTICES.md"),
+            public_target_only_file("COMMERCIAL.md"),
+            public_target_only_file(".github/workflows/ci.yml"),
+            public_target_only_file("scripts/update.sh"),
             public_target_only_file("templates/task-card-template.md"),
             public_target_only_file("templates/memory/context-capsule.md"),
             public_target_only_file("templates/memory/task-memory.md"),
@@ -397,6 +403,26 @@ mod tests {
             ],
             &DriftKind::ExtraSection
         ));
+    }
+
+    #[test]
+    fn public_allowlist_allows_release_overlay_files_only_in_target() {
+        let allowlist = default_public_allowlist();
+        for file in [
+            "SECURITY.md",
+            "NOTICE.md",
+            "THIRD_PARTY_NOTICES.md",
+            "COMMERCIAL.md",
+            ".github/workflows/ci.yml",
+            "scripts/update.sh",
+        ] {
+            assert!(is_allowed(
+                &allowlist,
+                file,
+                &[],
+                &DriftKind::FileMissingInSource
+            ));
+        }
     }
 
     #[test]

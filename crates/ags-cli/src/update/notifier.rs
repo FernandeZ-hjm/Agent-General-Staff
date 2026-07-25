@@ -193,33 +193,67 @@ fn fetch_latest_version() -> Option<(u64, u64, u64)> {
     let url =
         std::env::var("AGS_UPDATE_SOURCE_URL").unwrap_or_else(|_| DEFAULT_SOURCE_URL.to_string());
     let output = run_bounded_git_ls_remote(&url, Duration::from_millis(FETCH_TIMEOUT_MS))?;
+    latest_version_from_release_channel(&output)
+}
 
-    let mut best: Option<(u64, u64, u64)> = None;
+/// Resolve the public latest channel without ordering historical product tags.
+///
+/// `refs/heads/release/latest` is moved only after a formal GitHub Release
+/// succeeds. It must resolve to exactly one strict `vX.Y.Z` tag commit.
+fn latest_version_from_release_channel(output: &str) -> Option<(u64, u64, u64)> {
+    let mut channel_commit: Option<&str> = None;
+    let mut tags: std::collections::BTreeMap<(u64, u64, u64), &str> =
+        std::collections::BTreeMap::new();
     for line in output.lines() {
-        let Some(idx) = line.find("refs/tags/") else {
+        let mut columns = line.split_whitespace();
+        let Some(object_id) = columns.next() else {
             continue;
         };
-        let tag = line[idx + "refs/tags/".len()..]
-            .trim()
-            .trim_end_matches("^{}");
-        if let Some(v) = parse_version(tag) {
-            if best.map(|b| v > b).unwrap_or(true) {
-                best = Some(v);
+        let Some(reference) = columns.next() else {
+            continue;
+        };
+        if reference == "refs/heads/release/latest" {
+            channel_commit = Some(object_id);
+            continue;
+        }
+        let Some(tag) = reference.strip_prefix("refs/tags/") else {
+            continue;
+        };
+        let peeled = tag.strip_suffix("^{}");
+        let normalized = peeled.unwrap_or(tag);
+        if let Some(version) = parse_version(normalized) {
+            if peeled.is_some() || !tags.contains_key(&version) {
+                tags.insert(version, object_id);
             }
         }
     }
-    best
+
+    let channel_commit = channel_commit?;
+    let mut matches = tags
+        .into_iter()
+        .filter_map(|(version, commit)| (commit == channel_commit).then_some(version));
+    let only = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    Some(only)
 }
 
-/// Run `git ls-remote --tags <url>` bounded by a watchdog that kills the child
-/// after `timeout`. Drains stdout on a thread so a full pipe can't deadlock.
+/// Read the explicit release channel and formal version tags with a bounded
+/// `git ls-remote` probe. Drains stdout on a thread so a full pipe cannot
+/// deadlock.
 /// `GIT_TERMINAL_PROMPT=0` guarantees no credential prompt; the low-speed env
 /// aborts a stalled transfer. Returns the captured stdout, or `None` on failure /
 /// timeout / non-zero exit.
 fn run_bounded_git_ls_remote(url: &str, timeout: Duration) -> Option<String> {
     use std::io::Read;
     let mut child = Command::new("git")
-        .args(["ls-remote", "--tags", url])
+        .args([
+            "ls-remote",
+            url,
+            "refs/heads/release/latest",
+            "refs/tags/v*",
+        ])
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_HTTP_LOW_SPEED_LIMIT", "1000")
         .env("GIT_HTTP_LOW_SPEED_TIME", "3")
@@ -535,6 +569,31 @@ mod tests {
         assert_eq!(days_between("2026-06-19", "2026-06-25"), Some(6));
         // Across a month boundary.
         assert_eq!(days_between("2026-06-28", "2026-07-05"), Some(7));
+    }
+
+    #[test]
+    fn release_channel_beats_historical_semver_tags() {
+        let refs = "\
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\trefs/tags/v2.5.1\n\
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\trefs/tags/v2.5.1^{}\n\
+cccccccccccccccccccccccccccccccccccccccc\trefs/tags/v0.3.0\n\
+dddddddddddddddddddddddddddddddddddddddd\trefs/tags/v0.3.0^{}\n\
+dddddddddddddddddddddddddddddddddddddddd\trefs/heads/release/latest\n";
+        assert_eq!(latest_version_from_release_channel(refs), Some((0, 3, 0)));
+    }
+
+    #[test]
+    fn release_channel_fails_closed_without_unique_tag_match() {
+        let missing = "\
+dddddddddddddddddddddddddddddddddddddddd\trefs/heads/release/latest\n\
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\trefs/tags/v2.5.1\n";
+        assert_eq!(latest_version_from_release_channel(missing), None);
+
+        let ambiguous = "\
+dddddddddddddddddddddddddddddddddddddddd\trefs/heads/release/latest\n\
+dddddddddddddddddddddddddddddddddddddddd\trefs/tags/v0.3.0\n\
+dddddddddddddddddddddddddddddddddddddddd\trefs/tags/v0.3.1\n";
+        assert_eq!(latest_version_from_release_channel(ambiguous), None);
     }
 
     #[test]

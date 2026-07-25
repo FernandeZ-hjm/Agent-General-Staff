@@ -3,14 +3,13 @@
 Agent General Staff (AGS) is the public Rust-native AGS governance kernel and
 CLI.
 
-The 2.0 release turned AGS from a protocol-and-script kit into a full public
-governance runtime for multi-agent engineering work. Current releases continue
-to ship the `ags` CLI, canonical task-card protocols, execution-policy checks,
-release-boundary verification, memory-capsule templates, and public
-skill-governance workflows.
+Current releases ship the `ags` CLI, canonical task-card protocols,
+execution-policy checks, release-boundary verification, memory-capsule
+templates, and public skill-governance workflows.
 
-The current source and package version is `0.3.0`. Its formal release tag, when
-explicitly created by a maintainer after `main` CI passes, must be `v0.3.0`.
+The current stable/latest product version is `0.3.0`, with formal release tag
+`v0.3.0`. Once the separately authorized npm publication completes, npm
+`latest` must also resolve to `0.3.0`.
 Older `2.x` headings below are preserved as historical product release labels
 and are not rewritten.
 

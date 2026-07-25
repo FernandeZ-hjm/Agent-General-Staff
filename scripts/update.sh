@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AGS 2.0 Public Edition — Update Check / Update Script
+# Agent General Staff Public Edition — Update Check / Update Script
 #
 # Usage:
 #   bash scripts/update.sh --check
@@ -20,7 +20,7 @@ CACHE_FILE="$CACHE_DIR/update-check.json"
 
 usage() {
   cat <<'USAGE'
-AGS 2.0 Public Edition — Update
+Agent General Staff Public Edition — Update
 
 Usage:
   bash scripts/update.sh --check [--max-age-days N]
