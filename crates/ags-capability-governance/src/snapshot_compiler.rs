@@ -41,11 +41,11 @@ pub(super) struct SkillFileMetadata {
     #[serde(default)]
     display_name: String,
     #[serde(default)]
-    description: String,
+    pub(super) description: String,
     #[serde(default)]
     summary: String,
     #[serde(default)]
-    intent_tags: Vec<String>,
+    pub(super) intent_tags: Vec<String>,
     #[serde(default)]
     entrypoints: Vec<String>,
     #[serde(default)]

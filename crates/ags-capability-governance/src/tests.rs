@@ -1,5 +1,4 @@
 use super::*;
-use super::*;
 #[allow(unused_imports)]
 use super::{
     authority::*, catalog::*, hashing::*, overlay_transaction::*, private_store::*,

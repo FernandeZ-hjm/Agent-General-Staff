@@ -80,7 +80,7 @@ mod tests {
 
     fn sample_report() -> HealthReport {
         let mut report =
-            HealthReport::new(&format!("Suite Diagnostics v{}", env!("CARGO_PKG_VERSION")));
+            HealthReport::new(format!("Suite Diagnostics v{}", env!("CARGO_PKG_VERSION")));
         report.add(Finding::pass("cargo-fmt", "cargo fmt --check passed"));
         report.add(Finding::fail(
             "cargo-test",
@@ -94,7 +94,7 @@ mod tests {
         ));
         report.add(Finding::info(
             "suite-version",
-            &format!("suite-doctor v{}", env!("CARGO_PKG_VERSION")),
+            format!("suite-doctor v{}", env!("CARGO_PKG_VERSION")),
         ));
         report.add(Finding::skip(
             "network-check",
