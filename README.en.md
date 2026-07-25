@@ -164,16 +164,17 @@ the verified binary, and starts `ags mcp serve --transport stdio` without a
 shell child process.
 
 `ags onboarding plan --host <host>` covers project, host, Skill, CLI, MCP, and
-Hook onboarding. It prefers the
-[public manifest](https://github.com/FernandeZ-hjm/Agent-General-Staff/blob/main/manifests/third-party-capabilities.yaml)
-on GitHub `main`, binds the reviewed content hash, and falls back to the manifest
-packaged with the current version when GitHub is unavailable. The manifest is
-reviewed data, not a remote installer: no third-party action occurs without
-confirmation and a real availability/host-visibility check.
+Hook onboarding. It reads the
+[reviewed public manifest](https://github.com/FernandeZ-hjm/Agent-General-Staff/blob/821fb728b58c131c70a82dad51ccf83eb0372413/manifests/third-party-capabilities.yaml)
+at immutable commit `821fb728b58c131c70a82dad51ccf83eb0372413`, verifies
+the expected SHA-256, and falls back to the manifest packaged with the current
+version when GitHub is unavailable. The manifest is reviewed data, not a remote
+installer: no third-party action occurs without confirmation and a real
+availability/host-visibility check.
 
 ```mermaid
 flowchart TB
-    GH[Latest GitHub manifest] --> PLAN[onboarding plan<br/>source + content hash]
+    GH[Immutable reviewed GitHub manifest] --> PLAN[onboarding plan<br/>source + expected hash]
     PKG[Packaged manifest] -. offline fallback .-> PLAN
     PLAN --> REVIEW{Human review}
     REVIEW --> EXT[Skill / CLI / MCP / Hook<br/>explicit onboarding]

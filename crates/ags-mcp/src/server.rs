@@ -14,6 +14,9 @@
 //! preflight-bound because it represents one specific host/target pair.
 
 use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
+
+use sha2::{Digest, Sha256};
 
 use crate::protocol::{
     InitializeResult, JsonRpcRequest, JsonRpcResponse, PromptsCapability, ResourcesCapability,
@@ -39,17 +42,34 @@ struct PreflightState {
     /// cannot override it in either tool.
     preflight_target: Option<String>,
     routing_session: tools::RoutingSession,
+    runtime_process: RuntimeProcessIdentity,
 }
 
 impl PreflightState {
     fn new() -> Self {
+        Self::with_runtime_process(RuntimeProcessIdentity::capture())
+    }
+
+    fn with_runtime_process(runtime_process: RuntimeProcessIdentity) -> Self {
         Self {
             preflight_completed: false,
             bootstrap_required: false,
             preflight_agent: None,
             preflight_target: None,
             routing_session: tools::RoutingSession::default(),
+            runtime_process,
         }
+    }
+
+    /// Clear per-connection governance state while retaining the identity of the
+    /// executable loaded when this process started. Re-initializing a stdio
+    /// connection must not make an old process look like a newly loaded binary.
+    fn reset_session(&mut self) {
+        self.preflight_completed = false;
+        self.bootstrap_required = false;
+        self.preflight_agent = None;
+        self.preflight_target = None;
+        self.routing_session.invalidate();
     }
 
     /// Record a successful preflight. `agent` is the NORMALIZED agent and
@@ -83,6 +103,143 @@ impl PreflightState {
     }
 }
 
+#[derive(Debug, Clone)]
+struct RuntimeProcessIdentity {
+    executable: Option<PathBuf>,
+    started_hash: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeProcessStaleEvidence {
+    executable: PathBuf,
+    started_hash: String,
+    installed_hash: String,
+}
+
+impl RuntimeProcessIdentity {
+    fn capture() -> Self {
+        let executable = std::env::current_exe().ok();
+        let started_hash = executable.as_deref().and_then(executable_sha256);
+        Self {
+            executable,
+            started_hash,
+        }
+    }
+
+    #[cfg(test)]
+    fn capture_from_path(executable: PathBuf) -> Self {
+        let started_hash = executable_sha256(&executable);
+        Self {
+            executable: Some(executable),
+            started_hash,
+        }
+    }
+
+    fn stale_evidence(&self) -> Option<RuntimeProcessStaleEvidence> {
+        let executable = self.executable.clone()?;
+        let started_hash = self.started_hash.clone()?;
+        let installed_hash = executable_sha256(&executable)?;
+        (installed_hash != started_hash).then_some(RuntimeProcessStaleEvidence {
+            executable,
+            started_hash,
+            installed_hash,
+        })
+    }
+}
+
+fn executable_sha256(path: &Path) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    let digest = Sha256::digest(bytes);
+    Some(format!("sha256:{digest:x}"))
+}
+
+fn attach_runtime_process_stale(result: &str, evidence: &RuntimeProcessStaleEvidence) -> String {
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(result) else {
+        return result.to_string();
+    };
+    let Some(object) = value.as_object_mut() else {
+        return result.to_string();
+    };
+
+    object.insert(
+        "runtime_process".to_string(),
+        serde_json::json!({
+            "status": "stale",
+            "executable": evidence.executable,
+            "started_hash": evidence.started_hash,
+            "installed_hash": evidence.installed_hash,
+            "restart_required": true
+        }),
+    );
+
+    let capability = object
+        .entry("capability_catalog".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    if let Some(capability) = capability.as_object_mut() {
+        capability.insert(
+            "status".to_string(),
+            serde_json::json!("runtime_process_stale"),
+        );
+        capability.insert("refresh_required".to_string(), serde_json::json!(false));
+        capability.insert("requires_host_restart".to_string(), serde_json::json!(true));
+        capability.remove("refresh");
+    }
+
+    let already_stopped = object
+        .get("overall_status")
+        .and_then(|status| status.as_str())
+        .is_some_and(|status| status == "stop");
+    if !already_stopped {
+        object.insert("overall_status".to_string(), serde_json::json!("warning"));
+        object.insert(
+            "governance_status".to_string(),
+            serde_json::json!("NEEDS_USER_DECISION"),
+        );
+    }
+
+    let warning = "AGS MCP runtime process is stale after an executable upgrade; DirectResponse remains available, but SkillTarget and MachineCli routing are blocked until the host restarts this MCP connection.";
+    let warnings = object
+        .entry("warnings".to_string())
+        .or_insert_with(|| serde_json::json!([]));
+    if let Some(warnings) = warnings.as_array_mut() {
+        if !warnings
+            .iter()
+            .any(|entry| entry.as_str().is_some_and(|entry| entry == warning))
+        {
+            warnings.push(serde_json::json!(warning));
+        }
+    }
+
+    let mut existing_steps = object
+        .get("next_steps")
+        .and_then(|steps| steps.as_array())
+        .cloned()
+        .unwrap_or_default();
+    existing_steps.retain(|step| {
+        step.as_str().is_none_or(|text| {
+            !text.contains("All clear")
+                && !text.contains("may execute tasks")
+                && !text.contains("Capability snapshot refresh")
+                && !text.contains("capability_catalog.refresh.argv")
+        })
+    });
+    let mut next_steps = vec![
+        serde_json::json!(
+            "⚠ Restart or reconnect the AGS MCP server so the host loads the installed executable."
+        ),
+        serde_json::json!(
+            "  Do not refresh the capability snapshot for this condition; rerun ags_preflight after reconnecting."
+        ),
+    ];
+    next_steps.append(&mut existing_steps);
+    object.insert(
+        "next_steps".to_string(),
+        serde_json::Value::Array(next_steps),
+    );
+
+    serde_json::to_string_pretty(&value).unwrap_or_else(|_| result.to_string())
+}
+
 fn is_successful_preflight_result(result: &str) -> bool {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(result) else {
         return false;
@@ -100,8 +257,26 @@ fn is_successful_preflight_result(result: &str) -> bool {
         .get("failures")
         .and_then(|v| v.as_array())
         .is_some_and(|failures| failures.is_empty());
+    let runtime_process_current = value
+        .get("runtime_process")
+        .and_then(|runtime| runtime.get("status"))
+        .and_then(|status| status.as_str())
+        .is_none_or(|status| status != "stale");
 
-    exit_code_ok && !should_stop && failures_empty
+    exit_code_ok && !should_stop && failures_empty && runtime_process_current
+}
+
+fn is_runtime_process_stale_result(result: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(result)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("runtime_process")
+                .and_then(|runtime| runtime.get("status"))
+                .and_then(|status| status.as_str())
+                .map(str::to_string)
+        })
+        .is_some_and(|status| status == "stale")
 }
 
 /// Extract the normalized agent and resolved target from a successful preflight
@@ -269,8 +444,9 @@ fn handle_initialize(
     };
 
     *initialized = true;
-    // Reset preflight state on re-initialize (new connection semantics)
-    *preflight = PreflightState::new();
+    // Reset connection governance state while preserving the executable
+    // identity captured when this process started.
+    preflight.reset_session();
 
     let json_result = serde_json::to_value(&result).unwrap_or(serde_json::Value::Null);
     JsonRpcResponse::success(req.id.clone(), json_result)
@@ -328,10 +504,27 @@ fn handle_tools_call(req: &JsonRpcRequest, preflight: &mut PreflightState) -> Js
         &mut preflight.routing_session,
     ) {
         Ok(result) => {
+            let result = if tools::is_preflight_tool_name(tool_name) {
+                if let Some(evidence) = preflight.runtime_process.stale_evidence() {
+                    preflight.reset_session();
+                    attach_runtime_process_stale(&result, &evidence)
+                } else {
+                    result
+                }
+            } else {
+                result
+            };
+
             // Mark preflight as completed only when the preflight report itself
             // is clean. A successful JSON-RPC tool call may still report
             // overall_status=Stop / exit_code=1 for an ungoverned target.
-            if tools::is_preflight_tool_name(tool_name) && is_successful_preflight_result(&result) {
+            if tools::is_preflight_tool_name(tool_name) && is_runtime_process_stale_result(&result)
+            {
+                // The process cannot safely establish any governed binding
+                // after its on-disk executable changes.
+            } else if tools::is_preflight_tool_name(tool_name)
+                && is_successful_preflight_result(&result)
+            {
                 // Use the NORMALIZED agent + RESOLVED target from the preflight
                 // result JSON, not the raw call arguments.
                 let (agent, target) = preflight_context_from_result(&result);
@@ -361,7 +554,7 @@ fn handle_tools_call(req: &JsonRpcRequest, preflight: &mut PreflightState) -> Js
                     })
                     .unwrap_or(false)
             {
-                *preflight = PreflightState::new();
+                preflight.reset_session();
             }
 
             let content = vec![serde_json::json!({
@@ -499,6 +692,41 @@ mod tests {
     use super::*;
     use crate::protocol::JsonRpcRequest;
     use serde_json::json;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct RuntimeFixture {
+        path: PathBuf,
+    }
+
+    impl RuntimeFixture {
+        fn new() -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "ags-mcp-runtime-fixture-{}-{nonce}",
+                std::process::id()
+            ));
+            fs::write(&path, b"runtime-v1").expect("runtime fixture should be writable");
+            Self { path }
+        }
+
+        fn identity(&self) -> RuntimeProcessIdentity {
+            RuntimeProcessIdentity::capture_from_path(self.path.clone())
+        }
+
+        fn replace(&self) {
+            fs::write(&self.path, b"runtime-v2").expect("runtime fixture should be replaceable");
+        }
+    }
+
+    impl Drop for RuntimeFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
 
     /// Build a minimal JSON-RPC request for testing handlers directly.
     fn make_request(method: &str, params: Option<serde_json::Value>) -> JsonRpcRequest {
@@ -535,7 +763,85 @@ mod tests {
             .to_string()
     }
 
+    fn response_text(response: &JsonRpcResponse) -> &str {
+        response
+            .result
+            .as_ref()
+            .and_then(|result| result.get("content"))
+            .and_then(|content| content.as_array())
+            .and_then(|content| content.first())
+            .and_then(|content| content.get("text"))
+            .and_then(|text| text.as_str())
+            .expect("tool response should contain text")
+    }
+
     // ── tools/call gate tests ───────────────────────────────────────────
+
+    #[test]
+    fn runtime_identity_detects_replaced_executable() {
+        let fixture = RuntimeFixture::new();
+        let identity = fixture.identity();
+        assert!(
+            identity.stale_evidence().is_none(),
+            "unchanged executable must be current"
+        );
+
+        fixture.replace();
+        let evidence = identity
+            .stale_evidence()
+            .expect("replaced executable must be detected");
+        assert_ne!(evidence.started_hash, evidence.installed_hash);
+        assert_eq!(evidence.executable, fixture.path);
+    }
+
+    #[test]
+    fn stale_runtime_preflight_requires_reconnect_and_keeps_gate_closed() {
+        let fixture = RuntimeFixture::new();
+        let mut preflight = PreflightState::with_runtime_process(fixture.identity());
+        fixture.replace();
+
+        let params = json!({
+            "name": "ags_preflight",
+            "arguments": {"agent": "codex", "target": suite_root()}
+        });
+        let req = make_request("tools/call", Some(params));
+        let response = handle_tools_call(&req, &mut preflight);
+        assert!(is_success(&response), "preflight should return a report");
+
+        let report: serde_json::Value = serde_json::from_str(response_text(&response))
+            .expect("preflight report should be JSON");
+        assert_eq!(report["runtime_process"]["status"], "stale");
+        assert_eq!(report["runtime_process"]["restart_required"], true);
+        assert_eq!(
+            report["capability_catalog"]["status"],
+            "runtime_process_stale"
+        );
+        assert_eq!(report["capability_catalog"]["refresh_required"], false);
+        assert_eq!(report["capability_catalog"]["requires_host_restart"], true);
+        assert!(
+            report["capability_catalog"].get("refresh").is_none(),
+            "runtime staleness must not suggest snapshot refresh"
+        );
+        assert!(
+            report["next_steps"]
+                .as_array()
+                .is_some_and(|steps| steps.iter().any(|step| step
+                    .as_str()
+                    .is_some_and(|step| step.contains("Do not refresh")))),
+            "next steps must distinguish restart from snapshot refresh"
+        );
+        assert!(
+            !preflight.preflight_completed && !preflight.bootstrap_required,
+            "stale runtime must keep every governed binding closed"
+        );
+
+        let gated_params =
+            json!({"name": "ags_route_request", "arguments": {"request": "still gated"}});
+        let gated_req = make_request("tools/call", Some(gated_params));
+        let gated_response = handle_tools_call(&gated_req, &mut preflight);
+        assert!(has_error(&gated_response));
+        assert!(error_contains(&gated_response, "Initialization Gate"));
+    }
 
     #[test]
     fn tools_list_always_allowed() {
@@ -833,6 +1139,7 @@ mod tests {
     fn initialize_resets_preflight_state() {
         let mut initialized = false;
         let mut preflight = PreflightState::new();
+        let started_hash = preflight.runtime_process.started_hash.clone();
         preflight.mark_completed(Some("codex".to_string()), Some("/tmp/x".to_string()));
 
         let req = make_request(
@@ -858,6 +1165,10 @@ mod tests {
         assert!(
             preflight.preflight_target.is_none(),
             "preflight target must be cleared on initialize"
+        );
+        assert_eq!(
+            preflight.runtime_process.started_hash, started_hash,
+            "initialize must preserve the process-start executable identity"
         );
     }
 

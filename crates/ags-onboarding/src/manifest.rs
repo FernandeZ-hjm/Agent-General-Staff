@@ -5,7 +5,10 @@ use std::path::Path;
 use std::process::Command;
 
 pub const THIRD_PARTY_MANIFEST_PATH: &str = "manifests/third-party-capabilities.yaml";
-pub const DEFAULT_THIRD_PARTY_MANIFEST_URL: &str = "https://raw.githubusercontent.com/FernandeZ-hjm/Agent-General-Staff/main/manifests/third-party-capabilities.yaml";
+pub const DEFAULT_THIRD_PARTY_MANIFEST_REVISION: &str = "821fb728b58c131c70a82dad51ccf83eb0372413";
+pub const DEFAULT_THIRD_PARTY_MANIFEST_URL: &str = "https://raw.githubusercontent.com/FernandeZ-hjm/Agent-General-Staff/821fb728b58c131c70a82dad51ccf83eb0372413/manifests/third-party-capabilities.yaml";
+pub const DEFAULT_THIRD_PARTY_MANIFEST_HASH: &str =
+    "sha256:77af54eab76a8d031d8ec6ffdd79224c1b0f5b829e392402ac349557940a9324";
 const EMBEDDED_THIRD_PARTY_MANIFEST: &str =
     include_str!("../../../manifests/third-party-capabilities.yaml");
 const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
@@ -187,7 +190,7 @@ pub fn resolve_third_party_manifest(root: &Path) -> Result<ManifestResolution, S
                         manifest,
                         source: url,
                         content_hash,
-                        freshness: "github-live".into(),
+                        freshness: "github-pinned".into(),
                         fallback_reason: None,
                     });
                 }
@@ -261,10 +264,17 @@ fn fetch_remote_manifest(url: &str) -> Result<(ThirdPartyManifest, String), Stri
     }
     let content = String::from_utf8(output.stdout)
         .map_err(|_| "GitHub registry response is not UTF-8".to_string())?;
+    let content_hash = sha256(content.as_bytes());
+    if url == DEFAULT_THIRD_PARTY_MANIFEST_URL && content_hash != DEFAULT_THIRD_PARTY_MANIFEST_HASH
+    {
+        return Err(format!(
+            "pinned GitHub registry hash mismatch: expected {DEFAULT_THIRD_PARTY_MANIFEST_HASH}, got {content_hash}"
+        ));
+    }
     let manifest = parse_manifest(&content)
         .map_err(|error| format!("cannot parse GitHub registry: {error}"))?;
     validate_manifest(&manifest)?;
-    Ok((manifest, sha256(content.as_bytes())))
+    Ok((manifest, content_hash))
 }
 
 fn is_allowed_registry_url(url: &str) -> bool {
@@ -471,5 +481,20 @@ capabilities:
     unexpected: true
 "#;
         assert!(parse_manifest(content).is_err());
+    }
+
+    #[test]
+    fn default_registry_uses_an_immutable_reviewed_commit() {
+        assert_eq!(DEFAULT_THIRD_PARTY_MANIFEST_REVISION.len(), 40);
+        assert!(DEFAULT_THIRD_PARTY_MANIFEST_REVISION
+            .chars()
+            .all(|character| character.is_ascii_hexdigit()));
+        assert!(DEFAULT_THIRD_PARTY_MANIFEST_URL
+            .contains(&format!("/{DEFAULT_THIRD_PARTY_MANIFEST_REVISION}/")));
+        assert!(!DEFAULT_THIRD_PARTY_MANIFEST_URL.contains("/main/"));
+        assert_eq!(DEFAULT_THIRD_PARTY_MANIFEST_HASH.len(), 71);
+        assert!(DEFAULT_THIRD_PARTY_MANIFEST_HASH
+            .strip_prefix("sha256:")
+            .is_some_and(|hash| hash.chars().all(|character| character.is_ascii_hexdigit())));
     }
 }

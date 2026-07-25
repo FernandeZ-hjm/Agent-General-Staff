@@ -168,17 +168,17 @@ launcher 会按 OS/架构下载同版本预编译 `ags`，核对 `SHA256SUMS`，
 `ags onboarding plan --host <host>` 查看项目、宿主、Skill、CLI、MCP 与 Hook 的
 逐项接入建议；它不会静默安装第三方能力。
 
-0.3.0 的第三方能力清单不是写死在提示词里的副本。onboarding 优先读取 GitHub
-`main` 上的
-[公开清单](https://github.com/FernandeZ-hjm/Agent-General-Staff/blob/main/manifests/third-party-capabilities.yaml)，
-并把实际审阅内容的 hash 写进结果；网络不可用时才回退到随当前版本打包的清单。清单只
+0.3.0 的第三方能力清单不是写死在提示词里的副本。onboarding 读取固定到
+`821fb728b58c131c70a82dad51ccf83eb0372413` 的
+[已审阅公开清单](https://github.com/FernandeZ-hjm/Agent-General-Staff/blob/821fb728b58c131c70a82dad51ccf83eb0372413/manifests/third-party-capabilities.yaml)，
+并校验预期 SHA-256；网络不可用时才回退到随当前版本打包的清单。清单只
 描述来源、安装方式、探测方式、认证/健康要求和路由元数据，不会把远端内容当脚本执行。
 Skill、CLI、MCP 与 Hook 都要经过用户确认、真实安装探测和宿主可见性校验，才会进入
 机器本地快照。
 
 ```mermaid
 flowchart TB
-    GH[GitHub 最新公开清单] --> PLAN[ags onboarding plan<br/>绑定 source + content hash]
+    GH[GitHub 不可变已审阅清单] --> PLAN[ags onboarding plan<br/>校验 source + expected hash]
     PKG[随版本打包的清单] -. 网络失败时回退 .-> PLAN
     PLAN --> REVIEW{用户审阅并确认}
     REVIEW -->|AGS 内核| S1[ags setup]

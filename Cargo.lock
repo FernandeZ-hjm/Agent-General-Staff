@@ -41,6 +41,7 @@ dependencies = [
  "request-governance",
  "serde",
  "serde_json",
+ "sha2",
  "skill-resolver",
  "task-card-validator",
 ]

@@ -21,7 +21,7 @@ runtime code to blur together:
 ```mermaid
 flowchart LR
     subgraph Onboarding["Capability onboarding"]
-        GH[GitHub live manifest] --> OP[onboarding plan<br/>source + content hash]
+        GH[GitHub manifest<br/>immutable reviewed commit] --> OP[onboarding plan<br/>source + content hash]
         PKG[Packaged fallback] -. offline fallback .-> OP
         OP --> HUMAN[Human review]
         HUMAN --> SNAP[Inventory + host snapshot]
@@ -128,9 +128,9 @@ flowchart LR
 ### Dynamic onboarding and public distribution
 
 - Added one public onboarding surface for project init, host adapters, Skill,
-  CLI, MCP and Hook capabilities. It reads the live GitHub capability manifest
-  when available, binds the reviewed content hash, and falls back to the packaged
-  manifest without silently installing anything.
+  CLI, MCP and Hook capabilities. It reads a GitHub capability manifest pinned
+  to an immutable reviewed commit, verifies its expected SHA-256, and falls back
+  to the packaged manifest without silently installing anything.
 - The public manifest covers Skill, CLI, MCP and Hook capabilities with source,
   install, probe, auth/health and routing metadata. Remote content is data for a
   reviewed plan, never an implicitly executed installer.
@@ -139,6 +139,11 @@ flowchart LR
   `SHA256SUMS`/provenance third, and manual asset-gated npm publication last.
 - Release workflows never create tags. A public `main` push alone does not
   create a GitHub Release or publish npm.
+- Added process-level MCP E2E coverage for Codex, Claude Code, Cursor, and OMP
+  across reconnects and multiple projects. A running MCP process now detects
+  when its on-disk executable has been replaced, reports
+  `runtime_process_stale`, and requires reconnect instead of misdirecting the
+  user to refresh an already-current capability snapshot.
 
 ### Upgrade and verification
 
@@ -157,6 +162,10 @@ flowchart LR
   `ags capability verify --host <host> --strict` and `ags doctor`. A manifest
   entry, an installed binary, or a visible skill by itself is not proof that the
   capability is safely routable.
+- If preflight reports `runtime_process_stale`, restart or reconnect the AGS MCP
+  server and rerun preflight. Do not refresh the capability snapshot for that
+  condition; `snapshot_stale` and `runtime_process_stale` have distinct recovery
+  actions.
 - Maintainer order is strict: public-safe `main` + green CI → explicit
   `v0.3.0` tag → five platform assets and `SHA256SUMS` + provenance → manual,
   exact-version npm dispatch. Each arrow is a separate authorization boundary.
