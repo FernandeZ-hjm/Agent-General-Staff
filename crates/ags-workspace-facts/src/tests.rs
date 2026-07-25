@@ -539,8 +539,12 @@ fn test_detect_ags_suite_repo() {
     );
     assert_eq!(identity.integration_status, IntegrationStatus::Suite);
     assert!(!identity.workspace_identities.is_empty());
-    // Should have found WORKSPACE.md with at least A, A1, S, B, B1
-    assert!(identity.workspace_identities.len() >= 5);
+    // The public edition is self-contained and publishes only its P identity;
+    // private A/A1/S/B/B1 topology must not be required or disclosed here.
+    assert!(identity
+        .workspace_identities
+        .iter()
+        .any(|workspace| workspace.code == "P"));
     // Should have found root entry files
     assert!(identity
         .root_entry_files_found
