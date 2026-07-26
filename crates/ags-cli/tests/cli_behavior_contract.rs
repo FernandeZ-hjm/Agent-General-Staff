@@ -739,6 +739,7 @@ fn v032_preserves_v030_human_and_machine_cli_behavior() {
             .args(expand_args(&case.args, &sandbox.root))
             .current_dir(sandbox.suite())
             .env("HOME", sandbox.root.join("home"))
+            .env("USERPROFILE", sandbox.root.join("home"))
             .env("AGS_HOME", sandbox.root.join("runtime"))
             .env("AGS_RUNTIME_HOME", sandbox.root.join("runtime"))
             .env("AGS_THIRD_PARTY_MANIFEST_OFFLINE", "1")

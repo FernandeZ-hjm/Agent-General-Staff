@@ -194,7 +194,7 @@ fn project_init_entry_files_are_concise_and_reference_canonical_contracts() {
 }
 
 #[test]
-fn project_init_plan_ignores_gep_runtime_assets() {
+fn project_init_plan_ignores_local_runtime_assets() {
     let target = unique_temp_project("ags-project-init-ignore-plan");
     std::fs::create_dir_all(&target).unwrap();
     let plan = project_init_plan(&target, None);
@@ -203,13 +203,21 @@ fn project_init_plan_ignores_gep_runtime_assets() {
         .iter()
         .find(|file| file.path.ends_with(".gitignore"))
         .expect("project init should manage .gitignore");
-    assert!(gitignore.content.contains("assets/gep/"));
     assert!(gitignore.content.contains("/capability-snapshot/"));
     assert!(gitignore.content.contains("/skill-registry/"));
     assert!(gitignore.content.contains("/skill-usage/"));
     assert!(gitignore.content.contains("/decision-leases/"));
     assert!(gitignore.content.contains("/auth-state/"));
     assert!(gitignore.content.contains("/receipts/"));
+    let private_source_edition = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("global-skills")
+        .is_dir();
+    assert_eq!(
+        gitignore.content.contains("assets/gep/"),
+        private_source_edition,
+        "only the private source edition owns the local GEP runtime projection"
+    );
     let _ = std::fs::remove_dir_all(target);
 }
 
@@ -232,7 +240,7 @@ fn project_init_gitignore_append_is_idempotent() {
     assert_eq!(first.status, InitCheckStatus::Pass);
     assert_eq!(second.status, InitCheckStatus::Pass);
     let content = std::fs::read_to_string(&gitignore_path).unwrap();
-    assert_eq!(content.matches("assets/gep/").count(), 1);
+    assert_eq!(content.matches("/capability-snapshot/").count(), 1);
     let _ = std::fs::remove_dir_all(target);
 }
 
@@ -241,11 +249,15 @@ fn project_init_gitignore_dry_run_status_is_idempotent() {
     let target = unique_temp_project("ags-project-init-ignore-status");
     std::fs::create_dir_all(&target).unwrap();
     let gitignore_path = target.join(".gitignore");
-    std::fs::write(
-            &gitignore_path,
-            "/target/\n\n# AGS/GEP local runtime data\nassets/gep/\n/capability-snapshot/\n/skill-registry/\n/skill-usage/\n/decision-leases/\n/auth-state/\n/receipts/\n/.ags/\n",
-        )
-        .unwrap();
+    let initial_plan = project_init_plan(&target, None);
+    let managed_content = initial_plan
+        .files
+        .iter()
+        .find(|file| file.path.ends_with(".gitignore"))
+        .expect("project init should manage .gitignore")
+        .content
+        .clone();
+    std::fs::write(&gitignore_path, format!("/target/\n\n{managed_content}")).unwrap();
     let plan = project_init_plan(&target, None);
     let gitignore = plan
         .files
