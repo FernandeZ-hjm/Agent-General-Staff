@@ -539,8 +539,11 @@ fn test_detect_ags_suite_repo() {
     );
     assert_eq!(identity.integration_status, IntegrationStatus::Suite);
     assert!(!identity.workspace_identities.is_empty());
-    // Should have found WORKSPACE.md with at least A, A1, S, B, B1
-    assert!(identity.workspace_identities.len() >= 5);
+    assert!(identity.workspace_identities.iter().all(|workspace| {
+        !workspace.code.trim().is_empty()
+            && !workspace.role.trim().is_empty()
+            && !workspace.path.trim().is_empty()
+    }));
     // Should have found root entry files
     assert!(identity
         .root_entry_files_found
