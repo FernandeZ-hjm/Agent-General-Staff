@@ -292,11 +292,11 @@ pub(super) fn registry_matches_process(registry: &WorkspaceRegistry) -> bool {
 }
 
 fn process_start_identity(pid: u32) -> Option<String> {
-    if !process_is_alive(pid) {
-        return None;
-    }
     #[cfg(unix)]
     {
+        if !process_is_alive(pid) {
+            return None;
+        }
         let output = Command::new("ps")
             .args(["-o", "lstart=", "-p", &pid.to_string()])
             .output()
@@ -309,6 +309,8 @@ fn process_start_identity(pid: u32) -> Option<String> {
     }
     #[cfg(windows)]
     {
+        // Get-Process already fails when the PID is absent. Avoid a preceding
+        // tasklist process on the latency-sensitive daemon startup path.
         let output = Command::new("powershell")
             .args([
                 "-NoProfile",

@@ -223,17 +223,16 @@ pub(super) fn connect_registered(
     if registry.schema_version != REGISTRY_SCHEMA || registry.workspace != workspace {
         return Err("workspace daemon registry identity mismatch".to_string());
     }
-    if !registry_matches_process(&registry) {
-        remove_registry_if_owned(&paths.registry, &registry.token);
-        return Ok(None);
-    }
     match TcpStream::connect(&registry.endpoint) {
         Ok(stream) => Ok(Some((stream, registry))),
-        Err(_) if registry.process_start_identity.is_empty() => {
+        Err(_)
+            if registry.process_start_identity.is_empty()
+                || !registry_matches_process(&registry) =>
+        {
             // A v0.3.1 registry has no process-start identity. A reused PID
             // therefore cannot prove that the old daemon still owns this
-            // unreachable endpoint; reclaim the unauthenticated migration
-            // record instead of blocking this workspace forever.
+            // unreachable endpoint. New registries are reclaimed only after
+            // their PID + process-start identity no longer matches.
             remove_registry_if_owned(&paths.registry, &registry.token);
             Ok(None)
         }
