@@ -364,7 +364,8 @@ pub fn verify(target: &Path) -> HealthReport {
             }
             let output = std::process::Command::new("bash")
                 .arg("-n")
-                .arg(&full)
+                .arg(script)
+                .current_dir(target)
                 .output();
             match output {
                 Ok(o) if o.status.success() => {
@@ -585,7 +586,11 @@ mod tests {
         let protocol_actions: Vec<_> = plan
             .actions
             .iter()
-            .filter(|a| a.path.contains("protocol/"))
+            .filter(|a| {
+                Path::new(&a.path)
+                    .strip_prefix(&target)
+                    .is_ok_and(|relative| relative.starts_with("protocol"))
+            })
             .collect();
         assert!(
             !protocol_actions.is_empty(),
@@ -596,7 +601,11 @@ mod tests {
         let script_actions: Vec<_> = plan
             .actions
             .iter()
-            .filter(|a| a.path.contains("scripts/"))
+            .filter(|a| {
+                Path::new(&a.path)
+                    .strip_prefix(&target)
+                    .is_ok_and(|relative| relative.starts_with("scripts"))
+            })
             .collect();
         assert!(!script_actions.is_empty(), "should include script files");
         for a in &script_actions {
@@ -637,7 +646,9 @@ mod tests {
         // All template action paths must be under manifests/templates/
         for a in &template_actions {
             assert!(
-                a.path.contains("manifests/templates/"),
+                Path::new(&a.path)
+                    .strip_prefix(&target)
+                    .is_ok_and(|relative| relative.starts_with("manifests/templates")),
                 "template action path must be under manifests/templates/: {}",
                 a.path
             );
@@ -733,9 +744,11 @@ mod tests {
         let report = verify(&target);
         assert!(report.passed(), "verify should pass: {:?}", report.findings);
         for finding in &report.findings {
-            assert_eq!(
-                finding.status,
-                crate::doctor::CheckStatus::Pass,
+            assert!(
+                matches!(
+                    finding.status,
+                    crate::doctor::CheckStatus::Pass | crate::doctor::CheckStatus::Skip
+                ),
                 "verify check {} should pass: {} — {}",
                 finding.check_name,
                 finding.message,

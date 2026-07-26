@@ -933,7 +933,7 @@ fn list_files_recursive(root: &Path, dir: &Path, files: &mut Vec<String>) {
             .strip_prefix(root)
             .unwrap_or(&path)
             .to_string_lossy()
-            .to_string();
+            .replace('\\', "/");
         let Ok(metadata) = fs::symlink_metadata(&path) else {
             continue;
         };
@@ -983,6 +983,16 @@ mod tests {
             }
             std::fs::write(path, content).unwrap();
         }
+    }
+
+    #[test]
+    fn recursive_listing_uses_manifest_separators() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("nested").join("file.txt");
+        std::fs::create_dir_all(nested.parent().unwrap()).unwrap();
+        std::fs::write(nested, b"fixture").unwrap();
+
+        assert_eq!(list_files(dir.path()), vec!["nested/file.txt".to_string()]);
     }
 
     #[test]

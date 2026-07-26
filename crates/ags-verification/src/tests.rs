@@ -680,17 +680,27 @@ fn test_json_roundtrip_report() {
 fn test_run_command_executes_in_repo_root() {
     let root = std::env::temp_dir().join(format!("ags-verify-cwd-test-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
-    let expected = root
-        .canonicalize()
-        .unwrap_or_else(|_| root.clone())
-        .to_string_lossy()
-        .to_string();
+    let manifest = root.join("Cargo.toml");
+    std::fs::write(
+        &manifest,
+        "[package]\nname = \"ags-cwd-probe\"\nversion = \"0.0.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    let expected = manifest.canonicalize().unwrap_or_else(|_| manifest.clone());
 
-    let (code, stdout, stderr) = run_command(&root, "sh", &["-c", "pwd"], &[]);
+    let (code, stdout, stderr) = run_command(
+        &root,
+        env!("CARGO"),
+        &["locate-project", "--message-format", "plain"],
+        &[],
+    );
+    let actual = Path::new(stdout.trim())
+        .canonicalize()
+        .unwrap_or_else(|_| Path::new(stdout.trim()).to_path_buf());
     let _ = std::fs::remove_dir_all(&root);
 
     assert_eq!(code, 0, "stderr={stderr}");
-    assert_eq!(stdout.trim(), expected);
+    assert_eq!(actual, expected);
 }
 
 #[test]
