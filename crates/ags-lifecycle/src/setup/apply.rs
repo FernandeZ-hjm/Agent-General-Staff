@@ -220,13 +220,16 @@ pub(in crate::setup) fn add_claude_registration_checks(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use super::super::InstallFile;
     #[cfg(unix)]
     use super::write_install_file;
     #[cfg(unix)]
     use std::path::Path;
+    #[cfg(unix)]
     use std::path::PathBuf;
 
+    #[cfg(unix)]
     fn tmp(tag: &str) -> PathBuf {
         let base =
             std::env::temp_dir().join(format!("ags-setup-apply-{tag}-{}", std::process::id()));
@@ -235,6 +238,7 @@ mod tests {
         base
     }
 
+    #[cfg(unix)]
     fn install_file(path: PathBuf, content: &str) -> InstallFile {
         InstallFile {
             path,

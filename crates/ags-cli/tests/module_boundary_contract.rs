@@ -273,35 +273,46 @@ fn lifecycle_and_capability_crates_are_the_only_domain_authorities() {
 
     let cli_skill = read_rust_tree(&cli.join("skill"));
     let adoption_module = capability.join("adoption");
-    let capability_adoption = if adoption_module.is_dir() {
-        read_rust_tree(&adoption_module)
-    } else {
-        std::fs::read_to_string(capability.join("adoption.rs"))
-            .expect("capability adoption authority")
-    };
-    assert_contains_all(
-        "ags-capability-governance adoption",
-        &capability_adoption,
-        &[
-            "pub struct AdoptionPlan",
-            "fn install_canonical_body",
-            "fn acquire_github_source",
-            "fn audit_skill_directory",
-            "fn persist_plan",
-            "fn validate_saved_plan_integrity",
-        ],
+    let legacy_adoption = capability.join("adoption.rs");
+    let required_adoption_authority_markers = [
+        "pub struct AdoptionPlan",
+        "fn install_canonical_body",
+        "fn acquire_github_source",
+        "fn audit_skill_directory",
+        "fn persist_plan",
+        "fn validate_saved_plan_integrity",
+    ];
+    let forbidden_adoption_authority_markers = [
+        "struct AdoptionPlan",
+        "fn install_canonical_body",
+        "fn acquire_github_source",
+        "fn audit_skill_directory",
+        "fn persist_plan",
+        "fn validate_saved_plan_integrity",
+    ];
+    assert!(
+        !legacy_adoption.exists(),
+        "the retired adoption.rs monolith must not return"
     );
+    if adoption_module.is_dir() {
+        let capability_adoption = read_rust_tree(&adoption_module);
+        assert_contains_all(
+            "ags-capability-governance adoption",
+            &capability_adoption,
+            &required_adoption_authority_markers,
+        );
+    } else {
+        let capability_source = read_rust_tree(&capability);
+        assert_contains_none(
+            "public capability tree without private source acquisition",
+            &capability_source,
+            &forbidden_adoption_authority_markers,
+        );
+    }
     assert_contains_none(
         "ags-cli skill adapter",
         &cli_skill,
-        &[
-            "struct AdoptionPlan",
-            "fn install_canonical_body",
-            "fn acquire_github_source",
-            "fn audit_skill_directory",
-            "fn persist_plan",
-            "fn validate_saved_plan_integrity",
-        ],
+        &forbidden_adoption_authority_markers,
     );
 
     let workspace_facts = read_rust_tree(&root.join("crates/ags-workspace-facts/src"));

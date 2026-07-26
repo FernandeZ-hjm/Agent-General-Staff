@@ -240,7 +240,7 @@ public_rewrites:
   - path: crates/ags-lifecycle/src/init/plan.rs
     target_sha256: "sha256:debd8f7af6d4c082a56e42017513b862b749215dc67b65ef1b2bd8b11e893398"
   - path: crates/ags-lifecycle/src/setup/apply.rs
-    target_sha256: "sha256:16517c0da6d67880333ff956fbd5fe6206ce3447665ce5a8f7a86f607218b35d"
+    target_sha256: "sha256:5d8a9ad40cd54349102502b6a95f66b89747f6fa52374b7a04a3f2975f2eb6f8"
   - path: crates/ags-lifecycle/src/setup/memory/adapter.rs
     target_sha256: "sha256:d29003541dbe4b0940f75dcb5664a86703d82a0f37a9fb236ff6c4ee2cb48d76"
   - path: crates/ags-lifecycle/src/setup/memory/assets.rs
