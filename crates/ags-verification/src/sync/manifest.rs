@@ -287,6 +287,10 @@ const APPROVED_PUBLIC_OVERLAY_PATHS: &[&str] = &[
     "governance/skill-adoption-log.yaml",
     "governance/skill-ignore-list.yaml",
     "governance/skills-inventory.md",
+    "templates/memory/archive-index.md",
+    "templates/memory/context-capsule.md",
+    "templates/memory/task-archive/README.md",
+    "templates/memory/task-memory.md",
 ];
 
 pub fn is_approved_public_rewrite_path(path: &str) -> bool {
@@ -1364,6 +1368,57 @@ mod tests {
             "protocol/cursor-skill-index.md",
         ] {
             assert!(assets.contains(&path.to_string()));
+        }
+    }
+
+    #[test]
+    fn public_payload_authority_shared_files_exist_in_the_authority_tree() {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap();
+        let authority = load_public_payload_authority(workspace).unwrap();
+        let missing = authority
+            .shared_files
+            .iter()
+            .filter(|relative| !workspace.join(relative).is_file())
+            .cloned()
+            .collect::<Vec<_>>();
+
+        assert!(
+            missing.is_empty(),
+            "public payload authority references missing shared files: {}",
+            missing.join(", ")
+        );
+    }
+
+    #[test]
+    fn public_payload_authority_pins_target_only_memory_templates() {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap();
+        let authority = load_public_payload_authority(workspace).unwrap();
+        let overlays = authority
+            .public_overlay_files
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<BTreeSet<_>>();
+
+        for relative in [
+            "templates/memory/archive-index.md",
+            "templates/memory/context-capsule.md",
+            "templates/memory/task-archive/README.md",
+            "templates/memory/task-memory.md",
+        ] {
+            assert!(
+                overlays.contains(relative),
+                "public-only memory template must be a pinned overlay: {relative}"
+            );
+            assert!(
+                !authority.shared_files.iter().any(|path| path == relative),
+                "public-only memory template cannot be declared shared: {relative}"
+            );
         }
     }
 

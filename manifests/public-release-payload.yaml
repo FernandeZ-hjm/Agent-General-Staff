@@ -70,10 +70,6 @@ shared_files:
   - templates/global-entry/ags-task-handoff.md
   - templates/global-entry/host-operations.md
   - templates/hooks/pre-push.verify.sh
-  - templates/memory/archive-index.md
-  - templates/memory/context-capsule.md
-  - templates/memory/task-archive/README.md
-  - templates/memory/task-memory.md
   - templates/project-integration/AGENTS.md.template
   - templates/project-integration/CLAUDE.md.template
   - templates/task-card-template.md
@@ -162,6 +158,14 @@ public_overlay_files:
     target_sha256: "sha256:f5c1f9ae427183ebfb336795913a7e062f29ce4ac41604a2a67fe68b81277f26"
   - path: governance/skills-inventory.md
     target_sha256: "sha256:d483f9d843979c648ebb2184535a2ff0e2b42aaf93cc9824e0ef9c81944f5537"
+  - path: templates/memory/archive-index.md
+    target_sha256: "sha256:1ccc5dcdb8706b461d2180544b0bb9b677a0974b2cde376df569b6a4c66f755b"
+  - path: templates/memory/context-capsule.md
+    target_sha256: "sha256:b66a0ec64fe10f42f643ea389311efdb5343f78e692a661ba68cd473e3e17e94"
+  - path: templates/memory/task-archive/README.md
+    target_sha256: "sha256:0da9f61a742c418c97fab7c1f123c688b2ffc0e4d33e98fc83ad40f16e5957c2"
+  - path: templates/memory/task-memory.md
+    target_sha256: "sha256:79b69de748450f32fd7264ec5b8c5fe27634bc9926dab758f9f677e7057032f0"
 
 # Each tree contributes Cargo.toml plus every file below src/ and tests/. The
 # twelve roots are validated exactly; adding a thirteenth crate cannot silently
