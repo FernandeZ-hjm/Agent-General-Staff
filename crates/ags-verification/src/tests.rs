@@ -248,7 +248,10 @@ fn write_release_version_fixture(root: &Path) {
         ),
         (
             "global-skills/ags-setup/SKILL.md",
-            format!("AGS 产品版本：{}", env!("CARGO_PKG_VERSION")),
+            format!(
+                "ags setup --yes --force\nAGS 产品版本：{}",
+                env!("CARGO_PKG_VERSION")
+            ),
         ),
         (
             "global-skills/ags-skill/SKILL.md",
@@ -346,6 +349,29 @@ fn release_version_surfaces_reject_mcp_server_info_version_decoupling() {
     assert!(item
         .evidence
         .contains("MCP serverInfo.version from the product package version"));
+}
+
+#[test]
+fn release_version_surfaces_reject_retired_setup_flag_in_command_skill() {
+    let dir = tempfile::tempdir().unwrap();
+    write_release_version_fixture(dir.path());
+    std::fs::write(
+        dir.path().join("global-skills/ags-setup/SKILL.md"),
+        format!(
+            "ags setup --with-evomap --yes\nAGS 产品版本：{}",
+            env!("CARGO_PKG_VERSION")
+        ),
+    )
+    .unwrap();
+
+    let item = check_release_version_surfaces(dir.path());
+    assert_eq!(item.status, CheckStatus::Fail);
+    assert!(item
+        .evidence
+        .contains("still references retired flag --with-evomap"));
+    assert!(item
+        .evidence
+        .contains("is missing current command: ags setup --yes --force"));
 }
 
 #[test]
