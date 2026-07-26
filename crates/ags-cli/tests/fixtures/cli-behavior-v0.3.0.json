@@ -1452,7 +1452,7 @@
   ],
   "filesystem_delta_policy": "exact-content-hash-unix-mode-symlink-target",
   "input_fixture": "crates/ags-cli/tests/fixtures/cli-behavior-input-v0.3.0.json",
-  "input_fixture_sha256": "sha256:a2374a1d7c24ad97ac420c88ab6606e165454df28fe6466dff8c99f089e3b4d1",
+  "input_fixture_sha256": "sha256:c0235bb37159d1788afc62086f299a6266c11102153ea69c888cfa01a4a463f1",
   "normalization": [
     "crlf-to-lf",
     "ags.exe-to-ags",

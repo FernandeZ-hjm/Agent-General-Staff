@@ -1,6 +1,7 @@
 {
   "schema_version": "ags-cli-behavior-input/1",
   "files": {
+    "home/.codex/config.toml": "[mcp_servers]\n",
     "suite/crates/ags-cli/Cargo.toml": "[package]\nname = \"ags-cli-contract-fixture\"\nversion = \"0.3.0\"\nedition = \"2021\"\n",
     "suite/manifests/mcp-registry.yaml": "schema_version: \"1.0\"\nregistry:\n  version: \"1.0.0\"\n  description: \"immutable CLI contract fixture\"\n  default_policy: \"deny_by_default\"\n  update_policy: \"manual\"\nsuite_interfaces: []\nmcps: []\n",
     "suite/manifests/skills-registry.yaml": "registry:\n  version: \"1.2.0\"\n  description: \"immutable CLI contract fixture\"\n  update_policy: \"manual\"\n  upstreams: {}\nskills: []\ndemand_routes: []\n",

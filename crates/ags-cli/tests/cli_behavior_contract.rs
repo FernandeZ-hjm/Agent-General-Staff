@@ -8,7 +8,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const INPUT_FIXTURE_SHA256: &str =
-    "sha256:a2374a1d7c24ad97ac420c88ab6606e165454df28fe6466dff8c99f089e3b4d1";
+    "sha256:c0235bb37159d1788afc62086f299a6266c11102153ea69c888cfa01a4a463f1";
 const VALID_FULL_SHA256: &str =
     "sha256:e08f207b0ca39010f5a96c9ac4e0e4d52ec5b7b5e8f9a12ed8b379f59608b361";
 const INVALID_ULTRACODE_SHA256: &str =

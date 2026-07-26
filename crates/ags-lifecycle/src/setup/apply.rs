@@ -221,8 +221,11 @@ pub(in crate::setup) fn add_claude_registration_checks(
 #[cfg(test)]
 mod tests {
     use super::super::InstallFile;
+    #[cfg(unix)]
     use super::write_install_file;
-    use std::path::{Path, PathBuf};
+    #[cfg(unix)]
+    use std::path::Path;
+    use std::path::PathBuf;
 
     fn tmp(tag: &str) -> PathBuf {
         let base =

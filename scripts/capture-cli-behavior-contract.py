@@ -21,7 +21,7 @@ BASELINE_EXECUTABLE_SHA256 = (
 )
 INPUT_FIXTURE = Path("crates/ags-cli/tests/fixtures/cli-behavior-input-v0.3.0.json")
 INPUT_FIXTURE_SHA256 = (
-    "a2374a1d7c24ad97ac420c88ab6606e165454df28fe6466dff8c99f089e3b4d1"
+    "c0235bb37159d1788afc62086f299a6266c11102153ea69c888cfa01a4a463f1"
 )
 STDIN_FIXTURE_SHA256 = {
     "tests/fixtures/valid-full.md": (
