@@ -14,10 +14,16 @@ fn test_schema_version() {
 
 #[test]
 fn test_scan_migrated_manifest() {
-    // Scan the migrated suite manifest in the repo.
+    // Scan the edition's migrated suite manifest. Private/stable ship the
+    // governed bodies; the public edition deliberately ships no skill bodies.
     let root = repo_root();
     let result = scan_skills(&root);
     assert_eq!(result.schema_version, SCHEMA_VERSION);
+    if !root.join("global-skills").is_dir() {
+        assert_eq!(result.summary.available, 0);
+        assert_eq!(result.summary.personal, 0);
+        return;
+    }
     // 25 active required skills: retired duplicate routes stay out of the
     // active suite, and the 14 Superpowers playbooks are internal resources
     // behind one host-visible parent.
@@ -39,6 +45,14 @@ fn test_scan_migrated_manifest() {
 fn test_scan_personal_manifest_metadata() {
     let root = repo_root();
     let result = scan_skills(&root);
+    if !root.join("skill-packs/personal").is_dir() {
+        assert_eq!(result.summary.personal, 0);
+        assert!(result
+            .skills
+            .iter()
+            .all(|skill| !matches!(skill.status, SkillStatus::Personal)));
+        return;
+    }
     let skill = result
         .skills
         .iter()
@@ -272,6 +286,13 @@ fn test_render_upstream_text_and_json() {
 #[test]
 fn superpowers_parent_does_not_reintroduce_duplicate_routes_or_heavy_chaining() {
     let root = repo_root();
+    if !root.join("global-skills").is_dir() {
+        assert!(
+            !root.join("global-skills/superpowers/SKILL.md").exists(),
+            "public-safe edition must not ship the private Superpowers body"
+        );
+        return;
+    }
     let parent = std::fs::read_to_string(root.join("global-skills/superpowers/SKILL.md"))
         .expect("read Superpowers parent");
     assert!(parent.contains("Use only when AGS Skill Resolver"));

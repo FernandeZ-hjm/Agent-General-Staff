@@ -2486,7 +2486,7 @@ fn sync_plan_removes_only_proven_retired_suite_thin_indexes() {
     let (ctx, base) = ctx_with_repo_dir(
         "retired-thin-index-cleanup",
         canned_list(),
-        "agent-governance-suite-private",
+        AGS_SUITE_ROOT_NAMES[0],
     );
     write_file(
         &ctx.repo_root.join("manifests/skills-registry.yaml"),
@@ -2497,8 +2497,8 @@ fn sync_plan_removes_only_proven_retired_suite_thin_indexes() {
              \x20 - name: retired-mismatch\n    routing: { route_state: retired }\n",
     );
 
-    let stable = base.join("agent-governance-suite-stable");
-    let runtime = base.join("agent-governance-suite-runtime");
+    let stable = base.join(AGS_SUITE_ROOT_NAMES[1]);
+    let runtime = base.join(AGS_SUITE_ROOT_NAMES[2]);
     write_file(
         &stable.join("global-skills/retired-safe/SKILL.md"),
         "---\nname: retired-safe\ndescription: old stable body.\n---\n",
@@ -2536,6 +2536,28 @@ fn sync_plan_removes_only_proven_retired_suite_thin_indexes() {
     make_symlink(&outside, &external_entry).unwrap();
     let mismatch_entry = ctx.home.join(".codebuddy/skills/retired-mismatch");
     make_symlink(&stable.join("global-skills/retired-safe"), &mismatch_entry).unwrap();
+
+    assert_eq!(
+        retired_suite_skill_names(&ctx.repo_root),
+        vec![
+            "retired-external".to_string(),
+            "retired-mismatch".to_string(),
+            "retired-real".to_string(),
+            "retired-safe".to_string(),
+        ],
+        "fixture registry must expose the retired-name authority"
+    );
+    assert_eq!(
+        sibling_ags_suite_roots(&ctx.repo_root).len(),
+        3,
+        "fixture must expose private/stable/runtime sibling roots"
+    );
+    for entry in [&claude_safe, &codex_safe, &shared_dangling] {
+        assert!(
+            retired_suite_thin_index_is_safe(&ctx, entry, "retired-safe"),
+            "fixture link must be proven suite-owned: {entry:?}"
+        );
+    }
 
     let dry_run = sync_plan(&ctx, &["claude-code", "codex", "codebuddy-code"], false);
     let retired_writes: Vec<&PlannedWrite> = dry_run
