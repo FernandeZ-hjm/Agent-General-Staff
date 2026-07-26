@@ -200,6 +200,13 @@ fn public_package_evomap_surface(path: &str) -> bool {
 pub(super) fn check_runtime_profile_templates(repo_root: &Path) -> CheckItem {
     let templates_dir = repo_root.join("manifests/templates");
     if !templates_dir.exists() {
+        if crate::edition::is_public_edition(repo_root) {
+            return CheckItem::pass(
+                "runtime-profile-templates",
+                "local",
+                "public edition intentionally omits private EvoMap runtime profile templates",
+            );
+        }
         return CheckItem::warn(
             "runtime-profile-templates",
             "local",

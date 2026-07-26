@@ -250,11 +250,11 @@ public_rewrites:
   - path: crates/ags-lifecycle/src/setup/memory/mod.rs
     target_sha256: "sha256:f21ba5379348cb82f5ac13b0cf18d14f7ef310edd8c7a09766e6998cfbf5b4af"
   - path: crates/ags-lifecycle/src/setup/memory/tests.rs
-    target_sha256: "sha256:da9c044eb4f9bb4e208676863e00f32db479ea5861d2df26b4dcaf2908f72b30"
+    target_sha256: "sha256:4e9c11b9d174420fd0443bbce8577cbe11c44121580106880359cec87f5e2a06"
   - path: crates/ags-lifecycle/src/setup/mod.rs
     target_sha256: "sha256:ca260e907889fdc27ce7ce8668644ace53408e6f10ceffdc968d126a1af1282e"
   - path: crates/ags-lifecycle/src/setup/plan.rs
-    target_sha256: "sha256:f54f87c1ead01fdabeaf92a8c52f1456f6d4dd3557f14da866387809f3e85b81"
+    target_sha256: "sha256:9650d984e245f70bc9a93061e2011318f810a53b455d3b2a2ed022da3219cd7c"
   - path: crates/ags-lifecycle/src/setup/plan/tests.rs
     target_sha256: "sha256:8f3ba610ef03b00b692841459f4636306752bcdde304b1ed6cc0073896dd329d"
   - path: crates/ags-lifecycle/src/setup/templates.rs
@@ -278,17 +278,17 @@ public_rewrites:
   - path: crates/ags-mcp/src/tools/tests.rs
     target_sha256: "sha256:9f12041f5c46fcfeffbfccda2a648239ae92c0a8239cab3167547f77d3384c59"
   - path: crates/ags-verification/src/bootstrap.rs
-    target_sha256: "sha256:7f4b9c64e36cca470fa6979d37672884236d2612e1ac1ec841fedfb17c277ed9"
+    target_sha256: "sha256:4e2fec7847abdee912a7a25cde615e9d868caf58d952147fd444119579ffe416"
   - path: crates/ags-verification/src/doctor/checks/host_memory.rs
     target_sha256: "sha256:84cb75d3217da87051338f6c4bf2111583b9a14b94445bd50616eb9fb0c83c73"
   - path: crates/ags-verification/src/doctor/checks/mod.rs
-    target_sha256: "sha256:d2d26c6a4d6b08e79afa8d35e938a6455351c719a40a79de804f846ec2db6ce0"
+    target_sha256: "sha256:276d0b7cf2145d5873e54c0e89120f48555821122cc0d9eba9f7ebe743a12687"
   - path: crates/ags-verification/src/doctor/checks/orchestration.rs
     target_sha256: "sha256:090a605b81182d9347fff3059f58bad67974799e091df6132750920c1f574b0d"
   - path: crates/ags-verification/src/doctor/checks/runtime.rs
     target_sha256: "sha256:dfe872793094e5d13058bebbb9960335f3d639db74b49c44f565e431d976a5e1"
   - path: crates/ags-verification/src/doctor/checks/tests.rs
-    target_sha256: "sha256:9ee2f8f26e4f8b811f05057c9c9f0f8a22431f7af4693c18fb8a6d8c6be949d4"
+    target_sha256: "sha256:ec4da6155735dbefd8f8f3ce2abaef8a31dc73b8a7c7ebd92bbc03f4b330c4d3"
   - path: crates/ags-verification/src/sync/mod.rs
     target_sha256: "sha256:87746acc967e36d034dda7946ed75a775e936e067d4bb14a9204c8a562416fe3"
   - path: docs/adr/0001-workspace-service-and-deep-modules.md

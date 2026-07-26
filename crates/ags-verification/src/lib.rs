@@ -25,6 +25,7 @@ pub use visible_status::{
     derive_governance_status, derive_visible_status, GovernanceStatus, StatusSignals, VisibleStatus,
 };
 
+mod edition;
 mod local_checks;
 mod model;
 mod orchestrator;

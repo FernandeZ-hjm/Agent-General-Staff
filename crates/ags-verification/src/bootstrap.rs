@@ -615,17 +615,25 @@ mod tests {
             "should include bootstrap log"
         );
 
-        // Must include template file actions
+        // Private/stable authority includes portable private-runtime templates;
+        // the public source edition intentionally excludes that payload.
         let template_actions: Vec<_> = plan
             .actions
             .iter()
             .filter(|a| a.action == "copy-template")
             .collect();
-        assert!(
-            template_actions.len() >= 3,
-            "should include at least 3 template actions (profile, js hook, json hook), got {}",
-            template_actions.len()
-        );
+        if crate::edition::is_public_edition(repo_root) {
+            assert!(
+                template_actions.is_empty(),
+                "public bootstrap must not recreate private runtime templates"
+            );
+        } else {
+            assert!(
+                template_actions.len() >= 3,
+                "should include at least 3 template actions (profile, js hook, json hook), got {}",
+                template_actions.len()
+            );
+        }
         // All template action paths must be under manifests/templates/
         for a in &template_actions {
             assert!(

@@ -12,10 +12,10 @@ mod tests {
     }
 
     #[test]
-    fn public_edition_is_detected_from_the_public_workspace_contract() {
+    fn documentation_only_does_not_claim_public_payload_identity() {
         let root = fixture("edition");
         std::fs::write(root.join("WORKSPACE.md"), "# AGS Public Edition\n").unwrap();
-        assert!(is_public_edition(&root));
+        assert!(!is_public_edition(&root));
         let _ = std::fs::remove_dir_all(root);
     }
 

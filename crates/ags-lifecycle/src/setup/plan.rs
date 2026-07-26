@@ -302,9 +302,7 @@ Each command skill routes through AGS preflight before acting.\n",
             mode: Some(0o755),
         },
     ];
-    files.extend(super::memory::memory_script_install_files(
-        &home.to_path_buf(),
-    ));
+    files.extend(super::memory::memory_script_install_files(home));
 
     // AGS-owned global rule modules. Host-global AGENTS.md / CLAUDE.md stay
     // operator-controlled and may reference these concise, stable modules.

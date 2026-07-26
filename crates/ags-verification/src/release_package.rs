@@ -261,11 +261,20 @@ mod tests {
 
     #[test]
     fn public_release_package_keeps_rust_workspace_and_strips_evomap_runtime() {
-        let (plan, failed) = release_package_plan(&workspace_root(), "public-full", true);
-        assert!(
-            failed,
-            "private authority checkout must not masquerade as the closed public payload"
-        );
+        let root = workspace_root();
+        let (plan, failed) = release_package_plan(&root, "public-full", true);
+        if crate::edition::is_public_edition(&root) {
+            assert!(
+                !failed,
+                "canonical public checkout must close its own release payload: {}",
+                plan
+            );
+        } else {
+            assert!(
+                failed,
+                "private authority checkout must not masquerade as the closed public payload"
+            );
+        }
 
         let included = plan["included_files"]
             .as_array()

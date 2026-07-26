@@ -271,10 +271,57 @@ fn normalize(bytes: Vec<u8>, root: &Path) -> String {
             .replace(['/', '\\', '.'], "-")
             .trim_matches('-')
             .to_string();
-        text = text.replace(&candidate, "<CONTRACT_ROOT>");
+        replace_contract_path(&mut text, &candidate, "<CONTRACT_ROOT>");
         text = text.replace(&sanitized, "<CONTRACT_ROOT_SANITIZED>");
     }
+    normalize_contract_path_separators(&mut text, "<CONTRACT_ROOT>");
     normalize_receipt_names(&text)
+}
+
+fn replace_contract_path(text: &mut String, candidate: &str, replacement: &str) {
+    let mut variants = Vec::new();
+    if candidate.as_bytes().get(1) == Some(&b':') {
+        variants.push(format!(r"\\?\{candidate}"));
+    }
+    variants.push(candidate.to_string());
+
+    for variant in variants {
+        let escaped = serde_json::to_string(&variant).expect("serialize path fixture");
+        let escaped = escaped
+            .strip_prefix('"')
+            .and_then(|value| value.strip_suffix('"'))
+            .expect("JSON string framing");
+        *text = text.replace(escaped, replacement);
+        *text = text.replace(&variant, replacement);
+    }
+}
+
+fn normalize_contract_path_separators(text: &mut String, marker: &str) {
+    let mut search_from = 0;
+    while let Some(relative_start) = text[search_from..].find(marker) {
+        let start = search_from + relative_start;
+        let json_string = text[..start].ends_with('"');
+        let mut cursor = start + marker.len();
+        while cursor < text.len() {
+            let character = text[cursor..].chars().next().expect("UTF-8 boundary");
+            if character == '\\' {
+                let next = cursor + character.len_utf8();
+                let width = if text[next..].starts_with('\\') { 2 } else { 1 };
+                text.replace_range(cursor..cursor + width, "/");
+                cursor += 1;
+                continue;
+            }
+            if character == '\n'
+                || character == '\r'
+                || (json_string && character == '"')
+                || (!json_string && character.is_whitespace())
+            {
+                break;
+            }
+            cursor += character.len_utf8();
+        }
+        search_from = cursor.max(start + marker.len());
+    }
 }
 
 #[cfg(unix)]
@@ -885,6 +932,14 @@ fn portable_delta(delta: Value) -> Value {
     {
         delta
     }
+}
+
+#[test]
+fn json_escaped_extended_windows_paths_normalize_to_portable_contract_paths() {
+    let mut text = r#"{"source_root":"\\\\?\\C:\\Users\\runner\\suite\\protocol"}"#.to_string();
+    replace_contract_path(&mut text, r"C:\Users\runner\suite", "<CONTRACT_ROOT>/suite");
+    normalize_contract_path_separators(&mut text, "<CONTRACT_ROOT>");
+    assert_eq!(text, r#"{"source_root":"<CONTRACT_ROOT>/suite/protocol"}"#);
 }
 
 #[test]
