@@ -348,20 +348,17 @@ pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
         }
 
         let setup_skill = "global-skills/ags-setup/SKILL.md";
-        match std::fs::read_to_string(repo_root.join(setup_skill)) {
-            Ok(content) => {
-                if content.contains("--with-evomap") {
-                    errors.push(format!(
-                        "{setup_skill} still references retired flag --with-evomap"
-                    ));
-                }
-                if !content.contains("ags setup --yes --force") {
-                    errors.push(format!(
-                        "{setup_skill} is missing current command: ags setup --yes --force"
-                    ));
-                }
+        if let Ok(content) = std::fs::read_to_string(repo_root.join(setup_skill)) {
+            if content.contains("--with-evomap") {
+                errors.push(format!(
+                    "{setup_skill} still references retired flag --with-evomap"
+                ));
             }
-            Err(_) => {}
+            if !content.contains("ags setup --yes --force") {
+                errors.push(format!(
+                    "{setup_skill} is missing current command: ags setup --yes --force"
+                ));
+            }
         }
     }
 

@@ -320,7 +320,7 @@ fn attach_runtime_process_stale(result: &str, evidence: &RuntimeProcessStaleEvid
         );
     }
 
-    let warning = "AGS workspace daemon is stale after an executable upgrade; DirectResponse remains available, but SkillTarget and MachineCli routing are blocked until the host reconnects through the stdio adapter.";
+    let warning = "AGS workspace daemon is stale after an executable upgrade; the host may still reply directly outside AGS, but all AGS-governed routing, actions, and resources are blocked until the host reconnects through the stdio adapter.";
     let warnings = object
         .entry("warnings".to_string())
         .or_insert_with(|| serde_json::json!([]));

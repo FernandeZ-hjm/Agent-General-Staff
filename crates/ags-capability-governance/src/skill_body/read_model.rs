@@ -287,12 +287,12 @@ pub fn check_skills(root: &Path) -> SkillCheckResult {
     if let Ok(content) = std::fs::read_to_string(&manifest_path) {
         if let Ok(manifest) = serde_yaml::from_str::<SuiteManifest>(&content) {
             if let Some(suite) = manifest.suite {
-                let mut manifest_skill_names: Vec<String> = Vec::new();
+                let mut adoption_required_skill_names: Vec<String> = Vec::new();
 
                 if let Some(required) = suite.required {
                     for entry in &required {
                         if let Some(ref name) = entry.name {
-                            manifest_skill_names.push(name.clone());
+                            adoption_required_skill_names.push(name.clone());
                             if entry.entry_ref.is_none() {
                                 issues.push(SkillIssue {
                                     severity: "warn".to_string(),
@@ -308,14 +308,17 @@ pub fn check_skills(root: &Path) -> SkillCheckResult {
                 }
 
                 if let Some(optional) = suite.optional {
-                    for entry in &optional {
-                        if let Some(ref name) = entry.name {
-                            manifest_skill_names.push(name.clone());
-                        }
+                    for name in optional
+                        .iter()
+                        .filter(|entry| entry.adopted.is_some() || entry.entry_ref.is_some())
+                        .filter_map(|entry| entry.name.as_ref())
+                    {
+                        adoption_required_skill_names.push(name.clone());
                     }
                 }
 
-                // Cross-reference: adoption log should contain all manifest skills
+                // Cross-reference every required skill and each explicitly adopted
+                // optional skill. Recommendation-only optional entries need no log.
                 if let Ok(adoption_content) = std::fs::read_to_string(&adoption_path) {
                     if let Ok(adoption) = serde_yaml::from_str::<AdoptionLog>(&adoption_content) {
                         if let Some(entries) = adoption.entries {
@@ -324,7 +327,7 @@ pub fn check_skills(root: &Path) -> SkillCheckResult {
                                 .filter_map(|e| e.get("skill_name").and_then(|v| v.as_str()))
                                 .collect();
 
-                            let missing_from_adoption: Vec<&String> = manifest_skill_names
+                            let missing_from_adoption: Vec<&String> = adoption_required_skill_names
                                 .iter()
                                 .filter(|n| !adopted_names.contains(&n.as_str()))
                                 .collect();
@@ -333,10 +336,11 @@ pub fn check_skills(root: &Path) -> SkillCheckResult {
                                 name: "manifest-to-adoption-log".to_string(),
                                 passed: missing_from_adoption.is_empty(),
                                 detail: if missing_from_adoption.is_empty() {
-                                    "All manifest skills have adoption log entries".to_string()
+                                    "All adoption-required manifest skills have adoption log entries"
+                                        .to_string()
                                 } else {
                                     format!(
-                                        "{} manifest skill(s) missing from adoption log: {}",
+                                        "{} adoption-required manifest skill(s) missing from adoption log: {}",
                                         missing_from_adoption.len(),
                                         missing_from_adoption
                                             .iter()

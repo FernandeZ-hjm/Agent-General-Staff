@@ -318,8 +318,17 @@ fn update_verify_validates_snapshot_against_installed_capability_authority() {
     std::fs::create_dir_all(&runtime).unwrap();
     std::fs::create_dir_all(&host_home).unwrap();
 
-    for relative in ["manifests", "global-skills", "skill-packs"] {
-        copy_tree(&root.join(relative), &authority.join(relative));
+    let manifests = root.join("manifests");
+    assert!(
+        manifests.is_dir(),
+        "the capability authority fixture requires manifests"
+    );
+    copy_tree(&manifests, &authority.join("manifests"));
+    for relative in ["global-skills", "skill-packs"] {
+        let source = root.join(relative);
+        if source.is_dir() {
+            copy_tree(&source, &authority.join(relative));
+        }
     }
     let registry_path = authority.join("manifests/skills-registry.yaml");
     let mut registry = std::fs::read_to_string(&registry_path).unwrap();

@@ -84,6 +84,73 @@ fn test_check_governance_files() {
 }
 
 #[test]
+fn optional_manifest_skills_do_not_require_adoption_log_entries() {
+    let base =
+        std::env::temp_dir().join(format!("ags-skill-check-optional-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(base.join("governance")).unwrap();
+    std::fs::create_dir_all(base.join("manifests")).unwrap();
+    std::fs::write(
+        base.join("governance/skill-adoption-log.yaml"),
+        "schema_version: \"2.0-skill\"\nentries: []\n",
+    )
+    .unwrap();
+    std::fs::write(
+        base.join("governance/skill-ignore-list.yaml"),
+        "schema_version: \"2.0-skill\"\nentries: []\n",
+    )
+    .unwrap();
+    std::fs::write(
+        base.join("manifests/suite.yaml"),
+        "schema_version: \"2.0-skill\"\nsuite:\n  name: public\n  version: \"0.3.2\"\n  required: []\n  optional:\n    - name: diagnosing-bugs\n",
+    )
+    .unwrap();
+
+    let result = check_skills(&base);
+    let _ = std::fs::remove_dir_all(&base);
+
+    assert!(
+        result.passed,
+        "optional recommendations are not adopted requirements: {result:#?}"
+    );
+}
+
+#[test]
+fn adopted_optional_manifest_skill_requires_adoption_log_entry() {
+    let base = std::env::temp_dir().join(format!("ags-skill-check-adopted-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(base.join("governance")).unwrap();
+    std::fs::create_dir_all(base.join("manifests")).unwrap();
+    std::fs::write(
+        base.join("governance/skill-adoption-log.yaml"),
+        "schema_version: \"2.0-skill\"\nentries: []\n",
+    )
+    .unwrap();
+    std::fs::write(
+        base.join("governance/skill-ignore-list.yaml"),
+        "schema_version: \"2.0-skill\"\nentries: []\n",
+    )
+    .unwrap();
+    std::fs::write(
+        base.join("manifests/suite.yaml"),
+        "schema_version: \"2.0-skill\"\nsuite:\n  name: private\n  version: \"0.3.2\"\n  required: []\n  optional:\n    - name: claude-mem\n      adopted: \"2026-01-01\"\n      entry_ref: governance/skill-adoption-log.yaml#claude-mem\n",
+    )
+    .unwrap();
+
+    let result = check_skills(&base);
+    let _ = std::fs::remove_dir_all(&base);
+    let adoption_check = result
+        .consistency_checks
+        .iter()
+        .find(|check| check.name == "manifest-to-adoption-log")
+        .expect("manifest-to-adoption-log check");
+
+    assert!(!result.passed);
+    assert!(!adoption_check.passed);
+    assert!(adoption_check.detail.contains("claude-mem"));
+}
+
+#[test]
 fn test_propose_unknown_skill() {
     let root = repo_root();
     let result = propose_skills(&root, "adopt", "nonexistent-skill");
