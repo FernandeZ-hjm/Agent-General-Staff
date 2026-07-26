@@ -97,9 +97,7 @@ fn every_workspace_rust_source_is_tracked() {
         .collect::<BTreeSet<_>>();
     let missing = EXPECTED_PACKAGES
         .iter()
-        .flat_map(|package| {
-            rust_sources(&root.join("crates").join(package).join("src"))
-        })
+        .flat_map(|package| rust_sources(&root.join("crates").join(package).join("src")))
         .filter_map(|path| {
             let relative = path
                 .strip_prefix(&root)
