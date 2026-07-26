@@ -75,6 +75,48 @@ fn rust_sources(root: &Path) -> Vec<PathBuf> {
     files
 }
 
+#[test]
+fn every_workspace_rust_source_is_tracked() {
+    let root = workspace_root();
+    let output = Command::new("git")
+        .args(["ls-files", "-z", "--", "crates"])
+        .current_dir(&root)
+        .output()
+        .expect("git ls-files");
+    assert!(
+        output.status.success(),
+        "git ls-files failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let tracked = output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| String::from_utf8_lossy(path).replace('\\', "/"))
+        .collect::<BTreeSet<_>>();
+    let missing = EXPECTED_PACKAGES
+        .iter()
+        .flat_map(|package| {
+            rust_sources(&root.join("crates").join(package).join("src"))
+        })
+        .filter_map(|path| {
+            let relative = path
+                .strip_prefix(&root)
+                .expect("workspace source")
+                .to_string_lossy()
+                .replace('\\', "/");
+            (!tracked.contains(&relative)).then_some(relative)
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        missing.is_empty(),
+        "workspace Rust sources must be tracked: {}",
+        missing.join(", ")
+    );
+}
+
 fn read_rust_tree(root: &Path) -> String {
     rust_sources(root)
         .iter()
