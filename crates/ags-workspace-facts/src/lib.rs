@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 mod instruction_projection;
+pub mod managed_projects;
 mod protocol_audit;
 mod rendering;
 mod session_preflight;

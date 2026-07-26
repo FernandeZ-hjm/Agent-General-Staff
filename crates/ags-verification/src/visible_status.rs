@@ -9,7 +9,7 @@
 //! **Quiet only affects the foreground.** It never suppresses trace, receipt, or
 //! archive writes — "可审计不等于过程直播". Auditable ≠ livestreamed.
 
-pub use request_governance::GovernanceStatus;
+pub use ags_governance_decision::GovernanceStatus;
 
 /// Compatibility alias. New contracts should use `GovernanceStatus`.
 #[deprecated(note = "use GovernanceStatus")]

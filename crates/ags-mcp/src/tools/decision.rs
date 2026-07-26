@@ -106,8 +106,28 @@ pub(super) fn tool_route_request_with_source(
             ProposalTarget::Skill(_) | ProposalTarget::MachineCli(_)
         )
     });
+    if needs_capability_authority && capability_source.is_some() {
+        let failure = binding
+            .capability
+            .as_ref()
+            .and_then(ags_session::CapabilityReference::as_failure)
+            .or_else(|| {
+                binding
+                    .capability
+                    .is_none()
+                    .then_some(ags_session::CapabilityLoadFailure::SnapshotStale)
+            });
+        if let Some(error) = failure {
+            return blocked_route(
+                binding,
+                decision_id,
+                proposal_id,
+                ProposalError::new(error.code(), "targets", error.detail()),
+            );
+        }
+    }
     let (authority_root, registry_hash) = if needs_capability_authority {
-        let root = match skill_resolver::resolve_capability_authority_root(
+        let root = match ags_capability_governance::resolve_capability_authority_root(
             &binding.target,
             runtime_home,
             std::env::var_os("AGS_SOURCE_ROOT").map(PathBuf::from),
@@ -141,7 +161,7 @@ pub(super) fn tool_route_request_with_source(
                 );
             }
         };
-        let registry_hash = skill_resolver::sha256(&registry_bytes);
+        let registry_hash = ags_capability_governance::sha256(&registry_bytes);
         (Some(root), registry_hash)
     } else {
         (None, "sha256:not-applicable".to_string())
@@ -154,31 +174,22 @@ pub(super) fn tool_route_request_with_source(
         ProposalTarget::Skill(skill) => Some(skill),
         _ => None,
     });
-    let current_snapshot = if let Some(root) = authority_root.as_deref() {
+    let current_snapshot = if authority_root.is_some() {
         let loaded = capability_source.map_or_else(
             || {
-                skill_resolver::load_validated_snapshot_with_roots(
-                    root,
-                    runtime_home,
-                    &binding.host,
-                    &binding.host_home,
-                )
-                .map_err(|_| "skill_snapshot_stale".to_string())
+                ags_session::LocalCapabilityCatalogSource::new(runtime_home.to_path_buf())
+                    .load_validated_snapshot(binding)
             },
             |source| source.load_validated_snapshot(binding),
         );
         match loaded {
-            Ok(snapshot) => snapshot,
-            Err(_) => {
+            Ok(catalog) => catalog,
+            Err(error) => {
                 return blocked_route(
                     binding,
                     decision_id,
                     proposal_id,
-                    ProposalError::new(
-                        "skill_snapshot_stale",
-                        "targets",
-                        "the preflight-bound host capability snapshot is unavailable or stale",
-                    ),
+                    ProposalError::new(error.code(), "targets", error.detail()),
                 );
             }
         }
@@ -192,7 +203,26 @@ pub(super) fn tool_route_request_with_source(
             registry_hash,
         );
     };
-    let (snapshot, table) = current_snapshot;
+    if capability_source.is_some()
+        && binding
+            .capability
+            .as_ref()
+            .and_then(ags_session::CapabilityReference::ready_binding)
+            != Some(&current_snapshot.binding)
+    {
+        return blocked_route(
+            binding,
+            decision_id,
+            proposal_id,
+            ProposalError::new(
+                "skill_snapshot_stale",
+                "targets",
+                "the workspace capability bundle changed after preflight; rerun ags_preflight",
+            ),
+        );
+    }
+    let snapshot = current_snapshot.snapshot;
+    let table = current_snapshot.table;
     let (selected_skill, snapshot_hash) = if let Some(skill) = skill_target {
         if skill.snapshot_hash != snapshot.snapshot_hash {
             return blocked_route(
@@ -206,7 +236,7 @@ pub(super) fn tool_route_request_with_source(
                 ),
             );
         }
-        let selection = match skill_resolver::resolve_skill(
+        let selection = match ags_capability_governance::resolve_skill(
             &skill.skill_id,
             skill.entrypoint.as_deref(),
             &snapshot.snapshot_hash,
@@ -452,10 +482,10 @@ pub(super) fn machine_policy_hash(
             CliCapabilityId::TaskPrepareExecution | CliCapabilityId::PolicyResolve,
             TypedCliInput::TaskCard { content },
         ) => {
-            let parsed = task_card_validator::parse_validated(content)
+            let parsed = ags_task_contract::validator::parse_validated(content)
                 .map_err(|errors| format!("task_card_validation_failed: {}", errors.join("; ")))?;
-            let policy = execution_policy::resolve_policy(
-                execution_policy::TaskPolicyInput::from_fields(&parsed.fields),
+            let policy = ags_governance_decision::policy::resolve_policy(
+                ags_governance_decision::policy::TaskPolicyInput::from_fields(&parsed.fields),
             );
             if capability == CliCapabilityId::TaskPrepareExecution && policy.stop_before_launch {
                 return Err(format!(
@@ -573,9 +603,9 @@ pub(super) fn hold_action<'a>(
 pub(super) fn onboarding_policy_hash(
     plan_hash: &str,
     item_id: &str,
-    action: &ags_onboarding::OnboardingAction,
+    action: &ags_lifecycle::OnboardingAction,
 ) -> String {
-    ags_onboarding::action_hash(plan_hash, item_id, action)
+    ags_lifecycle::action_hash(plan_hash, item_id, action)
 }
 
 pub(super) fn hold_onboarding_action<'a>(
@@ -583,7 +613,7 @@ pub(super) fn hold_onboarding_action<'a>(
     binding: &PreflightBinding,
     plan_hash: &str,
     item_id: &str,
-    action: ags_onboarding::OnboardingAction,
+    action: ags_lifecycle::OnboardingAction,
 ) -> &'a HeldAction {
     let policy_hash = onboarding_policy_hash(plan_hash, item_id, &action);
     let action_id = stable_id(
@@ -634,7 +664,7 @@ pub(super) fn hold_onboarding_action<'a>(
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct OutcomeInput {
-    pub(super) status: skill_resolver::SkillOutcome,
+    pub(super) status: ags_capability_governance::SkillOutcome,
     #[serde(default)]
     pub(super) quality: Option<u8>,
 }

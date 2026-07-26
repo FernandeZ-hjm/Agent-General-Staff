@@ -8,8 +8,9 @@ description = "AGS receipt — task run receipt generation, verification, and co
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
-request-governance = { package = "ags-governance-decision", path = "../ags-governance-decision" }
+ags-platform = { path = "../ags-platform" }
+ags-governance-decision = { path = "../ags-governance-decision" }
+ags-task-contract = { path = "../ags-task-contract" }
 
 [dev-dependencies]
 tempfile = "3"

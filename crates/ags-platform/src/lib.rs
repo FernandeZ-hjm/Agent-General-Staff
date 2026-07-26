@@ -84,6 +84,16 @@ pub fn sha256(bytes: impl AsRef<[u8]>) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes.as_ref()))
 }
 
+/// Stable SHA-256 digest without a scheme prefix.
+///
+/// Task-card and receipt identifiers historically use the bare hexadecimal
+/// form, while capability authorities use [`sha256`]. Keeping both encodings
+/// here prevents domain modules from depending on one another only for hash
+/// formatting.
+pub fn sha256_hex(bytes: impl AsRef<[u8]>) -> String {
+    format!("{:x}", Sha256::digest(bytes.as_ref()))
+}
+
 /// Hash a file without exposing filesystem details to domain crates.
 pub fn sha256_file(path: &Path) -> Result<String, String> {
     let bytes = std::fs::read(path)

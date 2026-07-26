@@ -130,7 +130,7 @@ pub fn locate_runtime_home() -> PathBuf {
     }
     ags_platform::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".ags/runtime")
+        .join(".ags/private-runtime")
 }
 
 pub(super) fn safe_host(active_host: &str) -> String {

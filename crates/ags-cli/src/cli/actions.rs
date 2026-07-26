@@ -388,36 +388,6 @@ pub(crate) enum UpdateLane {
     Projects,
     Public,
 }
-impl UpdateLane {
-    pub(crate) fn all() -> [UpdateLane; 6] {
-        use UpdateLane::*;
-        [Core, Runtime, Agents, Skills, Projects, Public]
-    }
-    pub(crate) fn id(&self) -> &'static str {
-        match self {
-            UpdateLane::Core => "core",
-            UpdateLane::Runtime => "runtime",
-            UpdateLane::Agents => "agents",
-            UpdateLane::Skills => "skills",
-            UpdateLane::Projects => "projects",
-            UpdateLane::Public => "public",
-        }
-    }
-    /// True only for lanes AGS may execute locally under explicit --apply.
-    pub(crate) fn auto_executes_locally(&self) -> bool {
-        matches!(
-            self,
-            UpdateLane::Core | UpdateLane::Runtime | UpdateLane::Projects
-        )
-    }
-    pub(crate) fn risk_tier(&self) -> &'static str {
-        match self {
-            UpdateLane::Core | UpdateLane::Public => "heavy",
-            UpdateLane::Runtime | UpdateLane::Skills | UpdateLane::Projects => "medium",
-            UpdateLane::Agents => "advice",
-        }
-    }
-}
 /// Unified update — five-segment stage 5 (统一更新). check/plan read-only;
 /// apply/repair-local write only AGS-owned dirs under --apply; rollback plan-only.
 #[derive(Subcommand)]

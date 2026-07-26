@@ -139,7 +139,7 @@ pub fn check_protocol_status(target: &Path) -> ProtocolStatus {
     let cargo_toml = canonical.join("Cargo.toml");
     let has_rust_validator = if cargo_toml.exists() {
         if let Ok(content) = std::fs::read_to_string(&cargo_toml) {
-            content.contains("task-card-validator")
+            content.contains("ags-task-contract") || content.contains("task-card-validator")
         } else {
             false
         }
@@ -173,7 +173,7 @@ pub fn check_protocol_status(target: &Path) -> ProtocolStatus {
     let task_card_validator = ValidatorInfo {
         available: validator_available,
         entry: validator_entry,
-        description: "Rust task-card-validator is the canonical task-card format gate. It provides structural format checks, field-value validation, field-combination checks, Execution Authority Gate, protected-path analysis, contradiction detection, and content-quality checks.".to_string(),
+        description: "The Rust validator owned by ags-task-contract is the canonical task-card format gate; the task-card-validator name remains a compatibility command only. It provides structural format checks, field-value validation, field-combination checks, Execution Authority Gate, protected-path analysis, contradiction detection, and content-quality checks.".to_string(),
         alternate_entry,
     };
 
@@ -181,6 +181,9 @@ pub fn check_protocol_status(target: &Path) -> ProtocolStatus {
     let risk_boundaries = RiskBoundaries {
         protected_paths: vec![
             "protocol/".to_string(),
+            "crates/ags-task-contract/src/validator/".to_string(),
+            // Retain the pre-v0.3.2 package path as a compatibility boundary
+            // when auditing older managed projects.
             "crates/task-card-validator/".to_string(),
             "Cargo.toml".to_string(),
             "Cargo.lock".to_string(),

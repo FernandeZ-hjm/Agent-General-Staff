@@ -22,12 +22,9 @@ use clap::Parser;
 
 mod cli;
 mod context;
-mod file_plan;
 mod host_platforms;
-mod host_probe;
 mod managed_projects;
 mod output;
-mod project_templates;
 mod receipt_bridge;
 
 mod agents;
@@ -72,6 +69,7 @@ fn run_cli() {
             dry_run,
             format,
         } => setup::cmd_setup(target, yes, force, register_claude, dry_run, &format),
+        Commands::Onboarding { action } => onboarding::run(action),
         Commands::Init {
             target,
             slug,
@@ -101,7 +99,6 @@ fn run_cli() {
             format,
         } => setup::cmd_private_apply(&profile, target, yes, force, &format, register_claude),
         Commands::Agents { action } => agents::run(action),
-        Commands::Onboarding { action } => onboarding::run(action),
         Commands::Skill {
             action,
             format,

@@ -322,7 +322,7 @@ pub(crate) enum AgentAction {
     /// Generates instructions tailored to known agents, with a generic
     /// governed-host fallback for any other non-empty agent identifier.
     Instructions {
-        /// Agent identifier: codex, claude-code, cursor, tencent-agent, workbuddy, codebuddy-code, cowork, or another host id
+        /// Agent identifier: codex, claude-code, omp, cursor, tencent-agent, workbuddy, codebuddy-code, cowork, or another host id
         #[arg(long = "for", value_name = "AGENT")]
         for_agent: String,
         /// Target repository path (default: current directory)
@@ -348,7 +348,7 @@ pub(crate) enum SessionAction {
     /// status, memory capsule/task-memory paths, stop conditions, warnings,
     /// failures, and recommended next steps.
     Preflight {
-        /// Agent identifier: codex, claude-code, cursor, tencent-agent, workbuddy, codebuddy-code, cowork, or another host id
+        /// Agent identifier: codex, claude-code, omp, cursor, tencent-agent, workbuddy, codebuddy-code, cowork, or another host id
         #[arg(long = "for", value_name = "AGENT")]
         for_agent: String,
         /// Target repository path (default: current directory)
@@ -409,12 +409,14 @@ pub(crate) enum VerifyAction {
 }
 
 // ── MCP Server ─────────────────────────────────────────────────────────────
-/// MCP server operations — run AGS as an MCP workspace adapter.
+/// MCP server operations — run AGS as an MCP server.
 ///
 /// First version supports stdio transport only. The server exposes
 /// AGS governance tools, resources, and prompts for MCP hosts
 /// (Tencent Agent, Codex, OMP, Cursor, Claude Code) to call as a global
 /// governance capability.
+///
+/// Third-party MCP servers remain host-owned and are never proxied by AGS.
 #[derive(Subcommand)]
 pub(crate) enum McpAction {
     /// Start the thin AGS MCP adapter on stdio.
@@ -470,9 +472,8 @@ pub(crate) enum ReleaseAction {
     /// Plan a release package — lists what files WOULD be included.
     ///
     /// Public profiles include the public Rust workspace and governance
-    /// runtime, while excluding build output, local/private runtime state, real
-    /// memory, preinstalled skill packs, local agent config, and local runtime
-    /// surfaces.
+    /// runtime, while excluding build output, local runtime state, real memory,
+    /// preinstalled skill packs, and local agent config.
     /// `private-full` includes everything. Dry-run only, nothing is written.
     Package {
         /// Package profile: public-full or private-full
@@ -497,7 +498,7 @@ pub(crate) enum RollbackAction {
         /// Rollback profile. `private` plans rollback of the local AGS runtime home.
         #[arg(long, value_parser = ["private"])]
         profile: Option<String>,
-        /// Target runtime home (default: $AGS_HOME or ~/.ags/runtime).
+        /// Target runtime home (default: $AGS_HOME or ~/.ags/private-runtime).
         #[arg(long)]
         target: Option<PathBuf>,
         /// Output format: text (default) or json

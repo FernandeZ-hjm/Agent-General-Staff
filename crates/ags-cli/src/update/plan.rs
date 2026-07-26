@@ -1,27 +1,18 @@
 use crate::cli::UpdateLane;
-use crate::context::{default_private_runtime_home, source_root_or_exit, AGS_VERSION};
+use crate::context::{
+    capability_authority_root_or_exit, default_private_runtime_home, source_root_or_exit,
+    AGS_VERSION,
+};
 use crate::managed_projects;
-use crate::update::lanes::{build_all_update_lanes, update_lane_json, UpdateLanePlan};
+use crate::update::lanes::{build_all_update_lanes, lifecycle_lane, update_lane_json};
+use ags_lifecycle::update::UpdateLanePlan;
 use std::path::PathBuf;
 
 /// Runtime home verified by `ags update verify`. An explicit `--target` is the
 /// operator's target runtime; without it, fall back to the normal AGS runtime
-/// home. Capability Route enrollment reads from this same path so the report is
-/// about one runtime, not a mix of default + target state.
+/// home.
 fn update_verify_runtime_home(target: Option<PathBuf>) -> PathBuf {
     target.unwrap_or_else(default_private_runtime_home)
-}
-
-/// Strict-drift predicate for `ags update verify`. Drift = runtime home missing
-/// OR an auth-evidence boundary violation. Enrollment-absent is deliberately NOT
-/// an input: a missing machine-local Capability Route enrollment is advisory
-/// degraded and must never make `--strict` fail.
-fn update_verify_strict_drift(
-    runtime_present: bool,
-    auth_boundary_clean: bool,
-    skill_snapshot_current: bool,
-) -> bool {
-    !runtime_present || !auth_boundary_clean || !skill_snapshot_current
 }
 
 pub(in crate::update) fn cmd_update_check(format: &str) {
@@ -31,7 +22,7 @@ pub(in crate::update) fn cmd_update_check(format: &str) {
     // Read-only notifier status: reflects stored update-state.json only. NO
     // network probe, NO state write here — due fetch/write belongs to
     // `ags update notify`. Read from the notifier's own runtime home.
-    let notify_home = skill_resolver::locate_runtime_home();
+    let notify_home = ags_capability_governance::locate_runtime_home();
     if format == "json" {
         let arr: Vec<_> = lanes.iter().map(update_lane_json).collect();
         let reg =
@@ -70,16 +61,16 @@ pub(in crate::update) fn cmd_update_check(format: &str) {
             "{}",
             crate::update::notifier::notifier_status_line(&notify_home)
         );
-        println!("\nNext: `ags update plan` for the full plan; `ags update apply --apply` updates the local kernel.");
+        println!("\nNext: `ags update plan` for the full plan; `ags update apply --apply` updates local executable lanes.");
     }
 }
 pub(in crate::update) fn cmd_update_plan(lane: Option<UpdateLane>, format: &str) {
     let source = source_root_or_exit("ags update plan");
     let home = default_private_runtime_home();
-    let lanes: Vec<UpdateLanePlan> = build_all_update_lanes(&source, &home)
-        .into_iter()
-        .filter(|p| lane.map(|l| l == p.lane).unwrap_or(true))
-        .collect();
+    let lanes: Vec<UpdateLanePlan> = ags_lifecycle::update::plan::select_lanes(
+        build_all_update_lanes(&source, &home),
+        lane.map(lifecycle_lane),
+    );
     if format == "json" {
         let arr: Vec<_> = lanes.iter().map(update_lane_json).collect();
         println!(
@@ -103,26 +94,52 @@ pub(in crate::update) fn cmd_update_plan(lane: Option<UpdateLane>, format: &str)
             for c in &p.commands {
                 println!("       $ {c}");
             }
+            for detail in &p.details {
+                let target = detail.get("target").and_then(|v| v.as_str()).unwrap_or("?");
+                let status = detail.get("status").and_then(|v| v.as_str()).unwrap_or("?");
+                let changed = detail
+                    .get("changed_files")
+                    .and_then(|v| v.as_array())
+                    .map(Vec::len)
+                    .unwrap_or(0);
+                println!("       - {target}: {status}, {changed} file(s)");
+            }
         }
-        println!("\nNOTE: apply executes only core/runtime locally; agents/projects/public stay advice. Receipt written on apply.");
+        println!("\nNOTE: apply executes core/runtime/projects locally under explicit --apply; agents/skills/public stay advice. Project refresh never commits or pushes. Receipt written on apply.");
     }
 }
 pub(in crate::update) fn cmd_update_verify(target: Option<PathBuf>, strict: bool, format: &str) {
     let home = update_verify_runtime_home(target);
     let runtime_present = home.is_dir();
 
+    // Registry/auth checks and the machine-local active-skill snapshot are
+    // read-only here. A stale snapshot blocks skill routing until explicitly
+    // refreshed with `ags capability snapshot --write`.
     let source = source_root_or_exit("ags update verify");
-    let findings = suite_doctor::skill_resolution_drift_check(&source);
-    let auth_boundary_clean = !findings.iter().any(|finding| {
-        finding.check_name == "skill-resolution-auth-boundary"
-            && finding.status == suite_doctor::CheckStatus::Fail
+    let capability_authority = capability_authority_root_or_exit("ags update verify");
+    let cr_findings = ags_verification::doctor::skill_resolution_drift_check(&capability_authority);
+    let auth_boundary_clean = !cr_findings.iter().any(|f| {
+        f.check_name == "skill-resolution-auth-boundary"
+            && f.status == ags_verification::doctor::CheckStatus::Fail
     });
-    let snapshot_path = skill_resolver::snapshot_path(&home, "codex");
+    let snapshot_path = ags_capability_governance::snapshot_path(&home, "codex");
     let snapshot_present = snapshot_path.is_file();
     let skill_snapshot_current =
-        skill_resolver::load_validated_snapshot(&source, &home, "codex").is_ok();
-    let drift =
-        update_verify_strict_drift(runtime_present, auth_boundary_clean, skill_snapshot_current);
+        ags_capability_governance::load_validated_snapshot(&capability_authority, &home, "codex")
+            .is_ok();
+    let project_lane = build_all_update_lanes(&source, &home)
+        .into_iter()
+        .find(|lane| lane.lane == ags_lifecycle::update::UpdateLane::Projects)
+        .expect("projects lane is always present");
+    let projects_drift = project_lane.drift.unwrap_or(true);
+
+    let drift = ags_lifecycle::update::plan::VerificationFacts {
+        runtime_present,
+        auth_boundary_clean,
+        skill_snapshot_current,
+        projects_drift,
+    }
+    .drift();
 
     if format == "json" {
         println!(
@@ -133,6 +150,7 @@ pub(in crate::update) fn cmd_update_verify(target: Option<PathBuf>, strict: bool
                 "runtime_home": home.display().to_string(),
                 "runtime_present": runtime_present,
                 "drift": drift,
+                "projects": update_lane_json(&project_lane),
                 "skill_resolver": {
                     "active_host": "codex",
                     "snapshot_path": snapshot_path.display().to_string(),
@@ -157,6 +175,10 @@ pub(in crate::update) fn cmd_update_verify(target: Option<PathBuf>, strict: bool
             }
         );
         println!(
+            "  projects: {}",
+            if projects_drift { "DRIFT" } else { "clean" }
+        );
+        println!(
             "  skill snapshot: {} auth_boundary={}",
             if skill_snapshot_current {
                 "current"
@@ -179,7 +201,7 @@ pub(in crate::update) fn cmd_update_verify(target: Option<PathBuf>, strict: bool
 
 #[cfg(test)]
 mod update_verify_tests {
-    use super::{update_verify_runtime_home, update_verify_strict_drift};
+    use super::update_verify_runtime_home;
     use std::path::PathBuf;
 
     fn tmp_home(tag: &str) -> PathBuf {
@@ -188,14 +210,6 @@ mod update_verify_tests {
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).unwrap();
         home
-    }
-
-    #[test]
-    fn strict_drift_requires_current_skill_snapshot() {
-        assert!(!update_verify_strict_drift(true, true, true));
-        assert!(update_verify_strict_drift(false, true, true));
-        assert!(update_verify_strict_drift(true, false, true));
-        assert!(update_verify_strict_drift(true, true, false));
     }
 
     #[test]

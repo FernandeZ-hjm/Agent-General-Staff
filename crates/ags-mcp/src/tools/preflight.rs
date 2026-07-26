@@ -6,19 +6,33 @@ pub(super) fn tool_preflight(
     capability_source: Option<&dyn CapabilityCatalogSource>,
 ) -> Result<String, String> {
     let agent = get_string(args, "agent")?;
-    let agent_type = project_discovery::AgentType::from_str(&agent)
+    let agent_type = ags_workspace_facts::AgentType::from_str(&agent)
         .map_err(|error| format!("Invalid agent: {error}"))?;
     let target = get_target(args);
-    let report = project_discovery::run_session_preflight(&target, &agent_type);
+    let report = ags_workspace_facts::run_session_preflight(&target, &agent_type);
     let resolved_target = report.target.clone();
     let mut value = serde_json::to_value(report).map_err(json_error)?;
     if let Some(object) = value.as_object_mut() {
         object.insert("agent".to_string(), serde_json::json!(agent_type.as_str()));
     }
-    let capability = capability_source.map_or_else(
-        || capability_reference(&resolved_target, agent_type.as_str()),
-        |source| source.capability_reference(&resolved_target, agent_type.as_str()),
+    let binding = PreflightBinding {
+        host: agent_type.as_str().to_string(),
+        target: resolved_target.clone(),
+        host_home: std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(".")),
+        capability: None,
+    };
+    let reference = capability_source.map_or_else(
+        || {
+            ags_session::LocalCapabilityCatalogSource::new(
+                ags_capability_governance::locate_runtime_home(),
+            )
+            .capability_reference(&binding)
+        },
+        |source| source.capability_reference(&binding),
     );
+    let capability = capability_reference_json(reference, &resolved_target, agent_type.as_str());
     attach_capability_catalog(&mut value, capability);
     pretty(&value)
 }
@@ -30,12 +44,61 @@ pub(super) fn attach_capability_catalog(
     let Some(object) = report.as_object_mut() else {
         return;
     };
-    let snapshot_stale = capability
+    let capability_status = capability
         .get("status")
         .and_then(|status| status.as_str())
-        .is_some_and(|status| status == "snapshot_stale");
+        .unwrap_or_default()
+        .to_string();
+    let unavailable_error = capability
+        .get("error")
+        .and_then(|error| error.get("detail"))
+        .and_then(|detail| detail.as_str())
+        .map(str::to_string);
     object.insert("capability_catalog".to_string(), capability);
-    if !snapshot_stale {
+    if capability_status == "capability_unavailable" {
+        let already_stopped = object
+            .get("overall_status")
+            .and_then(|status| status.as_str())
+            .is_some_and(|status| status == "stop");
+        if !already_stopped {
+            object.insert("overall_status".to_string(), serde_json::json!("warning"));
+            object.insert(
+                "governance_status".to_string(),
+                serde_json::json!(GovernanceStatus::NeedsUserDecision),
+            );
+        }
+        let warning = "Host capability catalog is unavailable; DirectResponse remains available, but SkillTarget and MachineCli routing are blocked until the reported diagnostic is resolved and preflight is rerun.";
+        let warnings = object
+            .entry("warnings".to_string())
+            .or_insert_with(|| serde_json::json!([]));
+        if let Some(warnings) = warnings.as_array_mut() {
+            warnings.push(serde_json::json!(warning));
+        }
+        let mut next_steps = vec![serde_json::json!(format!(
+            "Resolve capability_catalog.error before governed routing{}.",
+            unavailable_error
+                .as_deref()
+                .map(|detail| format!(": {detail}"))
+                .unwrap_or_default()
+        ))];
+        let mut existing_steps = object
+            .get("next_steps")
+            .and_then(|steps| steps.as_array())
+            .cloned()
+            .unwrap_or_default();
+        existing_steps.retain(|step| {
+            step.as_str().is_none_or(|text| {
+                !text.contains("All clear") && !text.contains("may execute tasks")
+            })
+        });
+        next_steps.append(&mut existing_steps);
+        object.insert(
+            "next_steps".to_string(),
+            serde_json::Value::Array(next_steps),
+        );
+        return;
+    }
+    if capability_status != "snapshot_stale" {
         return;
     }
 
@@ -88,26 +151,21 @@ pub(super) fn attach_capability_catalog(
     );
 }
 
-pub(super) fn capability_reference(target: &Path, host: &str) -> serde_json::Value {
-    let runtime_home = skill_resolver::locate_runtime_home();
-    let authority = skill_resolver::resolve_capability_authority_root(
-        target,
-        &runtime_home,
-        std::env::var_os("AGS_SOURCE_ROOT").map(PathBuf::from),
-    );
-    let loaded = authority
-        .as_ref()
-        .ok()
-        .and_then(|root| skill_resolver::load_validated_snapshot(root, &runtime_home, host).ok());
-    if let Some((snapshot, _)) = loaded {
-        serde_json::json!({
+pub(super) fn capability_reference_json(
+    reference: ags_session::CapabilityReference,
+    target: &Path,
+    host: &str,
+) -> serde_json::Value {
+    match reference {
+        ags_session::CapabilityReference::Ready { binding } => serde_json::json!({
             "uri": CURRENT_HOST_CAPABILITIES_URI,
             "status": "ready",
-            "snapshot_hash": snapshot.snapshot_hash,
+            "snapshot_hash": binding.snapshot_hash,
+            "workspace_identity": binding.workspace_identity,
+            "bundle_epoch": binding.bundle_epoch,
             "refresh_required": false
-        })
-    } else {
-        serde_json::json!({
+        }),
+        ags_session::CapabilityReference::SnapshotStale => serde_json::json!({
             "uri": CURRENT_HOST_CAPABILITIES_URI,
             "status": "snapshot_stale",
             "snapshot_hash": null,
@@ -125,19 +183,31 @@ pub(super) fn capability_reference(target: &Path, host: &str) -> serde_json::Val
                 ],
                 "requires_repreflight": true
             }
-        })
+        }),
+        ags_session::CapabilityReference::Unavailable { diagnostic } => serde_json::json!({
+            "uri": CURRENT_HOST_CAPABILITIES_URI,
+            "status": "capability_unavailable",
+            "snapshot_hash": null,
+            "refresh_required": false,
+            "error": {
+                "code": diagnostic.code.as_str(),
+                "detail": diagnostic.detail
+            }
+        }),
     }
 }
 
 pub(super) fn tool_protocol_status(args: &serde_json::Value) -> Result<String, String> {
-    pretty(&project_discovery::check_protocol_status(&get_target(args)))
+    pretty(&ags_workspace_facts::check_protocol_status(&get_target(
+        args,
+    )))
 }
 
 pub(super) fn tool_agent_instructions(args: &serde_json::Value) -> Result<String, String> {
     let agent = get_string(args, "agent")?;
-    let agent_type = project_discovery::AgentType::from_str(&agent)
+    let agent_type = ags_workspace_facts::AgentType::from_str(&agent)
         .map_err(|error| format!("Invalid agent: {error}"))?;
-    pretty(&project_discovery::generate_agent_instructions(
+    pretty(&ags_workspace_facts::generate_agent_instructions(
         &get_target(args),
         &agent_type,
     ))
@@ -154,7 +224,7 @@ pub(super) struct OnboardingPlanResult {
     schema_version: &'static str,
     governance_status: GovernanceStatus,
     binding: &'static str,
-    plan: ags_onboarding::OnboardingPlan,
+    plan: ags_lifecycle::OnboardingPlan,
     #[serde(skip_serializing_if = "Option::is_none")]
     lease: Option<DecisionLeaseEvidence>,
     actions: Vec<OnboardingActionRef>,
@@ -183,12 +253,15 @@ pub(super) fn tool_onboarding_plan(
         .unwrap_or_else(|| binding.target.clone());
     let executable = std::env::current_exe()
         .map_err(|error| format!("cannot resolve AGS executable: {error}"))?;
-    let third_party = ags_onboarding::manifest::resolve_third_party_manifest(&source_root)?;
+    let third_party =
+        ags_capability_governance::third_party_manifest::resolve_third_party_manifest(
+            &source_root,
+        )?;
     let active_skill_ids = if source_root.join("manifests/skills-registry.yaml").is_file() {
-        skill_resolver::build_capability_snapshot_with_roots_and_manifest(
+        ags_capability_governance::build_capability_snapshot_with_roots_and_manifest(
             &source_root,
             &binding.host,
-            &skill_resolver::locate_runtime_home(),
+            &ags_capability_governance::locate_runtime_home(),
             &binding.host_home,
             &third_party,
         )
@@ -203,8 +276,8 @@ pub(super) fn tool_onboarding_plan(
         // can still be reported as visible-but-not-ready.
         Vec::new()
     };
-    let plan = ags_onboarding::assess_public_with_resolution(
-        &ags_onboarding::AssessContext {
+    let plan = ags_lifecycle::assess_public_with_resolution(
+        &ags_lifecycle::AssessContext {
             source_root: &source_root,
             home: &binding.host_home,
             target: &binding.target,
@@ -252,7 +325,7 @@ pub(super) fn tool_onboarding_plan(
 
 pub(super) fn tool_task_validate(args: &serde_json::Value) -> Result<String, String> {
     let task_card = get_string(args, "task_card")?;
-    let errors = task_card_validator::validate(&task_card);
+    let errors = ags_task_contract::validator::validate(&task_card);
     pretty(&serde_json::json!({
         "is_valid": errors.is_empty(),
         "error_count": errors.len(),
@@ -262,7 +335,7 @@ pub(super) fn tool_task_validate(args: &serde_json::Value) -> Result<String, Str
 
 pub(super) fn tool_policy_resolve(args: &serde_json::Value) -> Result<String, String> {
     let task_card = get_string(args, "task_card")?;
-    let errors = task_card_validator::validate(&task_card);
+    let errors = ags_task_contract::validator::validate(&task_card);
     if !errors.is_empty() {
         return pretty(&serde_json::json!({
             "resolved": false,
@@ -270,14 +343,14 @@ pub(super) fn tool_policy_resolve(args: &serde_json::Value) -> Result<String, St
             "validation_errors": errors,
         }));
     }
-    let parsed = task_card_validator::parse_validated(&task_card)
+    let parsed = ags_task_contract::validator::parse_validated(&task_card)
         .map_err(|error| format!("Parse error: {error:?}"))?;
-    let input = execution_policy::TaskPolicyInput::from_fields_with_approval(
+    let input = ags_governance_decision::policy::TaskPolicyInput::from_fields_with_approval(
         &parsed.fields,
         bool_arg(args, "approve_writes"),
         bool_arg(args, "current_task_approval"),
     );
-    pretty(&execution_policy::resolve_policy(input))
+    pretty(&ags_governance_decision::policy::resolve_policy(input))
 }
 
 pub(super) fn tool_verify_local(

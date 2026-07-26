@@ -2,20 +2,17 @@
 
 use std::path::{Path, PathBuf};
 
+/// User-facing AGS product version.
 pub(crate) const AGS_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub(crate) fn guard_writable_target(command: &str, target: &Path) {
     let target_path = guard_path(target);
-    let protected_roots = [
-        "/Volumes/Projects/example-private-suite",
-        "/Volumes/Projects/remotes/example-private-suite.git",
-        "/Volumes/Projects/example-stable-suite",
-        "/Volumes/AI Project/ai-dev-env-bootstrap",
-        "/Volumes/Projects/remotes/example-public-suite.git",
-    ];
+    let protected_roots = std::env::var_os("AGS_PROTECTED_ROOTS")
+        .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
+        .unwrap_or_default();
 
-    for protected in &protected_roots {
-        let protected_path = guard_path(Path::new(protected));
+    for protected in protected_roots {
+        let protected_path = guard_path(&protected);
         if target_path == protected_path || target_path.starts_with(&protected_path) {
             eprintln!(
                 "{command}: refused — target is a protected suite path: {}",
@@ -74,20 +71,14 @@ pub(crate) fn guard_path(path: &Path) -> PathBuf {
     }
     normalized
 }
-pub(crate) fn sanitize_name(path: &str) -> String {
-    path.trim_matches('/')
-        .replace(['/', '\\', '.'], "-")
-        .trim_matches('-')
-        .to_string()
-}
 pub(crate) fn default_private_runtime_home() -> PathBuf {
     if let Some(path) = std::env::var_os("AGS_HOME") {
         return PathBuf::from(path);
     }
     if let Some(home) = ags_platform::home_dir() {
-        return home.join(".ags").join("runtime");
+        return home.join(".ags").join("private-runtime");
     }
-    PathBuf::from(".ags").join("runtime")
+    PathBuf::from(".ags").join("private-runtime")
 }
 pub(crate) fn private_install_target(target: Option<PathBuf>) -> PathBuf {
     target.unwrap_or_else(default_private_runtime_home)
@@ -125,14 +116,55 @@ pub(crate) fn ensure_bootstrap_source_repo(source_repo: &Path) {
     }
     std::process::exit(1);
 }
-pub(crate) fn source_root_or_exit(command: &str) -> PathBuf {
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    ensure_bootstrap_source_repo(&root);
-    if !root.join("crates/ags-cli/Cargo.toml").exists() {
-        eprintln!("{command}: refused — run from the AGS private suite root.");
-        std::process::exit(1);
+
+fn is_complete_source_root(root: &Path) -> bool {
+    let required = [
+        "protocol/agent-task-protocol.md",
+        "protocol/task-card-template.md",
+        "protocol/runtime-adapters.md",
+        "protocol/task-routing.md",
+        "scripts/validate.sh",
+        "scripts/run-task-card.sh",
+        "crates/ags-cli/Cargo.toml",
+    ];
+    required.iter().all(|rel| root.join(rel).is_file())
+}
+
+fn installed_source_root(runtime_home: &Path) -> Option<PathBuf> {
+    let manifest = std::fs::read_to_string(runtime_home.join("install-manifest.json")).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&manifest).ok()?;
+    value
+        .get("source_root")
+        .and_then(|value| value.as_str())
+        .map(PathBuf::from)
+}
+
+fn resolve_source_root(
+    cwd: &Path,
+    runtime_home: &Path,
+    explicit: Option<PathBuf>,
+) -> Result<PathBuf, String> {
+    let mut candidates = Vec::new();
+    if let Some(path) = explicit {
+        candidates.push(("AGS_SOURCE_ROOT", path));
     }
-    root
+    candidates.push(("current directory", cwd.to_path_buf()));
+    if let Some(path) = installed_source_root(runtime_home) {
+        candidates.push(("runtime install manifest", path));
+    }
+
+    let mut tried = Vec::new();
+    for (origin, candidate) in candidates {
+        let candidate = guard_path(&candidate);
+        if is_complete_source_root(&candidate) {
+            return Ok(candidate);
+        }
+        tried.push(format!("{origin}: {}", candidate.display()));
+    }
+    Err(format!(
+        "no complete AGS source root found; checked {}",
+        tried.join(", ")
+    ))
 }
 
 pub(crate) fn resolve_capability_authority_root(
@@ -140,19 +172,37 @@ pub(crate) fn resolve_capability_authority_root(
     runtime_home: &Path,
     explicit: Option<PathBuf>,
 ) -> Result<PathBuf, String> {
-    skill_resolver::resolve_capability_authority_root(cwd, runtime_home, explicit)
+    ags_capability_governance::resolve_capability_authority_root(cwd, runtime_home, explicit)
         .map_err(|error| error.to_string())
 }
 
 pub(crate) fn capability_authority_root_or_exit(command: &str) -> PathBuf {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let explicit = std::env::var_os("AGS_SOURCE_ROOT").map(PathBuf::from);
-    match resolve_capability_authority_root(&cwd, &skill_resolver::locate_runtime_home(), explicit)
-    {
+    match resolve_capability_authority_root(
+        &cwd,
+        &ags_capability_governance::locate_runtime_home(),
+        explicit,
+    ) {
         Ok(root) => root,
         Err(detail) => {
             eprintln!("{command}: refused — {detail}");
             eprintln!("Run `ags setup --yes` so capability authority can resolve the installed source root.");
+            std::process::exit(1);
+        }
+    }
+}
+
+pub(crate) fn source_root_or_exit(command: &str) -> PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let explicit = std::env::var_os("AGS_SOURCE_ROOT").map(PathBuf::from);
+    match resolve_source_root(&cwd, &default_private_runtime_home(), explicit) {
+        Ok(root) => root,
+        Err(detail) => {
+            eprintln!("{command}: refused — {detail}");
+            eprintln!(
+                "Run `ags setup --yes` from a complete suite checkout or set AGS_SOURCE_ROOT."
+            );
             std::process::exit(1);
         }
     }
@@ -163,18 +213,13 @@ pub(crate) fn unix_timestamp() -> u64 {
         .unwrap_or_default()
         .as_secs()
 }
-pub(crate) fn shell_quote(path: &Path) -> String {
-    let s = path.to_string_lossy();
-    format!("'{}'", s.replace('\'', "'\\''"))
-}
 pub(crate) fn home_dir() -> PathBuf {
     ags_platform::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
 #[cfg(test)]
-mod capability_authority_tests {
-    use super::{guard_path, resolve_capability_authority_root};
-    use std::path::Path;
+mod source_root_tests {
+    use super::*;
 
     fn seed_suite(root: &Path) {
         for rel in [
@@ -195,11 +240,33 @@ mod capability_authority_tests {
     }
 
     #[test]
+    fn source_root_resolves_from_install_manifest_outside_suite_cwd() {
+        let base =
+            std::env::temp_dir().join(format!("ags-source-root-manifest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let cwd = base.join("managed-project");
+        let suite = base.join("stable-suite");
+        let runtime = base.join("runtime");
+        std::fs::create_dir_all(&cwd).unwrap();
+        seed_suite(&suite);
+        std::fs::create_dir_all(&runtime).unwrap();
+        std::fs::write(
+            runtime.join("install-manifest.json"),
+            serde_json::json!({"source_root": suite.display().to_string()}).to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolve_source_root(&cwd, &runtime, None).unwrap(),
+            std::fs::canonicalize(&suite).unwrap()
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn capability_authority_resolves_from_install_manifest_outside_suite_cwd() {
-        let base = std::env::temp_dir().join(format!(
-            "ags-public-capability-authority-{}",
-            std::process::id()
-        ));
+        let base =
+            std::env::temp_dir().join(format!("ags-capability-authority-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let suite = base.join("suite");
         let project = base.join("managed-project");
@@ -217,13 +284,14 @@ mod capability_authority_tests {
             resolve_capability_authority_root(&project, &runtime, None).unwrap(),
             guard_path(&suite)
         );
+
         let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
     fn capability_authority_prefers_install_manifest_over_complete_suite_cwd() {
         let base = std::env::temp_dir().join(format!(
-            "ags-public-capability-installed-authority-{}",
+            "ags-capability-installed-authority-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&base);
@@ -242,6 +310,24 @@ mod capability_authority_tests {
         assert_eq!(
             resolve_capability_authority_root(&other_checkout, &runtime, None).unwrap(),
             guard_path(&installed)
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn source_root_prefers_explicit_environment_candidate() {
+        let base = std::env::temp_dir().join(format!("ags-source-root-env-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let cwd = base.join("managed-project");
+        let suite = base.join("explicit-suite");
+        let runtime = base.join("runtime");
+        std::fs::create_dir_all(&cwd).unwrap();
+        seed_suite(&suite);
+
+        assert_eq!(
+            resolve_source_root(&cwd, &runtime, Some(suite.clone())).unwrap(),
+            std::fs::canonicalize(&suite).unwrap()
         );
         let _ = std::fs::remove_dir_all(&base);
     }

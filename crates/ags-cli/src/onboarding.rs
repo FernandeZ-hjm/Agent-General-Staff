@@ -1,8 +1,8 @@
 use crate::cli::OnboardingAction as CliOnboardingAction;
 use crate::context::{capability_authority_root_or_exit, home_dir};
-use crate::host_probe::{claude_mcp_list_line, codex_mcp_list_line, mcp_server_ids};
 use crate::receipt_bridge::emit_ags_action_receipt;
-use ags_onboarding::{assess_public_with_resolution, find_action, AssessContext, OnboardingPlan};
+use ags_host_integration::{claude_mcp_list_line, codex_mcp_list_line, mcp_server_ids};
+use ags_lifecycle::{assess_public_with_resolution, find_action, AssessContext, OnboardingPlan};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
@@ -52,25 +52,25 @@ pub(crate) fn run(action: CliOnboardingAction) {
                 std::process::exit(1);
             });
             let result =
-                ags_onboarding::execute_action(action, &executable).unwrap_or_else(|error| {
+                ags_lifecycle::execute_action(action, &executable).unwrap_or_else(|error| {
                     eprintln!("ags onboarding apply: {error}");
                     std::process::exit(1);
                 });
             let success = result.success;
-            let receipt = receipt::build_action_receipt(
+            let receipt = ags_evidence::build_action_receipt(
                 "onboarding-apply",
                 Some(&plan.target),
-                receipt::GateResult {
+                ags_evidence::GateResult {
                     decision: if success { "allow" } else { "stop" }.to_string(),
                     reason: (!success).then(|| format!("onboarding item {item} failed")),
                 },
                 vec![],
                 vec![],
                 vec![],
-                vec![receipt::VerificationResult {
+                vec![ags_evidence::VerificationResult {
                     command: format!("ags onboarding apply --item {item}"),
                     exit_code: result.exit_code.unwrap_or(1),
-                    output_hash: receipt::sha256_hex(
+                    output_hash: ags_evidence::sha256_hex(
                         format!("{}\n{}", result.stdout, result.stderr).as_bytes(),
                     ),
                 }],
@@ -111,10 +111,12 @@ pub(crate) fn run(action: CliOnboardingAction) {
     }
 }
 
-fn onboarding_rollback_plan(action: &ags_onboarding::OnboardingAction) -> receipt::RollbackPlan {
-    let steps = ags_onboarding::rollback_advice(action)
+fn onboarding_rollback_plan(
+    action: &ags_lifecycle::OnboardingAction,
+) -> ags_evidence::RollbackPlan {
+    let steps = ags_lifecycle::rollback_advice(action)
         .into_iter()
-        .map(|advice| receipt::RollbackStep {
+        .map(|advice| ags_evidence::RollbackStep {
             affected_path: advice.affected_path,
             inverse_op: "manual-confirm".to_string(),
             backup_path: None,
@@ -122,7 +124,7 @@ fn onboarding_rollback_plan(action: &ags_onboarding::OnboardingAction) -> receip
             detail: advice.detail,
         })
         .collect();
-    receipt::RollbackPlan::manual_confirm(steps)
+    ags_evidence::RollbackPlan::manual_confirm(steps)
 }
 
 fn plan_or_exit(target: &Path, host: &str) -> OnboardingPlan {
@@ -133,15 +135,16 @@ fn plan_or_exit(target: &Path, host: &str) -> OnboardingPlan {
     let executable = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("ags"));
     let registered_mcp_ids = mcp_server_ids(host).unwrap_or_default();
     let host_home = home_dir();
-    let third_party = ags_onboarding::manifest::resolve_third_party_manifest(&source_root)
-        .unwrap_or_else(|error| {
-            eprintln!("ags onboarding: {error}");
-            std::process::exit(1);
-        });
-    let snapshot = skill_resolver::build_capability_snapshot_with_roots_and_manifest(
+    let third_party =
+        ags_capability_governance::third_party_manifest::resolve_third_party_manifest(&source_root)
+            .unwrap_or_else(|error| {
+                eprintln!("ags onboarding: {error}");
+                std::process::exit(1);
+            });
+    let snapshot = ags_capability_governance::build_capability_snapshot_with_roots_and_manifest(
         &source_root,
         host,
-        &skill_resolver::locate_runtime_home(),
+        &ags_capability_governance::locate_runtime_home(),
         &host_home,
         &third_party,
     )
@@ -179,7 +182,7 @@ fn probe_ags_registration(host: &str) -> Option<bool> {
         "claude-code" => claude_mcp_list_line("ags")
             .ok()
             .map(|entry| entry.is_some()),
-        "codex" | "omp" => codex_mcp_list_line("ags").ok().map(|entry| entry.is_some()),
+        "codex" => codex_mcp_list_line("ags").ok().map(|entry| entry.is_some()),
         _ => None,
     }
 }

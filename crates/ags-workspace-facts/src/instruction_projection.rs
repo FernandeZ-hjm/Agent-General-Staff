@@ -375,6 +375,8 @@ pub(super) fn generate_agent_instructions_from_facts(
     let risk_boundaries = RiskBoundaries {
         protected_paths: vec![
             "protocol/".to_string(),
+            "crates/ags-task-contract/src/validator/".to_string(),
+            // Older managed projects can still expose the retired package path.
             "crates/task-card-validator/".to_string(),
             "Cargo.toml".to_string(),
             "Cargo.lock".to_string(),
@@ -498,7 +500,8 @@ pub(super) fn build_instructions_text(
         }
         lines.push("Resolution: install AGS governance files (AGENTS.md, CLAUDE.md,".to_string());
         lines.push(
-            "protocol/, task-card-validator) before executing tasks in this repo.".to_string(),
+            "protocol/, and the ags-task-contract validator) before executing tasks in this repo."
+                .to_string(),
         );
         lines.push(
             "Use `ags init --target <dir>` to onboard the project, or manually add".to_string(),

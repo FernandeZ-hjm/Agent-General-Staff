@@ -1,0 +1,465 @@
+use super::*;
+use serde::Deserialize;
+use std::path::Path;
+
+#[derive(Deserialize)]
+struct CargoManifest {
+    package: Option<CargoPackage>,
+    workspace: Option<CargoWorkspace>,
+}
+
+#[derive(Deserialize)]
+struct CargoPackage {
+    name: Option<String>,
+    version: Option<InheritedField>,
+    license: Option<InheritedField>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum InheritedField {
+    Exact(String),
+    Workspace { workspace: bool },
+}
+
+#[derive(Deserialize)]
+struct CargoWorkspace {
+    package: Option<ProductMetadata>,
+}
+
+#[derive(Deserialize)]
+struct ProductMetadata {
+    version: Option<String>,
+    license: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SuiteManifest {
+    suite: Option<SuiteMetadata>,
+}
+
+#[derive(Deserialize)]
+struct SuiteMetadata {
+    version: Option<String>,
+    #[serde(default)]
+    required: Vec<SuiteComponent>,
+}
+
+#[derive(Deserialize)]
+struct SuiteComponent {
+    name: Option<String>,
+    version: Option<String>,
+    source: Option<String>,
+}
+
+const PRODUCT_PACKAGES: &[&str] = &[
+    "ags-platform",
+    "ags-workspace-facts",
+    "ags-host-integration",
+    "ags-capability-governance",
+    "ags-task-contract",
+    "ags-governance-decision",
+    "ags-session",
+    "ags-evidence",
+    "ags-verification",
+    "ags-lifecycle",
+    "ags-cli",
+    "ags-mcp",
+];
+
+#[derive(Deserialize)]
+struct McpRegistry {
+    #[serde(default)]
+    suite_interfaces: Vec<SuiteInterface>,
+}
+
+#[derive(Deserialize)]
+struct SuiteInterface {
+    name: Option<String>,
+    package: Option<ProductMetadata>,
+}
+
+fn require_exact_field(
+    errors: &mut Vec<String>,
+    surface: &str,
+    actual: Option<&str>,
+    expected: &str,
+) {
+    if actual != Some(expected) {
+        errors.push(format!(
+            "{surface} must be {expected}, found {}",
+            actual.unwrap_or("<missing>")
+        ));
+    }
+}
+
+fn check_typed_product_metadata(
+    repo_root: &Path,
+    version: &str,
+    license: &str,
+    errors: &mut Vec<String>,
+) {
+    let cargo_path = repo_root.join("Cargo.toml");
+    match std::fs::read_to_string(&cargo_path) {
+        Ok(content) => match toml::from_str::<CargoManifest>(&content) {
+            Ok(manifest) => {
+                let package = manifest
+                    .workspace
+                    .as_ref()
+                    .and_then(|workspace| workspace.package.as_ref());
+                require_exact_field(
+                    errors,
+                    "Cargo.toml workspace.package.version",
+                    package.and_then(|metadata| metadata.version.as_deref()),
+                    version,
+                );
+                require_exact_field(
+                    errors,
+                    "Cargo.toml workspace.package.license",
+                    package.and_then(|metadata| metadata.license.as_deref()),
+                    license,
+                );
+            }
+            Err(error) => errors.push(format!("Cargo.toml is invalid TOML: {error}")),
+        },
+        Err(_) => errors.push("Cargo.toml is missing or unreadable".to_string()),
+    }
+
+    for package_name in PRODUCT_PACKAGES {
+        let path = repo_root
+            .join("crates")
+            .join(package_name)
+            .join("Cargo.toml");
+        match std::fs::read_to_string(&path) {
+            Ok(content) => match toml::from_str::<CargoManifest>(&content) {
+                Ok(manifest) => {
+                    let package = manifest.package.as_ref();
+                    require_exact_field(
+                        errors,
+                        &format!("crates/{package_name}/Cargo.toml package.name"),
+                        package.and_then(|metadata| metadata.name.as_deref()),
+                        package_name,
+                    );
+                    require_inherited_product_field(
+                        errors,
+                        &format!("crates/{package_name}/Cargo.toml package.version"),
+                        package.and_then(|metadata| metadata.version.as_ref()),
+                        version,
+                    );
+                    require_inherited_product_field(
+                        errors,
+                        &format!("crates/{package_name}/Cargo.toml package.license"),
+                        package.and_then(|metadata| metadata.license.as_ref()),
+                        license,
+                    );
+                }
+                Err(error) => errors.push(format!(
+                    "crates/{package_name}/Cargo.toml is invalid TOML: {error}"
+                )),
+            },
+            Err(_) => errors.push(format!(
+                "crates/{package_name}/Cargo.toml is missing or unreadable"
+            )),
+        }
+    }
+
+    let suite_path = repo_root.join("manifests/suite.yaml");
+    match std::fs::read_to_string(&suite_path) {
+        Ok(content) => match serde_yaml::from_str::<SuiteManifest>(&content) {
+            Ok(manifest) => {
+                let suite = manifest.suite.as_ref();
+                require_exact_field(
+                    errors,
+                    "manifests/suite.yaml suite.version",
+                    suite.and_then(|suite| suite.version.as_deref()),
+                    version,
+                );
+                if let Some(suite) = suite {
+                    for component in &suite.required {
+                        if component
+                            .source
+                            .as_deref()
+                            .is_some_and(|source| source.starts_with("global-skills/ags-"))
+                        {
+                            let name = component.name.as_deref().unwrap_or("<missing>");
+                            require_exact_field(
+                                errors,
+                                &format!(
+                                    "manifests/suite.yaml suite.required[name={name}].version"
+                                ),
+                                component.version.as_deref(),
+                                version,
+                            );
+                        }
+                    }
+                }
+            }
+            Err(error) => errors.push(format!("manifests/suite.yaml is invalid YAML: {error}")),
+        },
+        Err(_) => errors.push("manifests/suite.yaml is missing or unreadable".to_string()),
+    }
+
+    let registry_path = repo_root.join("manifests/mcp-registry.yaml");
+    match std::fs::read_to_string(&registry_path) {
+        Ok(content) => match serde_yaml::from_str::<McpRegistry>(&content) {
+            Ok(registry) => {
+                let mut matching = registry
+                    .suite_interfaces
+                    .iter()
+                    .filter(|interface| interface.name.as_deref() == Some("ags"));
+                let interface = matching.next();
+                if matching.next().is_some() {
+                    errors.push(
+                        "manifests/mcp-registry.yaml suite_interfaces[name=ags] must be unique"
+                            .to_string(),
+                    );
+                }
+                let package = interface.and_then(|interface| interface.package.as_ref());
+                require_exact_field(
+                    errors,
+                    "manifests/mcp-registry.yaml suite_interfaces[name=ags].package.version",
+                    package.and_then(|metadata| metadata.version.as_deref()),
+                    version,
+                );
+                require_exact_field(
+                    errors,
+                    "manifests/mcp-registry.yaml suite_interfaces[name=ags].package.license",
+                    package.and_then(|metadata| metadata.license.as_deref()),
+                    license,
+                );
+            }
+            Err(error) => errors.push(format!(
+                "manifests/mcp-registry.yaml is invalid YAML: {error}"
+            )),
+        },
+        Err(_) => errors.push("manifests/mcp-registry.yaml is missing or unreadable".to_string()),
+    }
+}
+
+fn require_inherited_product_field(
+    errors: &mut Vec<String>,
+    surface: &str,
+    actual: Option<&InheritedField>,
+    expected: &str,
+) {
+    match actual {
+        Some(InheritedField::Exact(value)) if value == expected => {}
+        Some(InheritedField::Workspace { workspace: true }) => {}
+        Some(InheritedField::Exact(value)) => {
+            errors.push(format!("{surface} must be {expected}, found {value}"));
+        }
+        Some(InheritedField::Workspace { workspace: false }) => {
+            errors.push(format!("{surface} must inherit workspace metadata"));
+        }
+        None => errors.push(format!("{surface} is missing")),
+    }
+}
+
+pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
+    const VERSION: &str = env!("CARGO_PKG_VERSION");
+    const LICENSE: &str = "GPL-3.0-only";
+
+    let mut errors = Vec::new();
+    let package_path = repo_root.join("packages/ags-mcp/package.json");
+    match std::fs::read_to_string(&package_path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+    {
+        Some(package) => {
+            if package.get("version").and_then(|value| value.as_str()) != Some(VERSION) {
+                errors.push(format!(
+                    "packages/ags-mcp/package.json version must be {VERSION}"
+                ));
+            }
+            if package.get("license").and_then(|value| value.as_str()) != Some(LICENSE) {
+                errors.push(format!(
+                    "packages/ags-mcp/package.json license must be {LICENSE}"
+                ));
+            }
+        }
+        None => errors.push("packages/ags-mcp/package.json is missing or invalid JSON".to_string()),
+    }
+
+    check_typed_product_metadata(repo_root, VERSION, LICENSE, &mut errors);
+
+    for (relative, marker) in [
+        (
+            "crates/ags-mcp/src/protocol.rs",
+            "pub const SERVER_VERSION: &str = env!(\"CARGO_PKG_VERSION\");",
+        ),
+        (
+            "crates/ags-mcp/src/server.rs",
+            "version: SERVER_VERSION.to_string()",
+        ),
+    ] {
+        match std::fs::read_to_string(repo_root.join(relative)) {
+            Ok(content) if content.contains(marker) => {}
+            Ok(_) => errors.push(format!(
+                "{relative} must derive MCP serverInfo.version from the product package version"
+            )),
+            Err(_) => errors.push(format!("{relative} is missing or unreadable")),
+        }
+    }
+
+    let supported_series = VERSION
+        .rsplit_once('.')
+        .map(|(series, _)| format!("| {series}.x | Yes |"))
+        .unwrap_or_else(|| format!("| {VERSION} | Yes |"));
+    let required_text = [
+        (
+            "AGENT_SUITE_PROTOCOL.md",
+            format!("Current product version: **{VERSION}**."),
+        ),
+        ("RELEASE_NOTES.md", format!("## Release {VERSION}")),
+        ("README.md", "latest release".to_string()),
+        ("README.md", format!("**v{VERSION}**")),
+        ("README_EN.md", format!("are **v{VERSION}**.")),
+        ("packages/ags-mcp/README.md", format!("`v{VERSION}` GitHub")),
+        ("SECURITY.md", supported_series),
+        ("protocol/mcp-server.md", format!("AGS {VERSION} MCP")),
+    ];
+    for (relative, marker) in required_text {
+        match std::fs::read_to_string(repo_root.join(relative)) {
+            Ok(content) if content.contains(&marker) => {}
+            Ok(_) => errors.push(format!("{relative} is missing marker: {marker}")),
+            Err(_) => errors.push(format!("{relative} is missing or unreadable")),
+        }
+    }
+
+    // Command skill bodies are private/stable installation surfaces. Public
+    // source trees deliberately omit and forbid `global-skills/`; their absence
+    // must not make the public release version gate impossible. When the
+    // directory exists, however, every AGS-owned command skill must stay aligned.
+    if repo_root.join("global-skills").is_dir() {
+        for relative in [
+            "global-skills/ags-agents/SKILL.md",
+            "global-skills/ags-capability/SKILL.md",
+            "global-skills/ags-doctor/SKILL.md",
+            "global-skills/ags-init/SKILL.md",
+            "global-skills/ags-setup/SKILL.md",
+            "global-skills/ags-skill/SKILL.md",
+        ] {
+            let marker = format!("AGS 产品版本：{VERSION}");
+            match std::fs::read_to_string(repo_root.join(relative)) {
+                Ok(content) if content.contains(&marker) => {}
+                Ok(_) => errors.push(format!("{relative} is missing marker: {marker}")),
+                Err(_) => errors.push(format!("{relative} is missing or unreadable")),
+            }
+        }
+    }
+
+    if !repo_root.join("LICENSE").is_file() {
+        errors.push("root GPL LICENSE is missing".to_string());
+    }
+    if !repo_root.join("packages/ags-mcp/LICENSE").is_file() {
+        errors.push("npm launcher GPL LICENSE is missing".to_string());
+    }
+
+    // Wire/schema versions are compatibility identities, not the product
+    // release number. Keeping these explicit prevents an unsafe global version
+    // replacement from breaking v0.3.0 clients during a v0.3.x product update.
+    for (relative, marker) in [
+        (
+            "crates/ags-governance-decision/src/lib.rs",
+            "0.3.0-host-route-proposal",
+        ),
+        (
+            "crates/ags-governance-decision/src/lib.rs",
+            "0.3.0-route-resolution",
+        ),
+        (
+            "crates/ags-task-contract/src/intent.rs",
+            "0.3.0-handoff-contract",
+        ),
+        (
+            "crates/ags-task-contract/src/runner.rs",
+            "0.3.0-launch-plan",
+        ),
+        (
+            "crates/ags-lifecycle/src/onboarding/mod.rs",
+            "0.3.0-onboarding-plan",
+        ),
+        (
+            "crates/ags-capability-governance/src/authority.rs",
+            "0.3.0-host-capability-snapshot",
+        ),
+        (
+            "crates/ags-capability-governance/src/authority.rs",
+            "0.3.0-user-skill-overlay",
+        ),
+        (
+            "crates/ags-capability-governance/src/authority.rs",
+            "0.3.0-user-skill-sources",
+        ),
+        (
+            "crates/ags-capability-governance/src/authority.rs",
+            "0.3.0-overlay-mutation-receipt",
+        ),
+        (
+            "crates/ags-capability-governance/src/authority.rs",
+            "0.3.0-skill-usage-event",
+        ),
+        (
+            "crates/ags-session/src/workspace_service/capability_bundle.rs",
+            "0.3.0-workspace-capabilities",
+        ),
+        (
+            "crates/ags-session/src/workspace_service/registry_ownership.rs",
+            "0.3.0-workspace-service",
+        ),
+        (
+            "crates/ags-capability-governance/src/skill_body/console/model.rs",
+            "0.3.0-skill-console",
+        ),
+    ] {
+        match std::fs::read_to_string(repo_root.join(relative)) {
+            Ok(content) if content.contains(marker) => {}
+            Ok(_) => errors.push(format!(
+                "{relative} must retain compatibility schema marker {marker}"
+            )),
+            Err(_) => errors.push(format!("{relative} is missing or unreadable")),
+        }
+    }
+
+    // Source adoption is a private/stable capability and is deliberately
+    // absent from the public release tree. If a release source includes that
+    // module, its compatibility identity is still mandatory.
+    let adoption_model = "crates/ags-capability-governance/src/adoption/model.rs";
+    let adoption_path = repo_root.join(adoption_model);
+    if adoption_path.is_file() {
+        let marker = "0.3.0-skill-adoption-plan";
+        match std::fs::read_to_string(&adoption_path) {
+            Ok(content) if content.contains(marker) => {}
+            Ok(_) => errors.push(format!(
+                "{adoption_model} must retain compatibility schema marker {marker}"
+            )),
+            Err(_) => errors.push(format!("{adoption_model} is unreadable")),
+        }
+    }
+
+    match std::fs::read_to_string(repo_root.join("RELEASE_NOTES.md")) {
+        Ok(content)
+            if ["## Release 0.3.0", "## Release 0.3.1"]
+                .iter()
+                .all(|marker| content.contains(marker)) => {}
+        Ok(_) => errors.push(
+            "RELEASE_NOTES.md must retain the v0.3.0 and v0.3.1 history sections".to_string(),
+        ),
+        Err(_) => {}
+    }
+
+    if errors.is_empty() {
+        CheckItem::pass(
+            "release-version-surfaces",
+            "release",
+            &format!("Product version {VERSION} and {LICENSE} license surfaces are aligned."),
+        )
+    } else {
+        CheckItem::fail(
+            "release-version-surfaces",
+            "release",
+            &errors.join("; "),
+            "Align product/version/license surfaces while preserving historical release headings and compatibility wire/schema IDs.",
+        )
+    }
+}

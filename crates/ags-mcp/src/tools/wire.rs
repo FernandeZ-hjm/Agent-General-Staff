@@ -38,7 +38,7 @@ pub(super) enum HeldActionKind {
     Onboarding {
         plan_hash: String,
         item_id: String,
-        action: ags_onboarding::OnboardingAction,
+        action: ags_lifecycle::OnboardingAction,
     },
 }
 
@@ -341,14 +341,14 @@ pub fn call_tool(
             arguments,
             required_binding(binding)?,
             routing_session,
-            &skill_resolver::locate_runtime_home(),
+            &ags_capability_governance::locate_runtime_home(),
             capability_source,
         ),
         TOOL_APPLY_ACTION => tool_apply_action_with_source(
             arguments,
             required_binding(binding)?,
             routing_session,
-            &skill_resolver::locate_runtime_home(),
+            &ags_capability_governance::locate_runtime_home(),
             capability_source,
         ),
         other => Err(format!("Unknown tool: {other}")),

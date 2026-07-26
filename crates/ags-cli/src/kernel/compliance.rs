@@ -10,7 +10,7 @@ fn cmd_compliance_check(path: &str, format: &str) {
         }
     };
 
-    let receipt: receipt::Receipt = match serde_json::from_str(&content) {
+    let receipt: ags_evidence::Receipt = match serde_json::from_str(&content) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("compliance check: invalid receipt JSON — {}", e);
@@ -18,10 +18,10 @@ fn cmd_compliance_check(path: &str, format: &str) {
         }
     };
 
-    let result = receipt::check_compliance(&receipt);
+    let result = ags_evidence::check_compliance(&receipt);
     match format {
-        "json" => println!("{}", receipt::render_compliance_json(&result)),
-        _ => println!("{}", receipt::render_compliance_text(&result)),
+        "json" => println!("{}", ags_evidence::render_compliance_json(&result)),
+        _ => println!("{}", ags_evidence::render_compliance_text(&result)),
     }
 
     if !result.compliant {

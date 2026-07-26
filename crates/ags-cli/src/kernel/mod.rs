@@ -19,7 +19,7 @@ pub(crate) mod verify;
 /// Returns (content, parsed_fields, display_path) or exits on failure.
 pub(in crate::kernel) fn read_and_validate_task_card(
     path: &str,
-) -> (String, task_card_validator::ParsedTaskCard, String) {
+) -> (String, ags_task_contract::validator::ParsedTaskCard, String) {
     use std::io::Read;
 
     let display_path = if path == "-" {
@@ -45,7 +45,7 @@ pub(in crate::kernel) fn read_and_validate_task_card(
         }
     };
 
-    let card = match task_card_validator::parse_validated(&content) {
+    let card = match ags_task_contract::validator::parse_validated(&content) {
         Ok(c) => c,
         Err(errors) => {
             eprintln!("{}: VALIDATION FAILED", display_path);
@@ -66,14 +66,14 @@ pub(in crate::kernel) fn read_and_validate_task_card(
 /// mode. `approve_writes` (CLI flag / runner
 /// env) may additionally act as the M9 generic-adapter capability override.
 /// `current_task_approval` is the host-detected current-task instruction signal
-/// (an explicit "实现 / 修复 / 做完" on the live request). The
-/// stronger source wins when both are present.
+/// (an explicit "实现 / 修复 / 做完" on the live request). The stronger source
+/// wins when both are present.
 pub(in crate::kernel) fn build_policy_input(
     fields: &std::collections::HashMap<String, String>,
     approve_writes: bool,
     current_task_approval: bool,
-) -> execution_policy::TaskPolicyInput {
-    execution_policy::TaskPolicyInput::from_fields_with_approval(
+) -> ags_governance_decision::policy::TaskPolicyInput {
+    ags_governance_decision::policy::TaskPolicyInput::from_fields_with_approval(
         fields,
         approve_writes,
         current_task_approval,

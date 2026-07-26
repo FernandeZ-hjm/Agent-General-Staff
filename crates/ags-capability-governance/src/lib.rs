@@ -5,15 +5,11 @@
 //! compilation/validation, usage evidence, and deterministic hashing are
 //! separate knowledge modules.
 
-use request_governance::SkillDemand;
+use ags_governance_decision::SkillDemand;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use skill_governance::console::{
-    build_inventory, inventory_snapshot_hash, CommandOutcome, CommandRunner, ConsoleContext,
-    HealthStatus, HostVisibilityStatus, ManagedCapability, ManagedKind, ManagedStatus,
-    RegistryStatus, RouteExamples, RouteState,
-};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use skill_body::console::{build_inventory, ConsoleContext, ManagedKind};
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -26,7 +22,13 @@ mod overlay_transaction;
 mod private_store;
 mod snapshot_compiler;
 mod snapshot_validation;
+pub mod third_party_manifest;
 mod usage_ledger;
+
+/// Read-only discovery of project-local capabilities.
+pub mod project_registry;
+/// Skill-body inventory, host probes, mutation plans and transactions.
+pub mod skill_body;
 
 pub use authority::*;
 pub use catalog::*;

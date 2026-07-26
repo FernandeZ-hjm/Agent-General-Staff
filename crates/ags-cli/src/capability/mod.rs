@@ -12,10 +12,16 @@ fn cmd_capability_list(target: &Path, format: &str) {
         std::process::exit(1);
     }
 
-    let registry = capability_registry::discover_all(target);
+    let registry = ags_capability_governance::project_registry::discover_all(target);
     match format {
-        "json" => println!("{}", capability_registry::render_json(&registry)),
-        _ => println!("{}", capability_registry::render_text(&registry)),
+        "json" => println!(
+            "{}",
+            ags_capability_governance::project_registry::render_json(&registry)
+        ),
+        _ => println!(
+            "{}",
+            ags_capability_governance::project_registry::render_text(&registry)
+        ),
     }
 }
 /// Shared dispatch: `capability show`
@@ -28,11 +34,17 @@ fn cmd_capability_show(name: &str, target: &Path, format: &str) {
         std::process::exit(1);
     }
 
-    let registry = capability_registry::discover_all(target);
-    match capability_registry::find_by_id(&registry, name) {
+    let registry = ags_capability_governance::project_registry::discover_all(target);
+    match ags_capability_governance::project_registry::find_by_id(&registry, name) {
         Some(cap) => match format {
-            "json" => println!("{}", capability_registry::render_one_json(cap)),
-            _ => println!("{}", capability_registry::render_one_text(cap)),
+            "json" => println!(
+                "{}",
+                ags_capability_governance::project_registry::render_one_json(cap)
+            ),
+            _ => println!(
+                "{}",
+                ags_capability_governance::project_registry::render_one_text(cap)
+            ),
         },
         None => {
             eprintln!("capability show: capability not found — {}", name);
@@ -49,7 +61,7 @@ fn cmd_capability_show(name: &str, target: &Path, format: &str) {
 // MCP / CLI-backed registration is advised per host, never run by AGS.
 /// Default hosts the cross-Agent capability layer reports on.
 fn capability_default_hosts() -> Vec<&'static str> {
-    vec!["claude-code", "codex", "codebuddy-code", "cursor"]
+    vec!["claude-code", "codex", "omp", "codebuddy-code", "cursor"]
 }
 
 /// Rebuild and persist one host-scoped ActiveSkillTable snapshot after a
@@ -60,13 +72,13 @@ pub(crate) fn refresh_skill_snapshot(
     runtime_home: &Path,
     active_host: &str,
 ) -> Result<PathBuf, String> {
-    let snapshot = skill_resolver::build_capability_snapshot_with_runtime_home(
+    let snapshot = ags_capability_governance::build_capability_snapshot_with_runtime_home(
         authority_root,
         active_host,
         runtime_home,
     )
     .map_err(|error| format!("skill snapshot build failed: {error:?}"))?;
-    let path = skill_resolver::snapshot_path(runtime_home, active_host);
+    let path = ags_capability_governance::snapshot_path(runtime_home, active_host);
     let parent = path
         .parent()
         .ok_or_else(|| "skill snapshot path has no parent".to_string())?;
@@ -74,7 +86,7 @@ pub(crate) fn refresh_skill_snapshot(
         .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
     let json = serde_json::to_string_pretty(&snapshot)
         .map_err(|error| format!("skill snapshot serialization failed: {error}"))?;
-    skill_resolver::write_private_atomic(&path, (json + "\n").as_bytes())?;
+    ags_capability_governance::write_private_atomic(&path, (json + "\n").as_bytes())?;
     Ok(path)
 }
 
@@ -94,7 +106,7 @@ fn capability_verify_exit_code(strict: bool, status: &str) -> i32 {
 /// capability-distribution surface, not the private-overlay lifecycle.
 fn capability_install_exit_code(
     apply: bool,
-    result: &skill_governance::console::ConsoleProposalResult,
+    result: &ags_capability_governance::skill_body::console::ConsoleProposalResult,
 ) -> i32 {
     let apply_unfulfilled = apply && result.apply_status == "advised-only";
     if !result.blocked_reasons.is_empty() || !result.apply_errors.is_empty() || apply_unfulfilled {
@@ -108,7 +120,7 @@ fn capability_install_exit_code(
 /// not fail the batch.
 fn capability_sync_exit_code(
     apply: bool,
-    summary: &skill_governance::console::CapabilitySyncSummary,
+    summary: &ags_capability_governance::skill_body::console::CapabilitySyncSummary,
 ) -> i32 {
     if apply && (summary.failed > 0 || summary.blocked > 0) {
         1
@@ -118,7 +130,7 @@ fn capability_sync_exit_code(
 }
 /// `ags capability inventory` — unified cross-Agent inventory + host visibility.
 fn cmd_capability_inventory(hosts: &[String], format: &str) {
-    use skill_governance::console;
+    use ags_capability_governance::skill_body::console;
     let root = crate::context::capability_authority_root_or_exit("ags capability inventory");
     let ctx = console::ConsoleContext::system(root);
     let default_hosts = capability_default_hosts();
@@ -136,7 +148,7 @@ fn cmd_capability_inventory(hosts: &[String], format: &str) {
 /// `ags capability verify --host <host>` — read-only host visibility (canonical
 /// home for the check `ags skill verify` also exposes for compatibility).
 pub(crate) fn cmd_capability_verify(host: &str, strict: bool, format: &str) {
-    use skill_governance::console;
+    use ags_capability_governance::skill_body::console;
     let root = crate::context::capability_authority_root_or_exit("ags capability verify");
     let ctx = console::ConsoleContext::system(root);
     let result = console::verify_host(&ctx, host);
@@ -154,7 +166,7 @@ pub(crate) fn cmd_capability_verify(host: &str, strict: bool, format: &str) {
 /// entry. Dry-run unless `--apply`. AGS-owned thin-index writes go through the
 /// guard; MCP / CLI registration is advised, never executed.
 fn cmd_capability_install(capability: &str, apply: bool, format: &str) {
-    use skill_governance::console;
+    use ags_capability_governance::skill_body::console;
     let root = crate::context::capability_authority_root_or_exit("ags capability install");
     let ctx = console::ConsoleContext::system(root);
     let result = console::propose_action(&ctx, console::ConsoleAction::Adopt, capability, apply);
@@ -162,7 +174,7 @@ fn cmd_capability_install(capability: &str, apply: bool, format: &str) {
     if apply && code == 0 {
         refresh_skill_snapshot(
             &ctx.repo_root,
-            &skill_resolver::locate_runtime_home(),
+            &ags_capability_governance::locate_runtime_home(),
             "codex",
         )
         .unwrap_or_else(|error| {
@@ -190,7 +202,7 @@ fn cmd_capability_install(capability: &str, apply: bool, format: &str) {
 /// `--apply` exits nonzero if any item's write failed or was blocked, since the
 /// user asked AGS to perform the sync. Advised-only MCPs never fail the batch.
 pub(crate) fn cmd_capability_sync(apply: bool, format: &str) {
-    use skill_governance::console;
+    use ags_capability_governance::skill_body::console;
     let root = crate::context::capability_authority_root_or_exit("ags capability sync");
     let ctx = console::ConsoleContext::system(root);
     let hosts = capability_default_hosts();
@@ -199,7 +211,7 @@ pub(crate) fn cmd_capability_sync(apply: bool, format: &str) {
     if apply && code == 0 {
         refresh_skill_snapshot(
             &ctx.repo_root,
-            &skill_resolver::locate_runtime_home(),
+            &ags_capability_governance::locate_runtime_home(),
             "codex",
         )
         .unwrap_or_else(|error| {
@@ -229,25 +241,30 @@ fn cmd_capability_snapshot(host: &str, target: &Path, write: bool, format: &str)
     let explicit = std::env::var_os("AGS_SOURCE_ROOT").map(PathBuf::from);
     let root = crate::context::resolve_capability_authority_root(
         &requested,
-        &skill_resolver::locate_runtime_home(),
+        &ags_capability_governance::locate_runtime_home(),
         explicit,
     )
     .unwrap_or_else(|detail| {
         eprintln!("ags capability snapshot: refused — {detail}");
         std::process::exit(1);
     });
-    let snapshot = skill_resolver::build_capability_snapshot(&root, host).unwrap_or_else(|error| {
-        eprintln!("ags capability snapshot: build failed — {error:?}");
-        std::process::exit(1);
-    });
+    let snapshot = ags_capability_governance::build_capability_snapshot(&root, host)
+        .unwrap_or_else(|error| {
+            eprintln!("ags capability snapshot: build failed — {error:?}");
+            std::process::exit(1);
+        });
 
     let mut written: Option<String> = None;
     if write {
-        let path = refresh_skill_snapshot(&root, &skill_resolver::locate_runtime_home(), host)
-            .unwrap_or_else(|error| {
-                eprintln!("snapshot: {error}");
-                std::process::exit(1);
-            });
+        let path = refresh_skill_snapshot(
+            &root,
+            &ags_capability_governance::locate_runtime_home(),
+            host,
+        )
+        .unwrap_or_else(|error| {
+            eprintln!("snapshot: {error}");
+            std::process::exit(1);
+        });
         written = Some(path.to_string_lossy().to_string());
     }
 
@@ -306,7 +323,9 @@ mod capability_exit_code_tests {
     use super::{
         capability_install_exit_code, capability_sync_exit_code, capability_verify_exit_code,
     };
-    use skill_governance::console::{CapabilitySyncSummary, ConsoleProposalResult};
+    use ags_capability_governance::skill_body::console::{
+        CapabilitySyncSummary, ConsoleProposalResult,
+    };
 
     #[test]
     fn verify_strict_gate_only_fails_when_not_ok() {

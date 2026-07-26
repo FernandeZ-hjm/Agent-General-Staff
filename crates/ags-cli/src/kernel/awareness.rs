@@ -11,15 +11,15 @@ fn cmd_project_detect(target: &Path, format: &str) {
         std::process::exit(1);
     }
 
-    let identity = project_discovery::detect_project(target);
+    let identity = ags_workspace_facts::detect_project(target);
     match format {
-        "json" => println!("{}", project_discovery::render_json(&identity)),
+        "json" => println!("{}", ags_workspace_facts::render_json(&identity)),
         _ => println!(
             "{}",
-            project_discovery::render_project_identity_text(&identity)
+            ags_workspace_facts::render_project_identity_text(&identity)
         ),
     }
-    std::process::exit(project_discovery::project_detect_exit_code(&identity));
+    std::process::exit(ags_workspace_facts::project_detect_exit_code(&identity));
 }
 /// Shared dispatch: `protocol status`
 fn cmd_protocol_status(target: &Path, format: &str) {
@@ -31,15 +31,15 @@ fn cmd_protocol_status(target: &Path, format: &str) {
         std::process::exit(1);
     }
 
-    let status = project_discovery::check_protocol_status(target);
+    let status = ags_workspace_facts::check_protocol_status(target);
     match format {
-        "json" => println!("{}", project_discovery::render_json(&status)),
+        "json" => println!("{}", ags_workspace_facts::render_json(&status)),
         _ => println!(
             "{}",
-            project_discovery::render_protocol_status_text(&status)
+            ags_workspace_facts::render_protocol_status_text(&status)
         ),
     }
-    std::process::exit(project_discovery::protocol_status_exit_code(&status));
+    std::process::exit(ags_workspace_facts::protocol_status_exit_code(&status));
 }
 /// Shared dispatch: `agent instructions`
 fn cmd_agent_instructions(for_agent: &str, target: &Path, format: &str) {
@@ -51,7 +51,7 @@ fn cmd_agent_instructions(for_agent: &str, target: &Path, format: &str) {
         std::process::exit(1);
     }
 
-    let agent_type = match project_discovery::AgentType::from_str(for_agent) {
+    let agent_type = match ags_workspace_facts::AgentType::from_str(for_agent) {
         Ok(at) => at,
         Err(e) => {
             eprintln!("agent instructions: {}", e);
@@ -59,12 +59,12 @@ fn cmd_agent_instructions(for_agent: &str, target: &Path, format: &str) {
         }
     };
 
-    let instructions = project_discovery::generate_agent_instructions(target, &agent_type);
+    let instructions = ags_workspace_facts::generate_agent_instructions(target, &agent_type);
     match format {
-        "json" => println!("{}", project_discovery::render_json(&instructions)),
+        "json" => println!("{}", ags_workspace_facts::render_json(&instructions)),
         _ => println!(
             "{}",
-            project_discovery::render_agent_instructions_text(&instructions)
+            ags_workspace_facts::render_agent_instructions_text(&instructions)
         ),
     }
     std::process::exit(instructions.exit_code);
@@ -79,7 +79,7 @@ fn cmd_session_preflight(for_agent: &str, target: &Path, format: &str) {
         std::process::exit(1);
     }
 
-    let agent_type = match project_discovery::AgentType::from_str(for_agent) {
+    let agent_type = match ags_workspace_facts::AgentType::from_str(for_agent) {
         Ok(at) => at,
         Err(e) => {
             eprintln!("session preflight: {}", e);
@@ -87,12 +87,12 @@ fn cmd_session_preflight(for_agent: &str, target: &Path, format: &str) {
         }
     };
 
-    let preflight = project_discovery::run_session_preflight(target, &agent_type);
+    let preflight = ags_workspace_facts::run_session_preflight(target, &agent_type);
     match format {
-        "json" => println!("{}", project_discovery::render_json(&preflight)),
+        "json" => println!("{}", ags_workspace_facts::render_json(&preflight)),
         _ => println!(
             "{}",
-            project_discovery::render_session_preflight_text(&preflight)
+            ags_workspace_facts::render_session_preflight_text(&preflight)
         ),
     }
     std::process::exit(preflight.exit_code);

@@ -1,31 +1,22 @@
 [workspace]
 members = [
-    "crates/ags-cli",
-    "crates/task-card-validator",
-    "crates/ags-governance-decision",
-    "crates/workflow-sync-check",
-    "crates/suite-doctor",
-    "crates/bootstrap-dry-run",
-    "crates/execution-policy",
+    "crates/ags-platform",
     "crates/ags-workspace-facts",
+    "crates/ags-host-integration",
+    "crates/ags-capability-governance",
     "crates/ags-task-contract",
-    "crates/capability-registry",
+    "crates/ags-governance-decision",
+    "crates/ags-session",
     "crates/ags-evidence",
     "crates/ags-verification",
-    "crates/runner",
-    "crates/skill-governance",
-    "crates/ags-mcp",
-    "crates/ags-platform",
-    "crates/ags-host-integration",
-    "crates/ags-session",
-    "crates/ags-capability-governance",
     "crates/ags-lifecycle",
-    "crates/delivery-report-validator",
+    "crates/ags-cli",
+    "crates/ags-mcp",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 license = "GPL-3.0-only"
 

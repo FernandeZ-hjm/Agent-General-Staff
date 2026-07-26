@@ -9,7 +9,7 @@ fn ags_receipts_root() -> PathBuf {
 }
 /// Emit an action receipt into the AGS-owned receipts directory.
 pub(crate) fn emit_ags_action_receipt(
-    action_receipt: &receipt::ActionReceipt,
+    action_receipt: &ags_evidence::ActionReceipt,
 ) -> Result<PathBuf, String> {
-    receipt::emit_action_receipt(&ags_receipts_root(), action_receipt)
+    ags_evidence::emit_action_receipt(&ags_receipts_root(), action_receipt)
 }

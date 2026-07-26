@@ -18,17 +18,18 @@ fn read_input(path: &str) -> Result<String, String> {
 fn cmd_gate_check(path: &str, format: &str, approve_writes: bool, current_task_approval: bool) {
     let display_path = if path == "-" { "(stdin)" } else { path };
     let content = read_input(path).unwrap_or_else(|error| {
-        let output = execution_policy::gate_check_failed("read_error", vec![error]);
+        let output = ags_governance_decision::policy::gate_check_failed("read_error", vec![error]);
         output_gate_error(&output, display_path, format);
         std::process::exit(1);
     });
-    let card = task_card_validator::parse_validated(&content).unwrap_or_else(|errors| {
-        let output = execution_policy::gate_check_failed("validation_failed", errors);
+    let card = ags_task_contract::validator::parse_validated(&content).unwrap_or_else(|errors| {
+        let output =
+            ags_governance_decision::policy::gate_check_failed("validation_failed", errors);
         output_gate_error(&output, display_path, format);
         std::process::exit(1);
     });
     let input = build_policy_input(&card.fields, approve_writes, current_task_approval);
-    let output = execution_policy::gate_check(&input);
+    let output = ags_governance_decision::policy::gate_check(&input);
     if format == "json" {
         println!(
             "{}",
@@ -39,12 +40,16 @@ fn cmd_gate_check(path: &str, format: &str, approve_writes: bool, current_task_a
         println!("Task card:     {display_path}\n");
         println!("{}", format_policy_text(&output.resolved_policy));
     }
-    if output.decision == execution_policy::GateDecision::Stop {
+    if output.decision == ags_governance_decision::policy::GateDecision::Stop {
         std::process::exit(1);
     }
 }
 
-fn output_gate_error(output: &execution_policy::GateErrorOutput, display_path: &str, format: &str) {
+fn output_gate_error(
+    output: &ags_governance_decision::policy::GateErrorOutput,
+    display_path: &str,
+    format: &str,
+) {
     if format == "json" {
         println!(
             "{}",
@@ -71,10 +76,10 @@ struct GovernanceMiss {
 }
 
 fn output_decision(content: &str) -> (&'static str, Option<&'static str>, Vec<String>) {
-    if !task_card_validator::output_is_canonical_header(content) {
+    if !ags_task_contract::validator::output_is_canonical_header(content) {
         return ("stop", Some("bad_output_shape"), Vec::new());
     }
-    let errors = task_card_validator::validate(content);
+    let errors = ags_task_contract::validator::validate(content);
     if errors.is_empty() {
         ("allow", None, errors)
     } else {
@@ -135,17 +140,17 @@ fn cmd_gate_skill_tags(path: &str, target: &Path, for_agent: &str, format: &str)
         eprintln!("gate skill-tags: {error}");
         std::process::exit(1);
     });
-    let tags = task_card_validator::extract_skill_tags(&content);
+    let tags = ags_task_contract::validator::extract_skill_tags(&content);
     let root = crate::context::resolve_capability_authority_root(
         &crate::context::guard_path(target),
-        &skill_resolver::locate_runtime_home(),
+        &ags_capability_governance::locate_runtime_home(),
         std::env::var_os("AGS_SOURCE_ROOT").map(std::path::PathBuf::from),
     )
     .unwrap_or_else(|error| {
         eprintln!("gate skill-tags: capability_authority_unresolved: {error}");
         std::process::exit(1);
     });
-    let gate = skill_resolver::verify_skill_tags(&tags, &root, for_agent);
+    let gate = ags_capability_governance::verify_skill_tags(&tags, &root, for_agent);
     let decision = if gate.all_accepted { "allow" } else { "stop" };
     if format == "json" {
         println!(

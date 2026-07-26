@@ -1,62 +1,75 @@
-//! `ags setup` lifecycle (五段链路第 1 段).
+//! Human CLI adapter for the private-runtime setup lifecycle.
 
-mod apply;
-mod global_entry;
 pub(crate) mod memory;
-mod plan;
-mod recommendations;
 pub(crate) mod rollback;
-mod templates;
-mod verify;
-
-pub(crate) use verify::{cmd_private_verify, private_install_health_report};
 
 use crate::context::{
     guard_writable_target, home_dir, private_install_target, source_root_or_exit, unix_timestamp,
 };
 use crate::host_platforms::{
     cross_platform_init_json, cross_platform_init_plan, render_cross_platform_init_text,
+    AGENT_PLATFORM_SPECS,
 };
 use crate::receipt_bridge::emit_ags_action_receipt;
-use crate::setup::apply::{add_claude_registration_checks, write_install_file};
-use crate::setup::global_entry::{
-    global_entry_protocol_json, global_entry_protocol_plan, render_global_entry_protocol_text,
-    write_ags_global_entry,
-};
-use crate::setup::plan::{
-    cleanup_install_dir, private_install_plan, render_private_plan_json, render_private_plan_text,
-};
-use crate::setup::recommendations::{
-    render_third_party_recommendations_text, third_party_recommendations_json,
-};
 use std::path::PathBuf;
 
-pub(in crate::setup) const PRIVATE_INSTALL_SCHEMA: &str = "2.4-private-install";
-pub(in crate::setup) fn claude_ags_command_path() -> PathBuf {
-    home_dir().join(".claude").join("commands").join("ags.md")
+pub(crate) fn private_install_health_report(
+    target: &std::path::Path,
+    include_optional_extensions: bool,
+) -> ags_verification::doctor::HealthReport {
+    into_health_report(ags_lifecycle::setup::private_install_health_report(
+        target,
+        &home_dir(),
+        include_optional_extensions,
+    ))
 }
-fn codex_ags_named_skill_dir(name: &str) -> PathBuf {
-    home_dir().join(".codex").join("skills").join(name)
+
+fn into_health_report(
+    report: ags_lifecycle::setup::SetupReport,
+) -> ags_verification::doctor::HealthReport {
+    let mut converted = ags_verification::doctor::HealthReport::new(report.title.clone());
+    append_setup_report(&mut converted, report);
+    converted
 }
-pub(in crate::setup) fn codex_ags_named_skill_path(name: &str) -> PathBuf {
-    codex_ags_named_skill_dir(name).join("SKILL.md")
+
+pub(in crate::setup) fn append_setup_report(
+    target: &mut ags_verification::doctor::HealthReport,
+    report: ags_lifecycle::setup::SetupReport,
+) {
+    for finding in report.findings {
+        target.add(ags_verification::doctor::Finding {
+            check_name: finding.check_name,
+            status: match finding.status {
+                ags_lifecycle::setup::SetupCheckStatus::Pass => {
+                    ags_verification::doctor::CheckStatus::Pass
+                }
+                ags_lifecycle::setup::SetupCheckStatus::Fail => {
+                    ags_verification::doctor::CheckStatus::Fail
+                }
+                ags_lifecycle::setup::SetupCheckStatus::Warn => {
+                    ags_verification::doctor::CheckStatus::Warn
+                }
+                ags_lifecycle::setup::SetupCheckStatus::Skip => {
+                    ags_verification::doctor::CheckStatus::Skip
+                }
+            },
+            severity: match finding.severity {
+                ags_lifecycle::setup::SetupSeverity::Info => {
+                    ags_verification::doctor::Severity::Info
+                }
+                ags_lifecycle::setup::SetupSeverity::Warn => {
+                    ags_verification::doctor::Severity::Warn
+                }
+                ags_lifecycle::setup::SetupSeverity::Fail => {
+                    ags_verification::doctor::Severity::Fail
+                }
+            },
+            message: finding.message,
+            detail: finding.detail,
+        });
+    }
 }
-pub(in crate::setup) fn codex_ags_named_skill_agent_metadata_path(name: &str) -> PathBuf {
-    codex_ags_named_skill_dir(name)
-        .join("agents")
-        .join("openai.yaml")
-}
-pub(in crate::setup) fn retired_codex_ags_skill_dirs() -> Vec<PathBuf> {
-    vec![
-        codex_ags_named_skill_dir("ags"),
-        codex_ags_named_skill_dir("ags-preflight"),
-        codex_ags_named_skill_dir("ags-verify"),
-        // `ags-capability` retired from the standard front-stage Codex set (2.7):
-        // the `ags capability ...` CLI and Cross-Agent sync engine remain, but
-        // the visible command skill is removed. Setup cleans the stale host entry.
-        codex_ags_named_skill_dir("ags-capability"),
-    ]
-}
+
 pub(crate) fn cmd_private_plan(profile: &str, target: Option<PathBuf>, format: &str) {
     if profile != "private" {
         eprintln!("ags plan: unsupported profile '{profile}'");
@@ -64,25 +77,42 @@ pub(crate) fn cmd_private_plan(profile: &str, target: Option<PathBuf>, format: &
     }
     let source_root = source_root_or_exit("ags setup");
     let target = private_install_target(target);
-    let plan = private_install_plan(&source_root, &target);
-    let wizard = cross_platform_init_plan(&home_dir(), &|c| ags_platform::is_on_path(c));
+    let home = home_dir();
+    let host_entries = AGENT_PLATFORM_SPECS
+        .iter()
+        .map(|host| ags_lifecycle::setup::SetupHostEntry {
+            id: host.id.to_string(),
+            display: host.display.to_string(),
+            config_subdirs: host
+                .config_subdirs
+                .iter()
+                .map(|path| (*path).to_string())
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    let presentation = ags_lifecycle::setup::private_plan_presentation(
+        &source_root,
+        &target,
+        &home,
+        &host_entries,
+        false,
+    );
+    let wizard = cross_platform_init_plan(&home, &|command| ags_platform::is_on_path(command));
     match format {
         "json" => {
-            let mut value: serde_json::Value =
-                serde_json::from_str(&render_private_plan_json(&plan))
-                    .unwrap_or_else(|_| serde_json::json!({}));
-            if let Some(obj) = value.as_object_mut() {
-                obj.insert(
+            let mut value = presentation.install_json;
+            if let Some(object) = value.as_object_mut() {
+                object.insert(
                     "cross_platform_init".to_string(),
                     cross_platform_init_json(&wizard),
                 );
-                obj.insert(
+                object.insert(
                     "global_entry_protocol".to_string(),
-                    global_entry_protocol_json(&global_entry_protocol_plan(&plan)),
+                    presentation.global_entry_json,
                 );
-                obj.insert(
+                object.insert(
                     "third_party_recommendations".to_string(),
-                    third_party_recommendations_json(&source_root, &home_dir()),
+                    presentation.recommendations_json,
                 );
             }
             println!(
@@ -91,80 +121,45 @@ pub(crate) fn cmd_private_plan(profile: &str, target: Option<PathBuf>, format: &
             );
         }
         _ => {
-            println!("{}", render_private_plan_text(&plan));
+            println!("{}", presentation.install_text);
             println!();
             println!("{}", render_cross_platform_init_text(&wizard));
             println!();
-            println!(
-                "{}",
-                render_global_entry_protocol_text(&global_entry_protocol_plan(&plan))
-            );
+            println!("{}", presentation.global_entry_text);
             println!();
-            println!(
-                "{}",
-                render_third_party_recommendations_text(&source_root, &home_dir())
-            );
+            println!("{}", presentation.recommendations_text);
         }
     }
 }
 
-// ── Cross-platform initialization wizard ─────────────────────────────────────
-//
-// `ags setup` detects which Agent platforms are present on this machine and
-// renders a cross-platform sync plan: after the primary Agent has the AGS-self
-// entry, it shows the planned AGS-self MCP entry, AGS skill thin-index, and
-// adopted-capability visibility sync for every detected platform, plus a
-// drift-check command. This is PLAN-ONLY: AGS never runs an external host
-// registrar/installer here. Actual cross-Agent capability sync lands in the
-// `ags capability` command layer (a future release).
-/// Core private-install apply WITHOUT exiting the process. Returns the health
-/// report, the resolved target, and the plan text. Callers decide output and
-/// exit so reusing paths (e.g. `ags update apply`) can still emit their own
-/// receipt / JSON after the runtime writes complete.
+/// Core private-install apply without exiting. Output and exit policy remain in
+/// the human adapter so update/setup callers can preserve their command
+/// contracts while sharing one lifecycle mutation authority.
 pub(crate) fn run_private_apply(
     target: Option<PathBuf>,
     force: bool,
+    include_optional_extensions: bool,
     register_claude: bool,
-) -> (suite_doctor::HealthReport, PathBuf, String) {
+) -> (ags_verification::doctor::HealthReport, PathBuf, String) {
     let source_root = source_root_or_exit("ags setup");
     let target = private_install_target(target);
     guard_writable_target("ags setup", &target);
-    let plan = private_install_plan(&source_root, &target);
-    let plan_text_before_apply = render_private_plan_text(&plan);
-    let backup_stamp = unix_timestamp();
-    let mut report = suite_doctor::HealthReport::new("private-install-apply");
-
-    for file in &plan.files {
-        report.add(write_install_file(file, force, backup_stamp));
-    }
-    for dir in &plan.cleanup_dirs {
-        report.add(cleanup_install_dir(dir, force, backup_stamp));
-    }
-    if register_claude {
-        add_claude_registration_checks(&mut report);
-        memory::add_workspace_memory_capture(&mut report, &home_dir(), &source_root, backup_stamp);
-    }
-    // Incremental managed-block write of the AGS-owned global entry (under the
-    // runtime target — never a host config). Confirm-gated: only the apply path
-    // reaches here.
-    report.add(write_ags_global_entry(&target));
-    if report.passed() {
-        for host in ["codex", "claude-code"] {
-            match crate::capability::refresh_skill_snapshot(&source_root, &target, host) {
-                Ok(path) => report.add(suite_doctor::Finding::pass(
-                    format!("skill-active-table-snapshot-{host}"),
-                    format!("refreshed {}", path.display()),
-                )),
-                Err(error) => report.add(suite_doctor::Finding::fail(
-                    format!("skill-active-table-snapshot-{host}"),
-                    "failed to refresh ActiveSkillTable snapshot",
-                    error,
-                )),
-            }
-        }
-    }
-    (report, target, plan_text_before_apply)
+    let result = ags_lifecycle::setup::apply_private(ags_lifecycle::setup::PrivateApplyRequest {
+        source_root: &source_root,
+        target: &target,
+        home: &home_dir(),
+        force,
+        include_optional_extensions,
+        register_claude,
+        backup_stamp: unix_timestamp(),
+    });
+    (
+        into_health_report(result.report),
+        result.target,
+        result.plan_text,
+    )
 }
+
 pub(crate) fn cmd_private_apply(
     profile: &str,
     target: Option<PathBuf>,
@@ -184,12 +179,11 @@ pub(crate) fn cmd_private_apply(
     }
 
     let (report, target, plan_text_before_apply) =
-        run_private_apply(target, force, register_claude);
-
+        run_private_apply(target, force, false, register_claude);
     match format {
         "json" => {
             let output = serde_json::json!({
-                "schema_version": PRIVATE_INSTALL_SCHEMA,
+                "schema_version": ags_lifecycle::setup::PRIVATE_INSTALL_SCHEMA,
                 "profile": profile,
                 "target": target.to_string_lossy(),
                 "register_claude": register_claude,
@@ -202,13 +196,39 @@ pub(crate) fn cmd_private_apply(
             );
         }
         _ => {
-            println!("{}", plan_text_before_apply);
+            println!("{plan_text_before_apply}");
             println!();
-            println!("{}", suite_doctor::render_text(&report));
+            println!("{}", ags_verification::doctor::render_text(&report));
         }
     }
     std::process::exit(report.exit_code());
 }
+
+pub(crate) fn cmd_private_verify(profile: &str, target: Option<PathBuf>, format: &str) {
+    if profile != "private" {
+        eprintln!("ags verify: unsupported profile '{profile}'");
+        std::process::exit(2);
+    }
+    let target = private_install_target(target);
+    let report = private_install_health_report(&target, false);
+    match format {
+        "json" => {
+            let output = serde_json::json!({
+                "schema_version": ags_lifecycle::setup::PRIVATE_INSTALL_SCHEMA,
+                "profile": profile,
+                "target": target.to_string_lossy(),
+                "report": report,
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&output).unwrap_or_default()
+            );
+        }
+        _ => println!("{}", ags_verification::doctor::render_text(&report)),
+    }
+    std::process::exit(report.exit_code());
+}
+
 pub(crate) fn cmd_setup(
     target: Option<PathBuf>,
     yes: bool,
@@ -221,15 +241,14 @@ pub(crate) fn cmd_setup(
     let mut apply_code: Option<i32> = None;
     let mut receipt_path: Option<PathBuf> = None;
     if did_apply {
-        // Use the non-exiting apply helper so setup can emit its receipt.
-        let (report, rt_target, plan_text) =
-            run_private_apply(target.clone(), force, register_claude);
+        let (report, runtime_target, plan_text) =
+            run_private_apply(target.clone(), force, false, register_claude);
         match format {
             "json" => {
                 let output = serde_json::json!({
-                    "schema_version": PRIVATE_INSTALL_SCHEMA,
+                    "schema_version": ags_lifecycle::setup::PRIVATE_INSTALL_SCHEMA,
                     "profile": "private",
-                    "target": rt_target.to_string_lossy(),
+                    "target": runtime_target.to_string_lossy(),
                     "register_claude": register_claude,
                     "force": force,
                     "report": report,
@@ -242,15 +261,14 @@ pub(crate) fn cmd_setup(
             _ => {
                 println!("{plan_text}");
                 println!();
-                println!("{}", suite_doctor::render_text(&report));
+                println!("{}", ags_verification::doctor::render_text(&report));
             }
         }
-        // Machine-readable receipt evidence — emitted for EVERY setup apply path.
         let passed = report.passed();
-        let ar = receipt::build_action_receipt(
+        let receipt = ags_evidence::build_action_receipt(
             "setup-apply",
-            Some(&rt_target.display().to_string()),
-            receipt::GateResult {
+            Some(&runtime_target.display().to_string()),
+            ags_evidence::GateResult {
                 decision: if passed { "allow" } else { "stop" }.to_string(),
                 reason: if passed {
                     None
@@ -261,16 +279,16 @@ pub(crate) fn cmd_setup(
             vec![],
             vec![],
             vec![],
-            vec![receipt::VerificationResult {
+            vec![ags_evidence::VerificationResult {
                 command: "ags setup --yes".to_string(),
                 exit_code: report.exit_code(),
-                output_hash: receipt::sha256_hex(b"setup-applied"),
+                output_hash: ags_evidence::sha256_hex(b"setup-applied"),
             }],
-            receipt::RollbackPlan::backup_restore(vec![]),
+            ags_evidence::RollbackPlan::backup_restore(vec![]),
             if passed { "applied" } else { "failed" },
             passed,
         );
-        receipt_path = emit_ags_action_receipt(&ar).ok();
+        receipt_path = emit_ags_action_receipt(&receipt).ok();
         apply_code = Some(report.exit_code());
     }
     if format != "json" {
@@ -278,14 +296,20 @@ pub(crate) fn cmd_setup(
         println!();
         println!(
             "{}",
-            memory::render_memory_capture_plan(&home_dir(), &source_root, register_claude)
+            ags_lifecycle::setup::render_memory_capture_plan(
+                &home_dir(),
+                &source_root,
+                register_claude,
+            )
         );
     }
-    // Always show the Global Entry Protocol Templates gate + wizard.
     cmd_private_plan("private", target, format);
     if did_apply && format != "json" {
-        if let Some(p) = &receipt_path {
-            println!("\n{}", receipt::render_action_receipt_summary_line(p));
+        if let Some(path) = &receipt_path {
+            println!(
+                "\n{}",
+                ags_evidence::render_action_receipt_summary_line(path)
+            );
         }
         print_setup_agent_governance_next_step();
     }
@@ -293,22 +317,20 @@ pub(crate) fn cmd_setup(
         std::process::exit(code);
     }
 }
-/// After `ags setup --yes`, guide the operator to upgrade to machine-wide Agent
-/// governance, listing the Agent hosts detected on this machine.
+
 fn print_setup_agent_governance_next_step() {
-    let home = home_dir();
-    let plan = cross_platform_init_plan(&home, &|c| ags_platform::is_on_path(c));
+    let plan = cross_platform_init_plan(&home_dir(), &|command| ags_platform::is_on_path(command));
     let detected: Vec<&str> = plan
         .platforms
         .iter()
-        .filter(|p| p.detected)
-        .map(|p| p.id.as_str())
+        .filter(|platform| platform.detected)
+        .map(|platform| platform.id.as_str())
         .collect();
     println!();
     println!("Next step — upgrade to machine-wide Agent governance?");
     println!("下一步：是否升级为本机全局 Agent 治理内核？");
     if detected.is_empty() {
-        println!("  No Agent hosts detected yet. Install a host CLI (claude / codex), then:");
+        println!("  No Agent hosts detected yet. Install a host CLI (claude / codex / omp), then:");
     } else {
         println!("  Governable Agent hosts detected: {}", detected.join(", "));
     }

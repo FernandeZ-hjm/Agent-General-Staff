@@ -8,7 +8,7 @@ fn cmd_verify_run(scope: &str, format: &str, target: &Path, public_root: Option<
         std::process::exit(1);
     }
 
-    let scope = match ags_verify::Scope::from_str(scope) {
+    let scope = match ags_verification::Scope::from_str(scope) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("verify: {}", e);
@@ -16,14 +16,14 @@ fn cmd_verify_run(scope: &str, format: &str, target: &Path, public_root: Option<
         }
     };
 
-    let options = ags_verify::VerificationOptions {
+    let options = ags_verification::VerificationOptions {
         public_root: public_root.map(Path::to_path_buf),
     };
-    let report = ags_verify::run_verify_with_options(scope, target, &options);
+    let report = ags_verification::run_verify_with_options(scope, target, &options);
 
     match format {
-        "json" => println!("{}", ags_verify::render_json(&report)),
-        _ => println!("{}", ags_verify::render_text(&report)),
+        "json" => println!("{}", ags_verification::render_json(&report)),
+        _ => println!("{}", ags_verification::render_text(&report)),
     }
 
     std::process::exit(report.exit_code());
@@ -31,8 +31,8 @@ fn cmd_verify_run(scope: &str, format: &str, target: &Path, public_root: Option<
 /// `ags verify lane` — classify the change lane for a git diff range.
 ///
 /// Deterministic, read-only. `range` is the commit range under review (e.g.
-/// `<a1-head>..HEAD`), or `cached` / `staged` for the index. The push gate uses
-/// this to route hygiene changes onto a minimal path; it never defaults the
+/// `<a1-head>..HEAD`), or `cached` / `staged` for the index. Release/sync
+/// automation can use this to route hygiene changes onto a minimal path; it never defaults the
 /// range so a multi-commit push is not misjudged by a `HEAD~1` assumption.
 fn cmd_verify_lane(range: &str, format: &str, target: &Path) {
     if !target.exists() {
@@ -46,7 +46,7 @@ fn cmd_verify_lane(range: &str, format: &str, target: &Path) {
         range.to_string()
     };
 
-    match ags_verify::classify_from_git_range(target, &range_norm) {
+    match ags_verification::classify_from_git_range(target, &range_norm) {
         Ok(classification) => match format {
             "json" => match serde_json::to_string_pretty(&classification) {
                 Ok(s) => println!("{}", s),

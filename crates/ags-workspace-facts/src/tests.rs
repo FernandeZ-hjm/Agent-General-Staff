@@ -321,11 +321,11 @@ fn test_parse_workspace_table_standard() {
     let content = "\
 | Code | Role | Path |
 |---|---|
-| A | Development private suite | /Volumes/Projects/example-private-suite |
-| A1 | Private bare repo | /Volumes/Projects/remotes/example-private-suite.git |
-| S | Stable private suite | /Volumes/Projects/example-stable-suite |
-| B | Public worktree | /Volumes/AI Project/ai-dev-env-bootstrap |
-| B1 | Public bare repo | /Volumes/Projects/remotes/example-public-suite.git |
+| A | Development private suite | /workspace/agent-governance-suite-private |
+| A1 | Private bare repo | /home/tester/git-remotes/agent-governance-suite-private.git |
+| S | Stable private suite | /workspace/agent-governance-suite-stable |
+| B | Public worktree | /workspace/ai-dev-env-bootstrap |
+| B1 | Public bare repo | /home/tester/git-remotes/ai-dev-env-bootstrap.git |
 ";
     let identities = parse_workspace_table(content);
     assert_eq!(identities.len(), 5);
@@ -333,7 +333,7 @@ fn test_parse_workspace_table_standard() {
     assert_eq!(identities[0].role, "Development private suite");
     assert_eq!(
         identities[0].path,
-        "/Volumes/Projects/example-private-suite"
+        "/workspace/agent-governance-suite-private"
     );
     assert_eq!(identities[4].code, "B1");
 }
@@ -539,12 +539,8 @@ fn test_detect_ags_suite_repo() {
     );
     assert_eq!(identity.integration_status, IntegrationStatus::Suite);
     assert!(!identity.workspace_identities.is_empty());
-    // The public edition is self-contained and publishes only its P identity;
-    // private A/A1/S/B/B1 topology must not be required or disclosed here.
-    assert!(identity
-        .workspace_identities
-        .iter()
-        .any(|workspace| workspace.code == "P"));
+    // Should have found WORKSPACE.md with at least A, A1, S, B, B1
+    assert!(identity.workspace_identities.len() >= 5);
     // Should have found root entry files
     assert!(identity
         .root_entry_files_found
@@ -891,16 +887,19 @@ fn test_workspace_table_strips_backticks_from_paths() {
     let content = "\
 | Code | Role | Path |
 |---|---|
-| A | Dev suite | `/Volumes/Projects/example-private-suite` |
-| S | Stable | `/Volumes/Projects/example-stable-suite` |
+| A | Dev suite | `/workspace/agent-governance-suite-private` |
+| S | Stable | `/workspace/agent-governance-suite-stable` |
 ";
     let identities = parse_workspace_table(content);
     assert_eq!(identities.len(), 2);
     assert_eq!(
         identities[0].path,
-        "/Volumes/Projects/example-private-suite"
+        "/workspace/agent-governance-suite-private"
     );
-    assert_eq!(identities[1].path, "/Volumes/Projects/example-stable-suite");
+    assert_eq!(
+        identities[1].path,
+        "/workspace/agent-governance-suite-stable"
+    );
     // Verify no backticks remain
     assert!(!identities[0].path.contains('`'));
     assert!(!identities[1].path.contains('`'));
@@ -1108,22 +1107,6 @@ fn test_agent_instructions_target_aware_verify_commands() {
         .verification_commands
         .iter()
         .any(|c| c.contains("verify.sh")));
-}
-
-// ── Known workspace path detection ─────────────────────────────────
-
-#[test]
-fn test_known_workspace_path_detection() {
-    for (code, role, path) in KNOWN_WORKSPACE_PATHS {
-        assert_eq!(
-            known_workspace_identity(Path::new(path)),
-            Some(WorkspaceIdentity {
-                code: (*code).to_string(),
-                role: (*role).to_string(),
-                path: (*path).to_string(),
-            })
-        );
-    }
 }
 
 // ── Session Preflight tests ───────────────────────────────────────

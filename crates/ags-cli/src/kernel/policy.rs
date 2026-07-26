@@ -3,7 +3,7 @@ use crate::cli::PolicyAction;
 
 /// Format a `ResolvedExecutionPolicy` as human-readable text.
 pub(in crate::kernel) fn format_policy_text(
-    policy: &execution_policy::ResolvedExecutionPolicy,
+    policy: &ags_governance_decision::policy::ResolvedExecutionPolicy,
 ) -> String {
     let mut lines: Vec<String> = Vec::new();
 
@@ -90,7 +90,7 @@ pub(crate) fn cmd_policy_resolve(
     };
 
     // Phase 1: validate and parse
-    let card = match task_card_validator::parse_validated(&content) {
+    let card = match ags_task_contract::validator::parse_validated(&content) {
         Ok(c) => c,
         Err(errors) => {
             eprintln!("{}: VALIDATION FAILED", display_path);
@@ -106,7 +106,7 @@ pub(crate) fn cmd_policy_resolve(
     let input = build_policy_input(&card.fields, approve_writes, current_task_approval);
 
     // Phase 3: resolve execution policy
-    let policy = execution_policy::resolve_policy(input);
+    let policy = ags_governance_decision::policy::resolve_policy(input);
 
     // Phase 4: output
     match format {
@@ -126,7 +126,7 @@ pub(crate) fn cmd_policy_resolve(
 fn cmd_policy_explain(path: &str, format: &str, approve_writes: bool, current_task_approval: bool) {
     let (_, card, display_path) = read_and_validate_task_card(path);
     let input = build_policy_input(&card.fields, approve_writes, current_task_approval);
-    let output = execution_policy::explain_policy(&input);
+    let output = ags_governance_decision::policy::explain_policy(&input);
 
     match format {
         "json" => match serde_json::to_string_pretty(&output) {
@@ -145,7 +145,7 @@ fn cmd_policy_explain(path: &str, format: &str, approve_writes: bool, current_ta
 fn cmd_policy_check(path: &str, format: &str, approve_writes: bool, current_task_approval: bool) {
     let (_, card, _display_path) = read_and_validate_task_card(path);
     let input = build_policy_input(&card.fields, approve_writes, current_task_approval);
-    let policy = execution_policy::resolve_policy(input);
+    let policy = ags_governance_decision::policy::resolve_policy(input);
 
     match format {
         "json" => match serde_json::to_string_pretty(&policy) {
@@ -166,7 +166,7 @@ fn cmd_policy_check(path: &str, format: &str, approve_writes: bool, current_task
 }
 /// Format a PolicyExplainOutput as human-readable text.
 fn format_explain_text(
-    output: &execution_policy::PolicyExplainOutput,
+    output: &ags_governance_decision::policy::PolicyExplainOutput,
     display_path: &str,
 ) -> String {
     let mut lines: Vec<String> = Vec::new();

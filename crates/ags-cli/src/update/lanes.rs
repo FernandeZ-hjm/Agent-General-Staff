@@ -1,211 +1,120 @@
-use crate::cli::UpdateLane;
-use crate::context::AGS_VERSION;
+//! CLI adapters for lifecycle-owned update lanes.
+
+use crate::cli::UpdateLane as CliUpdateLane;
 use crate::managed_projects;
+use ags_lifecycle::update::{
+    CapabilityInventory, ProjectInventory, ProjectUpdate, UpdateLane, UpdateLanePlan,
+};
 use std::path::Path;
 
-#[derive(Debug, Clone)]
-pub(in crate::update) struct UpdateLanePlan {
-    pub(crate) lane: UpdateLane,
-    pub(crate) auto_executes: bool,
-    pub(crate) advice_only: bool,
-    pub(crate) risk_tier: String,
-    pub(crate) summary: String,
-    pub(crate) drift: Option<bool>,
-    pub(crate) commands: Vec<String>,
-    pub(crate) details: Vec<serde_json::Value>,
-}
-fn build_update_lane_plan(
-    lane: UpdateLane,
-    source_root: &Path,
-    runtime_home: &Path,
-) -> UpdateLanePlan {
-    let auto = lane.auto_executes_locally();
-    let mut details = Vec::new();
-    let (summary, drift, commands): (String, Option<bool>, Vec<String>) = match lane {
-        UpdateLane::Core => (
-            format!("AGS kernel {AGS_VERSION} — rebuild from the private source repo"),
-            None,
-            vec![
-                format!("git -C \"{}\" pull --ff-only", source_root.display()),
-                format!(
-                    "cargo build --release --manifest-path \"{}\"",
-                    source_root.join("Cargo.toml").display()
-                ),
-            ],
-        ),
-        UpdateLane::Runtime => {
-            let present = runtime_home.is_dir();
-            (
-                format!("runtime snippets/templates at {}", runtime_home.display()),
-                Some(!present),
-                vec!["ags setup --yes".to_string()],
-            )
-        }
-        UpdateLane::Agents => (
-            "Agent host AGS MCP onboarding (advise-only)".to_string(),
-            None,
-            vec!["ags agents govern".to_string()],
-        ),
-        UpdateLane::Skills => {
-            let registry = ags_onboarding::manifest::resolve_third_party_manifest(source_root);
-            let summary = match registry {
-                Ok(registry) => {
-                    details.push(serde_json::json!({
-                        "third_party_registry_source": registry.source,
-                        "third_party_registry_hash": registry.content_hash,
-                        "third_party_registry_freshness": registry.freshness,
-                        "fallback_reason": registry.fallback_reason,
-                        "capabilities": registry.manifest.capabilities.len(),
-                        "kinds": ["skill", "cli", "mcp", "hook"],
-                    }));
-                    format!(
-                        "third-party capability registry + skill thin-index distribution ({} entries)",
-                        registry.manifest.capabilities.len()
-                    )
-                }
-                Err(error) => {
-                    details.push(serde_json::json!({"third_party_registry_error": error}));
-                    "third-party capability registry unavailable".to_string()
-                }
-            };
-            (
-                summary,
-                None,
-                vec![
-                    "ags onboarding plan".to_string(),
-                    "ags skill sync --apply".to_string(),
-                ],
-            )
-        }
-        UpdateLane::Projects => {
-            let reg = managed_projects::load(&managed_projects::registry_path(runtime_home))
-                .unwrap_or_default();
-            let (existing, stale) = managed_projects::partition_existing(&reg);
-            let reports: Vec<_> = existing
-                .iter()
-                .map(|project| {
-                    crate::init::refresh_managed_project(
-                        Path::new(&project.path),
-                        &project.slug,
-                        source_root,
-                        false,
-                    )
-                })
-                .collect();
-            let drifted = reports.iter().filter(|report| report.drift).count();
-            let blocked = reports
-                .iter()
-                .filter(|report| !report.blocked_reasons.is_empty())
-                .count();
-            details = reports
-                .iter()
-                .map(|report| {
-                    serde_json::json!({
-                        "target": report.target,
-                        "slug": report.slug,
-                        "status": report.status,
-                        "drift": report.drift,
-                        "changed_files": report.changed_files,
-                        "blocked_reasons": report.blocked_reasons,
-                    })
-                })
-                .collect();
-            let remote = reg
-                .projects
-                .iter()
-                .filter(|p| managed_projects::is_remote_backed(p))
-                .count();
-            (
-                format!(
-                    "managed projects: {} ({} present, {} drifted, {} blocked, {} stale, {} remote-backed) — refreshes AGS-owned files only, never auto-pushes",
-                    reg.projects.len(),
-                    existing.len(),
-                    drifted,
-                    blocked,
-                    stale.len(),
-                    remote
-                ),
-                Some(drifted > 0 || blocked > 0 || !stale.is_empty()),
-                vec!["ags update apply --lane projects --apply".to_string()],
-            )
-        }
-        UpdateLane::Public => (
-            "public-safe projection (plan/verify only; never push)".to_string(),
-            None,
-            vec!["review public boundary; AGS never publishes by default".to_string()],
-        ),
-    };
-    UpdateLanePlan {
-        lane,
-        auto_executes: auto,
-        advice_only: !auto,
-        risk_tier: lane.risk_tier().to_string(),
-        summary,
-        drift,
-        commands,
-        details,
+pub(in crate::update) fn lifecycle_lane(lane: CliUpdateLane) -> UpdateLane {
+    match lane {
+        CliUpdateLane::Core => UpdateLane::Core,
+        CliUpdateLane::Runtime => UpdateLane::Runtime,
+        CliUpdateLane::Agents => UpdateLane::Agents,
+        CliUpdateLane::Skills => UpdateLane::Skills,
+        CliUpdateLane::Projects => UpdateLane::Projects,
+        CliUpdateLane::Public => UpdateLane::Public,
     }
 }
+
+pub(in crate::update) fn inspect_projects(
+    source_root: &Path,
+    runtime_home: &Path,
+    apply: bool,
+) -> ProjectInventory {
+    let registry = match managed_projects::load(&managed_projects::registry_path(runtime_home)) {
+        Ok(registry) => registry,
+        Err(error) => {
+            return ProjectInventory {
+                registry_error: Some(error),
+                ..ProjectInventory::default()
+            };
+        }
+    };
+    let (existing, stale) = managed_projects::partition_existing(&registry);
+    let reports = existing
+        .iter()
+        .map(|project| {
+            let report = crate::init::refresh_managed_project(
+                Path::new(&project.path),
+                &project.slug,
+                source_root,
+                apply,
+            );
+            ProjectUpdate {
+                target: report.target,
+                slug: report.slug,
+                status: report.status,
+                drift: report.drift,
+                changed_files: report.changed_files,
+                unchanged_files: report.unchanged_files,
+                blocked_reasons: report.blocked_reasons,
+            }
+        })
+        .collect();
+    let stale_reports = stale
+        .iter()
+        .map(|project| ProjectUpdate {
+            target: project.path.clone(),
+            slug: project.slug.clone(),
+            status: "stale".to_string(),
+            drift: true,
+            changed_files: Vec::new(),
+            unchanged_files: Vec::new(),
+            blocked_reasons: vec!["registered project directory is missing".to_string()],
+        })
+        .collect();
+    ProjectInventory {
+        registered: registry.projects.len(),
+        present: existing.len(),
+        stale: stale.len(),
+        remote_backed: registry
+            .projects
+            .iter()
+            .filter(|project| managed_projects::is_remote_backed(project))
+            .count(),
+        reports,
+        stale_reports,
+        registry_error: None,
+    }
+}
+
 pub(in crate::update) fn build_all_update_lanes(
     source_root: &Path,
     runtime_home: &Path,
 ) -> Vec<UpdateLanePlan> {
-    UpdateLane::all()
-        .iter()
-        .map(|l| build_update_lane_plan(*l, source_root, runtime_home))
-        .collect()
+    let projects = inspect_projects(source_root, runtime_home, false);
+    let capabilities =
+        match ags_capability_governance::third_party_manifest::resolve_third_party_manifest(
+            source_root,
+        ) {
+            Ok(registry) => CapabilityInventory {
+                summary: format!(
+                    "third-party capability registry + skill thin-index distribution ({} entries)",
+                    registry.manifest.capabilities.len()
+                ),
+                details: vec![serde_json::json!({
+                    "third_party_registry_source": registry.source,
+                    "third_party_registry_hash": registry.content_hash,
+                    "third_party_registry_freshness": registry.freshness,
+                    "fallback_reason": registry.fallback_reason,
+                    "capabilities": registry.manifest.capabilities.len(),
+                    "kinds": ["skill", "cli", "mcp", "hook"],
+                })],
+            },
+            Err(error) => CapabilityInventory {
+                summary: "third-party capability registry unavailable".to_string(),
+                details: vec![serde_json::json!({"third_party_registry_error": error})],
+            },
+        };
+    ags_lifecycle::update::lanes::build_all_update_lanes(
+        source_root,
+        runtime_home,
+        crate::context::AGS_VERSION,
+        &projects,
+        &capabilities,
+    )
 }
-pub(in crate::update) fn update_lane_json(p: &UpdateLanePlan) -> serde_json::Value {
-    serde_json::json!({
-        "lane": p.lane.id(),
-        "auto_executes_locally": p.auto_executes,
-        "advice_only": p.advice_only,
-        "risk_tier": p.risk_tier,
-        "summary": p.summary,
-        "drift": p.drift,
-        "commands": p.commands,
-        "details": p.details,
-    })
-}
 
-#[cfg(test)]
-mod update_lane_tests {
-    use super::*;
-    use crate::cli::UpdateLane;
-    use std::path::PathBuf;
-
-    fn temp_home(tag: &str) -> PathBuf {
-        let base = std::env::temp_dir().join(format!("ags-xplat-{}-{}", std::process::id(), tag));
-        let _ = std::fs::remove_dir_all(&base);
-        std::fs::create_dir_all(&base).unwrap();
-        base
-    }
-
-    #[test]
-    fn update_lanes_mark_core_runtime_and_projects_auto() {
-        assert!(UpdateLane::Core.auto_executes_locally());
-        assert!(UpdateLane::Runtime.auto_executes_locally());
-        assert!(UpdateLane::Projects.auto_executes_locally());
-        assert!(!UpdateLane::Agents.auto_executes_locally());
-        assert!(!UpdateLane::Public.auto_executes_locally());
-        assert_eq!(UpdateLane::Core.risk_tier(), "heavy");
-        assert_eq!(UpdateLane::Public.risk_tier(), "heavy");
-        assert_eq!(UpdateLane::Runtime.risk_tier(), "medium");
-        assert_eq!(UpdateLane::Agents.risk_tier(), "advice");
-        assert_eq!(UpdateLane::Projects.risk_tier(), "medium");
-    }
-
-    #[test]
-    fn build_all_update_lanes_has_six_with_flags() {
-        let src = temp_home("upd-src");
-        let home = temp_home("upd-home");
-        let lanes = build_all_update_lanes(&src, &home);
-        assert_eq!(lanes.len(), 6);
-        let core = lanes.iter().find(|l| l.lane == UpdateLane::Core).unwrap();
-        assert!(core.auto_executes);
-        let agents = lanes.iter().find(|l| l.lane == UpdateLane::Agents).unwrap();
-        assert!(agents.advice_only);
-        let _ = std::fs::remove_dir_all(&src);
-        let _ = std::fs::remove_dir_all(&home);
-    }
-}
+pub(in crate::update) use ags_lifecycle::update::lanes::update_lane_json;

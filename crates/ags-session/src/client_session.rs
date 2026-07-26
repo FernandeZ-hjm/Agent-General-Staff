@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::{PreflightBinding, SessionActionStore, WorkspaceState};
+use crate::{CapabilityReference, PreflightBinding, SessionActionStore, WorkspaceState};
 
 /// Governance state for one daemon client session.
 ///
@@ -14,6 +14,7 @@ pub struct WorkspaceClientSession<T> {
     bootstrap_required: bool,
     preflight_agent: Option<String>,
     preflight_target: Option<String>,
+    capability: Option<CapabilityReference>,
     actions: SessionActionStore<T>,
     workspace: Arc<WorkspaceState>,
     session_id: String,
@@ -27,6 +28,7 @@ impl<T> WorkspaceClientSession<T> {
             bootstrap_required: false,
             preflight_agent: None,
             preflight_target: None,
+            capability: None,
             actions: SessionActionStore::for_session(&session_id),
             workspace,
             session_id,
@@ -41,6 +43,7 @@ impl<T> WorkspaceClientSession<T> {
             bootstrap_required: false,
             preflight_agent: None,
             preflight_target: None,
+            capability: None,
             actions: SessionActionStore::default(),
             workspace: WorkspaceState::standalone(),
             session_id: format!("standalone-{}", std::process::id()),
@@ -53,6 +56,7 @@ impl<T> WorkspaceClientSession<T> {
         self.bootstrap_required = false;
         self.preflight_agent = None;
         self.preflight_target = None;
+        self.capability = None;
         self.actions.invalidate();
     }
 
@@ -60,11 +64,17 @@ impl<T> WorkspaceClientSession<T> {
         self.actions.invalidate();
     }
 
-    pub fn mark_completed(&mut self, agent: Option<String>, target: Option<String>) {
+    pub fn mark_completed(
+        &mut self,
+        agent: Option<String>,
+        target: Option<String>,
+        capability: Option<CapabilityReference>,
+    ) {
         self.preflight_completed = true;
         self.bootstrap_required = false;
         self.preflight_agent = agent;
         self.preflight_target = target;
+        self.capability = capability;
     }
 
     pub fn mark_bootstrap_required(&mut self, agent: Option<String>, target: Option<String>) {
@@ -72,6 +82,7 @@ impl<T> WorkspaceClientSession<T> {
         self.bootstrap_required = agent.is_some() && target.is_some();
         self.preflight_agent = agent;
         self.preflight_target = target;
+        self.capability = None;
     }
 
     pub fn binding(&self) -> Option<PreflightBinding> {
@@ -82,7 +93,12 @@ impl<T> WorkspaceClientSession<T> {
             host: self.preflight_agent.clone()?,
             target: self.preflight_target.as_deref()?.into(),
             host_home: self.host_home.clone(),
+            capability: self.capability.clone(),
         })
+    }
+
+    pub fn capability_reference(&self) -> Option<&CapabilityReference> {
+        self.capability.as_ref()
     }
 
     pub fn is_preflight_completed(&self) -> bool {
@@ -127,7 +143,7 @@ mod tests {
         let home = PathBuf::from("/tmp/ags-session-test-home");
         let mut first = WorkspaceClientSession::<()>::standalone(home.clone());
         let second = WorkspaceClientSession::<()>::standalone(home);
-        first.mark_completed(Some("codex".to_string()), Some(".".to_string()));
+        first.mark_completed(Some("codex".to_string()), Some(".".to_string()), None);
         let first_generation = first.action_store().generation;
         let second_generation = second.action_store().generation;
 

@@ -36,7 +36,7 @@ fn cmd_receipt_generate(
     };
 
     // Compute task card hash
-    let task_card_hash = receipt::sha256_hex(content.as_bytes());
+    let task_card_hash = ags_evidence::sha256_hex(content.as_bytes());
 
     // Parse verification results
     let mut verification_results = Vec::new();
@@ -52,7 +52,7 @@ fn cmd_receipt_generate(
                     std::process::exit(2);
                 }
             };
-            verification_results.push(receipt::VerificationResult {
+            verification_results.push(ags_evidence::VerificationResult {
                 command: cmd.to_string(),
                 exit_code,
                 output_hash: String::new(), // no real output to hash
@@ -68,7 +68,7 @@ fn cmd_receipt_generate(
 
     // Compute delivery report hash if provided
     let delivery_hash = match delivery_report {
-        Some(p) => match receipt::hash_file(std::path::Path::new(p)) {
+        Some(p) => match ags_evidence::hash_file(std::path::Path::new(p)) {
             Ok(h) => Some(h),
             Err(e) => {
                 eprintln!("receipt generate: cannot hash delivery report — {}", e);
@@ -84,8 +84,8 @@ fn cmd_receipt_generate(
         &task_card_hash[..12.min(task_card_hash.len())]
     );
 
-    let receipt = receipt::Receipt {
-        schema_version: receipt::RECEIPT_SCHEMA_VERSION.to_string(),
+    let receipt = ags_evidence::Receipt {
+        schema_version: ags_evidence::RECEIPT_SCHEMA_VERSION.to_string(),
         receipt_id,
         timestamp: format!("unix-{}", {
             use std::time::SystemTime;
@@ -100,7 +100,7 @@ fn cmd_receipt_generate(
         } else {
             Some(display_path)
         },
-        gate_result: receipt::GateResult {
+        gate_result: ags_evidence::GateResult {
             decision: gate_result.to_string(),
             reason: gate_reason.map(|s| s.to_string()),
         },
@@ -108,18 +108,18 @@ fn cmd_receipt_generate(
         delivery_report_hash: delivery_hash,
         exit_code: None,
         governance_status: Some(if gate_result == "stop" {
-            request_governance::GovernanceStatus::BlockedByPolicy
+            ags_governance_decision::GovernanceStatus::BlockedByPolicy
         } else {
-            request_governance::GovernanceStatus::DoneWithReceipt
+            ags_governance_decision::GovernanceStatus::DoneWithReceipt
         }),
         governance_evidence: None,
     };
 
     match format {
-        "json" => println!("{}", receipt::render_receipt_json(&receipt)),
+        "json" => println!("{}", ags_evidence::render_receipt_json(&receipt)),
         _ => {
             // Text format: print JSON because text receipt is just the JSON body
-            println!("{}", receipt::render_receipt_json(&receipt));
+            println!("{}", ags_evidence::render_receipt_json(&receipt));
         }
     }
 }
@@ -133,7 +133,7 @@ fn cmd_receipt_verify(path: &str, format: &str) {
         }
     };
 
-    let receipt: receipt::Receipt = match serde_json::from_str(&content) {
+    let receipt: ags_evidence::Receipt = match serde_json::from_str(&content) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("receipt verify: invalid receipt JSON — {}", e);
@@ -141,10 +141,10 @@ fn cmd_receipt_verify(path: &str, format: &str) {
         }
     };
 
-    let result = receipt::verify_receipt(&receipt);
+    let result = ags_evidence::verify_receipt(&receipt);
     match format {
-        "json" => println!("{}", receipt::render_verify_json(&result)),
-        _ => println!("{}", receipt::render_verify_text(&result)),
+        "json" => println!("{}", ags_evidence::render_verify_json(&result)),
+        _ => println!("{}", ags_evidence::render_verify_text(&result)),
     }
 
     if !result.valid {

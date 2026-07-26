@@ -38,48 +38,6 @@ pub struct WorkspaceIdentity {
     pub path: String,
 }
 
-/// Known workspace paths that imply a role even without WORKSPACE.md.
-pub(super) const KNOWN_WORKSPACE_PATHS: &[(&str, &str, &str)] = &[
-    (
-        "A",
-        "Development private suite",
-        "/Volumes/Projects/example-private-suite",
-    ),
-    (
-        "A1",
-        "Private bare repo",
-        "/Volumes/Projects/remotes/example-private-suite.git",
-    ),
-    (
-        "S",
-        "Stable private suite",
-        "/Volumes/Projects/example-stable-suite",
-    ),
-    (
-        "B",
-        "Public worktree",
-        "/Volumes/AI Project/ai-dev-env-bootstrap",
-    ),
-    (
-        "B1",
-        "Public bare repo",
-        "/Volumes/Projects/remotes/example-public-suite.git",
-    ),
-];
-
-pub(super) fn known_workspace_identity(root: &Path) -> Option<WorkspaceIdentity> {
-    let canonical = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let canonical_str = canonical.to_string_lossy();
-    KNOWN_WORKSPACE_PATHS
-        .iter()
-        .find(|(_, _, path)| *path == canonical_str)
-        .map(|(code, role, path)| WorkspaceIdentity {
-            code: (*code).to_string(),
-            role: (*role).to_string(),
-            path: (*path).to_string(),
-        })
-}
-
 /// Parse WORKSPACE.md content to extract the workspace identity table.
 ///
 /// Looks for a markdown table with columns `Code | Role | Path` and
@@ -158,7 +116,7 @@ pub enum IntegrationStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectIdentity {
     pub target: PathBuf,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing)]
     pub inferred_role: Option<WorkspaceIdentity>,
     pub integration_status: IntegrationStatus,
     pub is_ags_suite: bool,
@@ -317,15 +275,22 @@ pub fn detect_project(target: &Path) -> ProjectIdentity {
         integration_markers += 1;
     }
 
-    // ── Inferred role from known paths ─────────────────────────────────
-    identity.inferred_role = known_workspace_identity(&canonical);
-
-    // If no identity table but we have a known role, add it
-    if identity.workspace_identities.is_empty() {
-        if let Some(ref role) = identity.inferred_role {
-            identity.workspace_identities.push(role.clone());
-        }
-    }
+    // ── Inferred role from the repository-owned workspace table ────────
+    // Machine-specific A/S/B paths belong in WORKSPACE.md or host config,
+    // never in the public runtime binary.
+    identity.inferred_role = identity
+        .workspace_identities
+        .iter()
+        .find(|role| {
+            let declared = PathBuf::from(
+                role.path
+                    .trim()
+                    .trim_matches('`')
+                    .replace("$HOME", &ags_platform::home_dir_or_temp().to_string_lossy()),
+            );
+            declared.canonicalize().unwrap_or(declared).eq(&canonical)
+        })
+        .cloned();
 
     // ── Classify integration status ────────────────────────────────────
     if identity.is_ags_suite {

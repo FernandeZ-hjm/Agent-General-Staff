@@ -88,7 +88,7 @@ pub(crate) enum Commands {
         /// Installation profile. Only `private` is currently supported.
         #[arg(long, value_parser = ["private"])]
         profile: String,
-        /// Target runtime home (default: $AGS_HOME or ~/.ags/runtime).
+        /// Target runtime home (default: $AGS_HOME or ~/.ags/private-runtime).
         #[arg(long)]
         target: Option<PathBuf>,
         /// Output format: text (default) or json
@@ -101,7 +101,7 @@ pub(crate) enum Commands {
         /// Installation profile. Only `private` is currently supported.
         #[arg(long, value_parser = ["private"])]
         profile: String,
-        /// Target runtime home (default: $AGS_HOME or ~/.ags/runtime).
+        /// Target runtime home (default: $AGS_HOME or ~/.ags/private-runtime).
         #[arg(long)]
         target: Option<PathBuf>,
         /// Required confirmation for write-mode install.
@@ -296,8 +296,8 @@ pub(crate) enum Commands {
 
     // ── MCP operations ─────────────────────────────────────────
     /// Start AGS MCP server — expose governance tools/resources/prompts
-    /// to MCP hosts (Tencent Agent, Codex, Cursor, Claude Code). V1 supports
-    /// stdio transport only.
+    /// to MCP hosts (Tencent Agent, Codex, OMP, Cursor, Claude Code). V1 supports
+    /// stdio transport only. Third-party MCP servers remain host-owned.
     #[command(hide = true)]
     Mcp {
         #[command(subcommand)]

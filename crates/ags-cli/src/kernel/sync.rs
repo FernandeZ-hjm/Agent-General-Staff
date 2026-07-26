@@ -19,41 +19,46 @@ pub(crate) fn cmd_sync_check(
 
     // Default: if no targets specified, use stable as default
     if all_targets.is_empty() {
-        all_targets.push((
-            "stable".to_string(),
-            PathBuf::from(workflow_sync_check::DEFAULT_STABLE_ROOT),
-        ));
+        let stable_root = std::env::var_os("AGS_SYNC_STABLE_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                source
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new("."))
+                    .join(ags_verification::sync::DEFAULT_STABLE_ROOT)
+            });
+        all_targets.push(("stable".to_string(), stable_root));
     }
 
-    let target_configs: Vec<workflow_sync_check::TargetConfig> = all_targets
+    let target_configs: Vec<ags_verification::sync::TargetConfig> = all_targets
         .into_iter()
         .map(|(name, root)| {
             let kind = match name.as_str() {
-                "stable" => workflow_sync_check::ProjectKind::Stable,
+                "stable" => ags_verification::sync::ProjectKind::Stable,
                 "public"
                 | "public-core"
                 | "public-core-only"
                 | "public-full"
-                | "public-full-sanitized" => workflow_sync_check::ProjectKind::PublicCoreOnly,
-                _ => workflow_sync_check::ProjectKind::Custom(name.clone()),
+                | "public-full-sanitized" => ags_verification::sync::ProjectKind::PublicCoreOnly,
+                _ => ags_verification::sync::ProjectKind::Custom(name.clone()),
             };
-            workflow_sync_check::TargetConfig { root, name, kind }
+            ags_verification::sync::TargetConfig { root, name, kind }
         })
         .collect();
 
     let report_format = match format {
-        "json" => workflow_sync_check::ReportFormat::Json,
-        _ => workflow_sync_check::ReportFormat::Text,
+        "json" => ags_verification::sync::ReportFormat::Json,
+        _ => ags_verification::sync::ReportFormat::Text,
     };
 
-    let options = workflow_sync_check::CheckOptions {
+    let options = ags_verification::sync::CheckOptions {
         source_root: source,
         source_name: "private".to_string(),
         targets: target_configs,
         allowlist_path: allowlist,
     };
 
-    let ok = workflow_sync_check::run_cli(options, report_format);
+    let ok = ags_verification::sync::run_cli(options, report_format);
     if !ok {
         std::process::exit(1);
     }

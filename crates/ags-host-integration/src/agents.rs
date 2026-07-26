@@ -1,0 +1,140 @@
+use crate::{claude_mcp_list_line, codex_mcp_list_line, CrossPlatformInitPlan};
+
+/// One row of `ags agents scan`: a detected host + AGS-MCP registration probe.
+#[derive(Debug, Clone)]
+pub struct AgentScanRow {
+    pub id: String,
+    pub display: String,
+    pub cli_present: bool,
+    pub config_present: bool,
+    pub app_present: bool,
+    pub detected: bool,
+    pub is_primary: bool,
+    /// Some(true)=registered, Some(false)=not registered, None=not probeable.
+    pub ags_mcp_registered: Option<bool>,
+    pub ags_mcp_evidence: String,
+}
+/// Build scan rows from a detection plan plus an AGS-MCP registration probe.
+/// `probe(host_id)` returns Some((registered, evidence)) for probeable hosts
+/// (claude-code / codex / omp) and None for hosts AGS cannot probe.
+pub fn agents_scan_rows(
+    plan: &CrossPlatformInitPlan,
+    probe: &dyn Fn(&str) -> Option<(bool, String)>,
+) -> Vec<AgentScanRow> {
+    plan.platforms
+        .iter()
+        .map(|p| {
+            let (registered, evidence) = match probe(&p.id) {
+                Some((reg, ev)) => (Some(reg), ev),
+                None => (
+                    None,
+                    "not probeable by AGS — register/verify manually".to_string(),
+                ),
+            };
+            AgentScanRow {
+                id: p.id.clone(),
+                display: p.display.clone(),
+                cli_present: p.cli_present,
+                config_present: p.config_present,
+                app_present: p.app_present,
+                detected: p.detected,
+                is_primary: p.is_primary,
+                ags_mcp_registered: registered,
+                ags_mcp_evidence: evidence,
+            }
+        })
+        .collect()
+}
+/// The governance chain a host enters once AGS MCP is reachable. Success of
+/// `ags agents govern` is the host being able to call `ags_preflight` and then
+/// flow through these gates — not AGS writing host config.
+pub fn agents_governance_chain() -> Vec<&'static str> {
+    vec![
+        "ags_preflight (host initialization gate)",
+        "ags://capabilities/current-host (preflight-bound catalog)",
+        "ags_route_request (read-only typed RouteResolution)",
+        "ags_apply_action (one-shot held action)",
+        "ags_task_validate (task-card format gate)",
+        "ags_policy_resolve (execution policy)",
+        "review gate + verification gate (delivery)",
+    ]
+}
+
+/// AGS MCP tool surface an operator is choosing to expose when registering the
+/// `ags` MCP server in a host. Registration happens at server granularity; this
+/// list makes the included tools explicit before the operator acts.
+pub fn ags_mcp_tool_surface() -> Vec<&'static str> {
+    vec![
+        "ags_preflight",
+        "ags_protocol_status",
+        "ags_agent_instructions",
+        "ags_onboarding_plan",
+        "ags_task_validate",
+        "ags_policy_resolve",
+        "ags_route_request",
+        "ags_apply_action",
+        "ags_verify_local",
+    ]
+}
+/// Production probe: Claude Code via `claude mcp list` and Codex via
+/// `codex mcp list`. OMP is deliberately unprobeable here: a Codex registry
+/// entry is configuration-source evidence, not a live OMP-session connection.
+pub fn default_agents_probe(host_id: &str) -> Option<(bool, String)> {
+    match host_id {
+        "claude-code" => Some(match claude_mcp_list_line("ags") {
+            Ok(Some(line)) => (true, line),
+            Ok(None) => (false, "not in `claude mcp list`".to_string()),
+            Err(e) => (false, format!("claude mcp list unavailable: {e}")),
+        }),
+        "codex" => Some(match codex_mcp_list_line("ags") {
+            Ok(Some(line)) => (true, line),
+            Ok(None) => (false, "not in `codex mcp list`".to_string()),
+            Err(e) => (false, format!("codex mcp list unavailable: {e}")),
+        }),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod agents_scan_tests {
+    use super::*;
+    use crate::cross_platform_init_plan_with_detectors;
+    use std::path::PathBuf;
+
+    fn temp_home(tag: &str) -> PathBuf {
+        let base = std::env::temp_dir().join(format!("ags-xplat-{}-{}", std::process::id(), tag));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        base
+    }
+
+    #[test]
+    fn agents_scan_rows_probe_supported_and_advise_unprobeable() {
+        let home = temp_home("agents-scan");
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        let plan = cross_platform_init_plan_with_detectors(&home, &|c| c == "claude", &|_| false);
+        let probe = |id: &str| -> Option<(bool, String)> {
+            if id == "claude-code" {
+                Some((true, "ags: connected".to_string()))
+            } else {
+                None
+            }
+        };
+        let rows = agents_scan_rows(&plan, &probe);
+        let cc = rows.iter().find(|r| r.id == "claude-code").unwrap();
+        assert!(cc.detected);
+        assert_eq!(cc.ags_mcp_registered, Some(true));
+        let wb = rows.iter().find(|r| r.id == "workbuddy").unwrap();
+        assert!(!wb.detected, "tencent host not detected on a bare home");
+        assert_eq!(wb.ags_mcp_registered, None, "unprobeable host → advise");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn omp_is_not_marked_registered_from_an_inherited_codex_source() {
+        assert!(
+            default_agents_probe("omp").is_none(),
+            "a Codex registry row is not live OMP runtime evidence"
+        );
+    }
+}

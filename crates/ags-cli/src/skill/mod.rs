@@ -6,21 +6,33 @@ use crate::receipt_bridge::emit_ags_action_receipt;
 /// Shared dispatch: `skill scan`
 fn cmd_skill_scan(format: &str) {
     let root = crate::context::capability_authority_root_or_exit("ags skill scan");
-    let result = skill_governance::scan_skills(&root);
+    let result = ags_capability_governance::skill_body::scan_skills(&root);
 
     match format {
-        "json" => println!("{}", skill_governance::render_scan_json(&result)),
-        _ => println!("{}", skill_governance::render_scan_text(&result)),
+        "json" => println!(
+            "{}",
+            ags_capability_governance::skill_body::render_scan_json(&result)
+        ),
+        _ => println!(
+            "{}",
+            ags_capability_governance::skill_body::render_scan_text(&result)
+        ),
     }
 }
 /// Shared dispatch: `skill check`
 fn cmd_skill_check(format: &str) {
     let root = crate::context::capability_authority_root_or_exit("ags skill check");
-    let result = skill_governance::check_skills(&root);
+    let result = ags_capability_governance::skill_body::check_skills(&root);
 
     match format {
-        "json" => println!("{}", skill_governance::render_check_json(&result)),
-        _ => println!("{}", skill_governance::render_check_text(&result)),
+        "json" => println!(
+            "{}",
+            ags_capability_governance::skill_body::render_check_json(&result)
+        ),
+        _ => println!(
+            "{}",
+            ags_capability_governance::skill_body::render_check_text(&result)
+        ),
     }
 
     if !result.passed {
@@ -34,8 +46,8 @@ fn cmd_skill_propose(action: &str, skill_name: &str, apply: bool, format: &str) 
         "ags skill propose is deprecated; use `ags skill adopt|ignore|rollback` for lifecycle changes"
     );
     let operation = match action {
-        "adopt" | "update" | "repair" => skill_resolver::OverlayMutationOperation::Adopt,
-        "remove" | "uninstall" => skill_resolver::OverlayMutationOperation::Ignore,
+        "adopt" | "update" | "repair" => ags_capability_governance::OverlayMutationOperation::Adopt,
+        "remove" | "uninstall" => ags_capability_governance::OverlayMutationOperation::Ignore,
         "verify" => {
             eprintln!("use `ags skill verify --host codex` for verification");
             std::process::exit(2);
@@ -49,7 +61,7 @@ fn cmd_skill_propose(action: &str, skill_name: &str, apply: bool, format: &str) 
 }
 
 fn cmd_skill_overlay(
-    operation: skill_resolver::OverlayMutationOperation,
+    operation: ags_capability_governance::OverlayMutationOperation,
     skill_id: &str,
     restored_from_revision: Option<u64>,
     apply: bool,
@@ -57,9 +69,9 @@ fn cmd_skill_overlay(
     format: &str,
 ) {
     let root = crate::context::capability_authority_root_or_exit("ags skill lifecycle");
-    let runtime_home = skill_resolver::locate_runtime_home();
+    let runtime_home = ags_capability_governance::locate_runtime_home();
     let host_home = crate::context::home_dir();
-    let result = skill_resolver::mutate_user_overlay(
+    let result = ags_capability_governance::mutate_user_overlay(
         &root,
         &runtime_home,
         &host_home,
@@ -96,7 +108,7 @@ fn cmd_skill_overlay(
 /// gate: exit nonzero unless status is "ok" (i.e. every expected capability is
 /// visible).
 fn cmd_skill_verify(host: &str, strict: bool, format: &str) {
-    use skill_governance::console;
+    use ags_capability_governance::skill_body::console;
     let root = crate::context::capability_authority_root_or_exit("ags skill verify");
     let ctx = console::ConsoleContext::system(root);
     let result = console::verify_host(&ctx, host);
@@ -114,17 +126,23 @@ fn cmd_skill_verify(host: &str, strict: bool, format: &str) {
 /// Shared dispatch: `skill inventory`
 fn cmd_skill_inventory(format: &str, write: bool) {
     let root = crate::context::capability_authority_root_or_exit("ags skill inventory");
-    let result = skill_governance::scan_skill_inventory(&root);
+    let result = ags_capability_governance::skill_body::scan_skill_inventory(&root);
 
     match format {
-        "json" => println!("{}", skill_governance::render_inventory_json(&result)),
-        _ => println!("{}", skill_governance::render_inventory_text(&result)),
+        "json" => println!(
+            "{}",
+            ags_capability_governance::skill_body::render_inventory_json(&result)
+        ),
+        _ => println!(
+            "{}",
+            ags_capability_governance::skill_body::render_inventory_text(&result)
+        ),
     }
 
     if write {
         let report_dir = root.join("governance");
         let report_path = report_dir.join("skills-inventory.md");
-        let markdown = skill_governance::render_inventory_markdown(&result);
+        let markdown = ags_capability_governance::skill_body::render_inventory_markdown(&result);
         match std::fs::create_dir_all(&report_dir)
             .and_then(|_| std::fs::write(&report_path, markdown))
         {
@@ -142,11 +160,17 @@ fn cmd_skill_inventory(format: &str, write: bool) {
 /// sources and the suite skills that watch them. Performs NO network crawl.
 fn cmd_skill_upstream(format: &str) {
     let root = crate::context::capability_authority_root_or_exit("ags skill update");
-    let result = skill_governance::upstream_proposal(&root);
+    let result = ags_capability_governance::skill_body::upstream_proposal(&root);
 
     match format {
-        "json" => println!("{}", skill_governance::render_upstream_json(&result)),
-        _ => println!("{}", skill_governance::render_upstream_text(&result)),
+        "json" => println!(
+            "{}",
+            ags_capability_governance::skill_body::render_upstream_json(&result)
+        ),
+        _ => println!(
+            "{}",
+            ags_capability_governance::skill_body::render_upstream_text(&result)
+        ),
     }
 }
 /// `ags skill update` — incremental, auditable upstream update proposal
@@ -165,7 +189,7 @@ fn cmd_skill_sync(apply: bool, format: &str) {
 /// plan a reversible quarantine. Dry-run unless `--apply`; canonical bodies are
 /// never deleted. Emits a receipt when writes occur.
 fn cmd_skill_dedupe(apply: bool, format: &str) {
-    use skill_governance::console;
+    use ags_capability_governance::skill_body::console;
     let root = crate::context::capability_authority_root_or_exit("ags skill dedupe");
     let result = console::analyze_duplicates(&root, apply);
     match format {
@@ -175,10 +199,10 @@ fn cmd_skill_dedupe(apply: bool, format: &str) {
     if apply && !result.applied_moves.is_empty() {
         // Each move (from → to) is recorded as a reversible write, and the
         // rollback plan carries source/dest pairs so a quarantine can be undone.
-        let writes: Vec<receipt::ReceiptWrite> = result
+        let writes: Vec<ags_evidence::ReceiptWrite> = result
             .applied_moves
             .iter()
-            .map(|mv| receipt::ReceiptWrite {
+            .map(|mv| ags_evidence::ReceiptWrite {
                 op: "backup".to_string(),
                 path: mv.to.clone(),
                 from: Some(mv.from.clone()),
@@ -186,10 +210,10 @@ fn cmd_skill_dedupe(apply: bool, format: &str) {
                 detail: "quarantined non-keeper copy".to_string(),
             })
             .collect();
-        let rollback_steps: Vec<receipt::RollbackStep> = result
+        let rollback_steps: Vec<ags_evidence::RollbackStep> = result
             .applied_moves
             .iter()
-            .map(|mv| receipt::RollbackStep {
+            .map(|mv| ags_evidence::RollbackStep {
                 affected_path: mv.from.clone(),
                 inverse_op: "restore-backup".to_string(),
                 backup_path: Some(mv.to.clone()),
@@ -197,10 +221,10 @@ fn cmd_skill_dedupe(apply: bool, format: &str) {
                 detail: "restore quarantined copy to its canonical store path".to_string(),
             })
             .collect();
-        let ar = receipt::build_action_receipt(
+        let ar = ags_evidence::build_action_receipt(
             "skill-dedupe",
             Some(&root.display().to_string()),
-            receipt::GateResult {
+            ags_evidence::GateResult {
                 decision: "allow".to_string(),
                 reason: None,
             },
@@ -208,12 +232,12 @@ fn cmd_skill_dedupe(apply: bool, format: &str) {
             writes,
             vec![],
             vec![],
-            receipt::RollbackPlan::backup_restore(rollback_steps),
+            ags_evidence::RollbackPlan::backup_restore(rollback_steps),
             &result.apply_status,
             true,
         );
         if let Ok(p) = emit_ags_action_receipt(&ar) {
-            println!("\n{}", receipt::render_action_receipt_summary_line(&p));
+            println!("\n{}", ags_evidence::render_action_receipt_summary_line(&p));
         }
     }
     if apply && !result.apply_errors.is_empty() {
@@ -221,15 +245,16 @@ fn cmd_skill_dedupe(apply: bool, format: &str) {
     }
 }
 fn cmd_skill_overview(format: &str, fix: bool) {
-    use skill_governance::console;
+    use ags_capability_governance::skill_body::console;
     let root = crate::context::capability_authority_root_or_exit("ags skill");
-    let scan = skill_governance::scan_skills(&root);
-    let check = skill_governance::check_skills(&root);
+    let scan = ags_capability_governance::skill_body::scan_skills(&root);
+    let check = ags_capability_governance::skill_body::check_skills(&root);
     // Unified management-console inventory: skills + MCPs + suite interface +
     // CLI-backed, with canonical body status + per-host thin-index visibility
-    // across Claude Code, Codex, and CodeBuddy-Code. Read-only.
+    // across Claude Code, Codex, OMP, and CodeBuddy-Code. Read-only.
     let ctx = console::ConsoleContext::system(root);
-    let inventory = console::build_inventory(&ctx, &["claude-code", "codex", "codebuddy-code"]);
+    let inventory =
+        console::build_inventory(&ctx, &["claude-code", "codex", "omp", "codebuddy-code"]);
 
     match format {
         "json" => {
@@ -243,10 +268,10 @@ fn cmd_skill_overview(format: &str, fix: bool) {
                 "next_steps": if fix {
                     serde_json::json!([
                         "Review the inventory: managed_status, host_visibility, health_status, risk_notes.",
-                        "Dry-run candidate adoption: `ags skill adopt <skill-id>`.",
+                        "Dry-run catalog/local/GitHub adoption: `ags skill adopt <source>`.",
                         "Use `ags skill ignore <skill-id>` or `ags skill rollback <skill-id> --to <revision>` for the other lifecycle transitions.",
-                        "Confirm a lifecycle mutation with `--apply` (writes only the machine-private overlay, receipt ledger, and refreshed snapshot; never runs external installers).",
-                        "After apply, restart the host and run `ags skill verify --host claude-code`.",
+                        "Confirm the saved plan with `--apply` (third-party adoption writes only the machine-private body/source registry/overlay, planned-host thin indexes, receipts and snapshots; never runs external installers).",
+                        "After apply, run `ags skill verify --host claude-code --strict`.",
                         "Review upstream comparison sources with `ags skill upstream` (read-only stub; no crawl)."
                     ])
                 } else {
@@ -264,25 +289,31 @@ fn cmd_skill_overview(format: &str, fix: bool) {
         _ => {
             println!("{}", console::render_inventory_text(&inventory));
             println!();
-            println!("{}", skill_governance::render_scan_text(&scan));
+            println!(
+                "{}",
+                ags_capability_governance::skill_body::render_scan_text(&scan)
+            );
             println!();
-            println!("{}", skill_governance::render_check_text(&check));
+            println!(
+                "{}",
+                ags_capability_governance::skill_body::render_check_text(&check)
+            );
             println!();
             if fix {
                 println!("Skill Update Guidance");
                 println!("=====================");
                 println!("No skill files were modified.");
                 println!("Review the inventory above, then use:");
-                println!("  ags skill adopt <skill-id>                    # dry-run");
-                println!("  ags skill adopt <skill-id> --apply            # confirm");
+                println!("  ags skill adopt <source>                      # dry-run");
+                println!("  ags skill adopt <source> --apply              # confirm saved plan");
                 println!("  ags skill ignore <skill-id> [--apply]");
                 println!("  ags skill rollback <skill-id> --to <revision> [--apply]");
                 println!(
-                    "  ags skill verify  --host claude-code                     # host visibility"
+                    "  ags skill verify --host claude-code --strict             # host evidence"
                 );
                 println!("  ags skill upstream                                       # upstream comparison (stub)");
                 println!(
-                    "Apply writes only the machine-private overlay, append-only mutation receipt, and refreshed host snapshot; it never runs external installers."
+                    "Third-party apply writes only the reviewed machine-private body/source registry/overlay, planned-host thin indexes, receipts and snapshots; it never runs external installers."
                 );
             } else {
                 println!(
@@ -307,7 +338,7 @@ pub(crate) fn run(action: Option<SkillAction>, format: &str, fix: bool) {
             host,
             format,
         }) => cmd_skill_overlay(
-            skill_resolver::OverlayMutationOperation::Adopt,
+            ags_capability_governance::OverlayMutationOperation::Adopt,
             &skill_id,
             None,
             apply,
@@ -320,7 +351,7 @@ pub(crate) fn run(action: Option<SkillAction>, format: &str, fix: bool) {
             host,
             format,
         }) => cmd_skill_overlay(
-            skill_resolver::OverlayMutationOperation::Ignore,
+            ags_capability_governance::OverlayMutationOperation::Ignore,
             &skill_id,
             None,
             apply,
@@ -334,7 +365,7 @@ pub(crate) fn run(action: Option<SkillAction>, format: &str, fix: bool) {
             host,
             format,
         }) => cmd_skill_overlay(
-            skill_resolver::OverlayMutationOperation::Rollback,
+            ags_capability_governance::OverlayMutationOperation::Rollback,
             &skill_id,
             Some(to_revision),
             apply,

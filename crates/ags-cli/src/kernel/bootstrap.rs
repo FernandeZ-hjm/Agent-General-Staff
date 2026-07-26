@@ -2,11 +2,11 @@ use crate::context::{ensure_bootstrap_source_repo, guard_writable_target};
 use std::path::{Path, PathBuf};
 
 fn render_bootstrap_apply_json(
-    plan: &bootstrap_dry_run::BootstrapPlan,
-    report: &suite_doctor::HealthReport,
+    plan: &ags_verification::bootstrap::BootstrapPlan,
+    report: &ags_verification::doctor::HealthReport,
 ) -> String {
     let output = serde_json::json!({
-        "schema_version": bootstrap_dry_run::SCHEMA_VERSION,
+        "schema_version": ags_verification::bootstrap::SCHEMA_VERSION,
         "plan": plan,
         "apply_report": report,
     });
@@ -20,21 +20,21 @@ fn cmd_bootstrap_apply(target: &Path, format: &str) {
     let source_repo = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     ensure_bootstrap_source_repo(&source_repo);
 
-    let plan = bootstrap_dry_run::plan(&source_repo, target);
+    let plan = ags_verification::bootstrap::plan(&source_repo, target);
 
     // Print plan first
     if format != "json" {
-        println!("{}", bootstrap_dry_run::render_plan_text(&plan));
+        println!("{}", ags_verification::bootstrap::render_plan_text(&plan));
     }
 
     // Execute plan
-    let report = bootstrap_dry_run::apply(&source_repo, &plan);
+    let report = ags_verification::bootstrap::apply(&source_repo, &plan);
 
     match format {
         "json" => println!("{}", render_bootstrap_apply_json(&plan, &report)),
         _ => {
             println!();
-            println!("{}", suite_doctor::render_text(&report));
+            println!("{}", ags_verification::doctor::render_text(&report));
         }
     }
 
@@ -48,10 +48,10 @@ pub(crate) fn cmd_bootstrap_dry_run(format: &str) {
 }
 /// Shared dispatch: `bootstrap --dry-run --target <dir>`
 fn cmd_bootstrap_dry_run_target(target: &Path, format: &str) {
-    let report = bootstrap_dry_run::run(target);
+    let report = ags_verification::bootstrap::run(target);
     match format {
-        "json" => println!("{}", suite_doctor::render_json(&report)),
-        _ => println!("{}", suite_doctor::render_text(&report)),
+        "json" => println!("{}", ags_verification::doctor::render_json(&report)),
+        _ => println!("{}", ags_verification::doctor::render_text(&report)),
     }
     std::process::exit(report.exit_code());
 }

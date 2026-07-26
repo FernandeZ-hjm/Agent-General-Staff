@@ -377,7 +377,7 @@ mod tests {
     #[test]
     fn scripts_and_tests_are_source() {
         assert_eq!(
-            classify(&["scripts/push-a1.sh"]).lane,
+            classify(&["scripts/install.sh"]).lane,
             ChangeLane::SourceCode
         );
         assert_eq!(

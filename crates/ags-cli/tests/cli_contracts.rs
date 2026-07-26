@@ -11,11 +11,11 @@ impl TestDir {
     fn new(label: &str) -> Self {
         let sequence = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!(
-            "ags-public-cli-contract-{label}-{}-{sequence}",
+            "ags-cli-contract-{label}-{}-{sequence}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).expect("create public CLI contract test directory");
+        std::fs::create_dir_all(&path).expect("create CLI contract test directory");
         Self(path)
     }
 
@@ -43,7 +43,7 @@ fn run_ags(args: &[&str]) -> Output {
         .args(args)
         .current_dir(repo_root())
         .output()
-        .expect("run compiled public ags binary")
+        .expect("run compiled ags binary")
 }
 
 fn run_ags_isolated(args: &[&str]) -> Output {
@@ -52,10 +52,25 @@ fn run_ags_isolated(args: &[&str]) -> Output {
         .args(args)
         .current_dir(repo_root())
         .env("HOME", home.path())
-        .env("AGS_HOME", home.path().join(".ags/runtime"))
+        .env("AGS_HOME", home.path().join(".ags/private-runtime"))
         .env("PATH", "/usr/bin:/bin")
         .output()
-        .expect("run public ags binary in isolated host environment")
+        .expect("run compiled ags binary in isolated host environment")
+}
+
+fn copy_tree(source: &Path, destination: &Path) {
+    std::fs::create_dir_all(destination).expect("create copied fixture directory");
+    for entry in std::fs::read_dir(source).expect("read copied fixture directory") {
+        let entry = entry.expect("read copied fixture entry");
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let metadata = std::fs::metadata(&source_path).expect("read copied fixture metadata");
+        if metadata.is_dir() {
+            copy_tree(&source_path, &destination_path);
+        } else if metadata.is_file() {
+            std::fs::copy(&source_path, &destination_path).expect("copy fixture file");
+        }
+    }
 }
 
 fn assert_success(output: &Output, label: &str) {
@@ -84,7 +99,8 @@ fn task_card_pipeline_cli_contract() {
     let card = root.join("tests/fixtures/valid-full.md");
     let card = card.to_str().expect("UTF-8 fixture path");
 
-    assert_success(&run_ags(&["task", "validate", card]), "task validate");
+    let validate = run_ags(&["task", "validate", card]);
+    assert_success(&validate, "task validate");
 
     let policy = parse_json(
         &run_ags(&["policy", "resolve", card, "--format", "json"]),
@@ -114,7 +130,7 @@ fn host_plan_card_closes_against_its_exact_delivery_report() {
     let task_card_path = temp.path().join("task-card.md");
     let delivery_report_path = temp.path().join("delivery-report.md");
     let contract = serde_json::json!({
-        "schema_version": task_compiler::HANDOFF_CONTRACT_SCHEMA_VERSION,
+        "schema_version": ags_task_contract::HANDOFF_CONTRACT_SCHEMA_VERSION,
         "task_level": "Medium",
         "task": "执行已封闭的宿主 Plan 模式方案",
         "fields": {
@@ -149,7 +165,7 @@ fn host_plan_card_closes_against_its_exact_delivery_report() {
         .expect("compiled task card Contract ID");
     std::fs::write(&task_card_path, &card).unwrap();
 
-    let task_card_hash = receipt::sha256_hex(card.as_bytes());
+    let task_card_hash = ags_evidence::sha256_hex(card.as_bytes());
     let report = format!(
         "# 任务交付报告\n\
 \n\
@@ -204,17 +220,15 @@ fn integrity_and_bootstrap_cli_contract() {
     assert_eq!(verified["valid"], true);
 
     let root = root.to_str().expect("UTF-8 workspace path");
-    assert_success(
-        &run_ags(&[
-            "bootstrap",
-            "--dry-run",
-            "--target",
-            root,
-            "--format",
-            "json",
-        ]),
-        "bootstrap --dry-run",
-    );
+    let bootstrap = run_ags(&[
+        "bootstrap",
+        "--dry-run",
+        "--target",
+        root,
+        "--format",
+        "json",
+    ]);
+    assert_success(&bootstrap, "bootstrap --dry-run");
 }
 
 #[test]
@@ -295,6 +309,85 @@ fn setup_init_and_update_read_only_cli_contract() {
 }
 
 #[test]
+fn update_verify_validates_snapshot_against_installed_capability_authority() {
+    let root = repo_root();
+    let fixture = TestDir::new("update-verify-authority");
+    let authority = fixture.path().join("stable-authority");
+    let runtime = fixture.path().join("runtime");
+    let host_home = fixture.path().join("host-home");
+    std::fs::create_dir_all(&runtime).unwrap();
+    std::fs::create_dir_all(&host_home).unwrap();
+
+    for relative in ["manifests", "global-skills", "skill-packs"] {
+        copy_tree(&root.join(relative), &authority.join(relative));
+    }
+    let registry_path = authority.join("manifests/skills-registry.yaml");
+    let mut registry = std::fs::read_to_string(&registry_path).unwrap();
+    registry.push_str("\n# authority fixture hash differs from current checkout\n");
+    std::fs::write(&registry_path, registry).unwrap();
+    std::fs::write(
+        runtime.join("install-manifest.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "source_root": authority.display().to_string(),
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let snapshot = Command::new(env!("CARGO_BIN_EXE_ags"))
+        .args([
+            "capability",
+            "snapshot",
+            "--host",
+            "codex",
+            "--target",
+            authority.to_str().unwrap(),
+            "--write",
+            "--format",
+            "json",
+        ])
+        .current_dir(&root)
+        .env("HOME", &host_home)
+        .env("AGS_HOME", &runtime)
+        .env_remove("AGS_RUNTIME_HOME")
+        .env("AGS_SOURCE_ROOT", &authority)
+        .env("AGS_THIRD_PARTY_MANIFEST_OFFLINE", "1")
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .expect("write authority-bound capability snapshot");
+    assert_success(&snapshot, "capability snapshot --write");
+    assert_eq!(
+        ags_capability_governance::resolve_capability_authority_root(&root, &runtime, None)
+            .unwrap(),
+        authority.canonicalize().unwrap()
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ags"))
+        .args([
+            "update",
+            "verify",
+            "--target",
+            runtime.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .current_dir(&root)
+        .env("HOME", &host_home)
+        .env("AGS_HOME", &runtime)
+        .env_remove("AGS_RUNTIME_HOME")
+        .env("AGS_THIRD_PARTY_MANIFEST_OFFLINE", "1")
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .expect("run update verify against installed authority");
+    let report = parse_json(&output, "update verify installed authority");
+    assert_eq!(
+        report["skill_resolver"]["snapshot_current"], true,
+        "update verify must validate the snapshot against the installed capability authority, \
+         not the current A checkout"
+    );
+}
+
+#[test]
 fn agents_scan_cli_contract() {
     let output = run_ags_isolated(&["agents", "scan", "--format", "json"]);
     assert_success(&output, "agents scan");
@@ -345,8 +438,8 @@ fn high_risk_cli_rejections_remain_fail_closed() {
     ]);
     assert!(!receipt.status.success());
 
-    // Exercise the compatibility parser without recursively launching
-    // workspace verification from inside `cargo test`.
+    // Exercise the compatibility `verify run` parser without recursively
+    // launching workspace verification from inside `cargo test`.
     let verify_alias = run_ags(&["verify", "run", "--scope", "invalid"]);
     assert_eq!(verify_alias.status.code(), Some(2));
 }

@@ -8,7 +8,7 @@ pub(crate) fn cmd_task_validate(paths: &[String]) {
     } else {
         paths.to_vec()
     };
-    let ok = task_card_validator::validate_files(&paths);
+    let ok = ags_task_contract::validator::validate_files(&paths);
     if !ok {
         std::process::exit(1);
     }
@@ -23,11 +23,11 @@ fn cmd_task_close(task_card: &str, delivery_report: &str, format: &str) {
         eprintln!("task close: cannot read delivery report `{delivery_report}` — {error}");
         std::process::exit(1);
     });
-    let result = delivery_report_validator::validate(&card, &report);
+    let result = ags_evidence::delivery_report::validate(&card, &report);
     if format == "json" {
-        println!("{}", delivery_report_validator::render_json(&result));
+        println!("{}", ags_evidence::delivery_report::render_json(&result));
     } else {
-        println!("{}", delivery_report_validator::render_text(&result));
+        println!("{}", ags_evidence::delivery_report::render_text(&result));
     }
     if !result.valid {
         std::process::exit(1);
@@ -99,11 +99,11 @@ fn cmd_task_compile(
 
     // Compile
     let handoff_source = if host_plan_mode_final {
-        task_compiler::HandoffSource::HostPlanMode
+        ags_task_contract::HandoffSource::HostPlanMode
     } else {
-        task_compiler::HandoffSource::ExplicitHandoff
+        ags_task_contract::HandoffSource::ExplicitHandoff
     };
-    let (compiled_card, report) = task_compiler::compile_with_handoff_source(
+    let (compiled_card, report) = ags_task_contract::compile_with_handoff_source(
         &content,
         &project_root,
         check_only,
@@ -123,14 +123,14 @@ fn cmd_task_compile(
             )],
         )
     } else {
-        let errors = task_card_validator::validate(&compiled_card);
+        let errors = ags_task_contract::validator::validate(&compiled_card);
         (errors.is_empty(), errors)
     };
 
     // Build final report with actual validation results
     // Preserve gate fields from the compiler; override validation from the
     // canonical validator (which only runs meaningfully when executable_allowed).
-    let final_report = task_compiler::CompileReport {
+    let final_report = ags_task_contract::CompileReport {
         schema_version: report.schema_version,
         compiled_task_card: report.compiled_task_card,
         slot_sources: report.slot_sources,
@@ -201,17 +201,17 @@ fn cmd_task_compile(
             }
             _ => {
                 // Plain text card output — first line is ## 任务卡
-                print!("{}", task_compiler::render_card_text(&final_report));
+                print!("{}", ags_task_contract::render_card_text(&final_report));
             }
         }
     } else {
         // Full report output
         match format {
             "json" => {
-                println!("{}", task_compiler::render_report_json(&final_report));
+                println!("{}", ags_task_contract::render_report_json(&final_report));
             }
             _ => {
-                println!("{}", task_compiler::render_report_text(&final_report));
+                println!("{}", ags_task_contract::render_report_text(&final_report));
             }
         }
     }

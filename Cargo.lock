@@ -4,59 +4,52 @@ version = 4
 
 [[package]]
 name = "ags-capability-governance"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "ags-governance-decision",
- "ags-lifecycle",
  "ags-platform",
  "serde",
  "serde_json",
  "serde_yaml",
  "sha2",
- "skill-governance",
+ "tempfile",
 ]
 
 [[package]]
 name = "ags-cli"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "ags-capability-governance",
  "ags-evidence",
  "ags-governance-decision",
+ "ags-host-integration",
  "ags-lifecycle",
  "ags-mcp",
  "ags-platform",
+ "ags-session",
  "ags-task-contract",
  "ags-verification",
  "ags-workspace-facts",
- "bootstrap-dry-run",
- "capability-registry",
  "clap",
- "delivery-report-validator",
- "execution-policy",
- "runner",
  "serde",
  "serde_json",
- "skill-governance",
- "suite-doctor",
- "task-card-validator",
- "workflow-sync-check",
 ]
 
 [[package]]
 name = "ags-evidence"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "ags-governance-decision",
+ "ags-platform",
+ "ags-task-contract",
  "serde",
  "serde_json",
- "sha2",
  "tempfile",
 ]
 
 [[package]]
 name = "ags-governance-decision"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -65,7 +58,7 @@ dependencies = [
 
 [[package]]
 name = "ags-host-integration"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "ags-platform",
  "serde",
@@ -74,8 +67,11 @@ dependencies = [
 
 [[package]]
 name = "ags-lifecycle"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
+ "ags-capability-governance",
+ "ags-platform",
+ "ags-workspace-facts",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -84,27 +80,27 @@ dependencies = [
 
 [[package]]
 name = "ags-mcp"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "ags-capability-governance",
  "ags-evidence",
  "ags-governance-decision",
  "ags-lifecycle",
+ "ags-platform",
  "ags-session",
+ "ags-task-contract",
  "ags-verification",
  "ags-workspace-facts",
- "execution-policy",
  "getrandom",
  "serde",
  "serde_json",
  "sha2",
- "task-card-validator",
  "tempfile",
 ]
 
 [[package]]
 name = "ags-platform"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "sha2",
  "tempfile",
@@ -112,7 +108,7 @@ dependencies = [
 
 [[package]]
 name = "ags-session"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "ags-capability-governance",
  "ags-platform",
@@ -125,30 +121,33 @@ dependencies = [
 
 [[package]]
 name = "ags-task-contract"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
- "ags-evidence",
+ "ags-capability-governance",
+ "ags-governance-decision",
  "ags-platform",
  "serde",
  "serde_json",
- "task-card-validator",
 ]
 
 [[package]]
 name = "ags-verification"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
+ "ags-capability-governance",
  "ags-governance-decision",
+ "ags-platform",
+ "ags-workspace-facts",
  "serde",
  "serde_json",
  "serde_yaml",
  "tempfile",
- "workflow-sync-check",
+ "toml",
 ]
 
 [[package]]
 name = "ags-workspace-facts"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "ags-governance-decision",
  "ags-host-integration",
@@ -229,26 +228,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bootstrap-dry-run"
-version = "0.3.1"
-dependencies = [
- "ags-platform",
- "serde",
- "serde_json",
- "suite-doctor",
- "tempfile",
-]
-
-[[package]]
-name = "capability-registry"
-version = "0.3.1"
-dependencies = [
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -320,16 +299,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "delivery-report-validator"
-version = "0.3.1"
-dependencies = [
- "ags-evidence",
- "serde",
- "serde_json",
- "task-card-validator",
-]
-
-[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -353,14 +322,6 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys",
-]
-
-[[package]]
-name = "execution-policy"
-version = "0.3.1"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -526,19 +487,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
-name = "runner"
-version = "0.3.1"
-dependencies = [
- "ags-capability-governance",
- "ags-evidence",
- "ags-governance-decision",
- "execution-policy",
- "serde",
- "serde_json",
- "task-card-validator",
-]
-
-[[package]]
 name = "rustix"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -607,6 +555,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_spanned"
+version = "0.6.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf41e0cfaf7226dca15e8197172c295a782857fcb97fad1808a166870dee75a3"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_yaml"
 version = "0.9.34+deprecated"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -631,33 +588,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "skill-governance"
-version = "0.3.1"
-dependencies = [
- "ags-lifecycle",
- "serde",
- "serde_json",
- "serde_yaml",
-]
-
-[[package]]
 name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
-
-[[package]]
-name = "suite-doctor"
-version = "0.3.1"
-dependencies = [
- "ags-capability-governance",
- "ags-platform",
- "ags-workspace-facts",
- "serde",
- "serde_json",
- "serde_yaml",
- "skill-governance",
-]
 
 [[package]]
 name = "syn"
@@ -671,10 +605,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "task-card-validator"
-version = "0.3.1"
-
-[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -686,6 +616,47 @@ dependencies = [
  "rustix",
  "windows-sys",
 ]
+
+[[package]]
+name = "toml"
+version = "0.8.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc1beb996b9d83529a9e75c17a1686767d148d70663143c7854d8b4a09ced362"
+dependencies = [
+ "serde",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_edit",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "0.6.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22cddaf88f4fbc13c51aebbf5f8eceb5c7c5a9da2ac40a13519eb5b0a0e8f11c"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "toml_edit"
+version = "0.22.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41fe8c660ae4257887cf66394862d21dbca4a6ddd26f04a3560410406a2f819a"
+dependencies = [
+ "indexmap",
+ "serde",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_write",
+ "winnow",
+]
+
+[[package]]
+name = "toml_write"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 
 [[package]]
 name = "typenum"
@@ -791,6 +762,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "winnow"
+version = "0.7.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "wit-bindgen"
 version = "0.51.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -882,15 +862,6 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser",
-]
-
-[[package]]
-name = "workflow-sync-check"
-version = "0.3.1"
-dependencies = [
- "serde",
- "serde_json",
- "tempfile",
 ]
 
 [[package]]

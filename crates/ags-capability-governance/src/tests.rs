@@ -4,6 +4,7 @@ use super::{
     authority::*, catalog::*, hashing::*, overlay_transaction::*, private_store::*,
     snapshot_compiler::*, snapshot_validation::*, usage_ledger::*,
 };
+use crate::skill_body::console::{HealthStatus, ManagedCapability, ManagedStatus, RegistryStatus};
 
 fn active_skill() -> ActiveSkill {
     ActiveSkill {

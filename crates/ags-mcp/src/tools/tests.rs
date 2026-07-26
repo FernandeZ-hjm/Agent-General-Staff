@@ -1,7 +1,7 @@
 use super::*;
 #[allow(unused_imports)]
 use super::{apply::*, decision::*, preflight::*, wire::*};
-use request_governance::{
+use ags_governance_decision::{
     ExecutionAuthority, ProposalPhase, SolutionState, HOST_ROUTE_PROPOSAL_SCHEMA_VERSION,
 };
 
@@ -18,6 +18,7 @@ fn binding() -> PreflightBinding {
         host_home: std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(".")),
+        capability: None,
     }
 }
 
@@ -33,25 +34,11 @@ fn stale_capability_snapshot_downgrades_false_green_preflight() {
             "  Codex may execute tasks per AGS governance lifecycle."
         ]
     });
-    let capability = serde_json::json!({
-        "uri": CURRENT_HOST_CAPABILITIES_URI,
-        "status": "snapshot_stale",
-        "snapshot_hash": null,
-        "refresh_required": true,
-        "refresh": {
-            "argv": [
-                "ags",
-                "capability",
-                "snapshot",
-                "--host",
-                "codex",
-                "--target",
-                "/tmp/project",
-                "--write"
-            ],
-            "requires_repreflight": true
-        }
-    });
+    let capability = capability_reference_json(
+        ags_session::CapabilityReference::SnapshotStale,
+        Path::new("/tmp/project"),
+        "codex",
+    );
 
     attach_capability_catalog(&mut report, capability);
 
@@ -83,12 +70,17 @@ fn ready_capability_snapshot_preserves_green_preflight() {
         "warnings": [],
         "next_steps": ["✓ All clear — project is fully integrated."]
     });
-    let capability = serde_json::json!({
-        "uri": CURRENT_HOST_CAPABILITIES_URI,
-        "status": "ready",
-        "snapshot_hash": "sha256:snapshot",
-        "refresh_required": false
-    });
+    let capability = capability_reference_json(
+        ags_session::CapabilityReference::Ready {
+            binding: ags_session::CapabilityBinding {
+                workspace_identity: "workspace".to_string(),
+                bundle_epoch: 1,
+                snapshot_hash: "sha256:snapshot".to_string(),
+            },
+        },
+        Path::new("/tmp/project"),
+        "codex",
+    );
 
     attach_capability_catalog(&mut report, capability);
 
@@ -99,6 +91,144 @@ fn ready_capability_snapshot_preserves_green_preflight() {
         report["capability_catalog"]["snapshot_hash"],
         "sha256:snapshot"
     );
+}
+
+#[test]
+fn unavailable_capability_source_is_diagnostic_without_refresh_advice() {
+    let mut report = serde_json::json!({
+        "overall_status": "pass",
+        "governance_status": "ready",
+        "warnings": [],
+        "next_steps": ["✓ All clear — project is fully integrated."]
+    });
+    let capability = capability_reference_json(
+        ags_session::CapabilityReference::Unavailable {
+            diagnostic: ags_session::CapabilityDiagnostic {
+                code: ags_session::CapabilityDiagnosticCode::SnapshotCorrupt,
+                detail: "snapshot JSON is corrupt".to_string(),
+            },
+        },
+        Path::new("/tmp/project"),
+        "codex",
+    );
+
+    attach_capability_catalog(&mut report, capability);
+
+    assert_eq!(report["overall_status"], "warning");
+    assert_eq!(report["governance_status"], "NEEDS_USER_DECISION");
+    assert_eq!(
+        report["capability_catalog"]["status"],
+        "capability_unavailable"
+    );
+    assert_eq!(
+        report["capability_catalog"]["error"]["code"],
+        "capability_snapshot_corrupt"
+    );
+    assert_eq!(report["capability_catalog"]["refresh_required"], false);
+    assert!(report["capability_catalog"].get("refresh").is_none());
+    assert!(report["warnings"][0]
+        .as_str()
+        .unwrap()
+        .contains("DirectResponse remains available"));
+    assert!(report["next_steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|step| !step
+            .as_str()
+            .unwrap_or_default()
+            .contains("snapshot --host")));
+}
+
+struct CorruptCapabilitySource;
+
+impl CapabilityCatalogSource for CorruptCapabilitySource {
+    fn load_validated_snapshot(
+        &self,
+        _binding: &PreflightBinding,
+    ) -> Result<ags_session::ValidatedCapabilityCatalog, ags_session::CapabilityLoadFailure> {
+        Err(ags_session::CapabilityLoadFailure::Unavailable(
+            ags_session::CapabilityDiagnostic {
+                code: ags_session::CapabilityDiagnosticCode::SnapshotCorrupt,
+                detail: "fixture snapshot JSON is corrupt".to_string(),
+            },
+        ))
+    }
+}
+
+struct CapabilitySourceMustNotBeRead;
+
+impl CapabilityCatalogSource for CapabilitySourceMustNotBeRead {
+    fn load_validated_snapshot(
+        &self,
+        _binding: &PreflightBinding,
+    ) -> Result<ags_session::ValidatedCapabilityCatalog, ags_session::CapabilityLoadFailure> {
+        panic!("persisted typed preflight failure must reject before catalog reload");
+    }
+}
+
+#[test]
+fn route_preserves_typed_capability_failure_instead_of_reporting_stale() {
+    let (_base, mut binding, runtime, _executable, _spy) =
+        machine_fixture("typed-capability-failure");
+    binding.capability = Some(ags_session::CapabilityReference::Ready {
+        binding: ags_session::CapabilityBinding {
+            workspace_identity: "fixture-workspace".to_string(),
+            bundle_epoch: 1,
+            snapshot_hash: "sha256:fixture".to_string(),
+        },
+    });
+    let mut session = RoutingSession::default();
+    let route = tool_route_request_with_source(
+        &serde_json::json!({"proposal": machine_proposal()}),
+        &binding,
+        &mut session,
+        &runtime,
+        Some(&CorruptCapabilitySource),
+    )
+    .unwrap();
+    let route: serde_json::Value = serde_json::from_str(&route).unwrap();
+
+    assert_eq!(route["governance_status"], "BLOCKED_BY_POLICY");
+    assert_eq!(route["errors"][0]["code"], "capability_snapshot_corrupt");
+    assert!(route["errors"][0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("fixture snapshot JSON is corrupt"));
+    assert!(session.actions.is_empty());
+}
+
+#[test]
+fn route_uses_the_persisted_preflight_failure_without_reclassifying_it() {
+    let (_base, mut binding, runtime, _executable, _spy) =
+        machine_fixture("persisted-capability-failure");
+    binding.capability = Some(ags_session::CapabilityReference::Unavailable {
+        diagnostic: ags_session::CapabilityDiagnostic {
+            code: ags_session::CapabilityDiagnosticCode::StatePersistenceFailed,
+            detail: "workspace bundle atomic replace failed".to_string(),
+        },
+    });
+    let mut session = RoutingSession::default();
+
+    let route = tool_route_request_with_source(
+        &serde_json::json!({"proposal": machine_proposal()}),
+        &binding,
+        &mut session,
+        &runtime,
+        Some(&CapabilitySourceMustNotBeRead),
+    )
+    .unwrap();
+    let route: serde_json::Value = serde_json::from_str(&route).unwrap();
+
+    assert_eq!(
+        route["errors"][0]["code"],
+        "capability_state_persistence_failed"
+    );
+    assert!(route["errors"][0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("atomic replace failed"));
+    assert!(session.actions.is_empty());
 }
 
 fn direct_proposal() -> serde_json::Value {
@@ -181,11 +311,12 @@ fn machine_fixture(tag: &str) -> (PathBuf, PreflightBinding, PathBuf, PathBuf, P
     )
     .unwrap();
     std::fs::write(target.join("manifests/mcp-registry.yaml"), "mcps: []\n").unwrap();
-    let snapshot =
-        skill_resolver::build_capability_snapshot_with_roots(&target, "codex", &runtime, &home)
-            .unwrap();
-    skill_resolver::write_private_atomic(
-        &skill_resolver::snapshot_path(&runtime, "codex"),
+    let snapshot = ags_capability_governance::build_capability_snapshot_with_roots(
+        &target, "codex", &runtime, &home,
+    )
+    .unwrap();
+    ags_capability_governance::write_private_atomic(
+        &ags_capability_governance::snapshot_path(&runtime, "codex"),
         serde_json::to_string_pretty(&snapshot).unwrap().as_bytes(),
     )
     .unwrap();
@@ -203,6 +334,7 @@ fn machine_fixture(tag: &str) -> (PathBuf, PreflightBinding, PathBuf, PathBuf, P
         host: "codex".to_string(),
         target,
         host_home: home,
+        capability: None,
     };
     (base, binding, runtime, executable, spy)
 }
@@ -243,7 +375,7 @@ fn tree_digest(root: &Path) -> String {
     }
     let mut rows = Vec::new();
     visit(root, root, &mut rows);
-    request_governance::sha256(&rows.concat())
+    ags_governance_decision::sha256(&rows.concat())
 }
 
 #[test]
@@ -299,6 +431,7 @@ fn onboarding_plan_is_public_and_holds_only_closed_actions() {
         host: "codex".to_string(),
         target: target.clone(),
         host_home: target.join("home"),
+        capability: None,
     };
     let mut session = RoutingSession::default();
     let result = tool_onboarding_plan(&serde_json::json!({}), &binding, &mut session).unwrap();
@@ -307,7 +440,7 @@ fn onboarding_plan_is_public_and_holds_only_closed_actions() {
     assert_eq!(value["binding"], "bootstrap_required");
     assert_eq!(
         value["plan"]["excluded_capabilities"],
-        serde_json::json!([])
+        serde_json::json!(["evomap", "gep", "private-runtime", "personal-skill-packs"])
     );
     assert!(value["actions"]
         .as_array()
@@ -463,6 +596,21 @@ fn machine_mapping_is_fixed_and_shell_free() {
 }
 
 #[test]
+fn task_prepare_execution_preserves_the_v030_check_only_invocation() {
+    let (args, stdin) = machine_invocation(
+        CliCapabilityId::TaskPrepareExecution,
+        &TypedCliInput::TaskCard {
+            content: "## 任务卡\nfixture".to_string(),
+        },
+        "codex",
+        Path::new("."),
+    )
+    .unwrap();
+    assert_eq!(args, ["run", "-", "--check-only", "--format", "json"]);
+    assert_eq!(stdin, "## 任务卡\nfixture");
+}
+
+#[test]
 fn host_plan_handoff_maps_to_the_plan_final_compiler_flag() {
     let (args, stdin) = machine_invocation(
         CliCapabilityId::TaskCompile,
@@ -560,21 +708,22 @@ fn coexisting_skill_and_machine_records_outcome_in_the_same_apply() {
             "---\nname: mcp-skill-machine-demo\ndescription: skill machine outcome\nintent_tags: [outcome]\n---\n",
         )
         .unwrap();
-    skill_resolver::mutate_user_overlay(
+    ags_capability_governance::mutate_user_overlay(
         &root,
         &runtime,
         &home,
         "codex",
         skill_id,
-        skill_resolver::OverlayMutationOperation::Adopt,
+        ags_capability_governance::OverlayMutationOperation::Adopt,
         None,
         true,
     )
     .unwrap();
-    let snapshot =
-        skill_resolver::load_validated_snapshot_with_roots(&root, &runtime, "codex", &home)
-            .unwrap()
-            .0;
+    let snapshot = ags_capability_governance::load_validated_snapshot_with_roots(
+        &root, &runtime, "codex", &home,
+    )
+    .unwrap()
+    .0;
     let executable = base.join("fake-ags");
     let spy = base.join("spy");
     std::fs::write(
@@ -591,6 +740,7 @@ fn coexisting_skill_and_machine_records_outcome_in_the_same_apply() {
         host: "codex".to_string(),
         target: root,
         host_home: home,
+        capability: None,
     };
     let proposal = serde_json::json!({
         "schema_version": HOST_ROUTE_PROPOSAL_SCHEMA_VERSION,
@@ -638,10 +788,13 @@ fn coexisting_skill_and_machine_records_outcome_in_the_same_apply() {
     let applied: serde_json::Value = serde_json::from_str(&applied).unwrap();
     assert!(applied["outcome_event_id"].as_str().is_some());
     assert!(spy.exists());
-    let events = skill_resolver::load_usage_events(&runtime, "codex");
+    let events = ags_capability_governance::load_usage_events(&runtime, "codex");
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].skill_id, skill_id);
-    assert_eq!(events[0].outcome, skill_resolver::SkillOutcome::Succeeded);
+    assert_eq!(
+        events[0].outcome,
+        ags_capability_governance::SkillOutcome::Succeeded
+    );
 
     match old_bin {
         Some(value) => std::env::set_var("AGS_CLI_BIN", value),
@@ -874,7 +1027,7 @@ fn new_route_and_new_connection_invalidate_old_lease() {
 }
 
 #[test]
-fn shape_failure_is_non_consuming_but_binding_and_registry_failures_consume() {
+fn every_pre_effect_failure_keeps_the_lease_retryable() {
     let (base, binding, runtime, _, _) = machine_fixture("tamper");
 
     let mut session = RoutingSession::default();
@@ -917,6 +1070,7 @@ fn shape_failure_is_non_consuming_but_binding_and_registry_failures_consume() {
         host: "claude-code".to_string(),
         target: binding.target.clone(),
         host_home: binding.host_home.clone(),
+        capability: binding.capability.clone(),
     };
     assert_eq!(
         tool_apply_action(
@@ -927,6 +1081,10 @@ fn shape_failure_is_non_consuming_but_binding_and_registry_failures_consume() {
         )
         .unwrap_err(),
         "preflight_binding_conflict"
+    );
+    assert!(
+        !session.actions.get(&action_id).unwrap().consumed,
+        "binding failure happens before the effect seam"
     );
 
     let route = tool_route_request(
@@ -950,7 +1108,93 @@ fn shape_failure_is_non_consuming_but_binding_and_registry_failures_consume() {
         .unwrap_err(),
         "decision_lease_registry_hash_mismatch"
     );
+    assert!(
+        !session.actions.get(&action_id).unwrap().consumed,
+        "registry failure happens before the effect seam"
+    );
     std::fs::write(&registry_path, original).unwrap();
+
+    let route = tool_route_request(
+        &serde_json::json!({"proposal": machine_proposal()}),
+        &binding,
+        &mut session,
+        &runtime,
+    )
+    .unwrap();
+    let (lease_id, action_id) = route_action(&route);
+    session.actions.get_mut(&action_id).unwrap().policy_hash = "sha256:tampered".to_string();
+    assert_eq!(
+        tool_apply_action(
+            &serde_json::json!({"lease_id": lease_id, "action_id": action_id}),
+            &binding,
+            &mut session,
+            &runtime,
+        )
+        .unwrap_err(),
+        "decision_lease_policy_hash_mismatch"
+    );
+    assert!(
+        !session.actions.get(&action_id).unwrap().consumed,
+        "policy failure happens before the effect seam"
+    );
+
+    let route = tool_route_request(
+        &serde_json::json!({"proposal": machine_proposal()}),
+        &binding,
+        &mut session,
+        &runtime,
+    )
+    .unwrap();
+    let (lease_id, action_id) = route_action(&route);
+    session
+        .actions
+        .get_mut(&action_id)
+        .unwrap()
+        .evidence
+        .snapshot_hash = "sha256:tampered".to_string();
+    assert_eq!(
+        tool_apply_action(
+            &serde_json::json!({"lease_id": lease_id, "action_id": action_id}),
+            &binding,
+            &mut session,
+            &runtime,
+        )
+        .unwrap_err(),
+        "decision_lease_snapshot_hash_mismatch"
+    );
+    assert!(
+        !session.actions.get(&action_id).unwrap().consumed,
+        "snapshot failure happens before the effect seam"
+    );
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[cfg(unix)]
+#[test]
+fn effect_invocation_failure_consumes_the_lease_and_blocks_replay() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let (base, binding, runtime, _, _) = machine_fixture("effect-failure");
+    let old_bin = std::env::var_os("AGS_CLI_BIN");
+    std::env::set_var("AGS_CLI_BIN", base.join("missing-ags"));
+
+    let mut session = RoutingSession::default();
+    let route = tool_route_request(
+        &serde_json::json!({"proposal": machine_proposal()}),
+        &binding,
+        &mut session,
+        &runtime,
+    )
+    .unwrap();
+    let (lease_id, action_id) = route_action(&route);
+    let error = tool_apply_action(
+        &serde_json::json!({"lease_id": lease_id, "action_id": action_id}),
+        &binding,
+        &mut session,
+        &runtime,
+    )
+    .unwrap_err();
+    assert!(error.starts_with("MachineCli spawn failed:"));
+    assert!(session.actions.get(&action_id).unwrap().consumed);
     assert_eq!(
         tool_apply_action(
             &serde_json::json!({"lease_id": lease_id, "action_id": action_id}),
@@ -961,6 +1205,11 @@ fn shape_failure_is_non_consuming_but_binding_and_registry_failures_consume() {
         .unwrap_err(),
         "decision_lease_invalid_or_consumed"
     );
+
+    match old_bin {
+        Some(value) => std::env::set_var("AGS_CLI_BIN", value),
+        None => std::env::remove_var("AGS_CLI_BIN"),
+    }
     let _ = std::fs::remove_dir_all(base);
 }
 
@@ -1012,20 +1261,21 @@ fn skill_outcome_is_written_only_through_apply_without_sensitive_fields() {
             "---\nname: mcp-outcome-demo\ndescription: Records a controlled outcome.\nintent_tags: [outcome-demo]\n---\nbody\n",
         )
         .unwrap();
-    skill_resolver::mutate_user_overlay(
+    ags_capability_governance::mutate_user_overlay(
         &root,
         &runtime,
         &home,
         "codex",
         skill_id,
-        skill_resolver::OverlayMutationOperation::Adopt,
+        ags_capability_governance::OverlayMutationOperation::Adopt,
         None,
         true,
     )
     .unwrap();
-    let snapshot =
-        skill_resolver::build_capability_snapshot_with_roots(&root, "codex", &runtime, &home)
-            .unwrap();
+    let snapshot = ags_capability_governance::build_capability_snapshot_with_roots(
+        &root, "codex", &runtime, &home,
+    )
+    .unwrap();
     assert!(
         snapshot
             .active_skills
@@ -1037,8 +1287,8 @@ fn skill_outcome_is_written_only_through_apply_without_sensitive_fields() {
             .iter()
             .find(|card| card.skill_id == skill_id)
     );
-    skill_resolver::write_private_atomic(
-        &skill_resolver::snapshot_path(&runtime, "codex"),
+    ags_capability_governance::write_private_atomic(
+        &ags_capability_governance::snapshot_path(&runtime, "codex"),
         serde_json::to_string_pretty(&snapshot).unwrap().as_bytes(),
     )
     .unwrap();
@@ -1065,6 +1315,7 @@ fn skill_outcome_is_written_only_through_apply_without_sensitive_fields() {
             host: "codex".to_string(),
             target: root.clone(),
             host_home: home.clone(),
+            capability: None,
         },
         &mut session,
         &runtime,
@@ -1089,6 +1340,7 @@ fn skill_outcome_is_written_only_through_apply_without_sensitive_fields() {
             host: "codex".to_string(),
             target: root.clone(),
             host_home: home.clone(),
+            capability: None,
         },
         &mut session,
         &runtime,
@@ -1096,7 +1348,7 @@ fn skill_outcome_is_written_only_through_apply_without_sensitive_fields() {
     .unwrap();
     let applied: serde_json::Value = serde_json::from_str(&applied).unwrap();
     assert_eq!(applied["governance_status"], "DONE_WITH_RECEIPT");
-    let usage = skill_resolver::usage_path(&runtime, "codex");
+    let usage = ags_capability_governance::usage_path(&runtime, "codex");
     let line = std::fs::read_to_string(&usage).unwrap();
     let event: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
     assert_eq!(event["skill_id"], skill_id);
@@ -1128,6 +1380,7 @@ fn skill_outcome_is_written_only_through_apply_without_sensitive_fields() {
             host: "codex".to_string(),
             target: root.clone(),
             host_home: home.clone(),
+            capability: None,
         },
         &mut session,
         &runtime,
@@ -1144,14 +1397,18 @@ fn skill_outcome_is_written_only_through_apply_without_sensitive_fields() {
             host: "codex".to_string(),
             target: root.clone(),
             host_home: home.clone(),
+            capability: None,
         },
         &mut session,
         &runtime,
     )
     .unwrap();
-    let events = skill_resolver::load_usage_events(&runtime, "codex");
+    let events = ags_capability_governance::load_usage_events(&runtime, "codex");
     assert_eq!(events.len(), 2);
-    assert_eq!(events[1].outcome, skill_resolver::SkillOutcome::Abandoned);
+    assert_eq!(
+        events[1].outcome,
+        ags_capability_governance::SkillOutcome::Abandoned
+    );
     assert_eq!(events[0].request_fingerprint, events[1].request_fingerprint);
 
     let route = tool_route_request(
@@ -1160,6 +1417,7 @@ fn skill_outcome_is_written_only_through_apply_without_sensitive_fields() {
             host: "codex".to_string(),
             target: root.clone(),
             host_home: home.clone(),
+            capability: None,
         },
         &mut session,
         &runtime,
@@ -1176,6 +1434,7 @@ fn skill_outcome_is_written_only_through_apply_without_sensitive_fields() {
             host: "codex".to_string(),
             target: root.clone(),
             host_home: home.clone(),
+            capability: None,
         },
         &mut session,
         &runtime,
@@ -1192,6 +1451,7 @@ fn skill_outcome_is_written_only_through_apply_without_sensitive_fields() {
             host: "codex".to_string(),
             target: root,
             host_home: home.clone(),
+            capability: None,
         },
         &mut session,
         &runtime,
@@ -1200,7 +1460,7 @@ fn skill_outcome_is_written_only_through_apply_without_sensitive_fields() {
     let corrected: serde_json::Value = serde_json::from_str(&corrected).unwrap();
     assert_eq!(corrected["governance_status"], "DONE_WITH_RECEIPT");
     assert_eq!(
-        skill_resolver::load_usage_events(&runtime, "codex").len(),
+        ags_capability_governance::load_usage_events(&runtime, "codex").len(),
         3
     );
 

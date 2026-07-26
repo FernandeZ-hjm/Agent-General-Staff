@@ -1,12 +1,11 @@
-use ags_capability_governance as skill_resolver;
-use request_governance::{EngineeringDemand, SkillDemand};
-use skill_resolver::{
+use ags_capability_governance::{
     build_capability_snapshot_with_runtime_home, load_demand_routes, load_validated_snapshot,
     load_validated_snapshot_with_roots, resolve_capability_authority_root, resolve_skill,
     snapshot_path, ActiveSkill, ActiveSkillTable, AuthState, AvailabilityState, CapabilitySnapshot,
     GovernanceState, ResolveError, SkillCard, SkillSourceKind, SnapshotError,
     HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION,
 };
+use ags_governance_decision::{EngineeringDemand, SkillDemand};
 
 fn temp_path(name: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("ags-skill-resolver-{name}-{}", std::process::id()))
@@ -22,7 +21,7 @@ fn runtime_home_preserves_existing_environment_precedence() {
     std::env::set_var("AGS_RUNTIME_HOME", "/tmp/ags-runtime-priority");
     std::env::set_var("AGS_HOME", "/tmp/ags-home-fallback");
     assert_eq!(
-        skill_resolver::locate_runtime_home(),
+        ags_capability_governance::locate_runtime_home(),
         std::path::PathBuf::from("/tmp/ags-runtime-priority")
     );
 
@@ -40,7 +39,7 @@ fn runtime_home_preserves_existing_environment_precedence() {
 fn integrated_sibling_project_uses_installed_suite_capability_authority() {
     let base = temp_path("sibling-authority");
     let _ = std::fs::remove_dir_all(&base);
-    let suite = base.join("example-stable-suite");
+    let suite = base.join("agent-governance-suite-stable");
     let project = base.join("integrated-project");
     let runtime = base.join("runtime");
     std::fs::create_dir_all(suite.join("manifests")).unwrap();
@@ -90,7 +89,7 @@ fn architecture_card() -> SkillCard {
         reason_codes: Vec::new(),
         requires_auth: false,
         auth_state: AuthState::NotRequired,
-        activity: skill_resolver::ActivityState::Unobserved,
+        activity: ags_capability_governance::ActivityState::Unobserved,
         version: "registry".to_string(),
         source_hash: "sha256:source".to_string(),
     }
@@ -264,9 +263,10 @@ fn current_skill_body_change_invalidates_a_self_consistent_saved_snapshot() {
     std::fs::create_dir_all(body.join("scripts")).unwrap();
     std::fs::write(body.join("scripts/run.sh"), "printf first\n").unwrap();
 
-    let snapshot =
-        skill_resolver::build_capability_snapshot_with_roots(&root, "codex", &runtime, &home)
-            .unwrap();
+    let snapshot = ags_capability_governance::build_capability_snapshot_with_roots(
+        &root, "codex", &runtime, &home,
+    )
+    .unwrap();
     let path = snapshot_path(&runtime, "codex");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
@@ -277,7 +277,7 @@ fn current_skill_body_change_invalidates_a_self_consistent_saved_snapshot() {
     std::fs::write(body.join("scripts/run.sh"), "printf changed\n").unwrap();
     assert!(matches!(
         load_validated_snapshot_with_roots(&root, &runtime, "codex", &home),
-        Err(skill_resolver::SnapshotLoadError::Snapshot(
+        Err(ags_capability_governance::SnapshotLoadError::Snapshot(
             SnapshotError::SkillSnapshotStale
         ))
     ));
@@ -300,9 +300,10 @@ fn cursor_catalog_discovers_shared_user_skills() {
     )
     .unwrap();
 
-    let snapshot =
-        skill_resolver::build_capability_snapshot_with_roots(&root, "cursor", &runtime, &home)
-            .unwrap();
+    let snapshot = ags_capability_governance::build_capability_snapshot_with_roots(
+        &root, "cursor", &runtime, &home,
+    )
+    .unwrap();
     assert!(snapshot
         .catalog
         .iter()
@@ -383,9 +384,10 @@ fn catalog_unifies_all_enabled_sources_and_excludes_disabled_plugin_cache() {
         "catalog-plugin-disabled",
     );
 
-    let snapshot =
-        skill_resolver::build_capability_snapshot_with_roots(&root, "codex", &runtime, &home)
-            .unwrap();
+    let snapshot = ags_capability_governance::build_capability_snapshot_with_roots(
+        &root, "codex", &runtime, &home,
+    )
+    .unwrap();
     let source = |skill_id: &str| {
         snapshot
             .catalog
@@ -449,21 +451,22 @@ fn adopted_authenticated_skill_is_ready_only_after_nonsensitive_auth_state() {
         "---\nname: catalog-auth-demo\ndescription: Auth-gated catalog fixture.\nintent_tags: [auth-demo]\nrequires_auth: true\n---\nbody\n",
     )
     .unwrap();
-    skill_resolver::mutate_user_overlay(
+    ags_capability_governance::mutate_user_overlay(
         &root,
         &runtime,
         &home,
         "codex",
         skill_id,
-        skill_resolver::OverlayMutationOperation::Adopt,
+        ags_capability_governance::OverlayMutationOperation::Adopt,
         None,
         true,
     )
     .unwrap();
 
-    let missing =
-        skill_resolver::build_capability_snapshot_with_roots(&root, "codex", &runtime, &home)
-            .unwrap();
+    let missing = ags_capability_governance::build_capability_snapshot_with_roots(
+        &root, "codex", &runtime, &home,
+    )
+    .unwrap();
     let card = missing
         .catalog
         .iter()
@@ -486,9 +489,10 @@ fn adopted_authenticated_skill_is_ready_only_after_nonsensitive_auth_state() {
         format!(r#"{{"skills":{{"{skill_id}":"satisfied"}}}}"#),
     )
     .unwrap();
-    let ready =
-        skill_resolver::build_capability_snapshot_with_roots(&root, "codex", &runtime, &home)
-            .unwrap();
+    let ready = ags_capability_governance::build_capability_snapshot_with_roots(
+        &root, "codex", &runtime, &home,
+    )
+    .unwrap();
     let card = ready
         .catalog
         .iter()
@@ -510,8 +514,10 @@ fn adopted_authenticated_skill_is_ready_only_after_nonsensitive_auth_state() {
     )
     .unwrap();
     let rejected_secret_bearing_state =
-        skill_resolver::build_capability_snapshot_with_roots(&root, "codex", &runtime, &home)
-            .unwrap();
+        ags_capability_governance::build_capability_snapshot_with_roots(
+            &root, "codex", &runtime, &home,
+        )
+        .unwrap();
     let card = rejected_secret_bearing_state
         .catalog
         .iter()

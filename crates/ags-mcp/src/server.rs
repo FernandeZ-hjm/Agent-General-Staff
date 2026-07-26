@@ -15,7 +15,7 @@
 
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use sha2::{Digest, Sha256};
 
@@ -79,8 +79,13 @@ impl PreflightState {
     /// Record a successful preflight. `agent` is the NORMALIZED agent and
     /// `target` is the RESOLVED target — both taken from the preflight result
     /// JSON, not the raw call arguments.
-    fn mark_completed(&mut self, agent: Option<String>, target: Option<String>) {
-        self.governance.mark_completed(agent, target);
+    fn mark_completed(
+        &mut self,
+        agent: Option<String>,
+        target: Option<String>,
+        capability: Option<ags_session::CapabilityReference>,
+    ) {
+        self.governance.mark_completed(agent, target, capability);
     }
 
     fn mark_bootstrap_required(&mut self, agent: Option<String>, target: Option<String>) {
@@ -102,6 +107,31 @@ fn host_home() -> PathBuf {
 pub(crate) struct RuntimeProcessIdentity {
     executable: Option<PathBuf>,
     started_hash: Option<String>,
+    observation: Arc<Mutex<RuntimeExecutableObservation>>,
+    #[cfg(test)]
+    full_hash_reads: Arc<std::sync::atomic::AtomicU64>,
+}
+
+#[derive(Debug)]
+struct RuntimeExecutableObservation {
+    /// File identity whose bytes produced `started_hash`.
+    ///
+    /// On Unix this includes inode/device plus content-relevant timestamps.
+    /// Other platforms deliberately leave this unset and retain the conservative
+    /// full-hash check on every governed request.
+    fingerprint: Option<ExecutableFingerprint>,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ExecutableFingerprint {
+    device: u64,
+    inode: u64,
+    size: u64,
+    modified_seconds: i64,
+    modified_nanoseconds: i64,
+    changed_seconds: i64,
+    changed_nanoseconds: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -114,33 +144,131 @@ struct RuntimeProcessStaleEvidence {
 impl RuntimeProcessIdentity {
     pub(crate) fn capture() -> Self {
         let executable = std::env::current_exe().ok();
-        let started_hash = executable.as_deref().and_then(executable_sha256);
+        let (started_hash, fingerprint) = executable
+            .as_deref()
+            .map(capture_executable)
+            .unwrap_or((None, None));
         Self {
             executable,
             started_hash,
+            observation: Arc::new(Mutex::new(RuntimeExecutableObservation { fingerprint })),
+            #[cfg(test)]
+            full_hash_reads: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
     #[cfg(test)]
     fn capture_from_path(executable: PathBuf) -> Self {
-        let started_hash = executable_sha256(&executable);
+        let (started_hash, fingerprint) = capture_executable(&executable);
         Self {
             executable: Some(executable),
             started_hash,
+            observation: Arc::new(Mutex::new(RuntimeExecutableObservation { fingerprint })),
+            full_hash_reads: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
     fn stale_evidence(&self) -> Option<RuntimeProcessStaleEvidence> {
         let executable = self.executable.clone()?;
-        let started_hash = self.started_hash.clone()?;
-        let installed_hash = executable_sha256(&executable)?;
-        (installed_hash != started_hash).then_some(RuntimeProcessStaleEvidence {
+        let Some(started_hash) = self.started_hash.clone() else {
+            return Some(RuntimeProcessStaleEvidence {
+                executable,
+                started_hash: "unavailable:startup-hash-read-failed".to_string(),
+                installed_hash: "unverified".to_string(),
+            });
+        };
+        let before = match executable_fingerprint(&executable) {
+            Ok(fingerprint) => fingerprint,
+            Err(error) => {
+                return Some(RuntimeProcessStaleEvidence {
+                    executable,
+                    started_hash,
+                    installed_hash: format!("unavailable:{error}"),
+                });
+            }
+        };
+        let mut observation = self
+            .observation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if before.is_some() && before == observation.fingerprint {
+            return None;
+        }
+
+        #[cfg(test)]
+        self.full_hash_reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let installed_hash = match executable_sha256(&executable) {
+            Some(hash) => hash,
+            None => {
+                return Some(RuntimeProcessStaleEvidence {
+                    executable,
+                    started_hash,
+                    installed_hash: "unavailable:hash-read-failed".to_string(),
+                });
+            }
+        };
+        let after = executable_fingerprint(&executable).ok().flatten();
+        if before != after {
+            return Some(RuntimeProcessStaleEvidence {
+                executable,
+                started_hash,
+                installed_hash: format!("unstable:{installed_hash}"),
+            });
+        }
+        if installed_hash == started_hash {
+            observation.fingerprint = after;
+            return None;
+        }
+        Some(RuntimeProcessStaleEvidence {
             executable,
             started_hash,
             installed_hash,
         })
     }
+
+    #[cfg(test)]
+    fn full_hash_reads(&self) -> u64 {
+        self.full_hash_reads
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
+
+fn capture_executable(path: &Path) -> (Option<String>, Option<ExecutableFingerprint>) {
+    let before = executable_fingerprint(path).ok().flatten();
+    let hash = executable_sha256(path);
+    let after = executable_fingerprint(path).ok().flatten();
+    let fingerprint = (before == after).then_some(after).flatten();
+    (hash, fingerprint)
+}
+
+#[cfg(unix)]
+fn executable_fingerprint(path: &Path) -> std::io::Result<Option<ExecutableFingerprint>> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = std::fs::metadata(path)?;
+    Ok(Some(ExecutableFingerprint {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        size: metadata.size(),
+        modified_seconds: metadata.mtime(),
+        modified_nanoseconds: metadata.mtime_nsec(),
+        changed_seconds: metadata.ctime(),
+        changed_nanoseconds: metadata.ctime_nsec(),
+    }))
+}
+
+#[cfg(not(unix))]
+fn executable_fingerprint(path: &Path) -> std::io::Result<Option<ExecutableFingerprint>> {
+    // No std API exposes a portable file identity strong enough to prove that
+    // a path still names the bytes hashed at daemon start. Keep the existing
+    // full-hash-per-call behavior on these platforms.
+    let _ = std::fs::metadata(path)?;
+    Ok(None)
+}
+
+#[cfg(not(unix))]
+type ExecutableFingerprint = ();
 
 fn executable_sha256(path: &Path) -> Option<String> {
     let bytes = std::fs::read(path).ok()?;
@@ -274,13 +402,36 @@ fn is_runtime_process_stale_result(result: &str) -> bool {
         .is_some_and(|status| status == "stale")
 }
 
+fn runtime_process_stale_error(
+    id: Option<serde_json::Value>,
+    preflight: &PreflightState,
+) -> Option<JsonRpcResponse> {
+    let evidence = preflight.runtime_process.stale_evidence()?;
+    Some(JsonRpcResponse::error(
+        id,
+        -32001,
+        &format!(
+            "runtime_process_stale: AGS executable changed from {} to {} at {}; reconnect through the stdio adapter before using governed tools or resources",
+            evidence.started_hash,
+            evidence.installed_hash,
+            evidence.executable.display()
+        ),
+    ))
+}
+
 /// Extract the normalized agent and resolved target from a successful preflight
 /// result JSON. These come from the preflight OUTPUT (normalized agent, resolved
 /// target path), never from the raw call arguments, so later phase tools reuse
 /// the same context AGS actually resolved.
-fn preflight_context_from_result(result: &str) -> (Option<String>, Option<String>) {
+fn preflight_context_from_result(
+    result: &str,
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<ags_session::CapabilityReference>,
+) {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(result) else {
-        return (None, None);
+        return (None, None, None);
     };
     let agent = value
         .get("agent")
@@ -292,7 +443,62 @@ fn preflight_context_from_result(result: &str) -> (Option<String>, Option<String
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
-    (agent, target)
+    let capability = value.get("capability_catalog").and_then(|catalog| {
+        match catalog.get("status").and_then(|status| status.as_str())? {
+            "ready" => Some(ags_session::CapabilityReference::Ready {
+                binding: ags_session::CapabilityBinding {
+                    workspace_identity: catalog.get("workspace_identity")?.as_str()?.to_string(),
+                    bundle_epoch: catalog.get("bundle_epoch")?.as_u64()?,
+                    snapshot_hash: catalog.get("snapshot_hash")?.as_str()?.to_string(),
+                },
+            }),
+            "snapshot_stale" => Some(ags_session::CapabilityReference::SnapshotStale),
+            "capability_unavailable" => {
+                let error = catalog.get("error")?;
+                let code = match error.get("code")?.as_str()? {
+                    "capability_authority_unavailable" => {
+                        ags_session::CapabilityDiagnosticCode::AuthorityUnavailable
+                    }
+                    "capability_snapshot_build_failed" => {
+                        ags_session::CapabilityDiagnosticCode::SnapshotBuildFailed
+                    }
+                    "capability_snapshot_read_failed" => {
+                        ags_session::CapabilityDiagnosticCode::SnapshotReadFailed
+                    }
+                    "capability_snapshot_corrupt" => {
+                        ags_session::CapabilityDiagnosticCode::SnapshotCorrupt
+                    }
+                    "capability_snapshot_integrity_failed" => {
+                        ags_session::CapabilityDiagnosticCode::SnapshotIntegrityFailed
+                    }
+                    "capability_snapshot_invalid" => {
+                        ags_session::CapabilityDiagnosticCode::SnapshotInvalid
+                    }
+                    "capability_workspace_target_invalid" => {
+                        ags_session::CapabilityDiagnosticCode::WorkspaceTargetInvalid
+                    }
+                    "capability_state_lock_unavailable" => {
+                        ags_session::CapabilityDiagnosticCode::StateLockUnavailable
+                    }
+                    "capability_state_persistence_failed" => {
+                        ags_session::CapabilityDiagnosticCode::StatePersistenceFailed
+                    }
+                    "capability_source_unavailable" => {
+                        ags_session::CapabilityDiagnosticCode::SourceUnavailable
+                    }
+                    _ => return None,
+                };
+                Some(ags_session::CapabilityReference::Unavailable {
+                    diagnostic: ags_session::CapabilityDiagnostic {
+                        code,
+                        detail: error.get("detail")?.as_str()?.to_string(),
+                    },
+                })
+            }
+            _ => None,
+        }
+    });
+    (agent, target, capability)
 }
 
 fn is_bootstrap_required_preflight_result(result: &str) -> bool {
@@ -531,6 +737,16 @@ fn handle_tools_call(req: &JsonRpcRequest, preflight: &mut PreflightState) -> Js
         return JsonRpcResponse::error(req.id.clone(), -32000, PREFLIGHT_GATE_ERROR);
     }
 
+    // Check the loaded executable before any governed adapter can invalidate a
+    // decision generation, mint a lease, read a bound resource, or cross the
+    // apply consumption point. Discovery and host-instruction bootstrap remain
+    // available; preflight retains its structured stale report.
+    if tool_name != tools::TOOL_PREFLIGHT && tool_name != tools::TOOL_AGENT_INSTRUCTIONS {
+        if let Some(response) = runtime_process_stale_error(req.id.clone(), preflight) {
+            return response;
+        }
+    }
+
     // Every preflight attempt invalidates actions from the preceding binding,
     // even when the new preflight ultimately reports a stop condition.
     if tools::is_preflight_tool_name(tool_name) {
@@ -578,8 +794,8 @@ fn handle_tools_call(req: &JsonRpcRequest, preflight: &mut PreflightState) -> Js
             {
                 // Use the NORMALIZED agent + RESOLVED target from the preflight
                 // result JSON, not the raw call arguments.
-                let (agent, target) = preflight_context_from_result(&result);
-                preflight.mark_completed(agent, target);
+                let (agent, target, capability) = preflight_context_from_result(&result);
+                preflight.mark_completed(agent, target, capability);
                 log_error(&format!(
                     "preflight completed for agent: {} target: {}",
                     preflight.governance.preflight_agent().unwrap_or("unknown"),
@@ -588,7 +804,7 @@ fn handle_tools_call(req: &JsonRpcRequest, preflight: &mut PreflightState) -> Js
             } else if tools::is_preflight_tool_name(tool_name)
                 && is_bootstrap_required_preflight_result(&result)
             {
-                let (agent, target) = preflight_context_from_result(&result);
+                let (agent, target, _) = preflight_context_from_result(&result);
                 preflight.mark_bootstrap_required(agent, target);
                 if preflight.governance.is_bootstrap_required() {
                     log_error("preflight established restricted bootstrap_required binding");
@@ -642,6 +858,9 @@ fn handle_resources_read(req: &JsonRpcRequest, preflight: &PreflightState) -> Js
     };
 
     if uri == tools::CURRENT_HOST_CAPABILITIES_URI {
+        if let Some(response) = runtime_process_stale_error(req.id.clone(), preflight) {
+            return response;
+        }
         let Some(binding) = preflight.binding() else {
             return JsonRpcResponse::error(req.id.clone(), -32000, PREFLIGHT_GATE_ERROR);
         };
@@ -699,6 +918,11 @@ fn handle_prompts_get(req: &JsonRpcRequest, preflight: &PreflightState) -> JsonR
     {
         return JsonRpcResponse::error(req.id.clone(), -32000, PREFLIGHT_GATE_ERROR);
     }
+    if PHASE_GATED_PROMPTS.contains(&prompt_name) {
+        if let Some(response) = runtime_process_stale_error(req.id.clone(), preflight) {
+            return response;
+        }
+    }
 
     let arguments = params
         .get("arguments")
@@ -736,567 +960,4 @@ fn log_error(msg: &str) {
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::protocol::JsonRpcRequest;
-    use serde_json::json;
-    use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    struct RuntimeFixture {
-        path: PathBuf,
-    }
-
-    impl RuntimeFixture {
-        fn new() -> Self {
-            let nonce = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos();
-            let path = std::env::temp_dir().join(format!(
-                "ags-mcp-runtime-fixture-{}-{nonce}",
-                std::process::id()
-            ));
-            fs::write(&path, b"runtime-v1").expect("runtime fixture should be writable");
-            Self { path }
-        }
-
-        fn identity(&self) -> RuntimeProcessIdentity {
-            RuntimeProcessIdentity::capture_from_path(self.path.clone())
-        }
-
-        fn replace(&self) {
-            fs::write(&self.path, b"runtime-v2").expect("runtime fixture should be replaceable");
-        }
-    }
-
-    impl Drop for RuntimeFixture {
-        fn drop(&mut self) {
-            let _ = fs::remove_file(&self.path);
-        }
-    }
-
-    /// Build a minimal JSON-RPC request for testing handlers directly.
-    fn make_request(method: &str, params: Option<serde_json::Value>) -> JsonRpcRequest {
-        JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
-            id: Some(json!(1)),
-            method: method.to_string(),
-            params,
-        }
-    }
-
-    fn has_error(response: &JsonRpcResponse) -> bool {
-        response.error.is_some()
-    }
-
-    fn is_success(response: &JsonRpcResponse) -> bool {
-        response.result.is_some() && response.error.is_none()
-    }
-
-    fn error_contains(response: &JsonRpcResponse, needle: &str) -> bool {
-        response
-            .error
-            .as_ref()
-            .map(|e| e.message.contains(needle))
-            .unwrap_or(false)
-    }
-
-    fn suite_root() -> String {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .canonicalize()
-            .expect("suite root should canonicalize")
-            .to_string_lossy()
-            .to_string()
-    }
-
-    fn response_text(response: &JsonRpcResponse) -> &str {
-        response
-            .result
-            .as_ref()
-            .and_then(|result| result.get("content"))
-            .and_then(|content| content.as_array())
-            .and_then(|content| content.first())
-            .and_then(|content| content.get("text"))
-            .and_then(|text| text.as_str())
-            .expect("tool response should contain text")
-    }
-
-    // ── tools/call gate tests ───────────────────────────────────────────
-
-    #[test]
-    fn runtime_identity_detects_replaced_executable() {
-        let fixture = RuntimeFixture::new();
-        let identity = fixture.identity();
-        assert!(
-            identity.stale_evidence().is_none(),
-            "unchanged executable must be current"
-        );
-
-        fixture.replace();
-        let evidence = identity
-            .stale_evidence()
-            .expect("replaced executable must be detected");
-        assert_ne!(evidence.started_hash, evidence.installed_hash);
-        assert_eq!(evidence.executable, fixture.path);
-    }
-
-    #[test]
-    fn stale_runtime_preflight_requires_reconnect_and_keeps_gate_closed() {
-        let fixture = RuntimeFixture::new();
-        let mut preflight = PreflightState::with_runtime_process(fixture.identity());
-        fixture.replace();
-
-        let params = json!({
-            "name": "ags_preflight",
-            "arguments": {"agent": "codex", "target": suite_root()}
-        });
-        let req = make_request("tools/call", Some(params));
-        let response = handle_tools_call(&req, &mut preflight);
-        assert!(is_success(&response), "preflight should return a report");
-
-        let report: serde_json::Value = serde_json::from_str(response_text(&response))
-            .expect("preflight report should be JSON");
-        assert_eq!(report["runtime_process"]["status"], "stale");
-        assert_eq!(report["runtime_process"]["restart_required"], true);
-        assert_eq!(
-            report["capability_catalog"]["status"],
-            "runtime_process_stale"
-        );
-        assert_eq!(report["capability_catalog"]["refresh_required"], false);
-        assert_eq!(report["capability_catalog"]["requires_host_restart"], true);
-        assert!(
-            report["capability_catalog"].get("refresh").is_none(),
-            "runtime staleness must not suggest snapshot refresh"
-        );
-        assert!(
-            report["next_steps"]
-                .as_array()
-                .is_some_and(|steps| steps.iter().any(|step| step
-                    .as_str()
-                    .is_some_and(|step| step.contains("Do not refresh")))),
-            "next steps must distinguish restart from snapshot refresh"
-        );
-        assert!(
-            !preflight.governance.is_preflight_completed()
-                && !preflight.governance.is_bootstrap_required(),
-            "stale runtime must keep every governed binding closed"
-        );
-
-        let gated_params =
-            json!({"name": "ags_route_request", "arguments": {"request": "still gated"}});
-        let gated_req = make_request("tools/call", Some(gated_params));
-        let gated_response = handle_tools_call(&gated_req, &mut preflight);
-        assert!(has_error(&gated_response));
-        assert!(error_contains(&gated_response, "Initialization Gate"));
-    }
-
-    #[test]
-    fn tools_list_always_allowed() {
-        let req = make_request("tools/list", None);
-        let resp = handle_tools_list(&req);
-        assert!(is_success(&resp), "tools/list must always succeed");
-    }
-
-    #[test]
-    fn tools_list_exposes_schema_safe_tool_names() {
-        let req = make_request("tools/list", None);
-        let resp = handle_tools_list(&req);
-        let tools = resp
-            .result
-            .as_ref()
-            .and_then(|result| result.get("tools"))
-            .and_then(|tools| tools.as_array())
-            .expect("tools/list result must contain tools array");
-
-        let names: Vec<&str> = tools
-            .iter()
-            .map(|tool| {
-                tool.get("name")
-                    .and_then(|name| name.as_str())
-                    .expect("each tool must have a string name")
-            })
-            .collect();
-
-        assert_eq!(names.len(), 9, "AGS MCP should expose exactly 9 tools");
-        assert!(names.contains(&tools::TOOL_PREFLIGHT));
-        assert!(names.contains(&tools::TOOL_ONBOARDING_PLAN));
-        assert!(
-            names.iter().all(|name| !name.contains('.')),
-            "tools/list must not expose dotted tool names: {:?}",
-            names
-        );
-    }
-
-    #[test]
-    fn preflight_tool_allowed_before_preflight() {
-        let mut preflight = PreflightState::new();
-        let params = json!({
-            "name": "ags_preflight",
-            "arguments": {"agent": "claude-code", "target": suite_root()}
-        });
-        let req = make_request("tools/call", Some(params));
-        let resp = handle_tools_call(&req, &mut preflight);
-        assert!(
-            is_success(&resp),
-            "preflight must be allowed before preflight"
-        );
-        assert!(
-            preflight.governance.is_preflight_completed(),
-            "preflight state must be marked completed"
-        );
-        assert_eq!(
-            preflight.governance.preflight_agent(),
-            Some("claude-code"),
-            "preflight agent must be recorded"
-        );
-        // Target must be recorded from the RESOLVED preflight result, not raw args.
-        let recorded_target = preflight
-            .governance
-            .preflight_target()
-            .expect("preflight target must be recorded from the result");
-        assert_eq!(
-            recorded_target,
-            suite_root(),
-            "recorded target should be the resolved suite root"
-        );
-    }
-
-    #[test]
-    fn failed_preflight_does_not_open_gate() {
-        let mut preflight = PreflightState::new();
-        let missing_target = std::env::temp_dir()
-            .join("ags-mcp-missing-preflight-target")
-            .join("does-not-exist");
-        let params = json!({
-            "name": "ags_preflight",
-            "arguments": {
-                "agent": "codex",
-                "target": missing_target.to_string_lossy()
-            }
-        });
-        let req = make_request("tools/call", Some(params));
-        let resp = handle_tools_call(&req, &mut preflight);
-        assert!(is_success(&resp), "failed preflight still returns a report");
-        assert!(
-            !preflight.governance.is_preflight_completed(),
-            "failed preflight must not open the gate"
-        );
-        assert!(
-            preflight.governance.is_bootstrap_required(),
-            "unintegrated targets should receive only the restricted bootstrap binding"
-        );
-
-        let gated_params = json!({"name": "ags_route_request", "arguments": {"request": "after failed preflight"}});
-        let gated_req = make_request("tools/call", Some(gated_params));
-        let gated_resp = handle_tools_call(&gated_req, &mut preflight);
-        assert!(
-            has_error(&gated_resp),
-            "gated tools must remain blocked after failed preflight"
-        );
-        assert!(error_contains(&gated_resp, "Initialization Gate"));
-
-        let onboarding_params = json!({"name": "ags_onboarding_plan", "arguments": {}});
-        let onboarding_req = make_request("tools/call", Some(onboarding_params));
-        let onboarding_resp = handle_tools_call(&onboarding_req, &mut preflight);
-        assert!(
-            is_success(&onboarding_resp),
-            "restricted bootstrap binding should allow the read-only onboarding plan"
-        );
-    }
-
-    #[test]
-    fn non_preflight_tool_blocked_before_preflight() {
-        let mut preflight = PreflightState::new();
-        let params = json!({"name": "ags_route_request", "arguments": {"request": "test"}});
-        let req = make_request("tools/call", Some(params));
-        let resp = handle_tools_call(&req, &mut preflight);
-        assert!(
-            has_error(&resp),
-            "ags_route_request must be blocked before preflight"
-        );
-        assert!(
-            error_contains(&resp, "Initialization Gate"),
-            "error must mention Initialization Gate"
-        );
-    }
-
-    #[test]
-    fn agent_instructions_allowed_before_preflight_without_opening_gate() {
-        let mut preflight = PreflightState::new();
-        let params = json!({
-            "name": "ags_agent_instructions",
-            "arguments": {"agent": "workbuddy", "target": suite_root()}
-        });
-        let req = make_request("tools/call", Some(params));
-        let resp = handle_tools_call(&req, &mut preflight);
-        assert!(
-            is_success(&resp),
-            "ags_agent_instructions must be available as a read-only bootstrap helper"
-        );
-        assert!(
-            !preflight.governance.is_preflight_completed(),
-            "agent instructions must not satisfy the initialization gate"
-        );
-
-        let gated_params =
-            json!({"name": "ags_route_request", "arguments": {"request": "still gated"}});
-        let gated_req = make_request("tools/call", Some(gated_params));
-        let gated_resp = handle_tools_call(&gated_req, &mut preflight);
-        assert!(
-            has_error(&gated_resp),
-            "phase tools must remain blocked until ags_preflight succeeds"
-        );
-    }
-
-    #[test]
-    fn non_preflight_tool_allowed_after_preflight() {
-        let mut preflight = PreflightState::new();
-        preflight.mark_completed(Some("claude-code".to_string()), None);
-
-        let params = json!({"name": "ags_protocol_status", "arguments": {}});
-        let req = make_request("tools/call", Some(params));
-        let resp = handle_tools_call(&req, &mut preflight);
-        assert!(
-            is_success(&resp),
-            "ags_protocol_status must be allowed after preflight"
-        );
-    }
-
-    #[test]
-    fn preflight_repeated_call_updates_state() {
-        let mut preflight = PreflightState::new();
-
-        // First preflight
-        let target = suite_root();
-        let params1 = json!({
-            "name": "ags_preflight",
-            "arguments": {"agent": "codex", "target": target}
-        });
-        let req1 = make_request("tools/call", Some(params1));
-        let _ = handle_tools_call(&req1, &mut preflight);
-        assert_eq!(preflight.governance.preflight_agent(), Some("codex"));
-
-        // Second preflight with different agent
-        let params2 = json!({
-            "name": "ags_preflight",
-            "arguments": {"agent": "claude-code", "target": suite_root()}
-        });
-        let req2 = make_request("tools/call", Some(params2));
-        let resp2 = handle_tools_call(&req2, &mut preflight);
-        assert!(is_success(&resp2), "repeated preflight must succeed");
-        assert_eq!(
-            preflight.governance.preflight_agent(),
-            Some("claude-code"),
-            "agent must be updated on repeat preflight"
-        );
-    }
-
-    // ── prompts/get gate tests ──────────────────────────────────────────
-
-    #[test]
-    fn reference_prompt_allowed_before_preflight() {
-        let preflight = PreflightState::new();
-        let params = json!({"name": "ags_global_kernel"});
-        let req = make_request("prompts/get", Some(params));
-        let resp = handle_prompts_get(&req, &preflight);
-        assert!(
-            is_success(&resp),
-            "ags_global_kernel reference prompt must be allowed before preflight"
-        );
-    }
-
-    #[test]
-    fn delivery_report_prompt_allowed_before_preflight() {
-        let preflight = PreflightState::new();
-        let params = json!({"name": "ags_delivery_report"});
-        let req = make_request("prompts/get", Some(params));
-        let resp = handle_prompts_get(&req, &preflight);
-        assert!(
-            is_success(&resp),
-            "ags_delivery_report reference prompt must be allowed before preflight"
-        );
-    }
-
-    #[test]
-    fn solution_phase_prompt_blocked_before_preflight() {
-        let preflight = PreflightState::new();
-        let params = json!({"name": "ags_solution_phase", "arguments": {"user_request": "test"}});
-        let req = make_request("prompts/get", Some(params));
-        let resp = handle_prompts_get(&req, &preflight);
-        assert!(
-            has_error(&resp),
-            "ags_solution_phase must be blocked before preflight"
-        );
-        assert!(error_contains(&resp, "Initialization Gate"));
-    }
-
-    #[test]
-    fn task_card_request_gate_prompt_blocked_before_preflight() {
-        let preflight = PreflightState::new();
-        let params = json!({"name": "ags_task_card_request_gate"});
-        let req = make_request("prompts/get", Some(params));
-        let resp = handle_prompts_get(&req, &preflight);
-        assert!(
-            has_error(&resp),
-            "ags_task_card_request_gate must be blocked before preflight"
-        );
-    }
-
-    #[test]
-    fn solution_phase_prompt_allowed_after_preflight() {
-        let mut preflight = PreflightState::new();
-        preflight.mark_completed(Some("claude-code".to_string()), None);
-
-        let params = json!({"name": "ags_solution_phase", "arguments": {"user_request": "test"}});
-        let req = make_request("prompts/get", Some(params));
-        let resp = handle_prompts_get(&req, &preflight);
-        assert!(
-            is_success(&resp),
-            "ags_solution_phase must be allowed after preflight"
-        );
-    }
-
-    // ── resources/read boundaries ───────────────────────────────────────
-
-    #[test]
-    fn resources_read_always_allowed() {
-        let req = make_request(
-            "resources/read",
-            Some(json!({"uri": "ags://global-kernel"})),
-        );
-        let preflight = PreflightState::new();
-        let resp = handle_resources_read(&req, &preflight);
-        assert!(is_success(&resp), "resources/read must always succeed");
-    }
-
-    #[test]
-    fn current_host_catalog_requires_preflight() {
-        let req = make_request(
-            "resources/read",
-            Some(json!({"uri": tools::CURRENT_HOST_CAPABILITIES_URI})),
-        );
-        let resp = handle_resources_read(&req, &PreflightState::new());
-        assert!(has_error(&resp));
-        assert!(error_contains(&resp, "Initialization Gate"));
-    }
-
-    // ── initialize resets preflight state ───────────────────────────────
-
-    #[test]
-    fn initialize_resets_preflight_state() {
-        let mut initialized = false;
-        let mut preflight = PreflightState::new();
-        let started_hash = preflight.runtime_process.started_hash.clone();
-        preflight.mark_completed(Some("codex".to_string()), Some("/tmp/x".to_string()));
-
-        let req = make_request(
-            "initialize",
-            Some(json!({
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "test", "version": "1.0"}
-            })),
-        );
-        let resp = handle_initialize(&req, &mut initialized, &mut preflight);
-
-        assert!(is_success(&resp), "initialize must succeed");
-        assert!(initialized, "initialized flag must be set");
-        assert!(
-            !preflight.governance.is_preflight_completed(),
-            "preflight state must be reset on initialize"
-        );
-        assert!(
-            preflight.governance.preflight_agent().is_none(),
-            "preflight agent must be cleared on initialize"
-        );
-        assert!(
-            preflight.governance.preflight_target().is_none(),
-            "preflight target must be cleared on initialize"
-        );
-        assert_eq!(
-            preflight.runtime_process.started_hash, started_hash,
-            "initialize must preserve the process-start executable identity"
-        );
-    }
-
-    // ── route_request is bound to preflight context ─────────────────────
-
-    #[test]
-    fn route_request_uses_preflight_agent_and_target() {
-        let mut preflight = PreflightState::new();
-        let pf_params = json!({
-            "name": "ags_preflight",
-            "arguments": {"agent": "codex", "target": suite_root()}
-        });
-        let pf_req = make_request("tools/call", Some(pf_params));
-        let pf_resp = handle_tools_call(&pf_req, &mut preflight);
-        assert!(is_success(&pf_resp), "preflight must succeed");
-        assert_eq!(preflight.governance.preflight_agent(), Some("codex"));
-        assert!(preflight.governance.preflight_target().is_some());
-
-        let sc_params = json!({
-            "name": "ags_route_request",
-            "arguments": {"proposal": {
-                "schema_version": "0.3.0-host-route-proposal",
-                "request_fingerprint": "sha256:req",
-                "phase": "direct_response",
-                "solution_state": "not_required",
-                "execution_authority": "none",
-                "scope_hash": "sha256:scope",
-                "targets": [{"kind": "direct_response"}]
-            }}
-        });
-        let sc_req = make_request("tools/call", Some(sc_params));
-        let sc_resp = handle_tools_call(&sc_req, &mut preflight);
-        assert!(
-            is_success(&sc_resp),
-            "route_request must succeed after preflight"
-        );
-
-        let text = sc_resp
-            .result
-            .as_ref()
-            .and_then(|r| r.get("content"))
-            .and_then(|c| c.as_array())
-            .and_then(|a| a.first())
-            .and_then(|c| c.get("text"))
-            .and_then(|t| t.as_str())
-            .expect("route_request must return text content");
-        let v: serde_json::Value = serde_json::from_str(text).expect("valid json");
-
-        assert_eq!(v["host"], "codex");
-        assert_eq!(
-            v["target"],
-            preflight.governance.preflight_target().unwrap()
-        );
-        assert_eq!(v["resolved_targets"][0]["kind"], "direct_response");
-    }
-
-    #[test]
-    fn route_request_rejects_explicit_binding_override() {
-        let mut preflight = PreflightState::new();
-        preflight.mark_completed(Some("codex".to_string()), Some(suite_root()));
-
-        let sc_params = json!({
-            "name": "ags_route_request",
-            "arguments": {
-                "active_host": "claude-code",
-                "proposal": {
-                    "schema_version": "0.3.0-host-route-proposal",
-                    "request_fingerprint": "sha256:req",
-                    "phase": "direct_response",
-                    "solution_state": "not_required",
-                    "execution_authority": "none",
-                    "scope_hash": "sha256:scope",
-                    "targets": [{"kind": "direct_response"}]
-                }
-            }
-        });
-        let sc_req = make_request("tools/call", Some(sc_params));
-        let sc_resp = handle_tools_call(&sc_req, &mut preflight);
-        assert!(has_error(&sc_resp));
-        assert!(error_contains(&sc_resp, "preflight_binding_conflict"));
-    }
-}
+mod tests;

@@ -18,7 +18,7 @@ pub(in crate::agents) fn cmd_agents_govern(agent: Option<&str>, apply: bool, for
         .collect();
     let chain = agents_governance_chain();
     let tool_surface = ags_mcp_tool_surface();
-    let mut apply_report = suite_doctor::HealthReport::new("agents-govern-apply");
+    let mut apply_report = ags_verification::doctor::HealthReport::new("agents-govern-apply");
     let supported_memory_hosts = ["claude-code", "codex", "omp"];
     if apply {
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
@@ -33,7 +33,7 @@ pub(in crate::agents) fn cmd_agents_govern(agent: Option<&str>, apply: bool, for
                     stamp,
                 );
             } else if agent.is_some() {
-                apply_report.add(suite_doctor::Finding::fail(
+                apply_report.add(ags_verification::doctor::Finding::fail(
                     "agents-memory-lifecycle-unsupported",
                     format!("no native memory lifecycle adapter for {}", target.id),
                     "Supported adapters: claude-code, codex, omp.",
@@ -55,15 +55,15 @@ pub(in crate::agents) fn cmd_agents_govern(agent: Option<&str>, apply: bool, for
         };
         let advised = targets
             .iter()
-            .map(|target| receipt::ReceiptAdvised {
+            .map(|target| ags_evidence::ReceiptAdvised {
                 command: target.mcp_host_command.clone(),
                 reason: "External MCP registration remains operator-controlled.".to_string(),
             })
             .collect();
-        let action_receipt = receipt::build_action_receipt(
+        let action_receipt = ags_evidence::build_action_receipt(
             "agents-govern-apply",
             Some(&target_ids),
-            receipt::GateResult {
+            ags_evidence::GateResult {
                 decision: if passed { "allow" } else { "stop" }.to_string(),
                 reason: if passed {
                     None
@@ -74,20 +74,20 @@ pub(in crate::agents) fn cmd_agents_govern(agent: Option<&str>, apply: bool, for
             vec![],
             vec![],
             advised,
-            vec![receipt::VerificationResult {
+            vec![ags_evidence::VerificationResult {
                 command: verification_command,
                 exit_code: apply_report.exit_code(),
-                output_hash: receipt::sha256_hex(
-                    suite_doctor::render_text(&apply_report).as_bytes(),
+                output_hash: ags_evidence::sha256_hex(
+                    ags_verification::doctor::render_text(&apply_report).as_bytes(),
                 ),
             }],
-            receipt::RollbackPlan::manual_confirm(vec![]),
+            ags_evidence::RollbackPlan::manual_confirm(vec![]),
             if passed { "applied" } else { "failed" },
             passed,
         );
         match crate::receipt_bridge::emit_ags_action_receipt(&action_receipt) {
             Ok(path) => receipt_path = Some(path),
-            Err(error) => apply_report.add(suite_doctor::Finding::fail(
+            Err(error) => apply_report.add(ags_verification::doctor::Finding::fail(
                 "agents-govern-action-receipt",
                 "host memory adapter receipt could not be written",
                 error,
@@ -155,9 +155,9 @@ pub(in crate::agents) fn cmd_agents_govern(agent: Option<&str>, apply: bool, for
             println!("  - {step}");
         }
         if apply {
-            println!("\n{}", suite_doctor::render_text(&apply_report));
+            println!("\n{}", ags_verification::doctor::render_text(&apply_report));
             if let Some(path) = &receipt_path {
-                println!("{}", receipt::render_action_receipt_summary_line(path));
+                println!("{}", ags_evidence::render_action_receipt_summary_line(path));
             }
         }
         println!(

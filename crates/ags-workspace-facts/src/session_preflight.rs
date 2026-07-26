@@ -32,7 +32,7 @@ pub struct SessionPreflight {
     pub integration_status: IntegrationStatus,
     pub is_ags_suite: bool,
     pub is_ags_integrated: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing)]
     pub inferred_role: Option<WorkspaceIdentity>,
     pub protocol_files_found: Vec<String>,
     pub protocol_files_missing: Vec<String>,
@@ -65,7 +65,7 @@ pub struct SessionPreflight {
     pub default_permission_mode: String,
 
     // Aggregated diagnostics
-    pub governance_status: request_governance::GovernanceStatus,
+    pub governance_status: ags_governance_decision::GovernanceStatus,
     pub overall_status: PreflightStatus,
     pub warnings: Vec<String>,
     pub failures: Vec<String>,
@@ -225,9 +225,9 @@ pub fn run_session_preflight(target: &Path, agent_type: &AgentType) -> SessionPr
         default_permission_mode: instructions.permissions.default_permission_mode.clone(),
 
         governance_status: if overall_status == PreflightStatus::Stop {
-            request_governance::GovernanceStatus::BlockedByPolicy
+            ags_governance_decision::GovernanceStatus::BlockedByPolicy
         } else {
-            request_governance::GovernanceStatus::Ok
+            ags_governance_decision::GovernanceStatus::Ok
         },
         overall_status,
         warnings,

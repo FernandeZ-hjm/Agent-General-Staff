@@ -5,7 +5,7 @@
 //! tool names, schemas, JSON results, and error strings remain unchanged.
 
 use crate::protocol::ToolListResult;
-use request_governance::{
+use ags_governance_decision::{
     proposal_hash, sha256, validate_machine_input, validate_proposal, CliCapabilityId,
     DecisionLeaseEvidence, ExecutionAuthority, GovernanceStatus, HostRouteProposal, ProposalError,
     ProposalTarget, ResolvedTarget, RouteResolution, ServerHeldActionKind, TaskCardHandoffSource,
