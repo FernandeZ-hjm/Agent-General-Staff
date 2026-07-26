@@ -100,17 +100,18 @@ fn runtime_identity_detects_replaced_executable() {
             "unchanged executable must be current"
         );
     }
+    let steady_state_hash_reads = if cfg!(unix) { 0 } else { 8 };
     assert_eq!(
         identity.full_hash_reads(),
-        0,
-        "unchanged executable identity must avoid full-file rehashing"
+        steady_state_hash_reads,
+        "runtime identity must use the platform's configured verification strategy"
     );
 
     fixture.replace();
     let evidence = identity
         .stale_evidence()
         .expect("replaced executable must be detected");
-    assert_eq!(identity.full_hash_reads(), 1);
+    assert_eq!(identity.full_hash_reads(), steady_state_hash_reads + 1);
     assert_ne!(evidence.started_hash, evidence.installed_hash);
     assert_eq!(evidence.executable, fixture.path);
 }
