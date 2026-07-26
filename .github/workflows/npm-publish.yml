@@ -57,6 +57,7 @@ jobs:
             --pattern SHA256SUMS \
             --dir "$RUNNER_TEMP/ags-release-check"
           cd "$RUNNER_TEMP/ags-release-check"
+          signer_workflow="${GITHUB_SERVER_URL#*://}/$GITHUB_REPOSITORY/.github/workflows/release.yml"
           for name in "${asset_names[@]}"; do
             grep -Fq "  $name" SHA256SUMS
           done
@@ -64,7 +65,7 @@ jobs:
           for name in "${asset_names[@]}"; do
             gh attestation verify "$name" \
               --repo "$GITHUB_REPOSITORY" \
-              --signer-workflow "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/.github/workflows/release.yml"
+              --signer-workflow "$signer_workflow"
           done
         env:
           GH_TOKEN: ${{ github.token }}
