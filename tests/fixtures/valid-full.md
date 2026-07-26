@@ -34,10 +34,10 @@ Review gate:
 
 记忆胶囊：暂无相关记忆
 
-任务存档：参考 full card 校验通过记录
+任务存档：参考此前 compact card 校验通过记录
 
 目标文件夹路径：
-- /Volumes/AI Project/ai-dev-env-bootstrap
+- /Volumes/AI Project/agent-governance-suite-private
 
 相关路径：
 - crates/

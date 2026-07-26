@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# verify.sh — compatibility wrapper for the canonical public AGS gate.
+# verify.sh — compatibility wrapper for the canonical AGS verification gate.
 #
 # Rust unit and CLI contract tests run exactly once through `ags verify`.
-# Public release/redaction checks remain in the maintainer-local review guard;
-# this tracked wrapper retains supply-chain policy and the independent shell
-# lane classifier without embedding private maintenance logic.
+# This wrapper retains only checks that intentionally live outside the Rust
+# workspace: supply-chain policy and the trusted shell lane classifier.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -50,15 +49,19 @@ check_lane() {
 
 cd "$REPO_ROOT"
 
-echo "=== AGS Public Verification Gate ==="
+echo "=== AGS Verification Gate ==="
 echo "Repo: $REPO_ROOT"
 echo
 
 # Canonical structured verification. This already runs workspace fmt, tests,
 # release build, fixtures, governance YAML and preflight. Full adds drift
 # checks; release adds the fail-closed public release boundary.
+verify_args=(verify --scope "$VERIFY_SCOPE" --format text)
+if [[ "$VERIFY_SCOPE" == "release" && -n "${AGS_RELEASE_PUBLIC_ROOT:-}" ]]; then
+    verify_args+=(--public-root "$AGS_RELEASE_PUBLIC_ROOT")
+fi
 run_gate "ags verify --scope $VERIFY_SCOPE" \
-    cargo run -q -p ags-cli -- verify --scope "$VERIFY_SCOPE" --format text
+    cargo run -q -p ags-cli -- "${verify_args[@]}"
 
 # External supply-chain authority. Missing cargo-deny is fail-closed.
 echo "--- cargo deny check ---"

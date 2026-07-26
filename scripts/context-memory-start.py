@@ -125,14 +125,8 @@ def build_context(repo_path: pathlib.Path) -> str | None:
     capsule = project_dir / "context-capsule.md"
     task_memory = project_dir / "task-memory.md"
 
-    capsule_text = bounded_read(
-        capsule,
-        int_env("AGS_MEMORY_START_MAX_CAPSULE_CHARS", DEFAULT_MAX_CAPSULE_CHARS),
-    )
-    task_text = bounded_read(
-        task_memory,
-        int_env("AGS_MEMORY_START_MAX_TASK_CHARS", DEFAULT_MAX_TASK_MEMORY_CHARS),
-    )
+    capsule_text = bounded_read(capsule, int_env("AGS_MEMORY_START_MAX_CAPSULE_CHARS", DEFAULT_MAX_CAPSULE_CHARS))
+    task_text = bounded_read(task_memory, int_env("AGS_MEMORY_START_MAX_TASK_CHARS", DEFAULT_MAX_TASK_MEMORY_CHARS))
 
     if not capsule_text and not task_text:
         return None
@@ -159,11 +153,7 @@ def main() -> int:
     if not context:
         return 0
 
-    hook_event_name = str(
-        hook_input.get("hook_event_name")
-        or hook_input.get("hookEventName")
-        or "SessionStart"
-    )
+    hook_event_name = str(hook_input.get("hook_event_name") or hook_input.get("hookEventName") or "SessionStart")
     sys.stdout.write(
         json.dumps(
             {

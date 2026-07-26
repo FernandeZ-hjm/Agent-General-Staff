@@ -5,7 +5,7 @@
 # ownership. Upstreams remain read-only comparison sources: crawl remote ->
 # generate diff proposal -> human accepts or rejects.
 # `route_priority`, examples, and demand_routes remain 0.2.x compatibility
-# metadata only. The 0.3.1 resolver never consumes them as selection authority;
+# metadata only. The 0.3.2 resolver never consumes them as selection authority;
 # hosts choose exact SkillTargets from the thin SkillCard catalog.
 
 registry:
@@ -1211,7 +1211,7 @@ candidate_skills:
       path: skills/deprecated/ubiquitous-language
 
 # 0.2.x compatibility metadata only. `demand_routes` contributes intent tags
-# and legacy deserialization coverage; it is NOT a 0.3.1 route authority. Hosts
+# and legacy deserialization coverage; it is NOT a 0.3.2 route authority. Hosts
 # select an exact SkillTarget from SkillCard metadata, and Resolver validates
 # skill_id + entrypoint + snapshot_hash with no fallback. Superpowers playbooks
 # remain internal entrypoints of one host-visible parent.

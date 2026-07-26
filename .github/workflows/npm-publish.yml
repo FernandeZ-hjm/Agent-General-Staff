@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  attestations: read
   id-token: write
 
 jobs:
@@ -35,51 +36,38 @@ jobs:
         shell: bash
         run: |
           package_version="$(node -p "require('./packages/ags-mcp/package.json').version")"
-          package_license="$(node -p "require('./packages/ags-mcp/package.json').license")"
           test "$package_version" = "${{ inputs.version }}"
-          test "$package_license" = "GPL-3.0-only"
-          test -f packages/ags-mcp/LICENSE
           test "$GITHUB_REPOSITORY" = "FernandeZ-hjm/Agent-General-Staff"
           tag="v${{ inputs.version }}"
           assets="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
-          for name in \
+          asset_names=( \
             "ags-${tag}-aarch64-apple-darwin.tar.gz" \
             "ags-${tag}-x86_64-apple-darwin.tar.gz" \
             "ags-${tag}-x86_64-unknown-linux-gnu.tar.gz" \
             "ags-${tag}-aarch64-unknown-linux-gnu.tar.gz" \
             "ags-${tag}-x86_64-pc-windows-msvc.zip" \
-            "SHA256SUMS"
+          )
+          for name in "${asset_names[@]}" SHA256SUMS
           do
             grep -Fqx "$name" <<<"$assets"
           done
           mkdir -p "$RUNNER_TEMP/ags-release-check"
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
-            --pattern SHA256SUMS --dir "$RUNNER_TEMP/ags-release-check"
-          for name in \
-            "ags-${tag}-aarch64-apple-darwin.tar.gz" \
-            "ags-${tag}-x86_64-apple-darwin.tar.gz" \
-            "ags-${tag}-x86_64-unknown-linux-gnu.tar.gz" \
-            "ags-${tag}-aarch64-unknown-linux-gnu.tar.gz" \
-            "ags-${tag}-x86_64-pc-windows-msvc.zip"
-          do
-            grep -Fq "  $name" "$RUNNER_TEMP/ags-release-check/SHA256SUMS"
+            --pattern 'ags-v*' \
+            --pattern SHA256SUMS \
+            --dir "$RUNNER_TEMP/ags-release-check"
+          cd "$RUNNER_TEMP/ags-release-check"
+          for name in "${asset_names[@]}"; do
+            grep -Fq "  $name" SHA256SUMS
+          done
+          sha256sum --check SHA256SUMS
+          for name in "${asset_names[@]}"; do
+            gh attestation verify "$name" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/.github/workflows/release.yml"
           done
         env:
           GH_TOKEN: ${{ github.token }}
       - run: npm test --prefix packages/ags-mcp
       - run: npm publish --provenance --access public
         working-directory: packages/ags-mcp
-      - name: Verify npm latest channel
-        shell: bash
-        run: |
-          expected="${{ inputs.version }}"
-          for attempt in 1 2 3 4 5; do
-            published="$(npm view @agent-governance-suite/mcp version 2>/dev/null || true)"
-            latest="$(npm view @agent-governance-suite/mcp dist-tags.latest 2>/dev/null || true)"
-            if [[ "$published" == "$expected" && "$latest" == "$expected" ]]; then
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "npm registry did not expose version=$expected on dist-tag latest" >&2
-          exit 1

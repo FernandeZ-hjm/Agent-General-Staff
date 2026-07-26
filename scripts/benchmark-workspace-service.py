@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare v0.3.1 workspace-service paths against a v0.3.0 binary."""
+"""Compare current workspace-service paths against a v0.3.0 binary."""
 
 from __future__ import annotations
 
@@ -170,7 +170,12 @@ class Bench:
                 },
             )
             route_ms = (time.perf_counter() - route_started) * 1000
-            return reconnect_ms, route_ms, self.authority_rss_kib(process.pid)
+            daemon_pid = self.workspace_authority_pid(process.pid)
+            return (
+                reconnect_ms,
+                route_ms,
+                self.session_rss_kib(process.pid, daemon_pid),
+            )
         finally:
             if process.stdin:
                 process.stdin.close()
@@ -190,16 +195,30 @@ class Bench:
         ).stdout
         return int(output.strip())
 
-    def authority_rss_kib(self, adapter_pid: int) -> int:
-        """Measure the governance-state owner in each architecture."""
+    def workspace_authority_pid(self, adapter_pid: int) -> int:
+        """Return the daemon PID, or the adapter PID for a pre-daemon baseline."""
         key = hashlib.sha256(str(self.project.resolve()).encode()).hexdigest()
         registry_path = self.runtime / "workspace-services" / f"{key}.json"
         if not registry_path.is_file():
-            return self.process_rss_kib(adapter_pid)
+            return adapter_pid
         registry = json.loads(registry_path.read_text())
-        return self.process_rss_kib(int(registry["pid"]))
+        return int(registry["pid"])
+
+    def session_rss_kib(self, adapter_pid: int, daemon_pid: int) -> int:
+        """Measure every AGS process simultaneously serving this MCP session.
+
+        v0.3.0 has one stdio process, so both PIDs are identical and counted
+        once. A daemon release has a live stdio adapter plus the workspace
+        daemon; both are counted. This keeps the baseline and candidate on the
+        same total-process footprint rather than comparing one process from
+        each architecture.
+        """
+        return sum(
+            self.process_rss_kib(pid) for pid in sorted({adapter_pid, daemon_pid})
+        )
 
     def measure(self) -> dict:
+        # Warm all four paths once before collecting fixed samples.
         self.timed_cli(
             "session", "preflight", "--for", "codex", "--target", str(self.project)
         )
@@ -288,6 +307,7 @@ def main() -> None:
     report = {
         "schema_version": "ags-workspace-performance/1",
         "samples": SAMPLES,
+        "rss_scope": "live_stdio_adapter_plus_workspace_daemon_unique_pids",
         "thresholds": {"median_ratio": 1.05, "p95_ratio": 1.10, "rss_ratio": 1.10},
         "baseline": baseline_result,
         "candidate": candidate_result,

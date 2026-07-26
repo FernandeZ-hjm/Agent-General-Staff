@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# lane-decision.sh — trusted, pure-shell push-lane decision.
+# lane-decision.sh — trusted, pure-shell release/sync lane decision.
 #
 # Reads changed file paths (one per line) on stdin and prints exactly one of:
-#   MINIMAL  — every changed file is ignore-rule or doc hygiene; the push gate
-#              may skip cargo test/build + validator and must NOT touch stable.
+#   MINIMAL  — every changed file is ignore-rule or doc hygiene; release/sync
+#              automation may skip cargo test/build + validator and must NOT touch stable.
 #   FULL     — anything else: source, scripts, Cargo.*, config, protocol,
 #              governance, manifests, root-entry docs, unknown files, or an
-#              empty input. Takes the full guarded path.
+#              empty input. Takes the full verification path.
 #
-# This is deliberately independent of the Rust workspace. The push gate must
+# This is deliberately independent of the Rust workspace. Release/sync automation must
 # never ask the in-tree (possibly changed) `ags` binary whether it may skip
 # verification — a broken or malicious classifier change could then route a
 # source/protocol diff through MINIMAL before any full verification ran. Keeping
-# the decision here, in plain shell over an allowlist, makes it a fail-safe gate
+# the decision here, in plain shell over an allowlist, makes it a fail-safe decision
 # rather than a self-verification bypass.
 #
 # Because any change to gate-selection code (scripts/, crates/, classifier) is a

@@ -1,6 +1,6 @@
 # Skill Lifecycle Governance
 
-> AGS 0.3.0 机器私有技能生命周期的实现边界。本文件补充
+> AGS 0.3.2 机器私有技能生命周期的实现边界。本文件补充
 > `protocol/skill-governance.md`，不另建路由权威。
 
 ## 权威与数据边界
@@ -19,7 +19,7 @@
 overlay、snapshot、usage、auth、lease 与 runtime receipt 都是机器私有数据，不得进入
 tracked diff、stable/public fixture 或 release payload。旧
 `governance/skill-adoption-log.yaml` 与 `governance/skill-ignore-list.yaml` 仅作为迁移和
-历史审计资料，不再决定 0.3.0 的运行时可路由状态。
+历史审计资料，不再决定 0.3.2 的运行时可路由状态。
 
 ## 单一生命周期链路
 

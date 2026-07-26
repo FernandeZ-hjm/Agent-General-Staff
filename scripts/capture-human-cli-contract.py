@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -18,6 +19,10 @@ VISIBLE_ROOTS = {
     "skill",
     "update",
 }
+BASELINE_RELEASE_COMMIT = "7d7e0477829a9288e97f3f2536a5ba6a8763cd58"
+BASELINE_EXECUTABLE_SHA256 = (
+    "af4aaf3f396bbb83c9f2bee3cac2c6352df412e4c6a2c9aade6a8417aeb2a7be"
+)
 MACHINE_PATHS = (
     ("task", "compile"),
     ("task", "validate"),
@@ -39,9 +44,7 @@ def help_text(binary: str, path: tuple[str, ...]) -> str:
         stderr=subprocess.PIPE,
     )
     if result.stderr:
-        raise SystemExit(
-            f"unexpected stderr for {' '.join(path) or '<root>'}: {result.stderr}"
-        )
+        raise SystemExit(f"unexpected stderr for {' '.join(path) or '<root>'}: {result.stderr}")
     return result.stdout
 
 
@@ -69,9 +72,7 @@ def child_commands(text: str) -> list[str]:
 
 def main() -> None:
     if len(sys.argv) != 3:
-        raise SystemExit(
-            "usage: capture-human-cli-contract.py <ags-v0.3.0> <output.json>"
-        )
+        raise SystemExit("usage: capture-human-cli-contract.py <ags-v0.3.0> <output.json>")
     binary, destination = sys.argv[1:]
     version = subprocess.run(
         [binary, "--version"],
@@ -81,6 +82,12 @@ def main() -> None:
     ).stdout.strip()
     if version != "ags 0.3.0":
         raise SystemExit(f"baseline must be ags 0.3.0, got {version!r}")
+    executable_sha256 = hashlib.sha256(Path(binary).read_bytes()).hexdigest()
+    if executable_sha256 != BASELINE_EXECUTABLE_SHA256:
+        raise SystemExit(
+            "baseline executable SHA-256 mismatch: "
+            f"expected {BASELINE_EXECUTABLE_SHA256}, got {executable_sha256}"
+        )
 
     captured: dict[str, str] = {}
     pending = [()]
@@ -99,7 +106,8 @@ def main() -> None:
             {
                 "schema_version": "ags-human-cli-contract/1",
                 "baseline_product_version": "0.3.0",
-                "allowed_version_change": "0.3.1",
+                "baseline_release_commit": BASELINE_RELEASE_COMMIT,
+                "baseline_executable_sha256": "sha256:" + executable_sha256,
                 "help": captured,
                 "machine_help": {
                     " ".join(path): help_text(binary, path) for path in MACHINE_PATHS

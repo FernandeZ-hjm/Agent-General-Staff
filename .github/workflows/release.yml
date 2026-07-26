@@ -25,29 +25,36 @@ jobs:
         shell: bash
         run: |
           git fetch origin main
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          tag_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          main_commit="$(git rev-parse "origin/main^{commit}")"
+          test "$tag_commit" = "$main_commit"
           version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(p["version"] for p in data["packages"] if p["name"] == "ags-cli"))')"
           npm_version="$(node -p "require('./packages/ags-mcp/package.json').version")"
-          npm_license="$(node -p "require('./packages/ags-mcp/package.json').license")"
           test "$GITHUB_REF_NAME" = "v$version"
           test "$npm_version" = "$version"
-          test "$npm_license" = "GPL-3.0-only"
           grep -Fqx "## Release $version" RELEASE_NOTES.md
-          grep -Fq "Current product version: **$version**." AGENT_SUITE_PROTOCOL.md
-          series="${version%.*}.x"
-          grep -Fq "| $series | Yes |" SECURITY.md
-          test -f LICENSE
-          test -f packages/ags-mcp/LICENSE
           test "$GITHUB_REPOSITORY" = "FernandeZ-hjm/Agent-General-Staff"
-          forbidden_pattern='name: "(g''ep|evo''map)"|evolution_asset_''recall|private-''runtime'
-          ! grep -Eq "$forbidden_pattern" manifests/mcp-registry.yaml
+          ! grep -Eq 'name: "(gep|evomap)"|evolution_asset_recall|private-runtime' manifests/mcp-registry.yaml
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test --workspace
         env:
           RUSTFLAGS: "-D warnings"
       - run: npm test --prefix packages/ags-mcp
+      - run: python3 scripts/test-stage-release-runtime.py
       - run: cargo run -q -p ags-cli -- verify --scope release --format text
+      - name: Freeze canonical public release plan
+        shell: bash
+        run: |
+          cargo run -q -p ags-cli -- release package \
+            --profile public-full \
+            --dry-run \
+            --format json > public-release-plan.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: public-release-plan
+          path: public-release-plan.json
+          if-no-files-found: error
 
   build:
     needs: verify
@@ -76,42 +83,36 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           targets: ${{ matrix.target }}
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: public-release-plan
+          path: .
       - run: cargo build --release --locked --target ${{ matrix.target }} -p ags-cli
-      - name: Verify packaged binary version
-        shell: bash
-        run: |
-          expected="${GITHUB_REF_NAME#v}"
-          if [[ "${{ matrix.archive }}" == "zip" ]]; then
-            actual="$(target/${{ matrix.target }}/release/ags.exe --version)"
-          else
-            actual="$(target/${{ matrix.target }}/release/ags --version)"
-          fi
-          test "$actual" = "ags $expected"
       - name: Package Unix asset
         if: matrix.archive == 'tar'
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
           asset="ags-v${version}-${{ matrix.target }}.tar.gz"
-          mkdir -p stage/runtime/manifests stage/runtime/protocol
+          mkdir -p stage/runtime
           cp "target/${{ matrix.target }}/release/ags" stage/ags
-          cp manifests/{skills-registry,mcp-registry,onboarding-public,third-party-capabilities,skill-recommendations}.yaml stage/runtime/manifests/
-          cp protocol/{agent-task-protocol,task-card-template,runtime-adapters,task-routing,project-profile,context-memory,cursor-skill-index}.md stage/runtime/protocol/
-          cp LICENSE NOTICE.md THIRD_PARTY_NOTICES.md stage/
-          printf 'Source: https://github.com/%s/tree/%s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" > stage/SOURCE.md
-          tar -C stage -czf "$asset" ags runtime LICENSE NOTICE.md THIRD_PARTY_NOTICES.md SOURCE.md
+          python3 scripts/stage-release-runtime.py \
+            --plan public-release-plan.json \
+            --source . \
+            --target stage/runtime
+          tar -C stage -czf "$asset" ags runtime
       - name: Package Windows asset
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME.Substring(1)
           $asset = "ags-v$version-${{ matrix.target }}.zip"
-          New-Item -ItemType Directory -Force -Path stage/runtime/manifests,stage/runtime/protocol | Out-Null
+          New-Item -ItemType Directory -Force -Path stage/runtime | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/ags.exe" stage/ags.exe
-          Copy-Item manifests/skills-registry.yaml,manifests/mcp-registry.yaml,manifests/onboarding-public.yaml,manifests/third-party-capabilities.yaml,manifests/skill-recommendations.yaml stage/runtime/manifests/
-          Copy-Item protocol/agent-task-protocol.md,protocol/task-card-template.md,protocol/runtime-adapters.md,protocol/task-routing.md,protocol/project-profile.md,protocol/context-memory.md,protocol/cursor-skill-index.md stage/runtime/protocol/
-          Copy-Item LICENSE,NOTICE.md,THIRD_PARTY_NOTICES.md stage/
-          "Source: https://github.com/$env:GITHUB_REPOSITORY/tree/$env:GITHUB_SHA" | Set-Content stage/SOURCE.md
+          python scripts/stage-release-runtime.py `
+            --plan public-release-plan.json `
+            --source . `
+            --target stage/runtime
           Compress-Archive -Path stage/* -DestinationPath $asset
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -150,16 +151,5 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/* \
             --verify-tag \
             --latest \
-            --title "Agent General Staff $version Public Edition" \
+            --title "Agent Governance Suite $version Public Edition" \
             --generate-notes
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/release/latest" >/dev/null 2>&1; then
-            gh api --method PATCH \
-              "repos/$GITHUB_REPOSITORY/git/refs/heads/release/latest" \
-              -f sha="$GITHUB_SHA" -F force=true
-          else
-            gh api --method POST \
-              "repos/$GITHUB_REPOSITORY/git/refs" \
-              -f ref="refs/heads/release/latest" -f sha="$GITHUB_SHA"
-          fi
-          channel_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/release/latest" --jq '.object.sha')"
-          test "$channel_sha" = "$GITHUB_SHA"

@@ -2,8 +2,8 @@
 # validate-task-card.sh — compatibility alias for scripts/validate.sh.
 #
 # This is a THIN WRAPPER that delegates to the canonical task-card validator
-# entry point (scripts/validate.sh → Rust task-card-validator via
-# `ags task-card-validator`). It adds NO second validation logic; it exists
+# entry point (scripts/validate.sh → ags-task-contract via
+# `ags task validate`). It adds NO second validation logic; it exists
 # only because some documentation and the public release manifest reference
 # the `validate-task-card.sh` name. There is exactly one canonical gate.
 #
