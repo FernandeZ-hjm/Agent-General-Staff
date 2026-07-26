@@ -3,7 +3,7 @@
 本文件是 Agent General Staff 公开版治理控制面协议概述。Canonical 协议文件位于本仓库
 `protocol/` 目录下，自包含，不依赖私有基础设施或私有仓库。
 
-Current product version: **0.3.1**.
+Current product version: **0.3.2**.
 
 这是 Agent General Staff Public Edition 的当前 latest 产品版本。AGS 负责准入、
 授权、策略、验证、回执、能力快照和记忆闭环，不提供任务队列、Agent 调度器、

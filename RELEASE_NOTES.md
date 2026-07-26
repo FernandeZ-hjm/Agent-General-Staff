@@ -1,490 +1,104 @@
-# Agent General Staff Public Edition Release Notes
+# Agent Governance Suite Release Notes
 
-Agent General Staff (AGS) is the public Rust-native AGS governance kernel and
-CLI.
+## Release 0.3.2
 
-Current releases ship the `ags` CLI, canonical task-card protocols,
-execution-policy checks, release-boundary verification, memory-capsule
-templates, and public skill-governance workflows.
+0.3.2 completes the package-boundary migration started in 0.3.1 without
+changing the captured v0.3.0 human or Machine CLI contracts.
 
-The current stable/latest product version is `0.3.1`, with formal release tag
-`v0.3.1`. npm `latest` resolves to `0.3.1`.
-Older `2.x` headings below are preserved as historical product release labels
-and are not rewritten.
+- The runtime workspace now exposes exactly twelve authoritative packages:
+  platform, workspace facts, host integration, capability governance, task
+  contract, governance decision, session, evidence, verification, lifecycle,
+  CLI, and MCP.
+- The nine former support packages have moved behind those owners. Their
+  package manifests and dependency edges are retired so validation, policy,
+  snapshot, lease, delivery, and verification logic cannot retain a second
+  authority.
+- Workspace-service E2E continues to cover Codex, Claude Code, Cursor, and OMP
+  client identities, session/lease isolation, reconnect persistence, snapshot
+  rebind, cross-project isolation, idle recycle, and stop-before-restart
+  upgrades.
+- Native registration probes passed for Codex, Claude Code, and OMP. The Cursor
+  adapter remains covered by the hermetic process E2E, but its v0.3.2 native
+  CLI probe was explicitly waived by the operator because the macOS login
+  keychain was locked; this release does not claim a native Cursor pass.
+- Performance evidence compares the current workspace-service paths against the
+  v0.3.0 process model with fixed sampling and explicit median, p95, and RSS
+  thresholds.
+- Chinese and English README surfaces now state the same control-plane
+  positioning, support matrix, limitations, daemon transparency, GPL-3.0-only
+  license, and release order.
+- The private-to-public guard validates source/module topology, documentation,
+  E2E/performance evidence, current version surfaces, and retired-authority
+  absence in addition to the public manifest and redaction checks.
+
+Release order remains fixed: public `main` and exact-commit CI first; then the
+annotated `v0.3.2` tag and five-platform GitHub Release assets with checksums
+and provenance; npm `latest` is published only after those assets are verified.
 
 ## Release 0.3.1
 
-0.3.1 is a compatibility-preserving architecture release:
+0.3.1 keeps the v0.3.0 human and machine command contracts while deepening the
+implementation into explicit platform, workspace-facts, host-integration,
+capability-governance, task-contract, governance-decision, session, evidence,
+verification, lifecycle, CLI, and MCP boundaries.
 
-- Reorganized the governance kernel into twelve primary domain boundaries and
-  split the largest capability, workspace-discovery, skill-console, and MCP
-  modules by responsibility.
-- Added one connect-or-start workspace daemon keyed only by canonical workspace
-  path. Codex, Claude Code, Cursor, and OMP share one atomic capability bundle
-  while keeping separate session, preflight, and DecisionLease state.
-- Fixed false `skill_snapshot_stale` results after successful refresh, lease
-  replay and cross-boundary isolation, premature lease consumption on malformed
-  apply, and task-card false positives for ordinary release-workflow prose.
-- Preserved the complete v0.3.0 human CLI and internal Machine CLI help
-  contracts. Only `ags --version` changes to 0.3.1.
-- Added four-host reconnect/cross-project E2E, a fixed-sample performance gate,
-  and version-surface checks that distinguish current product versions from
-  compatibility schema IDs and historical releases.
-- Kept the public distribution GPL-3.0-only and pinned onboarding capability
-  metadata to an immutable reviewed source.
+- The stdio process is a thin `connect-or-start` proxy to one daemon keyed only
+  by canonical workspace path.
+- Hosts share one atomic workspace capability bundle while every conversation
+  retains an independent session, preflight binding, and one-shot
+  DecisionLease.
+- Snapshot refresh can rebind an existing session immediately; stale hashes
+  invalidate the old binding without misclassifying the newly published
+  snapshot.
+- Apply input shape is validated before the lease consumption point; actions
+  remain fail-closed after entering the governed effect boundary.
+- Task-card validation no longer treats ordinary prose containing `workflow`
+  as a parallelism declaration.
+- The former capability, discovery, MCP-tool, and skill-console monolith files
+  are split by read model, probe, decision, mutation, transaction, rollback,
+  publication, and rendering responsibilities.
+- A captured 36-node v0.3.0 Clap help manifest protects every visible human
+  command, subcommand, option, enum, default, and help description.
+- Product version and GPL-3.0-only license surfaces are checked separately from
+  historical release labels and compatibility-preserved wire/schema versions.
+
+Release order remains fixed: public `main` and CI first; then the exact
+annotated `v0.3.1` tag and five-platform GitHub Release assets with checksums
+and provenance; npm `latest` is published only after those assets are verified.
 
 ## Release 0.3.0
 
-0.3.0 separates three chains that older releases allowed documentation and
-runtime code to blur together:
-
-```mermaid
-flowchart LR
-    subgraph Onboarding["Capability onboarding"]
-        GH[GitHub manifest<br/>immutable reviewed commit] --> OP[onboarding plan<br/>source + content hash]
-        PKG[Packaged fallback] -. offline fallback .-> OP
-        OP --> HUMAN[Human review]
-        HUMAN --> SNAP[Inventory + host snapshot]
-    end
-
-    subgraph Routing["Per-request routing"]
-        SNAP --> CAT[current-host catalog]
-        CAT --> HOST[Host owns language + context]
-        HOST --> PROP[HostRouteProposal]
-        PROP --> ROUTE[read-only ags_route_request]
-        ROUTE --> SKILL[exact SkillTarget]
-        ROUTE --> LEASE[held MachineCli action]
-        LEASE --> APPLY[explicit ags_apply_action]
-    end
-
-    subgraph Delivery["Execution and delivery closure"]
-        HOST --> CONTRACT[confirmed execution contract]
-        CONTRACT --> CARD[single canonical task card]
-        CARD --> POLICY[validate + policy + gate]
-        POLICY --> LP[LaunchPlan]
-        LP --> EXEC[host execution + verification]
-        EXEC --> CLOSE[card hash + G/AC/V/EV closure]
-    end
-
-    subgraph Memory["Native host memory lifecycle"]
-        START[Claude/Codex/OMP start event] --> INJECT[bounded read-only injection]
-        CLOSE --> END[host close event]
-        END --> RECEIPT[captured / skipped / failed receipt]
-        RECEIPT -->|valid card + delivery closure| ARCHIVE[append task archive + memory]
-        RECEIPT -->|ordinary conversation| SKIP[skip project-memory write]
-        ARCHIVE -. next session .-> START
-    end
-```
-
-### Host semantic proposals and explicit apply
-
-- Replaced the natural-language `request-router` with typed
-  `request-governance`. The host keeps full conversation context and submits a
-  closed `HostRouteProposal`; AGS validates phase, authority, exact skill and
-  closed machine targets without interpreting raw text.
-- `ags_route_request` is strictly read-only and rejects legacy raw requests.
-  `ags_apply_action` is the sole effectful MCP tool and consumes a one-shot,
-  daemon-client-session-bound held action by lease/action ID.
-- Added deterministic per-host capability catalogs, exact skill/entrypoint
-  validation, machine-private adopt/ignore/rollback overlays, auth availability
-  gates, and non-sensitive skill outcome/activity records.
-- Renamed canonical `TaskExecute` to `TaskPrepareExecution`; `ags run` now stops
-  at a validated `LaunchPlan` and reports `HOST_EXECUTION_REQUIRED` instead of
-  claiming execution, verification, or completion.
-- Added receipt 2.1 governance evidence while preserving 2.0 readers, made typed
-  handoff task level explicit, and fixed the full-width-colon compiler panic.
-- Public packaging now excludes capability snapshots, overlays, usage ledgers,
-  leases, auth state and runtime receipts.
-- The host-facing catalog is deliberately thin. Inventory discovers system,
-  user, project-local and external capabilities, but discovery alone never
-  makes an item routable. Registry policy, a legal invocation hint and a
-  healthy host snapshot must all agree before an exact target is accepted.
-
-### Prompt compilation and delivery closure
-
-- Host Plan mode now ends by compiling its decision-complete artifact directly
-  into the single canonical task card. Execute switches mode and dispatches that
-  exact validated card; no second plan or regenerated card is created.
-- Outside Plan mode, the task-card compiler remains available as an AI prompt
-  writer after the solution contract is confirmed; host-native direct edits do
-  not require a task card.
-- Task cards carry stable Contract/G/AC/V/EV identifiers. Delivery reports bind
-  the exact card hash and must close the exact identifier set; partial or blocked
-  reports cannot hide unresolved items in free-form prose.
-- Added `ags task close` and the public `delivery-report-validator` crate so the
-  final report is checked against the exact card instead of being trusted as a
-  narrative completion claim.
-
-### Native host memory closure
-
-- Added separate native lifecycle adapters for Claude Code
-  (`SessionStart` / `Stop`), Codex (`SessionStart` / `SessionEnd`), and OMP
-  (`session_start` / `before_agent_start` plus
-  `agent_settled` / `session_shutdown`). Evidence from one host never satisfies
-  another host's closure.
-- New sessions receive a bounded, read-only project-memory injection. Every
-  supported close event emits a machine-local `captured`, `skipped`, or `failed`
-  receipt; ordinary conversations are skipped and do not update task memory.
-- Project memory is appended only when a canonical task card and its delivery
-  closure are both present. `context-capsule.md` remains manual-only.
-- `ags agents govern --agent <claude-code|codex|omp> --apply` installs only the
-  selected AGS-owned native adapter. External MCP registration remains
-  advice-only. `ags agents verify --host <host> --strict` gates capability
-  visibility and the exact host's memory lifecycle together.
-
-### Concise agent entrypoints
-
-- Root and generated project `AGENTS.md` / `CLAUDE.md` are now thin maps:
-  repository identity, hard boundaries, preflight, and links to task-specific
-  protocol documents. Detailed task-card, host-operation, and memory rules live
-  in referenced Markdown instead of being duplicated in every entrypoint.
-- `ags setup` installs the reusable `ags-core.md`, `ags-task-handoff.md`, and
-  `host-operations.md` rule modules. `ags doctor` checks the split files as one
-  semantic contract.
-- Added `protocol/entrypoint-guidelines.md`, grounded in current OpenAI,
-  Anthropic, and GitHub guidance, including ownership, size budgets, no import
-  cycles, and progressive disclosure.
-
-### Dynamic onboarding and public distribution
-
-- Added one public onboarding surface for project init, host adapters, Skill,
-  CLI, MCP and Hook capabilities. It reads a GitHub capability manifest pinned
-  to an immutable reviewed commit, verifies its expected SHA-256, and falls back
-  to the packaged manifest without silently installing anything.
-- The public manifest covers Skill, CLI, MCP and Hook capabilities with source,
-  install, probe, auth/health and routing metadata. Remote content is data for a
-  reviewed plan, never an implicitly executed installer.
-- Added the npm MCP launcher and explicit release chain: public `main` CI first,
-  maintainer-created `v0.3.0` tag second, five-platform assets plus
-  `SHA256SUMS`/provenance third, and manual asset-gated npm publication last.
-- npm publication uses GitHub OIDC trusted publishing with a pinned compatible
-  npm CLI and normalized package metadata; no long-lived npm token is stored.
-- Release workflows never create tags. A public `main` push alone does not
-  create a GitHub Release or publish npm.
-- Added one canonical-path-keyed workspace daemon behind a thin stdio adapter.
-  Codex, Claude Code, Cursor, and OMP share workspace capability state while
-  retaining isolated sessions, preflight bindings, and DecisionLeases.
-  Process-level E2E covers reconnects, cross-project snapshots, foreign lease
-  rejection, idle recycling, and stop-before-restart executable upgrades.
-
-### Upgrade and verification
-
-- Existing source installs can update normally, then rerun `ags setup` and
-  explicit host/skill verification:
-  `ags setup --yes --force`,
-  `ags agents govern --agent <host> --apply`,
-  `ags agents verify --host <host> --strict`.
-  New MCP-only installs can use the npm launcher after the formal GitHub Release
-  and npm publication exist.
-- Review the effective third-party plan with
-  `ags onboarding plan --host <host> --format json`; the result states whether
-  its manifest came from GitHub or the packaged fallback and includes the
-  reviewed content hash.
-- Rebuild a host snapshot after capability changes, then run
-  `ags capability verify --host <host> --strict` and `ags doctor`. A manifest
-  entry, an installed binary, or a visible skill by itself is not proof that the
-  capability is safely routable.
-- On upgrade, reconnect the thin stdio adapter; it stops the old workspace
-  daemon before starting the installed executable. A `snapshot_stale` condition
-  still requires an explicit snapshot refresh and a new preflight.
-- Maintainer order is strict: public-safe `main` + green CI → explicit
-  `v0.3.0` tag → five platform assets and `SHA256SUMS` + provenance → manual,
-  exact-version npm dispatch. Each arrow is a separate authorization boundary.
-
-## Release 0.2.8
-
-### One request router, one structured decision
-
-- Replaced overlapping request and skill routing implementations with one
-  natural-language `request-router`. MCP `ags_route_request` receives complete
-  host conversation context and returns a closed `RequestDecision`.
-- `DirectResponse` is exclusive. One `SkillDemand` and one business-level
-  `MachineCli` target may coexist; the router never assembles CLI subcommands
-  into a workflow.
-- Added `skill-resolver`, which maps closed demands against a validated
-  `ActiveSkillTable`. Missing skills return unavailable without automatic
-  substitution; alternatives remain advisory only.
-- MCP invokes machine capabilities through fixed argv on the real `ags` CLI.
-  Compiler, Policy, Gate, and Runner consume structured contracts and never
-  re-parse natural language.
-- Capability snapshots now carry a registry/runtime hash. Stale snapshots fail
-  closed and can be refreshed with `ags capability snapshot --write`.
-- Task-card compilation requires both an explicit task-card request and a
-  confirmed, closed handoff contract. Existing canonical task cards remain
-  validate-first inputs.
-- Removed compatibility routing aliases and enrollment state, added positive
-  and negative routing tests, and isolated MCP tests from machine-local
-  snapshots.
-
-## Release 0.2.7
-
-### Unified routing model
-
-- Entry architecture used the previous multi-stage request-routing model before
-  the single-decision architecture introduced in 0.2.8.
-- Existing canonical task cards are the validate-first exception: input whose
-  first non-empty line is `## 任务卡` is validated before request
-  classification. A valid card proceeds directly to policy/runner consumption;
-  invalid card-shaped input fails closed and never falls through to generation.
-- Task-card permission is binary: `plan-only` or `execute-and-verify`. Light and
-  Medium default to direct execution; Heavy defaults to `plan-only`, while an
-  explicit Heavy `execute-and-verify` card runs directly with its independent
-  review gate.
-- CLI top-level surface consolidated to the **five-stage pipeline**: setup →
-  agents → skill → init → update. `doctor` and `capability` remain available
-  but are no longer primary user-facing pipeline stages.
-
-### Memory capsule capture
-
-- `claude-stop-memory-capture.py` publishes capsule capture: the stop hook now
-  archives delivery reports and receipts into task-memory and task-archive
-  automatically.
-
-### Task-card validator modular refactoring
-
-- `task-card-validator` refactored from a single 5000+ line `lib.rs` into
-  focused modules: `parse.rs` (markdown parsing), `validate.rs` (field and
-  combination checks), `contradictions.rs` (contradiction detection engine),
-  `types.rs` (shared types), and `tests.rs`. No behavioral change — same
-  validation rules, cleaner boundaries.
-
-### Capability skill retirement
-
-- The public `ags capability` skill entry was retired from setup; capability
-  discovery remained available through the CLI compatibility surface.
-
-### Capability host integrity
-
-- `ags capability verify --host <host> --strict` derives its expected set from
-  the AGS source authority recorded during installation, so running the command
-  from an empty or newly governed project cannot silently reduce coverage.
-- Required parent skills now fail closed when their host entry is missing.
-  Bundled router skills also verify internal playbook completeness and reject
-  stale playbooks exposed as standalone host skills.
-- `ags doctor` reports these third-party host-routing gaps as formal failures,
-  and the setup recommendation view recognizes skills exposed through the
-  shared `~/.agents/skills` store.
-
-### Cross-platform CI hardening
-
-- Windows and macOS CI stabilized: path separator normalization, LF line
-  endings via `.gitattributes`, `#[cfg(unix)]` gates on shell-dependent tests,
-  `PATHEXT`-aware command lookup, and temp-path spelling fixes.
-
-### GitHub release automation
-
-- Pushing an explicit `v<workspace-version>` tag now starts a release workflow.
-  It verifies that the tag matches the Cargo workspace version, points to a
-  commit on `main`, has a matching release-notes section, and passes the full
-  Linux/macOS/Windows matrix before creating the GitHub Release.
-- The workflow never creates tags and currently publishes the source release
-  only; prebuilt platform binaries remain out of scope.
-
-### Task compiler updates
-
-- `task-compiler` gains Windows absolute-path acceptance and tighter test
-  assertions for compiled task-card output.
-
-## Release 2.7.0
-
-AGS 2.7.0 is the kernel-architecture release. It consolidates governance logic
-into a unified kernel, restructures the CLI entry surface, and switches the
-project license from MIT to GPL-3.0-only.
-
-### Kernel architecture
-
-- The `ags-cli` crate is restructured around a `kernel/` subsystem: awareness,
-  bootstrap, compliance, gate, hooks, mcp, policy, receipt, rollback, runner,
-  sync, task, and verify modules form a gate → policy → runner → receipt →
-  rollback closed loop. Previously scattered governance logic now lives behind
-  a single kernel entry surface.
-- New `agents/` subsystem (govern, host_specs, scan, verify) adds lightweight
-  built-in agent dispatch within the CLI.
-- CLI routing split into `cli/actions` (user-facing commands) and
-  `cli/kernel_actions` (governance commands); `main.rs` is now a thin dispatcher.
-- `setup/`, `init/`, and `update/` are independent modules, each with plan →
-  apply → verify → rollback stages supporting dry-run and rollback.
-
-### Capability and routing
-
-- Retired the legacy automatic routing aliases. Brainstorm
-  demand now routes to `grill-with-docs`, debugging to `diagnosing-bugs`, and
-  verification to `verification-before-completion`. The aliases are no longer
-  suite-required or auto-triggered.
-- Aligned skill names to upstream canonical names (no local aliases, no compat
-  rows). Rename map: `diagnose` → `diagnosing-bugs`, `tdd` →
-  `test-driven-development`, `code-review` / `caveman-review` → `review`,
-  `zoom-out` → `codebase-design`; `caveman-commit` removed (no replacement). The
-  Light review gate now names `requesting-code-review`.
-- Capability Route ships as a tracked advisory routing crate
-  — manifest-driven and advisory-only across the MCP, CLI,
-  and skill-governance inventory surfaces.
-
-### Diagnostics
-
-- `suite-doctor` checks rewritten (~1400 lines changed) for alignment with the
-  kernel architecture and expanded diagnostic coverage.
-
-### License
-
-- License changed from MIT to GPL-3.0-only. Derivative works that are
-  distributed must also be licensed under GPL-3.0-only. Internal use is
-  unaffected. See `LICENSE`, `COMMERCIAL.md`, and `NOTICE.md`.
-
-### Other
-
-- Version surface aligned to 2.7.0 across Cargo metadata, the suite manifest, the MCP
-  registry and serverInfo example, and suite diagnostics.
-- Third-party skill recommendations remain manual-install only; the public edition
-  bundles no third-party skill bodies and no private runtime or memory state.
-
-## Release 2.6.2
-
-AGS 2.6.2 refreshes the public runtime to the current core architecture while
-keeping the public-full boundary strict:
-
-- Capability Route is manifest-driven and advisory-only across MCP, CLI, and
-  skill-governance inventory surfaces.
-- Runner and execution-policy flows use the resolver-first `ags run` contract,
-  including structured current-task approval handling.
-- Public manifests keep third-party skill bodies out of the payload while still
-  exposing safe recommendation and route-target metadata.
-- Public documentation and release checks remove private runtime names and
-  machine-local capability surfaces.
-
-## Release 2.6.0
-
-AGS 2.6.0 is the quiet-governance public release. It keeps the public-full
-sanitized boundary while bringing the public runtime up to the 2.6 protocol
-surface:
-
-- Advisory-intent no-mutation gate: consultation requests such as "是否需要",
-  "你觉得", or "should we" are classified as advisory and block mutation until
-  explicit execution authorization is present.
-- Quiet foreground status: MCP responses expose `visible_status` summaries while
-  retaining full traceable evidence in the structured report.
-- The previous advisory phase gate recommended the lightest execution-path form
-  that still covered the risk.
-- Tencent Agent host recognition: WorkBuddy and CodeBuddy-Code are recognized as
-  Tencent Agent host clients with governed-host preflight behavior.
-- Verification routing: `ags verify lane` and the shell lane-decision helper
-  classify diffs into minimal, standard, full, and release verification profiles.
-- Public boundary retained: local runtime assets, local memory, build output, and
-  machine-local overlays remain excluded from the public-full payload.
-
-## Release 2.5.1
-
-AGS 2.5.1 is the local-overlay maintenance release. It keeps the 2.5 public
-surface while making project onboarding safer for repositories that should not
-commit AGS-managed local entry files:
-
-- `ags init` defaults to a local overlay that writes AGS-managed files to
-  `.git/info/exclude` through an idempotent managed block.
-- `--mode shared|tracked` remains available when a project intentionally wants
-  committed AGS entry files.
-- `--migrate-tracked-overlay` safely untracks previously committed AGS-owned
-  overlay files with `git rm --cached`, without deleting the working copy.
-- Task-card template sources are collapsed to the single canonical
-  `protocol/task-card-template.md`; per-level fallback templates are removed
-  and compact task cards are rejected.
-
-## Release 2.5.0
-
-AGS 2.5.0 hardens the public edition for cross-platform use and supply-chain
-safety while preserving the 2.0 governance product surface:
-
-- Supply-chain gate: repo-local `deny.toml` (RustSec advisories; MIT / Apache-2.0
-  / Unicode-3.0 licenses; crates.io-only sources), wired fail-closed into
-  `scripts/verify.sh` and the CI matrix.
-- Cross-platform portability: new std-only, zero-dependency `ags-platform` crate
-  (`home_dir` / `temp_root` / `find_in_path` / `is_on_path`, aware of Windows
-  `USERPROFILE` and `PATHEXT`); core crates route `$HOME` and command-lookup
-  assumptions through it instead of Unix-only `std::env::var("HOME")` / `which`.
-- CI matrix: GitHub Actions now runs on `ubuntu-latest`, `macos-latest`, and
-  `windows-latest`; Windows and macOS run the Rust-native `ags verify --scope
-  local`, Ubuntu additionally runs the Bash gate and `cargo deny`.
-- Pre-push verifier: `templates/hooks/pre-push.verify.sh` (repo-local-first,
-  fail-closed; opt-in install, never automatic).
-- Public release boundary: the public-full sanitized payload strips local runtime
-  state, backing private resources, and machine-local overlays.
-- Skill governance console: `ags skill` now exposes a management console on top
-  of the existing `scan` / `check` / `install` flow — `ags skill inventory`
-  (audit on-disk skill assets, optionally writing `governance/skills-inventory.md`),
-  `ags skill verify --host <host>` (read-only host-visibility check), and
-  `ags skill propose --action adopt|update|remove|uninstall|repair|verify --skill <name>`
-  dry-run proposals,
-  plus confirmed `ags skill adopt --skill <name> --apply` / `ags skill ignore
-  --skill <name> --apply` writes. `scripts/verify.sh` gained smoke coverage
-  for the skill console command surface.
-
-### Windows support
-
-Verified on Windows in 2.5.0:
-
-- The Rust-native `ags` CLI core builds, tests, and runs on `windows-latest` in
-  CI. The Windows and macOS CI legs run the Rust-native `ags verify --scope
-  local`; the Linux leg additionally runs the Bash gate (`scripts/verify.sh`)
-  and `cargo deny`.
-- `ags-platform` resolves the Windows home directory (`USERPROFILE`, then
-  `HOMEDRIVE`+`HOMEPATH`, then `APPDATA`) and performs `PATH` lookups that honor
-  `PATHEXT`, so the CLI never depends on a Unix `$HOME` or an external `which`.
-
-Not claimed in 2.5.0:
-
-- The `scripts/*.sh` helpers (`install.sh`, `update.sh`, `verify.sh`,
-  `validate.sh`, …) are Bash/Unix paths. They are not promised to run natively
-  under Windows PowerShell or `cmd`; run them under Linux, macOS, WSL, or Git
-  Bash.
-- No pre-built Windows binary ships with this release. Native Windows users
-  should build the CLI from source with Cargo (PowerShell: `cargo build
-  --release`, then `$env:Path = "$PWD\target\release;$env:Path"`, then
-  `.\target\release\ags.exe verify --scope local`) rather than expecting a
-  downloadable `ags.exe` artifact.
-
-## Highlights
-
-- Rust governance kernel: task-card validation, execution policy resolution,
-  suite diagnostics, protocol drift checking, scoped verification, receipt and
-  compliance checks, runner planning, and capability discovery.
-- CLI-first workflow: `ags task`, `ags policy`, `ags sync`, `ags doctor`,
-  `ags bootstrap`, `ags project`, `ags protocol`, `ags session`, `ags verify`,
-  `ags run`, `ags receipt`, `ags compliance`, `ags skill`, `ags capability`,
-  `ags init`, and `ags archive`.
-- Standing engineering hub lifecycle: ambient preflight, solution formation,
-  user confirmation, explicit task-card request, execution contract, routing,
-  gate, execution, receipt, and verification.
-- Public-full sanitized distribution: includes the public Rust workspace and
-  governance framework, while excluding build output, installed third-party
-  skills, private memory, private task archives, secrets, and local machine
-  state.
-- GPL-3.0-only license: AGS may be used, studied, modified, and redistributed
-  under the terms of the GNU General Public License v3.0 only. Distributed
-  derivative works must also be GPL-3.0-only.
-
-## Rust And CLI Conversion
-
-AGS 2.0 consolidates the core governance surface into a Rust workspace. The
-public CLI exposes structured, repeatable commands for validation, policy
-resolution, preflight, release checks, memory capture, and audit receipts.
-
-The release keeps third-party skills optional. AGS can recommend development
-skills, but it does not install them silently. Confirmed installs are explicit
-and auditable.
-
-## Verification
-
-Before release, run:
-
-```bash
-cargo fmt --check
-RUSTFLAGS="-D warnings" cargo test
-cargo build --release
-bash scripts/verify.sh
-ags verify --scope release
-```
-
-## License And Attribution
-
-AGS Public Edition is distributed under the GNU General Public License v3.0
-only (GPL-3.0-only). Superpowers-related workflow inspiration and optional
-skill references are attributed separately in THIRD_PARTY_NOTICES.md.
+0.3.0 establishes the public AGS host-adapter and delivery-closure baseline:
+
+- preflight-bound `ags://capabilities/current-host` routing with exact typed
+  proposals and a single lease-bound effectful apply tool;
+- unified onboarding for skills, CLIs, MCP servers, and hooks from a validated,
+  hash-frozen GitHub capability manifest with offline fallback provenance;
+- availability-aware third-party routing so catalog presence is not confused
+  with host visibility, authentication, or runtime health;
+- native project-memory continuity for Claude Code (`SessionStart`/`Stop`),
+  Codex (`SessionStart`/`SessionEnd`), and OMP
+  (`session_start`/`agent_settled`/`session_shutdown`), with per-host close
+  receipts and no capture from ordinary card-less conversations;
+- explicit `ags agents govern --agent <host> --apply` writes for AGS-owned
+  memory adapters while external MCP registration remains advice-only;
+- explicit task-card handoff gates and deterministic delivery-report closure
+  across goals, acceptance criteria, verification, review, and unresolved IDs;
+- concise, non-cyclic `AGENTS.md`/`CLAUDE.md` startup maps backed by canonical
+  protocol documents instead of duplicated always-on manuals;
+- setup-installed shared global rule modules under `$HOME/.agents/rules`, so
+  concise host entrypoints remain complete on a clean machine;
+- prebuilt macOS, Linux, and Windows release assets plus an integrity-checking
+  npm MCP launcher.
+- one canonical-path workspace daemon shared by Codex, Claude Code, Cursor, and
+  OMP clients, with thin stdio forwarding, session-isolated preflight/leases,
+  atomic workspace capability state, idle recycling, and stop-before-restart
+  executable upgrades;
+- real-host MCP E2E coverage for same-workspace sharing, cross-project
+  isolation, reconnects, foreign-lease rejection, and daemon upgrades;
+- npm trusted publishing through GitHub OIDC with a pinned supported npm CLI
+  and a canonical executable `bin` entry.
+
+Release order is fixed: public `main` and CI first; then an explicit maintainer
+tag `v0.3.0`; then GitHub assets, checksums, and attestation; only after those
+assets exist may the npm publish workflow be dispatched for `0.3.0`.

@@ -672,7 +672,7 @@ environment override (`AGS_APPROVE_WRITES=1` → `runner-env`). Task card text i
 ### Stop before host execution
 
 The resolver has one host-execution blocking mechanism. The field name remains
-`stop_before_launch` for schema compatibility; AGS 0.3.1 Runner never launches:
+`stop_before_launch` for schema compatibility; AGS 0.3.2 Runner never launches:
 
 | Mechanism | Meaning | Runner behavior |
 |---|---|---|

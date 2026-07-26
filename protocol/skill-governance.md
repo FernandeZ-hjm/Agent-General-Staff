@@ -1,6 +1,6 @@
 # Skill Governance Protocol
 
-> AGS 0.3.1 的机器本地技能生命周期、统一目录与确定性解析协议。
+> AGS 0.3.2 的机器本地技能生命周期、统一目录与确定性解析协议。
 
 ## Source of Truth
 

@@ -54,4 +54,4 @@ Take an imprecise component that drifts and carries noise, put it inside a syste
 
 AGS just moves that old idea onto the floor of AI coding. The task card is the setpoint, the gate is the constraint, verification and the receipt are the feedback, and the memory capsule lets the system remember the road it has already walked. Call it innovation if you like; it's closer to a belated return to common sense.
 
-Back to the [README](../README.en.md) to see how these five become concrete commands.
+Back to the [README](../README_EN.md) to see how these five become concrete commands.

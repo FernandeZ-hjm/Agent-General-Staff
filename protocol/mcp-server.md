@@ -1,6 +1,6 @@
 # AGS MCP: Workspace Service and Host Adapter
 
-> AGS 0.3.1 MCP 是工作区治理服务与薄宿主适配器，不是自然语言 Agent。
+> AGS 0.3.2 MCP 是工作区治理服务与薄宿主适配器，不是自然语言 Agent。
 
 ## Architecture
 
@@ -147,7 +147,7 @@ Onboarding lease 绑定 public profile 的完整 `plan_hash`、item、host 与 t
 
 ## Server Info
 
-`serverInfo` example: `{"name":"ags-mcp","version":"0.3.1"}`
+`serverInfo` example: `{"name":"ags-mcp","version":"0.3.2"}`
 
 ## Verification
 

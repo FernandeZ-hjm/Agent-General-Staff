@@ -1,4 +1,4 @@
-# AGS v0.3.1 Architecture
+# AGS v0.3.2 Architecture
 
 AGS is a multi-Agent development governance control plane. It admits typed
 requests, binds authority and policy, validates evidence, and preserves
@@ -36,11 +36,12 @@ reconstructs user intent from keywords.
 | CLI | `ags-cli` | unchanged Clap surface and application-service dispatch | duplicated governance rules |
 | MCP | `ags-mcp` | JSON-RPC conversion, session connection and error mapping | workspace-global state |
 
-Source directories and Cargo package names use the same boundary names.
-Smaller crates such as `task-card-validator`, `execution-policy`,
-`skill-governance`, and `workflow-sync-check` are subordinate implementation
-modules. They are not alternate authorities and do not expose a second product
-surface.
+Source directories and Cargo package names use the same boundary names. The
+former `bootstrap-dry-run`, `capability-registry`,
+`delivery-report-validator`, `execution-policy`, `runner`, `skill-governance`,
+`suite-doctor`, `task-card-validator`, and `workflow-sync-check` package
+manifests are retired. Their implementations live inside the owning modules
+above, so the workspace has no alternate authority or second product surface.
 
 ## Workspace service
 
@@ -63,16 +64,23 @@ canonical workspace path
 - Disconnect does not stop the daemon. An empty daemon exits after its idle TTL.
 - Executable mismatch triggers authenticated stop-before-restart.
 
+## Public completion boundary
+
+Public completion requires more than a `PUBLIC_MANIFEST` comparison. Promotion
+must validate the canonical payload authority, exact tracked inventory and
+content hashes, public-safe source topology, compatibility contracts, release
+workflows, and absence of private runtime or third-party skill bodies.
+
 ## Compatibility boundary
 
 The complete 36-node visible public v0.3.0 Clap help tree and canonical Machine
 CLI paths are captured in
-`crates/ags-cli/tests/fixtures/human-cli-v0.3.0.json`. v0.3.1 matches those
+`crates/ags-cli/tests/fixtures/human-cli-v0.3.0.json`. v0.3.2 matches those
 surfaces byte-for-byte. Only `ags --version` changes.
 
 Product version, wire/schema version, and historical release version are
 separate classes:
 
-- Product metadata is aligned to `0.3.1`.
+- Product metadata is aligned to `0.3.2`.
 - v0.3.0 wire/schema identifiers remain stable for compatibility.
 - v0.3.0 release notes and fixtures remain historical evidence.

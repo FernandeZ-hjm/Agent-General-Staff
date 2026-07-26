@@ -62,7 +62,7 @@ scripts/                    # Public-safe scripts
   validate.sh
   verify.sh
 
-crates/                     # Rust crates (public-safe core)
+crates/                     # Exactly twelve authoritative Rust packages
   ags-platform/               # Paths, filesystem, hashes, atomic writes
   ags-workspace-facts/        # Canonical workspace and project facts
   ags-host-integration/       # Codex, Claude Code, Cursor, OMP adapters
@@ -75,11 +75,6 @@ crates/                     # Rust crates (public-safe core)
   ags-lifecycle/              # Setup, init, onboarding, update, rollback
   ags-cli/                    # Stable human and Machine CLI adapters
   ags-mcp/                    # Thin MCP/stdio protocol adapter
-  task-card-validator/        # Subordinate task-card validation
-  execution-policy/           # Subordinate policy resolution
-  skill-governance/           # Subordinate skill lifecycle implementation
-  workflow-sync-check/        # Subordinate A-to-public boundary checker
-  runner/                     # Host-execution launch-plan preparation
 
 docs/                       # Documentation
   skill-recommendations.md
@@ -88,9 +83,25 @@ templates/                  # Task card templates
 tests/                      # Test fixtures
 ```
 
+## Twelve authoritative modules
+
+The package list above is the complete runtime authority set. The adapters
+(`ags-cli`, `ags-mcp`) call the domain modules; they do not retain duplicate
+governance, snapshot, session, lease, validation, or verification rules.
+
+## Support-package migration status
+
+v0.3.2 retires the former `bootstrap-dry-run`, `capability-registry`,
+`delivery-report-validator`, `execution-policy`, `runner`, `skill-governance`,
+`suite-doctor`, `task-card-validator`, and `workflow-sync-check` Cargo package
+boundaries. Their implementations live under the owning modules named above;
+the old package manifests are absent. Compatibility remains at the human CLI,
+Machine CLI, wire/schema, and required re-export surfaces—not through a second
+authority.
+
 ## Release Identity
 
-Latest release: AGS v0.3.1 Public Edition.
+Latest release: AGS v0.3.2 Public Edition.
 
 Repository name: `agent-governance-suite`.
 
