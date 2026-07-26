@@ -252,7 +252,7 @@ public_rewrites:
   - path: crates/ags-lifecycle/src/setup/memory/tests.rs
     target_sha256: "sha256:4e9c11b9d174420fd0443bbce8577cbe11c44121580106880359cec87f5e2a06"
   - path: crates/ags-lifecycle/src/setup/mod.rs
-    target_sha256: "sha256:ca260e907889fdc27ce7ce8668644ace53408e6f10ceffdc968d126a1af1282e"
+    target_sha256: "sha256:616b32f028ea8fb55dc72d9b8e9c3125f0c9524752e33e8b9d71d936d2c54407"
   - path: crates/ags-lifecycle/src/setup/plan.rs
     target_sha256: "sha256:9650d984e245f70bc9a93061e2011318f810a53b455d3b2a2ed022da3219cd7c"
   - path: crates/ags-lifecycle/src/setup/plan/tests.rs
@@ -276,7 +276,7 @@ public_rewrites:
   - path: crates/ags-mcp/src/tools/apply.rs
     target_sha256: "sha256:b715edc0d5cc1192b6459dcf382fd3bd3ad2c534311f6a07d4aa953d09933d01"
   - path: crates/ags-mcp/src/tools/tests.rs
-    target_sha256: "sha256:9f12041f5c46fcfeffbfccda2a648239ae92c0a8239cab3167547f77d3384c59"
+    target_sha256: "sha256:04bf2f3d176ac31f81766c91d1349ce573fb656f5136f18995fca3ebeae2ec40"
   - path: crates/ags-verification/src/bootstrap.rs
     target_sha256: "sha256:423534b437e64206e176288dbb953402f0963eda241139eb9f50063b52c4e852"
   - path: crates/ags-verification/src/doctor/checks/host_memory.rs
@@ -292,7 +292,7 @@ public_rewrites:
   - path: crates/ags-verification/src/sync/mod.rs
     target_sha256: "sha256:87746acc967e36d034dda7946ed75a775e936e067d4bb14a9204c8a562416fe3"
   - path: docs/adr/0001-workspace-service-and-deep-modules.md
-    target_sha256: "sha256:619ef16d1b7bb07db773befe99067f8f6556f8e166615ac32dddd67f87c84117"
+    target_sha256: "sha256:0e045393094d6cbc9fe922f90bdee16205baa16eda5f8d092c9e8cce1dc8c11a"
   - path: docs/architecture.md
     target_sha256: "sha256:95ee611168fdbedfb5fb5bb6a1d6150f68881ee1fbe2071b23b200377bb407e4"
   - path: governance/skill-sync.md
@@ -310,11 +310,11 @@ public_rewrites:
   - path: protocol/context-memory.md
     target_sha256: "sha256:ae8b00af607221a2b57e3b0263fa10e587a9e8616767391e77c0865ab03af1b6"
   - path: protocol/mcp-server.md
-    target_sha256: "sha256:9735d74a1d9d99fb1484fa8ab4e4b9d00c1fbb6c223aef698b75106372df768d"
+    target_sha256: "sha256:bac70dc64dbdf51656926c9f825d45ebd8433cbe05950687f2ccf3cc35682017"
   - path: protocol/runtime-adapters.md
-    target_sha256: "sha256:fd56ed584f6e6ca4101afc29ce01e4731d12a986090dab7779761d3ec19f54ea"
+    target_sha256: "sha256:97e9c14ac2f68dbb1117ade63dd28e379b2a0504b9fe1730cad280e8225d04c6"
   - path: protocol/skill-governance.md
-    target_sha256: "sha256:84417c77c138ff17092eb2304d32e2f277a73ec392199217b3182a77ad69ac02"
+    target_sha256: "sha256:d5acb3b9433fceb0ff08af64324f3b7d8bb78421da8b1efbd745ef4bd72be560"
 
 # Binary release assets contain only this runtime support subset. The workflow
 # obtains this list from `ags release package`; it must not repeat the paths.

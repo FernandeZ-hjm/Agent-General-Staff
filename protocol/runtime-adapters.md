@@ -8,8 +8,8 @@ Keep the task-card skeleton generic. Put runtime-specific behavior here.
 ## Purpose
 
 The task card is an execution contract, not a Claude Code-only prompt. Cursor,
-Codex, Claude Code, or another agent may execute the same contract when the
-runtime adapter is explicit.
+Codex, Claude Code, OMP, or another agent may execute the same contract when
+the runtime adapter is explicit.
 
 Use this file when generating, reviewing, or executing task cards that need to
 state:
@@ -53,7 +53,7 @@ not govern solution formation or direct edit.
 **RouteResolution is not a runtime adapter field.** It is distinct from
 `Runtime adapter`, `Permission mode`, and `Execution surface`, and never sets or
 changes them. WorkBuddy and CodeBuddy-Code are Tencent Agent host clients;
-like any host other than `codex` / `claude-code` / `cursor` they map to
+like any host other than `codex` / `claude-code` / `cursor` / `omp` they map to
 `Runtime adapter: generic` (M9 caps permission at `plan-only` without explicit
 approval). Request governance does not change that mapping.
 
@@ -112,6 +112,7 @@ Allowed values:
 - `Codex`
 - `Claude Code`
 - `Cursor`
+- `OMP`
 - `Human`
 - `Other`
 
@@ -124,6 +125,7 @@ Allowed values:
 - `codex-local`
 - `claude-code`
 - `cursor`
+- `omp`
 - `generic`
 
 ### Execution Surface
@@ -276,6 +278,24 @@ Verification gate:
 - stop condition: broad refactor / destructive action / unclear scope
 ```
 
+### OMP Execution
+
+Use when OMP owns the native agent session.
+
+```markdown
+Executor: OMP
+Runtime adapter: omp
+Execution surface: cli
+Permission mode: execute-and-verify
+Parallelism: none
+Review gate:
+- 按 protocol/agent-task-protocol.md 的 Review Gate 规则执行当前任务级别。
+Verification gate:
+- commands: <project-specific checks>
+- expected evidence: changed files + command result + short delivery summary
+- stop condition: broad refactor / destructive action / unclear scope
+```
+
 ### High-Risk Planning
 
 Use only when the confirmed Heavy contract is a planning/audit pass.
@@ -303,6 +323,7 @@ Choose the adapter before filling task-specific details.
 | "you execute", "你直接做", "你来改" | `Codex` | `codex-local` | `local-workspace` |
 | "give me a Claude Code task card", "给 Claude Code 任务卡" | `Claude Code` | `claude-code` | `cli` |
 | "Cursor execute", "给 Cursor 任务卡" | `Cursor` | `cursor` | `ide` |
+| "OMP execute", "给 OMP 任务卡" | `OMP` | `omp` | `cli` |
 | "human checklist", "我自己执行" | `Human` | `generic` | `local-workspace` |
 | external or unknown agent | `Other` | `generic` | choose the narrowest known surface |
 
@@ -540,6 +561,30 @@ Parallelism mapping:
 - `worktree`: require explicit task-card authorization.
 - `multi-session` and `agent-team`: require explicit task-card authorization.
 
+### `omp`
+
+Use for task cards executed by an OMP-native agent session.
+
+Permission mapping:
+
+- `plan-only`: inspect and return diagnosis, audit findings, or a plan without
+  mutating the workspace.
+- `execute-and-verify`: execute within the confirmed task-card scope and return
+  explicit verification evidence.
+
+Execution notes:
+
+- OMP owns process launch and its native lifecycle extension; AGS Runner only
+  returns a host-handoff `LaunchPlan`.
+- Do not translate OMP into `generic` or apply the generic M9 permission cap.
+- The task card remains the execution authority; OMP-native extensions cannot
+  rewrite permission, review, verification, or protected-path boundaries.
+
+Parallelism mapping:
+
+- Use only the parallelism modes that the task card explicitly authorizes and
+  the active OMP runtime can express safely.
+
 ### `generic`
 
 Use when the runtime is unknown or external.
@@ -561,6 +606,7 @@ Use when the runtime is unknown or external.
 - If the user says "you execute", use `codex-local`.
 - If the user asks for a Claude Code prompt or task card, use `claude-code`.
 - If the user asks for Cursor execution, use `cursor`.
+- If the user asks for OMP execution, use `omp`.
 - If no executor is specified, follow the project operating protocol.
 
 ## Execution-Policy Resolver

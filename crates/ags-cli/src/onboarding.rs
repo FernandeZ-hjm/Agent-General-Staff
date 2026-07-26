@@ -141,22 +141,18 @@ fn plan_or_exit(target: &Path, host: &str) -> OnboardingPlan {
                 eprintln!("ags onboarding: {error}");
                 std::process::exit(1);
             });
-    let snapshot = ags_capability_governance::build_capability_snapshot_with_roots_and_manifest(
-        &source_root,
-        host,
+    let active_skill_ids = ags_capability_governance::load_static_snapshot(
         &ags_capability_governance::locate_runtime_home(),
-        &host_home,
-        &third_party,
+        host,
     )
-    .unwrap_or_else(|error| {
-        eprintln!("ags onboarding: capability snapshot build failed: {error:?}");
-        std::process::exit(1);
-    });
-    let active_skill_ids = snapshot
-        .active_skills
-        .iter()
-        .map(|skill| skill.skill_id.clone())
-        .collect::<Vec<_>>();
+    .map(|(_, table)| {
+        table
+            .active_skills()
+            .into_iter()
+            .map(|skill| skill.skill_id)
+            .collect::<Vec<_>>()
+    })
+    .unwrap_or_default();
     assess_public_with_resolution(
         &AssessContext {
             source_root: &source_root,

@@ -141,14 +141,7 @@ fn snapshot_hash_is_deterministic_and_binds_catalog() {
     )
     .unwrap();
     assert_eq!(one.snapshot_hash, two.snapshot_hash);
-    assert!(one
-        .validate(
-            "codex",
-            "sha256:registry",
-            "sha256:overlay",
-            "sha256:runtime"
-        )
-        .is_ok());
+    assert!(one.validate_integrity("codex").is_ok());
 }
 
 #[test]
@@ -467,7 +460,7 @@ fn imported_source_registry_candidate_becomes_active_when_linked_and_adopted() {
         .any(|skill| skill.skill_id == "apple-design"));
     std::fs::remove_file(&shared_entry).unwrap();
     assert!(
-        load_validated_snapshot_with_roots(&root, &runtime, "claude-code", &home).is_ok(),
+        load_static_snapshot(&runtime, "claude-code").is_ok(),
         "a codex/omp adoption must not stale the persisted Claude snapshot"
     );
     let original_runtime_hash = snapshot.runtime_hash;

@@ -17,12 +17,13 @@
 //! - `claude-code`: produces a fixed command preview from resolved policy.
 //! - `codex-local`: structured host handoff preview.
 //! - `cursor`: structured host handoff preview.
+//! - `omp`: structured native-host handoff preview.
 //! - `generic`: capped at plan-only, requires human handoff.
 
 use ags_capability_governance::SkillTagGate;
 use ags_governance_decision::policy::{GateCheckOutput, ResolvedExecutionPolicy};
 use ags_governance_decision::GovernanceStatus;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 // ── Public types ──────────────────────────────────────────────────────────
 
@@ -74,13 +75,13 @@ pub struct LaunchPlan {
 /// Adapter-specific launch plan.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AdapterPlan {
-    /// Runtime adapter: claude-code, codex-local, cursor, generic
+    /// Runtime adapter: claude-code, codex-local, cursor, omp, generic
     pub adapter: String,
     /// Human-readable launch command description
     pub launch_command: String,
     /// Arguments from resolved policy (verbatim, never from raw fields)
     pub launch_args: Vec<String>,
-    /// Whether this adapter is a stub (true for codex-local, cursor)
+    /// Whether this adapter is a stub (true for codex-local, cursor, omp)
     pub is_stub: bool,
     /// Why this adapter is a stub
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -130,42 +131,15 @@ pub fn run_task_card(
     approve_writes: bool,
     current_task_approval: bool,
 ) -> LaunchPlan {
-    // The runtime skill-tag gate reads the manifest routing authority + the
-    // machine-local ActiveSkillTable snapshot. Resolve both from the real
-    // process cwd / runtime home; tests use `run_task_card_inner` to inject
-    // hermetic roots.
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let runtime_home = ags_capability_governance::locate_runtime_home();
-    let authority_root = ags_capability_governance::resolve_capability_authority_root(
-        &cwd,
-        &runtime_home,
-        std::env::var_os("AGS_SOURCE_ROOT").map(PathBuf::from),
-    );
-    let manifest_root = authority_root.as_ref().unwrap_or(&cwd);
-    let mut plan = run_task_card_inner(
+    run_task_card_inner(
         task_card_path,
         check_only,
         dry_run,
         approve_writes,
         current_task_approval,
-        manifest_root,
         &runtime_home,
-    );
-    if let Err(error) = authority_root {
-        if plan.skill_tags_gate.is_some() {
-            plan.gate_decision = "stop".to_string();
-            plan.gate_error_kind = Some("capability_authority_unresolved".to_string());
-            plan.validation_errors.push(error.to_string());
-            plan.skill_tags_gate = None;
-            plan.receipt_plan.host_should_generate = false;
-            plan.host_execution_required = false;
-            plan.governance_status = GovernanceStatus::BlockedByPolicy;
-            plan.receipt_plan.gate_result_for_receipt = "stop".to_string();
-            plan.delivery_report_ref =
-                "BLOCKED — capability authority root could not be resolved".to_string();
-        }
-    }
-    plan
+    )
 }
 
 /// Map a resolved runtime adapter to the host identifier the runtime skill-tag
@@ -177,13 +151,14 @@ fn host_for_adapter(adapter: &str) -> &str {
         "claude-code" => "claude-code",
         "codex-local" => "codex",
         "cursor" => "cursor",
+        "omp" => "omp",
         _ => "",
     }
 }
 
-/// Core of [`run_task_card`] with the skill-tag gate's `manifest_root` and
-/// `runtime_home` injected (hermetic in tests; real cwd / runtime home in
-/// production via the public wrapper). The runtime skill-tag availability gate
+/// Core of [`run_task_card`] with the skill-tag gate's static snapshot runtime
+/// home injected (hermetic in tests; machine runtime home in production via the
+/// public wrapper). The runtime skill-tag availability gate
 /// (the third gate) runs on the launch-plan path only — read/validation failures
 /// and check-only return before it, so the offline policy gate stays static.
 #[allow(clippy::too_many_arguments)]
@@ -193,7 +168,6 @@ pub fn run_task_card_inner(
     dry_run: bool,
     approve_writes: bool,
     current_task_approval: bool,
-    manifest_root: &Path,
     runtime_home: &Path,
 ) -> LaunchPlan {
     let mode = if check_only {
@@ -349,7 +323,6 @@ pub fn run_task_card_inner(
         Some(
             ags_capability_governance::verify_skill_tags_with_runtime_home(
                 &skill_tags,
-                manifest_root,
                 active_host,
                 runtime_home,
             ),
@@ -499,6 +472,20 @@ fn resolve_adapter(policy: &ResolvedExecutionPolicy, _task_card_path: &str) -> A
                     .to_string(),
             ),
             executor_binary: "cursor".to_string(),
+            dispatched: false,
+        },
+
+        "omp" => AdapterPlan {
+            adapter: "omp".to_string(),
+            launch_command: "omp host-native handoff [task-card]".to_string(),
+            launch_args: vec![],
+            is_stub: true,
+            stub_reason: Some(
+                "omp adapter is a structured host handoff. OMP owns its native \
+                 session and consumes the validated task card without AGS spawning it."
+                    .to_string(),
+            ),
+            executor_binary: "omp".to_string(),
             dispatched: false,
         },
 

@@ -448,7 +448,6 @@ fn preflight_context_from_result(
             "ready" => Some(ags_session::CapabilityReference::Ready {
                 binding: ags_session::CapabilityBinding {
                     workspace_identity: catalog.get("workspace_identity")?.as_str()?.to_string(),
-                    bundle_epoch: catalog.get("bundle_epoch")?.as_u64()?,
                     snapshot_hash: catalog.get("snapshot_hash")?.as_str()?.to_string(),
                 },
             }),
@@ -456,12 +455,6 @@ fn preflight_context_from_result(
             "capability_unavailable" => {
                 let error = catalog.get("error")?;
                 let code = match error.get("code")?.as_str()? {
-                    "capability_authority_unavailable" => {
-                        ags_session::CapabilityDiagnosticCode::AuthorityUnavailable
-                    }
-                    "capability_snapshot_build_failed" => {
-                        ags_session::CapabilityDiagnosticCode::SnapshotBuildFailed
-                    }
                     "capability_snapshot_read_failed" => {
                         ags_session::CapabilityDiagnosticCode::SnapshotReadFailed
                     }
@@ -479,9 +472,6 @@ fn preflight_context_from_result(
                     }
                     "capability_state_lock_unavailable" => {
                         ags_session::CapabilityDiagnosticCode::StateLockUnavailable
-                    }
-                    "capability_state_persistence_failed" => {
-                        ags_session::CapabilityDiagnosticCode::StatePersistenceFailed
                     }
                     "capability_source_unavailable" => {
                         ags_session::CapabilityDiagnosticCode::SourceUnavailable

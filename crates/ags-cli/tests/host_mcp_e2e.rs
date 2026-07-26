@@ -969,21 +969,18 @@ fn hermetic_host_adapters_share_one_workspace_service_but_keep_sessions_and_leas
     session_ids.sort();
     session_ids.dedup();
     assert_eq!(session_ids.len(), HOSTS.len());
-    let capability_bundle = environment.runtime.join("workspace-services").join(format!(
+    let legacy_capability_bundle = environment.runtime.join("workspace-services").join(format!(
         "{}.capabilities.json",
         workspace_key.as_ref().unwrap()
     ));
-    let bundle: Value = serde_json::from_slice(&fs::read(capability_bundle).unwrap()).unwrap();
-    assert_eq!(
-        Path::new(bundle["workspace"].as_str().unwrap())
-            .canonicalize()
-            .unwrap(),
-        environment.project_a.canonicalize().unwrap()
+    assert!(
+        !legacy_capability_bundle.exists(),
+        "workspace requests must not publish a dynamic capability bundle"
     );
     for host in HOSTS {
         assert!(
-            bundle["snapshots"].get(*host).is_some(),
-            "workspace capability bundle omitted {host}"
+            ags_capability_governance::snapshot_path(&environment.runtime, host).is_file(),
+            "static host snapshot is missing for {host}"
         );
     }
     let service_registry = environment
@@ -1062,9 +1059,9 @@ fn hermetic_host_adapters_share_one_workspace_service_but_keep_sessions_and_leas
         preflight["capability_catalog"]["workspace_identity"], workspace_a_capability_identity,
         "different workspaces shared one capability bundle identity"
     );
-    assert!(preflight["capability_catalog"]["bundle_epoch"]
-        .as_u64()
-        .is_some_and(|epoch| epoch > 0));
+    assert!(preflight["capability_catalog"]
+        .get("bundle_epoch")
+        .is_none());
     let snapshot = other_workspace.current_host_snapshot();
     assert_eq!(snapshot["host"], "codex");
     // Equal content hashes are allowed when the host capabilities are
@@ -1151,7 +1148,7 @@ fn native_host_registration_harness() {
 }
 
 #[test]
-fn refreshed_snapshot_rebinds_the_existing_workspace_session() {
+fn refreshed_snapshot_does_not_rebind_the_existing_workspace_session() {
     let environment = TestEnvironment::new();
     let initial = environment.write_snapshot("codex");
     let claude_initial = environment.write_snapshot("claude-code");
@@ -1176,14 +1173,17 @@ fn refreshed_snapshot_rebinds_the_existing_workspace_session() {
         "capability mutation did not produce a new snapshot"
     );
 
-    let stale_resource = client.request_envelope(
-        3,
-        "resources/read",
-        json!({"uri": "ags://capabilities/current-host"}),
+    let current = client.current_host_snapshot();
+    assert_eq!(
+        current["snapshot_hash"], initial["snapshot_hash"],
+        "a live workspace daemon must keep its first sealed host snapshot"
     );
-    assert!(stale_resource["error"]["message"]
-        .as_str()
-        .is_some_and(|message| message.contains("skill_snapshot_stale")));
+    assert!(
+        current["catalog"].as_array().is_some_and(|cards| cards
+            .iter()
+            .all(|card| card["skill_id"].as_str() != Some("e2e-refresh-skill"))),
+        "a request-time resource read must not absorb a disk refresh"
+    );
 
     let claude_current = claude.current_host_snapshot();
     assert_eq!(claude_current["host"], "claude-code");
@@ -1192,32 +1192,21 @@ fn refreshed_snapshot_rebinds_the_existing_workspace_session() {
         "refreshing Codex invalidated the independent Claude host generation"
     );
 
-    let stale_route = client.route_project_verify();
-    assert_eq!(stale_route["governance_status"], "BLOCKED_BY_POLICY");
-    assert!(stale_route["lease"].is_null());
-    assert_eq!(stale_route["errors"][0]["code"], "skill_snapshot_stale");
-    assert!(stale_route["errors"][0]["message"]
-        .as_str()
-        .is_some_and(|message| message.contains("rerun ags_preflight")));
-
-    let rebound = client.preflight("codex", &environment.project_a);
-    assert_eq!(rebound["capability_catalog"]["status"], "ready");
-    assert_eq!(
-        rebound["capability_catalog"]["snapshot_hash"],
-        refreshed["snapshot_hash"]
-    );
-    let current = client.current_host_snapshot();
-    assert_eq!(current["snapshot_hash"], refreshed["snapshot_hash"]);
+    let route = client.route_project_verify();
     assert!(
-        current["catalog"].as_array().is_some_and(|cards| cards
-            .iter()
-            .any(|card| { card["skill_id"].as_str() == Some("e2e-refresh-skill") })),
-        "refreshed current-host catalog omitted the new skill"
+        route["lease"]["lease_id"].is_string(),
+        "the unchanged in-memory binding must remain routable after a disk refresh"
+    );
+
+    let repeated = client.preflight("codex", &environment.project_a);
+    assert_eq!(
+        repeated["capability_catalog"]["snapshot_hash"], initial["snapshot_hash"],
+        "repeated preflight must not refresh or rebind the live daemon"
     );
 }
 
 #[test]
-fn failed_workspace_bundle_publish_never_becomes_ready_in_memory() {
+fn legacy_workspace_bundle_path_does_not_affect_static_snapshot_reads() {
     let environment = TestEnvironment::new();
     environment.write_snapshot("codex");
 
@@ -1248,15 +1237,8 @@ fn failed_workspace_bundle_publish_never_becomes_ready_in_memory() {
     let first = client.preflight("codex", &environment.project_a);
     let second = client.preflight("codex", &environment.project_a);
     for report in [&first, &second] {
-        assert_eq!(
-            report["capability_catalog"]["status"],
-            "capability_unavailable"
-        );
-        assert_eq!(
-            report["capability_catalog"]["error"]["code"],
-            "capability_state_persistence_failed"
-        );
-        assert!(report["capability_catalog"]["snapshot_hash"].is_null());
+        assert_eq!(report["capability_catalog"]["status"], "ready");
+        assert!(report["capability_catalog"]["snapshot_hash"].is_string());
     }
 }
 

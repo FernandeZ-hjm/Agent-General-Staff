@@ -1,5 +1,6 @@
 use super::*;
 use ags_governance_decision::policy::{ApprovalSource, Parallelism, PermissionMode};
+use std::path::PathBuf;
 
 #[test]
 fn test_read_error_produces_stop_plan() {
@@ -109,6 +110,30 @@ fn test_cursor_adapter_is_stub() {
 
     let adapter = resolve_adapter(&policy, "test-task-card.md");
     assert_eq!(adapter.adapter, "cursor");
+    assert!(adapter.is_stub);
+}
+
+#[test]
+fn test_omp_adapter_is_native_host_handoff() {
+    let policy = ResolvedExecutionPolicy {
+        executor: "OMP".into(),
+        runtime_adapter: "omp".into(),
+        effective_permission_mode: PermissionMode::ExecuteAndVerify,
+        effective_parallelism: Parallelism::None,
+        effective_execution_surface: "cli".into(),
+        allowed_launch_args: vec![],
+        stop_before_launch: false,
+        stop_reasons: vec![],
+        was_downgraded: false,
+        downgrade_reasons: vec![],
+        execution_effort: "normal".into(),
+        is_exhaustive_mode: false,
+        approval_source: ApprovalSource::None,
+    };
+
+    let adapter = resolve_adapter(&policy, "test-task-card.md");
+    assert_eq!(adapter.adapter, "omp");
+    assert_eq!(adapter.executor_binary, "omp");
     assert!(adapter.is_stub);
 }
 
@@ -278,14 +303,6 @@ fn test_current_task_approval_flag_sets_approval_source() {
 
 const VALID_CARD: &str = include_str!("../../../../tests/fixtures/valid-full.md");
 
-fn repo_root_for_test() -> PathBuf {
-    // crates/ags-task-contract → repo root.
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .expect("repo root resolves")
-}
-
 fn unique_tmp(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "ags-runner-skilltag-{}-{}",
@@ -299,6 +316,7 @@ fn host_for_adapter_maps_known_adapters() {
     assert_eq!(host_for_adapter("claude-code"), "claude-code");
     assert_eq!(host_for_adapter("codex-local"), "codex");
     assert_eq!(host_for_adapter("cursor"), "cursor");
+    assert_eq!(host_for_adapter("omp"), "omp");
     // generic / unknown → host-agnostic (fail-closed).
     assert_eq!(host_for_adapter("generic"), "");
     assert_eq!(host_for_adapter("anything-else"), "");
@@ -328,7 +346,6 @@ fn runtime_skill_tag_gate_stops_unavailable_tag() {
         true,  // dry-run (launch-plan path)
         false,
         false,
-        &repo_root_for_test(),
         &runtime_home,
     );
     assert!(plan.validation_passed, "card must pass static validation");
@@ -364,7 +381,6 @@ fn runtime_skill_tag_gate_absent_when_card_has_no_tags() {
         true,
         false,
         false,
-        &repo_root_for_test(),
         &runtime_home,
     );
     assert!(plan.validation_passed);
@@ -406,7 +422,6 @@ fn check_only_skips_runtime_skill_tag_gate() {
         false,
         false,
         false,
-        &repo_root_for_test(),
         &runtime_home,
     );
     assert_eq!(plan.mode, "check-only");

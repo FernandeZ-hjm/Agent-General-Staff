@@ -22,10 +22,10 @@ use super::model::ApprovalSource;
 /// | `approval_source` | `ApprovalSource::None` |
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskPolicyInput {
-    /// Executor: "Codex" | "Claude Code" | "Cursor" | "Other"
+    /// Executor: "Codex" | "Claude Code" | "Cursor" | "OMP" | "Other"
     pub executor: String,
 
-    /// Runtime adapter: "codex-local" | "claude-code" | "cursor" | "generic"
+    /// Runtime adapter: "codex-local" | "claude-code" | "cursor" | "omp" | "generic"
     pub runtime_adapter: String,
 
     /// Execution surface: "local-workspace" | "cli" | "ide" | "web"

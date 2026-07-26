@@ -1,7 +1,7 @@
 //! Workspace-scoped AGS daemon and thin stdio adapter.
 //!
-//! This facade is the external seam. Registry ownership, capability bundle
-//! publication, transport authentication, and upgrade/recycle mechanics remain
+//! This facade is the external seam. Registry ownership, immutable capability
+//! loading, transport authentication, and upgrade/recycle mechanics remain
 //! internal implementation modules.
 
 use std::io::BufReader;
@@ -9,12 +9,13 @@ use std::net::TcpStream;
 use std::path::Path;
 use std::sync::Arc;
 
-mod capability_bundle;
+#[path = "workspace_service/capability_bundle.rs"]
+mod capability_snapshot;
 mod registry_ownership;
 mod transport_handshake;
 mod upgrade_recycle;
 
-pub use capability_bundle::WorkspaceState;
+pub use capability_snapshot::WorkspaceState;
 
 /// Callback implemented by the protocol adapter for one authenticated client.
 pub trait WorkspaceSessionHandler: Send + Sync + 'static {

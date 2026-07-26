@@ -25,12 +25,12 @@ Cursor、OMP 等宿主只是同一工作区服务的客户端；每个客户端�
 JSON-RPC，不保存治理状态。客户端断开不会终止 daemon；无活动会话超过 idle window
 后才回收。新 adapter 发现 executable hash 变化时，必须先停止旧 daemon，再启动新
 版本，禁止同一工作区的新旧 daemon 并存。daemon 只监听 loopback ephemeral
-endpoint；registry/token、诊断日志与 capability bundle 位于用户私有 runtime 目录，
+endpoint；registry/token、诊断日志与静态 host capability snapshot 位于用户私有 runtime 目录，
 使用私有权限、token handshake、非符号链接目录和原子替换。
 
 ## Initialization Gate
 
-任何 AGS 场景的第一调用必须是 `ags_preflight(agent, target?)`；MCP 不可用时才使用 `ags session preflight --for <agent> --target <path>`。preflight 绑定当前 daemon client session 的 host/target，并返回 current-host resource URI、`snapshot_hash` 与 `workspace_service` 身份。preflight target 必须属于 daemon 的 canonical workspace；跨工作区 target fail closed。新 preflight 会清空该 session 的所有 held actions。若动态目录已变化而持久化快照失效，preflight 必须返回 `overall_status=warning`、`governance_status=NEEDS_USER_DECISION`、`refresh_required=true` 与结构化刷新 argv；不得继续显示 “All clear”。该 warning 不阻断 `DirectResponse`，但 `SkillTarget` / `MachineCliTarget` 在用户明确刷新并重新 preflight 前继续 fail closed。preflight 本身不自动写快照。
+任何 AGS 场景的第一调用必须是 `ags_preflight(agent, target?)`；MCP 不可用时才使用 `ags session preflight --for <agent> --target <path>`。preflight 绑定当前 daemon client session 的 host/target，并返回 current-host resource URI、`snapshot_hash` 与 `workspace_service` 身份。preflight target 必须属于 daemon 的 canonical workspace；跨工作区 target fail closed。新 preflight 会清空该 session 的所有 held actions。preflight 只读取 daemon 启动后首次加载的静态 host snapshot，不扫描或比较动态目录，也不自动写快照。快照缺失、损坏或内部 hash 不一致时返回结构化 warning 与显式刷新 argv，并对 `SkillTarget` / `MachineCliTarget` fail closed；`DirectResponse` 仍可用。
 
 尚未初始化的项目不会进入普通治理态，而会建立受限
 `bootstrap_required` 绑定。该绑定只允许 `ags_onboarding_plan` 与
@@ -128,7 +128,7 @@ SkillTarget 在不与 MachineCli 共存时返回受控 outcome action。`outcome
 
 ### Resources (6)
 
-新增 `ags://capabilities/current-host`：preflight-bound、只读的 `HostCapabilitySnapshot`。经显式刷新写出的 validated snapshot 由工作区 daemon 单点读取、重新校验、缓存并原子吸收到 workspace capability bundle；后续 route/apply 不再绕回可能被其他工作区覆盖的全机活动文件。宿主按 session 与 `snapshot_hash` 缓存薄目录，并提交精确 `skill_id` / `entrypoint` / `snapshot_hash`。第三方能力只有同时满足 `route_state = routable` 与 `availability.state = ready` 才能进入自然语言候选；hook 永远只走宿主事件面。host-native MCP 还必须以宿主当前连接的实时工具可见性为准，不能把仅注册或健康未知当作 ready。快照失效时，preflight 的 `capability_catalog.refresh.argv` 给出显式机器本地刷新参数；宿主须先取得用户确认，执行后重新 preflight 并读取新的 `snapshot_hash`。其他公开资源包括 `ags://global-kernel`、任务协议、路由、模板与 runtime adapter。
+新增 `ags://capabilities/current-host`：preflight-bound、只读的 `HostCapabilitySnapshot`。经显式 setup/update/adopt/sync 或 snapshot refresh 原子写出的静态 snapshot，由工作区 daemon 每宿主只读取和校验一次；不存在 workspace capability bundle、bundle epoch 或请求期重新扫描。resource read、route 和 apply 复用同一内存对象与 `snapshot_hash`。宿主提交精确 `skill_id` / `entrypoint` / `snapshot_hash`。第三方能力是否 routable/ready、认证、health 与宿主可见性均是刷新时冻结的事实；实际调用失败作为普通执行失败记录，不会隐式重建快照。磁盘快照刷新后须重启 daemon/重新连接再 preflight，旧 session 与 lease 随服务重启失效。快照缺失或内部校验失败时，preflight 的 `capability_catalog.refresh.argv` 给出显式机器本地刷新参数。其他公开资源包括 `ags://global-kernel`、任务协议、路由、模板与 runtime adapter。
 
 ### Prompts and hosts
 

@@ -135,22 +135,13 @@ fn cmd_gate_output(path: &str, for_request: Option<&str>, format: &str) {
     }
 }
 
-fn cmd_gate_skill_tags(path: &str, target: &Path, for_agent: &str, format: &str) {
+fn cmd_gate_skill_tags(path: &str, _target: &Path, for_agent: &str, format: &str) {
     let content = read_input(path).unwrap_or_else(|error| {
         eprintln!("gate skill-tags: {error}");
         std::process::exit(1);
     });
     let tags = ags_task_contract::validator::extract_skill_tags(&content);
-    let root = crate::context::resolve_capability_authority_root(
-        &crate::context::guard_path(target),
-        &ags_capability_governance::locate_runtime_home(),
-        std::env::var_os("AGS_SOURCE_ROOT").map(std::path::PathBuf::from),
-    )
-    .unwrap_or_else(|error| {
-        eprintln!("gate skill-tags: capability_authority_unresolved: {error}");
-        std::process::exit(1);
-    });
-    let gate = ags_capability_governance::verify_skill_tags(&tags, &root, for_agent);
+    let gate = ags_capability_governance::verify_skill_tags(&tags, for_agent);
     let decision = if gate.all_accepted { "allow" } else { "stop" };
     if format == "json" {
         println!(

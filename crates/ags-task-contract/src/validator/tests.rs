@@ -876,6 +876,18 @@ fn reject_executor_adapter_mismatch() {
 }
 
 #[test]
+fn accept_omp_with_native_runtime_adapter() {
+    let input = valid_card_fields()
+        .replace("Executor: Claude Code", "Executor: OMP")
+        .replace("Runtime adapter: claude-code", "Runtime adapter: omp");
+    let errors = validate(&input);
+    assert!(
+        errors.is_empty(),
+        "OMP with its native runtime adapter must be valid: {errors:?}"
+    );
+}
+
+#[test]
 fn reject_other_with_claude_code_adapter() {
     let input = card_body(
         "路径：\n- .\n\

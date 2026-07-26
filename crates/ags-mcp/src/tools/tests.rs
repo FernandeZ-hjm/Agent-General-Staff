@@ -74,7 +74,6 @@ fn ready_capability_snapshot_preserves_green_preflight() {
         ags_session::CapabilityReference::Ready {
             binding: ags_session::CapabilityBinding {
                 workspace_identity: "workspace".to_string(),
-                bundle_epoch: 1,
                 snapshot_hash: "sha256:snapshot".to_string(),
             },
         },
@@ -174,7 +173,6 @@ fn route_preserves_typed_capability_failure_instead_of_reporting_stale() {
     binding.capability = Some(ags_session::CapabilityReference::Ready {
         binding: ags_session::CapabilityBinding {
             workspace_identity: "fixture-workspace".to_string(),
-            bundle_epoch: 1,
             snapshot_hash: "sha256:fixture".to_string(),
         },
     });
@@ -204,8 +202,8 @@ fn route_uses_the_persisted_preflight_failure_without_reclassifying_it() {
         machine_fixture("persisted-capability-failure");
     binding.capability = Some(ags_session::CapabilityReference::Unavailable {
         diagnostic: ags_session::CapabilityDiagnostic {
-            code: ags_session::CapabilityDiagnosticCode::StatePersistenceFailed,
-            detail: "workspace bundle atomic replace failed".to_string(),
+            code: ags_session::CapabilityDiagnosticCode::SnapshotReadFailed,
+            detail: "static snapshot read failed".to_string(),
         },
     });
     let mut session = RoutingSession::default();
@@ -222,12 +220,12 @@ fn route_uses_the_persisted_preflight_failure_without_reclassifying_it() {
 
     assert_eq!(
         route["errors"][0]["code"],
-        "capability_state_persistence_failed"
+        "capability_snapshot_read_failed"
     );
     assert!(route["errors"][0]["message"]
         .as_str()
         .unwrap()
-        .contains("atomic replace failed"));
+        .contains("static snapshot read failed"));
     assert!(session.actions.is_empty());
 }
 
@@ -719,11 +717,9 @@ fn coexisting_skill_and_machine_records_outcome_in_the_same_apply() {
         true,
     )
     .unwrap();
-    let snapshot = ags_capability_governance::load_validated_snapshot_with_roots(
-        &root, &runtime, "codex", &home,
-    )
-    .unwrap()
-    .0;
+    let snapshot = ags_capability_governance::load_static_snapshot(&runtime, "codex")
+        .unwrap()
+        .0;
     let executable = base.join("fake-ags");
     let spy = base.join("spy");
     std::fs::write(

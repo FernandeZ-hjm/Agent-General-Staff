@@ -14,7 +14,15 @@ rollback, snapshot publication, and rendering.
 
 Use one service per canonical workspace and make MCP stdio a thin
 `connect-or-start` proxy. Keep sessions, preflight bindings, and actions
-client-local. Publish capability bundles by validate-then-atomic-replace.
+client-local. Publish one static snapshot per host by
+validate-then-atomic-replace during explicit lifecycle updates.
+
+The request path never rebuilds or compares live capability observations.
+The daemon loads a host snapshot once, validates its sealed hashes, and reuses
+that same object for preflight, resource reads, route, and apply. There is no
+workspace capability bundle or bundle epoch. An explicit snapshot refresh
+becomes active only after daemon restart/reconnect, which also invalidates old
+sessions and leases.
 
 Split the four largest modules by cohesive change reason:
 
@@ -32,8 +40,10 @@ mutation implementation.
 
 ## Consequences
 
-Four hosts can share scans and capability publication without sharing decision
-authority. Cross-session, cross-host, cross-workspace, and replayed leases fail
+Four hosts can share one workspace service without sharing decision authority.
+Capability scans occur only in explicit setup/update/adoption/snapshot
+publication, never while serving a request. Cross-session, cross-host,
+cross-workspace, and replayed leases fail
 closed. The human CLI and Machine CLI remain byte-compatible with v0.3.0 help
 and output contracts. Future refactors move behavior behind these boundaries
 before changing adapters.

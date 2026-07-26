@@ -164,6 +164,17 @@ fn test_compile_missing_task_and_goal() {
 }
 
 #[test]
+fn test_compile_maps_omp_executor_to_native_adapter() {
+    let intent = "Executor: OMP\n任务：run with OMP\n目标：verify native adapter";
+    let project_root = Path::new(".");
+    let (card, report) = compile(intent, project_root, false, true);
+
+    assert!(report.validation_passed, "{:?}", report.validation_errors);
+    assert!(card.contains("Executor: OMP"));
+    assert!(card.contains("Runtime adapter: omp"));
+}
+
+#[test]
 fn test_compile_includes_slot_sources() {
     let intent = "任务：test\n目标：verify";
     let project_root = Path::new(".");

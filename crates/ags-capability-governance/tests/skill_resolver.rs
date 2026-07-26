@@ -1,9 +1,8 @@
 use ags_capability_governance::{
-    build_capability_snapshot_with_runtime_home, load_demand_routes, load_validated_snapshot,
-    load_validated_snapshot_with_roots, resolve_capability_authority_root, resolve_skill,
-    snapshot_path, ActiveSkill, ActiveSkillTable, AuthState, AvailabilityState, CapabilitySnapshot,
-    GovernanceState, ResolveError, SkillCard, SkillSourceKind, SnapshotError,
-    HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION,
+    build_capability_snapshot_with_runtime_home, load_demand_routes, load_static_snapshot,
+    resolve_capability_authority_root, resolve_skill, snapshot_path, ActiveSkill, ActiveSkillTable,
+    AuthState, AvailabilityState, CapabilitySnapshot, GovernanceState, ResolveError, SkillCard,
+    SkillSourceKind, SnapshotError, HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION,
 };
 use ags_governance_decision::{EngineeringDemand, SkillDemand};
 
@@ -158,7 +157,7 @@ fn snapshot() -> CapabilitySnapshot {
 }
 
 #[test]
-fn snapshot_validates_all_authority_hashes_before_routing() {
+fn static_snapshot_validates_sealed_integrity_before_routing() {
     let snapshot = snapshot();
     assert_eq!(
         snapshot.schema_version,
@@ -167,40 +166,19 @@ fn snapshot_validates_all_authority_hashes_before_routing() {
     assert!(snapshot.active_table_hash.starts_with("sha256:"));
     assert!(snapshot.catalog_hash.starts_with("sha256:"));
     assert!(snapshot.snapshot_hash.starts_with("sha256:"));
-    assert!(snapshot
-        .validate(
-            "codex",
-            "sha256:registry-a",
-            "sha256:overlay-a",
-            "sha256:runtime-a"
-        )
-        .is_ok());
+    assert!(snapshot.validate_integrity("codex").is_ok());
 }
 
 #[test]
-fn stale_or_tampered_snapshot_fails_closed() {
+fn wrong_host_or_tampered_static_snapshot_fails_closed() {
     let mut snapshot = snapshot();
     assert_eq!(
-        snapshot
-            .validate(
-                "codex",
-                "sha256:registry-b",
-                "sha256:overlay-a",
-                "sha256:runtime-a"
-            )
-            .unwrap_err(),
+        snapshot.validate_integrity("omp").unwrap_err(),
         SnapshotError::SkillSnapshotStale
     );
     snapshot.snapshot_hash = "sha256:tampered".to_string();
     assert_eq!(
-        snapshot
-            .validate(
-                "codex",
-                "sha256:registry-a",
-                "sha256:overlay-a",
-                "sha256:runtime-a"
-            )
-            .unwrap_err(),
+        snapshot.validate_integrity("codex").unwrap_err(),
         SnapshotError::SnapshotIntegrityFailed
     );
 }
@@ -223,7 +201,7 @@ fn host_scoped_snapshots_coexist_and_validate_independently() {
         snapshot_path(&runtime, "claude-code")
     );
     for host in ["codex", "claude-code"] {
-        let (snapshot, _) = load_validated_snapshot(&root, &runtime, host).unwrap();
+        let (snapshot, _) = load_static_snapshot(&runtime, host).unwrap();
         assert_eq!(snapshot.host, host);
     }
 
@@ -242,12 +220,12 @@ fn legacy_single_snapshot_is_not_a_hidden_fallback() {
     let snapshot = build_capability_snapshot_with_runtime_home(&root, "codex", &runtime).unwrap();
     std::fs::write(&legacy, serde_json::to_string(&snapshot).unwrap()).unwrap();
 
-    assert!(load_validated_snapshot(&root, &runtime, "codex").is_err());
+    assert!(load_static_snapshot(&runtime, "codex").is_err());
     let _ = std::fs::remove_dir_all(runtime);
 }
 
 #[test]
-fn current_skill_body_change_invalidates_a_self_consistent_saved_snapshot() {
+fn current_skill_body_change_waits_for_explicit_snapshot_refresh() {
     let base = temp_path("current-catalog-drift");
     let _ = std::fs::remove_dir_all(&base);
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -270,17 +248,21 @@ fn current_skill_body_change_invalidates_a_self_consistent_saved_snapshot() {
     let path = snapshot_path(&runtime, "codex");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
-    assert!(load_validated_snapshot_with_roots(&root, &runtime, "codex", &home).is_ok());
+    assert!(load_static_snapshot(&runtime, "codex").is_ok());
 
     // A referenced implementation file is part of source_hash even when the
     // catalog metadata in SKILL.md is unchanged.
     std::fs::write(body.join("scripts/run.sh"), "printf changed\n").unwrap();
-    assert!(matches!(
-        load_validated_snapshot_with_roots(&root, &runtime, "codex", &home),
-        Err(ags_capability_governance::SnapshotLoadError::Snapshot(
-            SnapshotError::SkillSnapshotStale
-        ))
-    ));
+    let (loaded, _) = load_static_snapshot(&runtime, "codex").unwrap();
+    assert_eq!(loaded.snapshot_hash, snapshot.snapshot_hash);
+
+    let refreshed = ags_capability_governance::write_capability_snapshot_with_roots(
+        &root, "codex", &runtime, &home,
+    )
+    .unwrap();
+    assert_ne!(refreshed.snapshot_hash, snapshot.snapshot_hash);
+    let (loaded, _) = load_static_snapshot(&runtime, "codex").unwrap();
+    assert_eq!(loaded.snapshot_hash, refreshed.snapshot_hash);
 
     let _ = std::fs::remove_dir_all(base);
 }

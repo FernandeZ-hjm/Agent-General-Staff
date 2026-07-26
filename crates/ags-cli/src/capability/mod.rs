@@ -172,15 +172,17 @@ fn cmd_capability_install(capability: &str, apply: bool, format: &str) {
     let result = console::propose_action(&ctx, console::ConsoleAction::Adopt, capability, apply);
     let code = capability_install_exit_code(apply, &result);
     if apply && code == 0 {
-        refresh_skill_snapshot(
-            &ctx.repo_root,
-            &ags_capability_governance::locate_runtime_home(),
-            "codex",
-        )
-        .unwrap_or_else(|error| {
-            eprintln!("ags capability install: {error}");
-            std::process::exit(1);
-        });
+        for host in capability_default_hosts() {
+            refresh_skill_snapshot(
+                &ctx.repo_root,
+                &ags_capability_governance::locate_runtime_home(),
+                host,
+            )
+            .unwrap_or_else(|error| {
+                eprintln!("ags capability install: {error}");
+                std::process::exit(1);
+            });
+        }
     }
     match format {
         "json" => println!("{}", console::render_proposal_json(&result)),
@@ -209,15 +211,17 @@ pub(crate) fn cmd_capability_sync(apply: bool, format: &str) {
     let result = console::sync_plan(&ctx, &hosts, apply);
     let code = capability_sync_exit_code(apply, &result.summary);
     if apply && code == 0 {
-        refresh_skill_snapshot(
-            &ctx.repo_root,
-            &ags_capability_governance::locate_runtime_home(),
-            "codex",
-        )
-        .unwrap_or_else(|error| {
-            eprintln!("ags capability sync: {error}");
-            std::process::exit(1);
-        });
+        for host in &hosts {
+            refresh_skill_snapshot(
+                &ctx.repo_root,
+                &ags_capability_governance::locate_runtime_home(),
+                host,
+            )
+            .unwrap_or_else(|error| {
+                eprintln!("ags capability sync: {error}");
+                std::process::exit(1);
+            });
+        }
     }
     match format {
         "json" => println!("{}", console::render_sync_json(&result)),

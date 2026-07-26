@@ -566,8 +566,8 @@ fn current_host_catalog_preserves_typed_unavailable_diagnostic() {
         Some(suite_root()),
         Some(ags_session::CapabilityReference::Unavailable {
             diagnostic: ags_session::CapabilityDiagnostic {
-                code: ags_session::CapabilityDiagnosticCode::StatePersistenceFailed,
-                detail: "atomic publication failed".to_string(),
+                code: ags_session::CapabilityDiagnosticCode::SnapshotReadFailed,
+                detail: "static snapshot read failed".to_string(),
             },
         }),
     );
@@ -578,10 +578,7 @@ fn current_host_catalog_preserves_typed_unavailable_diagnostic() {
 
     let response = handle_resources_read(&req, &preflight);
 
-    assert!(error_contains(
-        &response,
-        "capability_state_persistence_failed"
-    ));
+    assert!(error_contains(&response, "capability_snapshot_read_failed"));
     assert!(
         !error_contains(&response, "skill_snapshot_stale"),
         "typed unavailable state must not collapse to stale"

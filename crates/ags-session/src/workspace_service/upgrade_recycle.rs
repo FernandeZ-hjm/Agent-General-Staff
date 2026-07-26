@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use ags_platform::canonical_workspace_root;
 
-use super::capability_bundle::WorkspaceState;
+use super::capability_snapshot::WorkspaceState;
 use super::registry_ownership::{
     acquire_workspace_owner, current_executable_hash, ensure_private_dir, fresh_id, now_millis,
     publish_registry, read_registry, reclaim_stale_lock, registry_matches_process,

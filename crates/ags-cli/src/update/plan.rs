@@ -125,8 +125,7 @@ pub(in crate::update) fn cmd_update_verify(target: Option<PathBuf>, strict: bool
     let snapshot_path = ags_capability_governance::snapshot_path(&home, "codex");
     let snapshot_present = snapshot_path.is_file();
     let skill_snapshot_current =
-        ags_capability_governance::load_validated_snapshot(&capability_authority, &home, "codex")
-            .is_ok();
+        ags_capability_governance::load_static_snapshot(&home, "codex").is_ok();
     let project_lane = build_all_update_lanes(&source, &home)
         .into_iter()
         .find(|lane| lane.lane == ags_lifecycle::update::UpdateLane::Projects)

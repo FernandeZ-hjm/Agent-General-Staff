@@ -49,7 +49,6 @@ pub(super) struct ServicePaths {
     pub(super) registry: PathBuf,
     pub(super) lock: PathBuf,
     pub(super) owner: PathBuf,
-    pub(super) capabilities: PathBuf,
     pub(super) diagnostics: PathBuf,
 }
 
@@ -61,7 +60,6 @@ impl ServicePaths {
             registry: dir.join(format!("{key}.json")),
             lock: dir.join(format!("{key}.lock")),
             owner: dir.join(format!("{key}.owner")),
-            capabilities: dir.join(format!("{key}.capabilities.json")),
             diagnostics: dir.join(format!("{key}.log")),
             dir,
         }

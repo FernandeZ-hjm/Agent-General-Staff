@@ -239,7 +239,7 @@ pub fn apply_private(request: PrivateApplyRequest<'_>) -> PrivateApplyResult {
     }
     report.add(write_ags_global_entry(request.target));
     if report.passed() {
-        for host in ["codex", "claude-code"] {
+        for host in ["codex", "claude-code", "omp", "codebuddy-code", "cursor"] {
             match refresh_skill_snapshot(request.source_root, request.target, host) {
                 Ok(path) => report.add(crate::setup::SetupFinding::pass(
                     format!("skill-active-table-snapshot-{host}"),

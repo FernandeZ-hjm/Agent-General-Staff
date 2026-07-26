@@ -241,6 +241,23 @@ fn generic_adapter_downgrades_execute_to_plan_only() {
     assert_eq!(policy.downgrade_reasons[0].rule_id, "M9");
 }
 
+#[test]
+fn omp_native_adapter_preserves_execute_and_verify() {
+    let input = TaskPolicyInput {
+        executor: "OMP".into(),
+        runtime_adapter: "omp".into(),
+        execution_surface: "cli".into(),
+        ..generic_execute_input()
+    };
+    let policy = resolve_policy(input);
+
+    assert_eq!(
+        policy.effective_permission_mode,
+        PermissionMode::ExecuteAndVerify
+    );
+    assert!(!policy.was_downgraded);
+}
+
 // ── T9: Subagent with within-card authority → allowed ────────────
 
 #[test]

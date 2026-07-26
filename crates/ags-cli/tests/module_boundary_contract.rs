@@ -409,7 +409,7 @@ fn mcp_and_cli_delegate_workspace_state_to_ags_session() {
         &[
             "pub struct WorkspaceClientSession",
             "pub struct SessionActionStore",
-            "struct WorkspaceCapabilityBundle",
+            "snapshots: RwLock<HashMap",
             "fn connect_or_start",
         ],
     );
@@ -417,7 +417,6 @@ fn mcp_and_cli_delegate_workspace_state_to_ags_session() {
         "ags-cli adapter",
         &cli_source,
         &[
-            "struct WorkspaceCapabilityBundle",
             "struct WorkspaceRegistry",
             "struct WorkspaceClientSession",
             "struct SessionActionStore",
@@ -429,7 +428,6 @@ fn mcp_and_cli_delegate_workspace_state_to_ags_session() {
         "ags-mcp adapter",
         &mcp_source,
         &[
-            "struct WorkspaceCapabilityBundle",
             "struct WorkspaceRegistry",
             "struct WorkspaceClientSession",
             "struct SessionActionStore",

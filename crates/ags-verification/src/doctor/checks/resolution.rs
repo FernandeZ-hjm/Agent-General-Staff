@@ -123,7 +123,7 @@ pub fn skill_resolution_drift_check(repo_root: &Path) -> Vec<Finding> {
     // deterministic active-skill snapshot.
     let runtime_home = ags_capability_governance::locate_runtime_home();
     let evidence = ags_capability_governance::snapshot_path(&runtime_home, "codex");
-    match ags_capability_governance::load_validated_snapshot(repo_root, &runtime_home, "codex") {
+    match ags_capability_governance::load_static_snapshot(&runtime_home, "codex") {
         Ok(_) => findings.push(Finding::info(
             "skill-active-table-snapshot",
             format!("Codex ActiveSkillTable snapshot is current ({})", evidence.display()),

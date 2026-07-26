@@ -1,5 +1,5 @@
 use super::*;
-use crate::workspace_service::capability_bundle::WorkspaceState;
+use crate::workspace_service::capability_snapshot::WorkspaceState;
 use crate::workspace_service::registry_ownership::{
     acquire_workspace_owner, atomic_write_json, current_executable_hash,
     current_process_start_identity, ensure_private_dir, reclaim_stale_lock, workspace_key,
@@ -10,12 +10,20 @@ use crate::workspace_service::transport_handshake::{
     HandshakeResult, WIRE_SCHEMA,
 };
 use crate::workspace_service::upgrade_recycle::connect_registered;
+use crate::{CapabilityCatalogSource, PreflightBinding};
 use ags_platform::canonical_workspace_root;
 use std::fs;
 use std::io::BufReader;
 use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
+
+fn legacy_capability_bundle_path(runtime: &Path, workspace: &Path) -> PathBuf {
+    runtime
+        .join("workspace-services")
+        .join(format!("{}.capabilities.json", workspace_key(workspace)))
+}
 
 #[test]
 fn instance_identity_is_only_the_canonical_workspace_path() {
@@ -35,6 +43,54 @@ fn instance_identity_is_only_the_canonical_workspace_path() {
 }
 
 #[test]
+fn workspace_daemon_keeps_one_static_snapshot_for_its_lifetime() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = canonical_workspace_root(&root).unwrap();
+    let fixture = tempfile::tempdir().unwrap();
+    let runtime = fixture.path().join("runtime");
+    let home = fixture.path().join("home");
+    let initial = ags_capability_governance::write_capability_snapshot_with_roots(
+        &root, "codex", &runtime, &home,
+    )
+    .unwrap();
+    let state = WorkspaceState::new(root.clone(), runtime.clone()).unwrap();
+    let mut binding = PreflightBinding {
+        host: "codex".to_string(),
+        target: root.clone(),
+        host_home: home.clone(),
+        capability: None,
+    };
+    let accepted = state.capability_reference(&binding);
+    assert_eq!(
+        accepted
+            .ready_binding()
+            .map(|binding| binding.snapshot_hash.as_str()),
+        Some(initial.snapshot_hash.as_str())
+    );
+    binding.capability = Some(accepted);
+
+    let added = home.join(".codex/skills/new-after-daemon-start/SKILL.md");
+    fs::create_dir_all(added.parent().unwrap()).unwrap();
+    fs::write(
+        &added,
+        "---\nname: new-after-daemon-start\ndescription: refresh-only fixture\n---\n",
+    )
+    .unwrap();
+    let refreshed = ags_capability_governance::write_capability_snapshot_with_roots(
+        &root, "codex", &runtime, &home,
+    )
+    .unwrap();
+    assert_ne!(refreshed.snapshot_hash, initial.snapshot_hash);
+
+    let loaded = state.read_catalog(&binding).unwrap();
+    assert_eq!(loaded.snapshot_hash, initial.snapshot_hash);
+    assert!(
+        !legacy_capability_bundle_path(&runtime, &root).exists(),
+        "request handling must not create a dynamic workspace capability bundle"
+    );
+}
+
+#[test]
 fn abandoned_start_lock_is_reclaimed() {
     let root = tempfile::tempdir().unwrap();
     let lock = root.path().join("workspace.lock");
@@ -44,43 +100,21 @@ fn abandoned_start_lock_is_reclaimed() {
 }
 
 #[test]
-fn corrupt_capability_bundle_fails_before_daemon_readiness() {
+fn legacy_dynamic_capability_bundle_is_ignored() {
     let root = tempfile::tempdir().unwrap();
     let workspace = root.path().join("workspace");
     let runtime = root.path().join("runtime");
     fs::create_dir_all(workspace.join(".git")).unwrap();
     let canonical = canonical_workspace_root(&workspace).unwrap();
-    let paths = ServicePaths::new(&runtime, &canonical);
-    fs::create_dir_all(&paths.dir).unwrap();
-    fs::write(&paths.capabilities, b"{not-json").unwrap();
+    let legacy = legacy_capability_bundle_path(&runtime, &canonical);
+    fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+    fs::write(&legacy, b"{not-json").unwrap();
 
-    let error = WorkspaceState::new(canonical, runtime).unwrap_err();
-    assert!(error.contains("workspace capability bundle corrupt"));
-    assert!(!paths.registry.exists());
-}
-
-#[test]
-fn capability_bundle_binding_mismatch_fails_closed() {
-    let root = tempfile::tempdir().unwrap();
-    let workspace = root.path().join("workspace");
-    let runtime = root.path().join("runtime");
-    fs::create_dir_all(workspace.join(".git")).unwrap();
-    let canonical = canonical_workspace_root(&workspace).unwrap();
-    let paths = ServicePaths::new(&runtime, &canonical);
-    fs::create_dir_all(&paths.dir).unwrap();
-    let bundle = serde_json::json!({
-        "schema_version": "0.3.0-workspace-capabilities",
-        "workspace": root.path().join("other"),
-        "workspace_identity": "wrong",
-        "epoch": 1,
-        "host_epochs": {},
-        "snapshots": {}
-    });
-    fs::write(&paths.capabilities, serde_json::to_vec(&bundle).unwrap()).unwrap();
-
-    assert!(WorkspaceState::new(canonical, runtime)
-        .unwrap_err()
-        .contains("workspace capability bundle binding invalid"));
+    WorkspaceState::new(canonical, runtime).unwrap();
+    assert!(
+        legacy.exists(),
+        "legacy data is ignored, not mutated at startup"
+    );
 }
 
 #[cfg(unix)]

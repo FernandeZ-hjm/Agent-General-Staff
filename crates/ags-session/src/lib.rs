@@ -30,11 +30,10 @@ pub struct PreflightBinding {
     pub capability: Option<CapabilityReference>,
 }
 
-/// Workspace-local capability generation accepted by one client session.
+/// Workspace-local static capability snapshot accepted by one client session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapabilityBinding {
     pub workspace_identity: String,
-    pub bundle_epoch: u64,
     pub snapshot_hash: String,
 }
 
@@ -67,30 +66,24 @@ impl CapabilityReference {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CapabilityDiagnosticCode {
-    AuthorityUnavailable,
-    SnapshotBuildFailed,
     SnapshotReadFailed,
     SnapshotCorrupt,
     SnapshotIntegrityFailed,
     SnapshotInvalid,
     WorkspaceTargetInvalid,
     StateLockUnavailable,
-    StatePersistenceFailed,
     SourceUnavailable,
 }
 
 impl CapabilityDiagnosticCode {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::AuthorityUnavailable => "capability_authority_unavailable",
-            Self::SnapshotBuildFailed => "capability_snapshot_build_failed",
             Self::SnapshotReadFailed => "capability_snapshot_read_failed",
             Self::SnapshotCorrupt => "capability_snapshot_corrupt",
             Self::SnapshotIntegrityFailed => "capability_snapshot_integrity_failed",
             Self::SnapshotInvalid => "capability_snapshot_invalid",
             Self::WorkspaceTargetInvalid => "capability_workspace_target_invalid",
             Self::StateLockUnavailable => "capability_state_lock_unavailable",
-            Self::StatePersistenceFailed => "capability_state_persistence_failed",
             Self::SourceUnavailable => "capability_source_unavailable",
         }
     }
@@ -206,24 +199,11 @@ impl LocalCapabilityCatalogSource {
         &self,
         binding: &PreflightBinding,
     ) -> Result<ValidatedCapabilityCatalog, CapabilityLoadFailure> {
-        let authority = ags_capability_governance::resolve_capability_authority_root(
-            &binding.target,
-            &self.runtime_home,
-            std::env::var_os("AGS_SOURCE_ROOT").map(PathBuf::from),
-        )
-        .map_err(|error| {
-            unavailable(
-                CapabilityDiagnosticCode::AuthorityUnavailable,
-                error.to_string(),
-            )
-        })?;
-        let (snapshot, table) = ags_capability_governance::load_validated_snapshot_with_roots(
-            &authority,
-            &self.runtime_home,
-            &binding.host,
-            &binding.host_home,
-        )
-        .map_err(|error| classify_snapshot_load_error(error, &self.runtime_home, &binding.host))?;
+        let (snapshot, table) =
+            ags_capability_governance::load_static_snapshot(&self.runtime_home, &binding.host)
+                .map_err(|error| {
+                    classify_snapshot_load_error(error, &self.runtime_home, &binding.host)
+                })?;
         let workspace_identity = ags_platform::sha256(
             format!(
                 "standalone-capability\n{}",
@@ -234,7 +214,6 @@ impl LocalCapabilityCatalogSource {
         Ok(ValidatedCapabilityCatalog {
             binding: CapabilityBinding {
                 workspace_identity,
-                bundle_epoch: 0,
                 snapshot_hash: snapshot.snapshot_hash.clone(),
             },
             snapshot,
@@ -287,10 +266,6 @@ pub(crate) fn classify_snapshot_load_error(
                 }
             }
         }
-        SnapshotLoadError::Build(build_error) => unavailable(
-            CapabilityDiagnosticCode::SnapshotBuildFailed,
-            format!("{build_error:?}"),
-        ),
         SnapshotLoadError::Snapshot(SnapshotError::SkillSnapshotStale) => {
             CapabilityLoadFailure::SnapshotStale
         }
@@ -346,26 +321,8 @@ mod capability_tests {
     }
 
     #[test]
-    fn build_and_integrity_failures_are_not_refreshable_snapshot_state() {
+    fn integrity_failures_are_not_refreshable_snapshot_state() {
         let runtime = tempfile::tempdir().unwrap();
-        let build = classify_snapshot_load_error(
-            ags_capability_governance::SnapshotLoadError::Build(
-                ags_capability_governance::SnapshotBuildError::Read(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    "registry denied",
-                )),
-            ),
-            runtime.path(),
-            "codex",
-        );
-        assert!(matches!(
-            build,
-            CapabilityLoadFailure::Unavailable(CapabilityDiagnostic {
-                code: CapabilityDiagnosticCode::SnapshotBuildFailed,
-                ..
-            })
-        ));
-
         let integrity = classify_snapshot_load_error(
             ags_capability_governance::SnapshotLoadError::Snapshot(
                 ags_capability_governance::SnapshotError::SnapshotIntegrityFailed,

@@ -414,10 +414,6 @@ pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
             "0.3.0-skill-usage-event",
         ),
         (
-            "crates/ags-session/src/workspace_service/capability_bundle.rs",
-            "0.3.0-workspace-capabilities",
-        ),
-        (
             "crates/ags-session/src/workspace_service/registry_ownership.rs",
             "0.3.0-workspace-service",
         ),

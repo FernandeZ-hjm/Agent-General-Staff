@@ -30,9 +30,9 @@ Contract ID: tc-<16 lowercase hex>
 
 Handoff source: explicit-handoff / host-plan-mode / existing-card
 
-Executor: Codex / Claude Code / Cursor / Human / Other
+Executor: Codex / Claude Code / Cursor / OMP / Human / Other
 
-Runtime adapter: codex-local / claude-code / cursor / generic
+Runtime adapter: codex-local / claude-code / cursor / omp / generic
 
 Execution surface: local-workspace / cli / ide / web / remote-control / background-agent
 

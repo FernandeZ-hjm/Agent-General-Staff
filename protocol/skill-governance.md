@@ -10,9 +10,11 @@
 - `<runtime_home>/capability-snapshot/<host>.json`：每宿主单一能力快照，不入库。
 - `<runtime_home>/skill-usage/<host>.ndjson`：非敏感、append-only outcome ledger，不入库。
 
-## 统一候选目录
+## 显式刷新时的统一候选目录
 
-`HostCapabilitySnapshot` 统一发现：
+只有 setup、update、adopt/sync apply 或
+`ags capability snapshot --host <host> --write` 这类显式生命周期动作会重新
+发现并发布 `HostCapabilitySnapshot`。刷新时统一发现：
 
 - suite roots；
 - 宿主 `.system` 技能；
@@ -44,7 +46,7 @@ requires_auth 的技能只有在不含 secret 的 runtime `AuthState=satisfied` 
 
 ## Snapshot determinism
 
-每个宿主只有一个 `HostCapabilitySnapshot`：
+每个宿主只持久化一个静态 `HostCapabilitySnapshot`：
 
 ```text
 schema_version + host
@@ -53,7 +55,16 @@ schema_version + host
 → snapshot_hash
 ```
 
-时间戳和 activity 不参与 catalog/snapshot/lease hash。快照缺失、篡改或任一绑定 hash 漂移时 fail closed；显式刷新使用 `ags capability snapshot --host <host> --write`。
+时间戳和 activity 不参与 catalog/snapshot/lease hash。请求期只读取并验证快照
+自身的 schema、host 与内容 hash，不重新扫描 PATH、宿主可见性、认证、health、
+usage、registry 或 overlay，也不比较实时目录。不存在 workspace capability
+bundle、bundle epoch 或请求期 refresh。
+
+显式刷新使用 `ags capability snapshot --host <host> --write`，以私有权限原子
+替换该宿主唯一快照。刷新时采样到的上游、第三方能力、认证和宿主可见性会冻结
+到新快照；下一次显式刷新前保持不变。快照缺失、损坏或内部 hash 不一致时 fail
+closed。正在运行的 workspace daemon 每宿主只加载一次；磁盘快照更新后，重启
+daemon/重新连接才采用新快照，旧 session 与 lease 随服务重启失效。
 
 ## 私有 Overlay 生命周期
 
@@ -79,7 +90,8 @@ ags skill rollback <skill-id> --to <revision> [--apply]
 
 只有 `ags_apply_action` 可以为受控技能动作追加 outcome。ledger 仅记录：event id、timestamp、request fingerprint、proposal/decision/lease id、skill id、entrypoint、`succeeded|failed|abandoned` 和非敏感质量字段；禁止 raw prompt、凭据和绝对路径。
 
-activity：
+activity 只在显式快照刷新时从 ledger 采样并冻结到快照；请求、resource read、
+route 和 apply 不会重算或刷新 activity：
 
 - 从未有 outcome：`Unobserved`；
 - Active 连续 30 天无 outcome，或最后 outcome 超过 90 天：`Cold`；

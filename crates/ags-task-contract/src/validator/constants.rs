@@ -2,9 +2,9 @@
 
 // ── Allowed-value sets ─────────────────────────────────────────────────
 
-pub(crate) const VALID_EXECUTORS: &[&str] = &["Codex", "Claude Code", "Cursor", "Other"];
+pub(crate) const VALID_EXECUTORS: &[&str] = &["Codex", "Claude Code", "Cursor", "OMP", "Other"];
 pub(crate) const VALID_RUNTIME_ADAPTERS: &[&str] =
-    &["codex-local", "claude-code", "cursor", "generic"];
+    &["codex-local", "claude-code", "cursor", "omp", "generic"];
 pub(crate) const VALID_EXECUTION_SURFACES: &[&str] = &[
     "local-workspace",
     "cli",
@@ -63,6 +63,7 @@ pub(crate) fn expected_adapter(executor: &str) -> Option<&'static str> {
         "Codex" => Some("codex-local"),
         "Claude Code" => Some("claude-code"),
         "Cursor" => Some("cursor"),
+        "OMP" => Some("omp"),
         "Other" => Some("generic"),
         _ => None,
     }

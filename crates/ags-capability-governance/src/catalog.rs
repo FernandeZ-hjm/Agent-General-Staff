@@ -297,18 +297,17 @@ impl HostCapabilitySnapshot {
         Ok(snapshot)
     }
 
-    pub fn validate(
+    /// Validate only facts sealed inside the persisted snapshot.
+    ///
+    /// Runtime request paths use this check. They deliberately do not rebuild
+    /// the catalog from PATH, auth, host visibility, or mutable skill roots.
+    /// Those observations are sampled only by an explicit snapshot refresh.
+    pub fn validate_integrity(
         &self,
         expected_host: &str,
-        expected_registry_hash: &str,
-        expected_overlay_hash: &str,
-        expected_runtime_hash: &str,
     ) -> Result<ActiveSkillTable, SnapshotError> {
         if self.schema_version != HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION
             || self.host != expected_host
-            || self.registry_hash != expected_registry_hash
-            || self.overlay_hash != expected_overlay_hash
-            || self.runtime_hash != expected_runtime_hash
         {
             return Err(SnapshotError::SkillSnapshotStale);
         }

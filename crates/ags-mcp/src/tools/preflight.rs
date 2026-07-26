@@ -162,7 +162,6 @@ pub(super) fn capability_reference_json(
             "status": "ready",
             "snapshot_hash": binding.snapshot_hash,
             "workspace_identity": binding.workspace_identity,
-            "bundle_epoch": binding.bundle_epoch,
             "refresh_required": false
         }),
         ags_session::CapabilityReference::SnapshotStale => serde_json::json!({
@@ -257,25 +256,18 @@ pub(super) fn tool_onboarding_plan(
         ags_capability_governance::third_party_manifest::resolve_third_party_manifest(
             &source_root,
         )?;
-    let active_skill_ids = if source_root.join("manifests/skills-registry.yaml").is_file() {
-        ags_capability_governance::build_capability_snapshot_with_roots_and_manifest(
-            &source_root,
-            &binding.host,
-            &ags_capability_governance::locate_runtime_home(),
-            &binding.host_home,
-            &third_party,
-        )
-        .map_err(|error| format!("skill snapshot build failed: {error:?}"))?
-        .active_skills
-        .into_iter()
-        .map(|skill| skill.skill_id)
-        .collect::<Vec<_>>()
-    } else {
-        // Restricted bootstrap bindings may not have a capability authority
-        // yet. Fail closed: no skill is claimed active, while native host paths
-        // can still be reported as visible-but-not-ready.
-        Vec::new()
-    };
+    let active_skill_ids = ags_capability_governance::load_static_snapshot(
+        &ags_capability_governance::locate_runtime_home(),
+        &binding.host,
+    )
+    .map(|(_, table)| {
+        table
+            .active_skills()
+            .into_iter()
+            .map(|skill| skill.skill_id)
+            .collect::<Vec<_>>()
+    })
+    .unwrap_or_default();
     let plan = ags_lifecycle::assess_public_with_resolution(
         &ags_lifecycle::AssessContext {
             source_root: &source_root,

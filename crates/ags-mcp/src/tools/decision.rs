@@ -217,7 +217,7 @@ pub(super) fn tool_route_request_with_source(
             ProposalError::new(
                 "skill_snapshot_stale",
                 "targets",
-                "the workspace capability bundle changed after preflight; rerun ags_preflight",
+                "the static capability binding differs from preflight; reconnect and rerun ags_preflight",
             ),
         );
     }

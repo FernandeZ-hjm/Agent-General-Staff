@@ -285,10 +285,6 @@ fn write_release_version_fixture(root: &Path) {
             .to_string(),
         ),
         (
-            "crates/ags-session/src/workspace_service/capability_bundle.rs",
-            "0.3.0-workspace-capabilities".to_string(),
-        ),
-        (
             "crates/ags-session/src/workspace_service/registry_ownership.rs",
             "0.3.0-workspace-service".to_string(),
         ),
@@ -389,19 +385,6 @@ fn release_version_surfaces_keep_product_schema_and_history_separate() {
     assert!(schema_item
         .evidence
         .contains("must retain compatibility schema marker 0.3.0-host-route-proposal"));
-
-    write_release_version_fixture(dir.path());
-    std::fs::write(
-        dir.path()
-            .join("crates/ags-session/src/workspace_service/capability_bundle.rs"),
-        "0.3.2-workspace-capabilities",
-    )
-    .unwrap();
-    let workspace_schema_item = check_release_version_surfaces(dir.path());
-    assert_eq!(workspace_schema_item.status, CheckStatus::Fail);
-    assert!(workspace_schema_item
-        .evidence
-        .contains("must retain compatibility schema marker 0.3.0-workspace-capabilities"));
 
     write_release_version_fixture(dir.path());
     std::fs::write(

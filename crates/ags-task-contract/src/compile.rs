@@ -752,6 +752,7 @@ fn executor_to_adapter(executor: &str) -> &'static str {
         "Codex" => "codex-local",
         "Claude Code" => "claude-code",
         "Cursor" => "cursor",
+        "OMP" => "omp",
         _ => "generic",
     }
 }

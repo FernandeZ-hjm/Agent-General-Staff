@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use ags_platform::canonical_workspace_root;
 
-use super::capability_bundle::WorkspaceState;
+use super::capability_snapshot::WorkspaceState;
 use super::registry_ownership::{fresh_id, now_millis, ServicePaths, WorkspaceRegistry};
 use super::upgrade_recycle::{connect_or_start, reclaim_registry_after_failed_handshake};
 use super::WorkspaceSessionHandler;
