@@ -351,14 +351,24 @@ pub fn verify(target: &Path) -> HealthReport {
         }
     }
 
+    // A Windows image can expose an unrunnable WSL bash.exe launcher on PATH.
+    // Prove the selected executable can actually run before treating its
+    // syntax-check exit status as evidence about the copied scripts.
+    let bash_usable = ags_platform::is_on_path("bash")
+        && std::process::Command::new("bash")
+            .args(["-c", "exit 0"])
+            .current_dir(target)
+            .output()
+            .is_ok_and(|output| output.status.success());
+
     // ── bash -n syntax check on copied scripts ─────────────────────────
     for script in &["scripts/validate.sh", "scripts/run-task-card.sh"] {
         let full = target.join(script);
         if full.exists() {
-            if !ags_platform::is_on_path("bash") {
+            if !bash_usable {
                 report.add(Finding::skip(
                     format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
-                    format!("bash -n {script} skipped (bash not on PATH)"),
+                    format!("bash -n {script} skipped (bash is not runnable)"),
                 ));
                 continue;
             }

@@ -278,7 +278,7 @@ public_rewrites:
   - path: crates/ags-mcp/src/tools/tests.rs
     target_sha256: "sha256:9f12041f5c46fcfeffbfccda2a648239ae92c0a8239cab3167547f77d3384c59"
   - path: crates/ags-verification/src/bootstrap.rs
-    target_sha256: "sha256:3b9b4914a1249fe831831945e5b881b02db7fa6c5887bec48b129de87da3a106"
+    target_sha256: "sha256:423534b437e64206e176288dbb953402f0963eda241139eb9f50063b52c4e852"
   - path: crates/ags-verification/src/doctor/checks/host_memory.rs
     target_sha256: "sha256:84cb75d3217da87051338f6c4bf2111583b9a14b94445bd50616eb9fb0c83c73"
   - path: crates/ags-verification/src/doctor/checks/mod.rs
