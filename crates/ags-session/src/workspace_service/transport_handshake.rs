@@ -11,7 +11,7 @@ use ags_platform::canonical_workspace_root;
 
 use super::capability_bundle::WorkspaceState;
 use super::registry_ownership::{fresh_id, now_millis, ServicePaths, WorkspaceRegistry};
-use super::upgrade_recycle::connect_or_start;
+use super::upgrade_recycle::{connect_or_start, reclaim_registry_after_failed_handshake};
 use super::WorkspaceSessionHandler;
 
 pub(super) const WIRE_SCHEMA: &str = "ags-workspace-service/1";
@@ -140,7 +140,17 @@ pub(super) fn run_stdio_adapter_impl() -> Result<(), String> {
 fn connect_workspace_session(
     workspace: &Path,
 ) -> Result<(TcpStream, BufReader<TcpStream>), String> {
-    let (mut stream, registry) = connect_or_start(workspace)?;
+    let (stream, registry) = connect_or_start(workspace)?;
+    let paths = ServicePaths::new(&ags_capability_governance::locate_runtime_home(), workspace);
+    finish_workspace_session(stream, &registry, workspace, &paths)
+}
+
+pub(super) fn finish_workspace_session(
+    mut stream: TcpStream,
+    registry: &WorkspaceRegistry,
+    workspace: &Path,
+    paths: &ServicePaths,
+) -> Result<(TcpStream, BufReader<TcpStream>), String> {
     let handshake = Handshake {
         protocol: WIRE_SCHEMA.to_string(),
         token: registry.token.clone(),
@@ -149,24 +159,30 @@ fn connect_workspace_session(
         command: None,
         workspace: workspace.to_path_buf(),
     };
-    write_json_line(&mut stream, &handshake)?;
-    let mut daemon_reader = BufReader::new(
-        stream
-            .try_clone()
-            .map_err(|error| format!("daemon stream clone failed: {error}"))?,
-    );
-    let ready: HandshakeResult = read_json_line(&mut daemon_reader)?;
-    if ready.status != "ready"
-        || ready.workspace != workspace
-        || ready.instance_key != registry.instance_key
-        || ready.executable_hash != registry.executable_hash
-        || (!registry.process_start_identity.is_empty()
-            && ready.process_start_identity != registry.process_start_identity)
-        || (!registry.daemon_nonce.is_empty() && ready.daemon_nonce != registry.daemon_nonce)
-    {
-        return Err("workspace daemon handshake mismatch".to_string());
+    let result = (|| {
+        write_json_line(&mut stream, &handshake)?;
+        let mut daemon_reader = BufReader::new(
+            stream
+                .try_clone()
+                .map_err(|error| format!("daemon stream clone failed: {error}"))?,
+        );
+        let ready: HandshakeResult = read_json_line(&mut daemon_reader)?;
+        if ready.status != "ready"
+            || ready.workspace != workspace
+            || ready.instance_key != registry.instance_key
+            || ready.executable_hash != registry.executable_hash
+            || (!registry.process_start_identity.is_empty()
+                && ready.process_start_identity != registry.process_start_identity)
+            || (!registry.daemon_nonce.is_empty() && ready.daemon_nonce != registry.daemon_nonce)
+        {
+            return Err("workspace daemon handshake mismatch".to_string());
+        }
+        Ok((stream, daemon_reader))
+    })();
+    if result.is_err() {
+        reclaim_registry_after_failed_handshake(paths, registry);
     }
-    Ok((stream, daemon_reader))
+    result
 }
 
 #[allow(clippy::too_many_arguments)]

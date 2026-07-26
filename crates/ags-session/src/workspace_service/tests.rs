@@ -6,7 +6,8 @@ use crate::workspace_service::registry_ownership::{
     ServicePaths, WorkspaceOwner, WorkspaceRegistry, REGISTRY_SCHEMA,
 };
 use crate::workspace_service::transport_handshake::{
-    handle_connection, read_json_line, write_json_line, Handshake, HandshakeResult, WIRE_SCHEMA,
+    finish_workspace_session, handle_connection, read_json_line, write_json_line, Handshake,
+    HandshakeResult, WIRE_SCHEMA,
 };
 use crate::workspace_service::upgrade_recycle::connect_registered;
 use ags_platform::canonical_workspace_root;
@@ -197,6 +198,65 @@ fn legacy_registry_with_reused_live_pid_and_closed_endpoint_is_reclaimed() {
     assert!(!paths.registry.exists());
 }
 
+#[test]
+fn reachable_reused_endpoint_is_reclaimed_after_handshake_mismatch() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    let runtime = root.path().join("runtime");
+    fs::create_dir_all(workspace.join(".git")).unwrap();
+    let canonical = canonical_workspace_root(&workspace).unwrap();
+    let paths = ServicePaths::new(&runtime, &canonical);
+    ensure_private_dir(&paths.dir).unwrap();
+
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let registry = WorkspaceRegistry {
+        schema_version: REGISTRY_SCHEMA.to_string(),
+        workspace: canonical.clone(),
+        instance_key: workspace_key(&canonical),
+        endpoint: listener.local_addr().unwrap().to_string(),
+        token: "stale-reachable-token".to_string(),
+        pid: std::process::id(),
+        executable_hash: current_executable_hash().unwrap(),
+        process_start_identity: "different-process-start".to_string(),
+        daemon_nonce: "stale-daemon-nonce".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+    atomic_write_json(&paths.registry, &registry).unwrap();
+
+    let fake_registry = registry.clone();
+    let fake_workspace = canonical.clone();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let _: Handshake = read_json_line(&mut reader).unwrap();
+        write_json_line(
+            &mut stream,
+            &HandshakeResult {
+                status: "ready".to_string(),
+                workspace: fake_workspace,
+                instance_key: fake_registry.instance_key,
+                executable_hash: fake_registry.executable_hash,
+                process_start_identity: fake_registry.process_start_identity,
+                daemon_nonce: "different-daemon-nonce".to_string(),
+                session_id: Some("foreign-session".to_string()),
+            },
+        )
+        .unwrap();
+    });
+
+    let (stream, connected_registry) = connect_registered(&paths, &canonical)
+        .unwrap()
+        .expect("the stale endpoint is reachable before authentication");
+    let error =
+        finish_workspace_session(stream, &connected_registry, &canonical, &paths).unwrap_err();
+    assert_eq!(error, "workspace daemon handshake mismatch");
+    server.join().unwrap();
+    assert!(
+        !paths.registry.exists(),
+        "a reachable endpoint with a reused PID must not pin stale registry state"
+    );
+}
+
 #[derive(Default)]
 struct CapturingHandler {
     session_ids: Mutex<Vec<String>>,
@@ -287,4 +347,61 @@ fn daemon_mints_sessions_and_handshake_proves_process_identity() {
     captured.sort();
     captured.dedup();
     assert_eq!(captured, issued);
+}
+
+#[test]
+fn workspace_daemon_rejects_a_wrong_handshake_token() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    let runtime = root.path().join("runtime");
+    fs::create_dir_all(workspace.join(".git")).unwrap();
+    let workspace = canonical_workspace_root(&workspace).unwrap();
+    let state = Arc::new(WorkspaceState::new(workspace.clone(), runtime).unwrap());
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let endpoint = listener.local_addr().unwrap().to_string();
+    let registry = WorkspaceRegistry {
+        schema_version: REGISTRY_SCHEMA.to_string(),
+        workspace: workspace.clone(),
+        instance_key: workspace_key(&workspace),
+        endpoint: endpoint.clone(),
+        token: "expected-token".to_string(),
+        pid: std::process::id(),
+        executable_hash: current_executable_hash().unwrap(),
+        process_start_identity: current_process_start_identity().unwrap(),
+        daemon_nonce: "expected-daemon-nonce".to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+    let server_registry = registry.clone();
+    let server_workspace = Arc::clone(&state);
+    let server = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        handle_connection(
+            stream,
+            server_registry,
+            server_workspace,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(CapturingHandler::default()),
+        )
+        .unwrap_err()
+    });
+
+    let mut stream = TcpStream::connect(endpoint).unwrap();
+    write_json_line(
+        &mut stream,
+        &Handshake {
+            protocol: WIRE_SCHEMA.to_string(),
+            token: "wrong-token".to_string(),
+            kind: "session".to_string(),
+            session_id: Some("untrusted-session".to_string()),
+            command: None,
+            workspace,
+        },
+    )
+    .unwrap();
+    drop(stream);
+
+    assert_eq!(
+        server.join().unwrap(),
+        "workspace daemon authentication failed"
+    );
 }

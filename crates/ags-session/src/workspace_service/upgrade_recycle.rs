@@ -243,6 +243,19 @@ pub(super) fn connect_registered(
     }
 }
 
+pub(super) fn reclaim_registry_after_failed_handshake(
+    paths: &ServicePaths,
+    registry: &WorkspaceRegistry,
+) {
+    // A successful TCP connect only proves that some process owns the port.
+    // Keep the fast path free of OS process probes, then reclaim the registry
+    // only when a failed authenticated handshake also proves that its recorded
+    // process identity is no longer authoritative.
+    if registry.process_start_identity.is_empty() || !registry_matches_process(registry) {
+        remove_registry_if_owned(&paths.registry, &registry.token);
+    }
+}
+
 fn retire_mismatched_daemon(
     paths: &ServicePaths,
     workspace: &Path,
