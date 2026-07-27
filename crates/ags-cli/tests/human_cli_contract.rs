@@ -14,7 +14,7 @@ struct Contract {
 }
 
 #[test]
-fn v032_preserves_the_v030_machine_cli_contract() {
+fn v033_preserves_the_v030_machine_cli_contract() {
     let fixture = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/human-cli-v0.3.0.json"
@@ -71,7 +71,7 @@ fn platform_executable_suffix_is_not_command_surface_drift() {
 }
 
 #[test]
-fn v032_preserves_the_complete_v030_human_command_surface() {
+fn v033_preserves_the_complete_v030_human_command_surface() {
     let fixture = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/human-cli-v0.3.0.json"
@@ -88,7 +88,7 @@ fn v032_preserves_the_complete_v030_human_command_surface() {
         contract.baseline_executable_sha256,
         "sha256:af4aaf3f396bbb83c9f2bee3cac2c6352df412e4c6a2c9aade6a8417aeb2a7be"
     );
-    assert_eq!(env!("CARGO_PKG_VERSION"), "0.3.2");
+    assert_eq!(env!("CARGO_PKG_VERSION"), "0.3.3");
 
     for (path, expected) in &contract.help {
         let mut command = ags();
@@ -138,13 +138,13 @@ fn only_the_product_version_output_changes() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8(output.stdout).unwrap().trim(),
-        "ags 0.3.2"
+        "ags 0.3.3"
     );
     assert!(output.stderr.is_empty());
 }
 
 #[test]
-fn v032_rejects_commands_and_flags_absent_from_v030() {
+fn v033_rejects_commands_and_flags_absent_from_v030() {
     let cases = [
         (
             &["skill", "adopt-source", "x"][..],

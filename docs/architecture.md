@@ -1,4 +1,4 @@
-# AGS v0.3.2 Architecture
+# AGS v0.3.3 Architecture
 
 AGS is a multi-Agent development governance control plane. It admits typed
 requests, binds authority and policy, validates evidence, and preserves
@@ -75,12 +75,12 @@ workflows, and absence of private runtime or third-party skill bodies.
 
 The complete 36-node visible public v0.3.0 Clap help tree and canonical Machine
 CLI paths are captured in
-`crates/ags-cli/tests/fixtures/human-cli-v0.3.0.json`. v0.3.2 matches those
+`crates/ags-cli/tests/fixtures/human-cli-v0.3.0.json`. v0.3.3 matches those
 surfaces byte-for-byte. Only `ags --version` changes.
 
 Product version, wire/schema version, and historical release version are
 separate classes:
 
-- Product metadata is aligned to `0.3.2`.
+- Product metadata is aligned to `0.3.3`.
 - v0.3.0 wire/schema identifiers remain stable for compatibility.
 - v0.3.0 release notes and fixtures remain historical evidence.

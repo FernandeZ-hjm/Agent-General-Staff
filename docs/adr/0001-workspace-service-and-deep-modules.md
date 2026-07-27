@@ -1,7 +1,7 @@
 # ADR 0001: Workspace Service and Deep Module Boundaries
 
 - Status: Accepted
-- Product version: 0.3.2
+- Product version: 0.3.3
 
 ## Context
 

@@ -77,7 +77,7 @@ fi
 
 cd "$REPO_ROOT"
 
-# `ags run` remains intentionally non-executing in 0.3.2. It returns a validated
+# `ags run` remains intentionally non-executing in 0.3.3. It returns a validated
 # LaunchPlan and, when allowed, `HOST_EXECUTION_REQUIRED`. The wrapper therefore
 # performs no post-task notifier, receipt, verification, or process orchestration.
 exec ags run "${RUN_ARGS[@]}" <&0

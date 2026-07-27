@@ -11,9 +11,9 @@ Agent Governance Suite（AGS）是一个**多 Agent 开发治理控制面**。�
 队列、并行执行器或多 Agent 协商运行时。
 
 本仓是 AGS 的公开发行版，采用 **GPL-3.0-only**。当前产品版本和 latest release
-是 **v0.3.2**。
+是 **v0.3.3**。
 
-## v0.3.2 核心链路
+## v0.3.3 核心链路
 
 ```text
 用户请求
@@ -58,7 +58,7 @@ ags mcp serve --transport stdio
 
 ## 十二个主要 module
 
-v0.3.2 的 runtime workspace 只暴露十二个权威 Cargo package：
+v0.3.3 的 runtime workspace 只暴露十二个权威 Cargo package：
 
 | Module | 职责 |
 |---|---|
@@ -89,7 +89,7 @@ wire/schema 和必要 re-export 上，不再保留第二套 package authority。
 | Codex | 支持 | 全局/项目 skills | SessionStart / SessionEnd adapter | 原生 MCP 登记探针 + MCP 进程 E2E |
 | Claude Code | 支持 | `/ags` 与 skills | SessionStart / Stop adapter | 原生 MCP 连接探针 + MCP 进程 E2E |
 | OMP | 支持；可复用 Codex 配置 | native/shared skills | OMP lifecycle extension | 原生 RPC 可发现性探针 + MCP 进程 E2E |
-| Cursor | 支持 | host/project skill projection | 尚无完整原生记忆闭环声明 | MCP 进程 E2E；v0.3.2 原生 CLI 探针因本机钥匙串锁定而由操作者显式豁免 |
+| Cursor | 支持 | host/project skill projection | 尚无完整原生记忆闭环声明 | MCP 进程 E2E；v0.3.3 原生 CLI 探针因本机钥匙串锁定而由操作者显式豁免 |
 | CodeBuddy-Code / WorkBuddy | MCP 接入 | setup 生成配置片段 | 尚无完整原生记忆闭环声明 | 初始化与静态/可见性验证 |
 
 这里的 E2E 会启动真实 `ags` stdio adapter 和 workspace daemon，覆盖同工作区共享、
@@ -141,7 +141,7 @@ ags onboarding verify --host codex
 
 ## 稳定命令面
 
-v0.3.2 保持 v0.3.0 捕获的人类 Clap 树和 canonical Machine CLI 合同；唯一允许变化的
+v0.3.3 保持 v0.3.0 捕获的人类 Clap 树和 canonical Machine CLI 合同；唯一允许变化的
 可见字段是 `ags --version`。
 
 ```bash
@@ -184,18 +184,18 @@ git diff --check
 ## 许可证与发布
 
 - 许可证：**GPL-3.0-only**
-- latest：**v0.3.2**
+- latest：**v0.3.3**
 - 兼容基线：v0.3.0 human/Machine CLI
 - 历史：v0.3.1 release notes 保留，不作为 current version
 
 发布顺序不可倒置：
 
 1. public-safe 源码进入 GitHub `main`，等待 exact commit CI 全绿；
-2. Cargo、npm、manifest、文档和 release notes 统一为 `0.3.2`；
-3. 维护者显式推送 annotated `v0.3.2` tag；
+2. Cargo、npm、manifest、文档和 release notes 统一为 `0.3.3`；
+3. 维护者显式推送 annotated `v0.3.3` tag；
 4. tag workflow 构建五个平台资产、`SHA256SUMS` 和 provenance；
 5. Release 资产齐全后，手动 dispatch npm OIDC trusted-publisher workflow，
-   发布 `@agent-governance-suite/mcp@0.3.2` 为 latest。
+   发布 `@agent-governance-suite/mcp@0.3.3` 为 latest。
 
 日常 CI、同步 guard 和 npm workflow 都不会替维护者创建 tag。
 

@@ -12,9 +12,9 @@ verification, receipts, and memory closure. It does not schedule Agent teams
 and is not a task queue, parallel executor, or multi-Agent negotiation runtime.
 
 This repository is the public AGS distribution, licensed **GPL-3.0-only**. The
-current product version and latest release are **v0.3.2**.
+current product version and latest release are **v0.3.3**.
 
-## v0.3.2 governance flow
+## v0.3.3 governance flow
 
 ```text
 human request
@@ -66,7 +66,7 @@ ags mcp serve --transport stdio
 
 ## Twelve major modules
 
-The v0.3.2 runtime workspace exposes exactly twelve authoritative Cargo
+The v0.3.3 runtime workspace exposes exactly twelve authoritative Cargo
 packages:
 
 | Module | Responsibility |
@@ -99,7 +99,7 @@ second package authority. See [WORKSPACE.md](WORKSPACE.md) and
 | Codex | supported | global/project skills | SessionStart / SessionEnd adapter | native MCP registration probe + MCP process E2E |
 | Claude Code | supported | `/ags` and skills | SessionStart / Stop adapter | native MCP connection probe + MCP process E2E |
 | OMP | supported; may reuse Codex config | native/shared skills | OMP lifecycle extension | native RPC discoverability probe + MCP process E2E |
-| Cursor | supported | host/project skill projection | no complete native memory-closure claim | MCP process E2E; the v0.3.2 native CLI probe was explicitly waived because the local keychain was locked |
+| Cursor | supported | host/project skill projection | no complete native memory-closure claim | MCP process E2E; the v0.3.3 native CLI probe was explicitly waived because the local keychain was locked |
 | CodeBuddy-Code / WorkBuddy | MCP onboarding | setup-generated configuration snippets | no complete native memory-closure claim | initialization and static/visibility verification |
 
 The E2E suite launches the real `ags` stdio adapter and workspace daemon. It
@@ -159,7 +159,7 @@ falls back to the packaged hash-frozen manifest.
 
 ## Stable command surface
 
-v0.3.2 preserves the captured v0.3.0 human Clap tree and canonical Machine CLI
+v0.3.3 preserves the captured v0.3.0 human Clap tree and canonical Machine CLI
 contracts. The only permitted visible difference is `ags --version`.
 
 ```bash
@@ -207,19 +207,19 @@ assets, and remote CI for the exact public commit.
 ## License and release
 
 - License: **GPL-3.0-only**
-- Latest: **v0.3.2**
+- Latest: **v0.3.3**
 - Compatibility baseline: v0.3.0 human/Machine CLI
 - History: v0.3.1 release notes remain historical, not current
 
 Release ordering is fixed:
 
 1. Push the public-safe source to GitHub `main` and wait for exact-commit CI.
-2. Align Cargo, npm, manifests, docs, and release notes to `0.3.2`.
-3. The maintainer explicitly pushes the annotated `v0.3.2` tag.
+2. Align Cargo, npm, manifests, docs, and release notes to `0.3.3`.
+3. The maintainer explicitly pushes the annotated `v0.3.3` tag.
 4. The tag workflow builds five platform assets, `SHA256SUMS`, and provenance.
 5. After the Release assets are complete, manually dispatch the npm OIDC
    trusted-publisher workflow and publish
-   `@agent-governance-suite/mcp@0.3.2` as latest.
+   `@agent-governance-suite/mcp@0.3.3` as latest.
 
 Daily CI, the synchronization guard, and the npm workflow never create tags.
 

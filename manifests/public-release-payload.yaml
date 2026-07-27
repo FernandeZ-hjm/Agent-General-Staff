@@ -202,15 +202,15 @@ public_rewrites:
   - path: AGENTS.md
     target_sha256: "sha256:1f9eba12c5c59832a42c3e6a50124ca644e2149c67dfc2e6137cedcfe43e9b31"
   - path: AGENT_SUITE_PROTOCOL.md
-    target_sha256: "sha256:38c8c5d9b79f56a3464b92f2658ea2d147f8bae67aa2ba44eb79e0b169a7deb0"
+    target_sha256: "sha256:b5189b150d00607982f84ae01284355ba9fcdcefcd08812762d6a68c279c479e"
   - path: CLAUDE.md
     target_sha256: "sha256:7adbab7cd4ceda945d7f2646d60a204f2ca75da23b4c07694e45e597df393a74"
   - path: README.md
-    target_sha256: "sha256:7215fb6a5377480313adda5a7d7f489221f38f5736d06688646763ec7fb9ce26"
+    target_sha256: "sha256:dc9cf58059d777b3a37fb3867042078517d3154ff523bd71699fec310d358ca1"
   - path: README_EN.md
-    target_sha256: "sha256:7021e5f76bf5125660dced5967c57a0b79f7c40d4e2c8109d99995ecae50d83a"
+    target_sha256: "sha256:de0ccd678db4722de062ed0a7d7961ae57a46ce47a92dd018b50f614d0b93846"
   - path: WORKSPACE.md
-    target_sha256: "sha256:1b027f76ac13f78a69ac30a65f6edc0e40846424a475f64b82c5b126859710b4"
+    target_sha256: "sha256:fc39795a88714ca8de295dc19b0efbe95f193723cebf526232163650fded7283"
   - path: crates/ags-capability-governance/src/lib.rs
     target_sha256: "sha256:2e2fa573752374b5f8e3c910ef38f4a2c55fec4576ff75f09ddb84cf9a11dc8b"
   - path: crates/ags-capability-governance/src/skill_body/console/sync.rs
@@ -292,29 +292,29 @@ public_rewrites:
   - path: crates/ags-verification/src/sync/mod.rs
     target_sha256: "sha256:87746acc967e36d034dda7946ed75a775e936e067d4bb14a9204c8a562416fe3"
   - path: docs/adr/0001-workspace-service-and-deep-modules.md
-    target_sha256: "sha256:0e045393094d6cbc9fe922f90bdee16205baa16eda5f8d092c9e8cce1dc8c11a"
+    target_sha256: "sha256:57caea2f43743beb3f24bebb159e1c3ec7a98c416f0e1a00e21e5236d2feb85a"
   - path: docs/architecture.md
-    target_sha256: "sha256:95ee611168fdbedfb5fb5bb6a1d6150f68881ee1fbe2071b23b200377bb407e4"
+    target_sha256: "sha256:407bbf29340ec9fb9009bd882810a82e921dd6aff7262db0dbad98cd79b55319"
   - path: governance/skill-sync.md
-    target_sha256: "sha256:5e0ed84ffb8b3f16af998b5f5df984f279bf5696ccdd75ee1601b66b2b0b055c"
+    target_sha256: "sha256:68910e1aefee22e42c091f26d2bdc672849755242e6d63689cc597ac1c7d0896"
   - path: manifests/mcp-registry.yaml
-    target_sha256: "sha256:fab27416391f6439ba2d8050b945f3c10626b188626a108db8c607be0949baf9"
+    target_sha256: "sha256:b64cd6aca96acd28c677d9b632513f141da950ca030bc557c73caeed9cc5d1b5"
   - path: manifests/skills-registry.yaml
-    target_sha256: "sha256:82fa31cbb9882424dc35451b7049ee1399e2434132b92a1db7c76d03f1a9d165"
+    target_sha256: "sha256:7368fb58bc6ed7a40c03dfad8e430f6d83d7ece263c3fb50620ec0bce2a6071b"
   - path: manifests/suite.yaml
-    target_sha256: "sha256:b7e5b9ba747f081e21ced8f37e7e1edd827e5a69b1135d2e335d31180f46b682"
+    target_sha256: "sha256:b91416127ba7306c359039e163577e5a13da807df7d22bade3669f6a3f66255f"
   - path: protocol/2.0-baseline.md
     target_sha256: "sha256:69338816945fe1d1559c1b054e7c80d939b41881b5130751a82561c31c281bd1"
   - path: protocol/agent-task-protocol.md
-    target_sha256: "sha256:7470bdae18bc7198fbee5545e45088e8602dc995f0e0e23066e345080c2b9e6b"
+    target_sha256: "sha256:9b45d284e3c9004e37d0698ca601cd948ed610b5ae5e762cd015667cf1e737de"
   - path: protocol/context-memory.md
     target_sha256: "sha256:ae8b00af607221a2b57e3b0263fa10e587a9e8616767391e77c0865ab03af1b6"
   - path: protocol/mcp-server.md
-    target_sha256: "sha256:fa94456ef70c09f28006754fba69de97c0d68fec27073891aab3b7d8423510d9"
+    target_sha256: "sha256:13b5a19e04741f2fd8d634898514fb62a2c22c316b73571a37ba0ab25611341f"
   - path: protocol/runtime-adapters.md
-    target_sha256: "sha256:97e9c14ac2f68dbb1117ade63dd28e379b2a0504b9fe1730cad280e8225d04c6"
+    target_sha256: "sha256:e9f00e5d81caa253297d106d3db88f9889677b3c45b453c954445221b10f4e3e"
   - path: protocol/skill-governance.md
-    target_sha256: "sha256:ac717e6f736301d9521734e594900205796211f8f393ea9b6abcfddee32cdc35"
+    target_sha256: "sha256:0e30737af0331f6dab8fe640235e2d8cf729427245198b65ba80f8f3e12bb9e9"
 
 # Binary release assets contain only this runtime support subset. The workflow
 # obtains this list from `ags release package`; it must not repeat the paths.

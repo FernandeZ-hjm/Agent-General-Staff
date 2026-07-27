@@ -611,7 +611,7 @@ fn json_shape(value: &Value) -> Value {
 }
 
 #[test]
-fn v032_preserves_v030_human_and_machine_cli_behavior() {
+fn v033_preserves_v030_human_and_machine_cli_behavior() {
     let contract = load_contract();
     assert_eq!(contract.schema_version, "ags-cli-behavior-contract/3");
     assert_eq!(contract.baseline_product_version, "0.3.0");

@@ -1,5 +1,34 @@
 # Agent Governance Suite Release Notes
 
+## Release 0.3.3
+
+0.3.3 is a compatibility-preserving patch release for deterministic capability
+routing and native OMP task execution.
+
+- Each workspace daemon now loads one sealed capability snapshot per host and
+  reuses it unchanged across preflight, resource reads, route, and apply.
+  Request handling no longer rebuilds capabilities, compares live directories,
+  or advances a bundle epoch.
+- Apply validates the registry and snapshot hashes already sealed into the
+  daemon catalog. Editing or replacing the on-disk registry after route cannot
+  invalidate an otherwise valid lease; explicit setup/update plus daemon
+  restart remains the only snapshot refresh path.
+- Capability cards now distinguish `skill_target`, `host_command`, and
+  `not_routable`. AGS command skills such as `ags-setup` carry a frozen direct
+  invocation hint, stay outside `ActiveSkillTable`, and return
+  `skill_target_kind_mismatch` if submitted to MCP as `SkillTarget`.
+- `Executor: OMP` is accepted as a first-class task-card executor and maps to
+  the native `omp` runtime adapter across compiler, validator, policy, runner,
+  protocol, and regression tests.
+- Native registration evidence continues to pass for Codex, Claude Code, and
+  OMP. Cursor remains covered by hermetic adapter/daemon tests with the existing
+  explicit native-CLI keychain waiver.
+- The captured v0.3.0 human and Machine CLI contracts remain unchanged.
+
+Release order remains fixed: public `main` and exact-commit CI first; then the
+annotated `v0.3.3` tag and five-platform GitHub Release assets with checksums
+and provenance; npm `latest` is published only after those assets are verified.
+
 ## Release 0.3.2
 
 0.3.2 completes the package-boundary migration started in 0.3.1 without

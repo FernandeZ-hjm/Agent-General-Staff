@@ -101,7 +101,7 @@ authority.
 
 ## Release Identity
 
-Latest release: AGS v0.3.2 Public Edition.
+Latest release: AGS v0.3.3 Public Edition.
 
 Repository name: `agent-governance-suite`.
 

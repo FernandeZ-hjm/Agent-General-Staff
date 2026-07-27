@@ -327,7 +327,7 @@ fn release_version_surfaces_reject_one_drifting_workspace_package() {
     assert_eq!(item.status, CheckStatus::Fail);
     assert!(item
         .evidence
-        .contains("crates/ags-session/Cargo.toml package.version must be 0.3.2, found 9.9.9"));
+        .contains("crates/ags-session/Cargo.toml package.version must be 0.3.3, found 9.9.9"));
 }
 
 #[test]
@@ -377,7 +377,7 @@ fn release_version_surfaces_keep_product_schema_and_history_separate() {
 
     std::fs::write(
         dir.path().join("crates/ags-governance-decision/src/lib.rs"),
-        "0.3.2-host-route-proposal",
+        "0.3.3-host-route-proposal",
     )
     .unwrap();
     let schema_item = check_release_version_surfaces(dir.path());
