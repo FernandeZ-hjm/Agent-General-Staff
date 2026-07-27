@@ -78,10 +78,11 @@ pub(in crate::setup) fn codex_ags_command_skill_specs() -> &'static [(
     &'static str,
 )] {
     // Standard Codex front-stage AGS command skills: exactly setup → agents →
-    // skill → init → doctor. `ags-capability` is intentionally NOT here — it is
-    // the underlying cross-Agent visibility/sync layer (`ags capability ...` CLI
-    // remains) and is retired from the front-stage set (see
-    // `retired_codex_ags_skill_dirs`).
+    // skill → init → doctor. `ags-capability` is intentionally NOT here — the
+    // explicit static-snapshot CLI (`ags capability ...`) remains available
+    // without a second front-stage command skill (see
+    // `retired_codex_ags_skill_dirs`). Private-only command skills (e.g. the
+    // public-edition sync skill) are machine-local and never generated here.
     &[
         (
             "ags-setup",
@@ -102,7 +103,7 @@ pub(in crate::setup) fn codex_ags_command_skill_specs() -> &'static [(
             "AGS Skill",
             "管理第三方技能",
             "用 $ags-skill 管理第三方技能。",
-            "管理第三方技能：运行 `ags skill inventory` 查看统一目录；用 `ags skill adopt <skill-id>`、`ignore <skill-id>`、`rollback <skill-id> --to <revision>` 先 dry-run，确认后追加 `--apply` 写机器私有 overlay",
+            "管理第三方技能：运行 `ags skill inventory` 查看静态目录；第三方来源只在明确的安装或升级流程中更新，完成后运行 `ags capability snapshot --write --host <host>` 刷新一次静态快照，并用 `ags skill verify --strict` 复核",
         ),
         (
             "ags-init",

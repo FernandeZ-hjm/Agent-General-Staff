@@ -125,7 +125,7 @@ impl CapabilityLoadFailure {
         }
     }
 
-    pub fn into_legacy_error(self) -> String {
+    pub fn into_error_message(self) -> String {
         match self {
             Self::SnapshotStale => "skill_snapshot_stale".to_string(),
             Self::Unavailable(diagnostic) => {
@@ -160,66 +160,6 @@ pub trait CapabilityCatalogSource {
         &self,
         binding: &PreflightBinding,
     ) -> Result<ValidatedCapabilityCatalog, CapabilityLoadFailure>;
-}
-
-/// Filesystem-backed adapter for standalone sessions that are not connected to
-/// a workspace daemon. It shares the same typed source interface as the daemon
-/// and therefore cannot create a second MCP presentation path.
-#[derive(Debug, Clone)]
-pub struct LocalCapabilityCatalogSource {
-    runtime_home: PathBuf,
-}
-
-impl LocalCapabilityCatalogSource {
-    pub fn new(runtime_home: PathBuf) -> Self {
-        Self { runtime_home }
-    }
-}
-
-impl CapabilityCatalogSource for LocalCapabilityCatalogSource {
-    fn capability_reference(&self, binding: &PreflightBinding) -> CapabilityReference {
-        match self.load_catalog(binding) {
-            Ok(catalog) => CapabilityReference::Ready {
-                binding: catalog.binding,
-            },
-            Err(error) => error.into_reference(),
-        }
-    }
-
-    fn load_validated_snapshot(
-        &self,
-        binding: &PreflightBinding,
-    ) -> Result<ValidatedCapabilityCatalog, CapabilityLoadFailure> {
-        self.load_catalog(binding)
-    }
-}
-
-impl LocalCapabilityCatalogSource {
-    fn load_catalog(
-        &self,
-        binding: &PreflightBinding,
-    ) -> Result<ValidatedCapabilityCatalog, CapabilityLoadFailure> {
-        let (snapshot, table) =
-            ags_capability_governance::load_static_snapshot(&self.runtime_home, &binding.host)
-                .map_err(|error| {
-                    classify_snapshot_load_error(error, &self.runtime_home, &binding.host)
-                })?;
-        let workspace_identity = ags_platform::sha256(
-            format!(
-                "standalone-capability\n{}",
-                binding.target.to_string_lossy()
-            )
-            .as_bytes(),
-        );
-        Ok(ValidatedCapabilityCatalog {
-            binding: CapabilityBinding {
-                workspace_identity,
-                snapshot_hash: snapshot.snapshot_hash.clone(),
-            },
-            snapshot,
-            table,
-        })
-    }
 }
 
 pub(crate) fn unavailable(

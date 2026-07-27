@@ -56,7 +56,7 @@ pub(in crate::kernel) fn format_policy_text(
 
     lines.join("\n")
 }
-/// Shared dispatch: `policy resolve` / `resolve-policy`
+/// Shared dispatch: `policy resolve`
 pub(crate) fn cmd_policy_resolve(
     path: &str,
     format: &str,

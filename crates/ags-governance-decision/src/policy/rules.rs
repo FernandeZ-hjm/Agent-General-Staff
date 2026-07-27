@@ -34,16 +34,13 @@ fn record_stop(policy: &mut ResolvedExecutionPolicy, reason: StopReason) {
 //   M2 – enable parallelism
 //   M3 – generate any permission-escalating launch arg
 //
-// `exhaustive` is the neutral canonical value; `ultracode` is the legacy
-// parse-compatible alias mapping to the same semantics.
-
 /// Apply exhaustive-effort thinking-intensity rules (M1, M2, M3).
 ///
-/// Sets `is_exhaustive_mode` when effort is the exhaustive tier (`exhaustive` or
-/// the legacy `ultracode` alias).  Does NOT touch permission mode, parallelism,
-/// or launch args — those are set by other rules based on the original field
-/// values, not on effort.
-pub(crate) fn apply_ultracode_rules(input: &TaskPolicyInput, policy: &mut ResolvedExecutionPolicy) {
+/// Does NOT touch permission mode, parallelism, or launch args.
+pub(crate) fn apply_exhaustive_effort(
+    input: &TaskPolicyInput,
+    policy: &mut ResolvedExecutionPolicy,
+) {
     if input.is_exhaustive_effort() {
         policy.is_exhaustive_mode = true;
     }
@@ -298,7 +295,7 @@ pub(crate) fn apply_stop_before_launch_arg_gate(policy: &mut ResolvedExecutionPo
 /// - ExecuteAndVerify: no special permission arg needed
 /// - Active parallelism: runtime-specific parallelism flags (stripped if
 ///   effective permission forbids writes — M5/M6)
-/// - Ultracode does NOT inject any launch arg (M3).
+/// - Execution effort does NOT inject any launch arg (M3).
 pub(crate) fn generate_launch_args(input: &TaskPolicyInput, policy: &mut ResolvedExecutionPolicy) {
     let mut args: Vec<String> = Vec::new();
 

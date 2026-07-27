@@ -1,14 +1,8 @@
 use super::*;
 
-pub const HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION: &str = "0.3.1-host-capability-snapshot";
+pub const HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION: &str = "0.3.4-host-capability-snapshot";
 pub const CAPABILITY_SNAPSHOT_SCHEMA_VERSION: &str = HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION;
-pub const USER_OVERLAY_SCHEMA_VERSION: &str = "0.3.0-user-skill-overlay";
-pub const USER_SOURCE_REGISTRY_SCHEMA_VERSION: &str = "0.3.0-user-skill-sources";
-pub const USER_SOURCE_AUDIT_VERSION: &str = "skill-source-audit-v1";
-pub const OVERLAY_MUTATION_EVENT_SCHEMA_VERSION: &str = "0.3.0-overlay-mutation-receipt";
-pub const SKILL_USAGE_EVENT_SCHEMA_VERSION: &str = "0.3.0-skill-usage-event";
 pub const SKILL_REASON_CODES: &[&str] = &[
-    "candidate_requires_adoption",
     "registry_not_routable",
     "retired",
     "canonical_missing",
@@ -16,17 +10,8 @@ pub const SKILL_REASON_CODES: &[&str] = &[
     "health_degraded",
     "auth_required",
     "metadata_incomplete",
-    "source_hash_changed",
     "snapshot_stale",
 ];
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DemandRoute {
-    pub demand: SkillDemand,
-    pub skill_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub entrypoint: Option<String>,
-}
 
 #[derive(Debug)]
 pub enum RegistryError {
@@ -153,18 +138,4 @@ pub fn snapshot_path(runtime_home: &Path, active_host: &str) -> PathBuf {
     runtime_home
         .join("capability-snapshot")
         .join(format!("{}.json", safe_host(active_host)))
-}
-
-pub fn overlay_path(runtime_home: &Path) -> PathBuf {
-    runtime_home.join("skill-registry/user-overlay.yaml")
-}
-
-pub fn overlay_events_path(runtime_home: &Path) -> PathBuf {
-    runtime_home.join("skill-registry/user-overlay-events.ndjson")
-}
-
-pub fn usage_path(runtime_home: &Path, active_host: &str) -> PathBuf {
-    runtime_home
-        .join("skill-usage")
-        .join(format!("{}.ndjson", safe_host(active_host)))
 }

@@ -171,18 +171,6 @@ pub(super) fn capture_scripts_present(home: &Path, required: &[&str]) -> bool {
     required.iter().all(|n| dir.join(n).is_file())
 }
 
-/// Backward-compatible Claude Code lifecycle query. New host-aware callers
-/// should use [`compute_memory_lifecycle_for_host`].
-pub fn compute_memory_lifecycle(target: &Path) -> MemoryLifecycle {
-    let home = ags_platform::home_dir_or_temp();
-    compute_memory_lifecycle_at_for_host(target, &home, &AgentType::ClaudeCode)
-}
-
-/// Backward-compatible Claude Code test seam.
-pub fn compute_memory_lifecycle_at(target: &Path, home: &Path) -> MemoryLifecycle {
-    compute_memory_lifecycle_at_for_host(target, home, &AgentType::ClaudeCode)
-}
-
 /// Compute the closure for the exact host requested by preflight.
 pub fn compute_memory_lifecycle_for_host(target: &Path, agent_type: &AgentType) -> MemoryLifecycle {
     let home = ags_platform::home_dir_or_temp();

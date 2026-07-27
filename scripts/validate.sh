@@ -6,7 +6,7 @@
 #   bash scripts/validate.sh -                    # stdin
 #
 # The Rust validator owned by ags-task-contract is the sole canonical task-card
-# format gate. `ags task-card-validator` remains a compatibility command.
+# format gate.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

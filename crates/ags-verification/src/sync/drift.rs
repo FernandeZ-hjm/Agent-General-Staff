@@ -35,7 +35,7 @@ pub fn check_target(
         if pinned_public_files.contains(*relative) {
             // Canonical public verification below requires the exact target
             // SHA-256 for fixed rewrites and B-owned overlays. Do not also feed
-            // pinned files through the legacy section allowlist.
+            // pinned files through the section allowlist.
             continue;
         }
         check_file(source_root, target_root, relative, allowlist, &mut drifts);
@@ -578,7 +578,7 @@ mod tests {
 
     fn write_manifest(root: &Path) {
         let safety = "protocol/runtime-adapters.md\n# Test\n\n\
-            ultracode is thinking intensity only — it does not change permission mode.\n\
+            exhaustive is thinking intensity only — it does not change permission mode.\n\
             Task level does not change the permission mode; permission modes are plan-only and execute-and-verify; execute-and-verify runs directly.\n\
             plan-only must not produce write-type launch args and must strip parallelism.\n\
             Runners must consume allowed_launch_args and effective_permission_mode.\n";

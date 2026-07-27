@@ -59,11 +59,6 @@ pub(crate) use parse::*;
 // `types` and `validate` expose their entire surface through the public
 // re-exports below, so no crate-internal glob is needed for them.
 
-// `read_input` is private-by-default (used by `validate_files`) but is also
-// exercised directly by unit tests, so re-export it crate-internally under test.
-#[cfg(test)]
-pub(crate) use validate::read_input;
-
 // Public API for downstream crates. NOTE: `CardType` and the
 // `ParsedTaskCard.card_type` field were removed as part of deleting the
 // compact task-card format (single canonical format = the classic skeleton).

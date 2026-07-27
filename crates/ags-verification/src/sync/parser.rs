@@ -158,22 +158,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_single_heading_with_content() {
-        let input = "# Title\n\nSome content here.\n\nMore content.\n";
-        let parsed = parse("test.md", input);
-
-        assert_eq!(parsed.section_order, vec![vec!["Title".to_string()]]);
-        assert_eq!(
-            parsed
-                .sections
-                .get(&vec!["Title".to_string()])
-                .map(|s| s.as_str()),
-            Some("Some content here.\n\nMore content.")
-        );
-    }
-
-    #[test]
-    fn parse_multi_level_sections() {
+    fn hierarchy_and_siblings_are_parsed_once() {
         let input = "\
 # Top
 top content
@@ -225,36 +210,12 @@ middle 2 content
     }
 
     #[test]
-    fn parse_ignores_setext_headings() {
-        // Setext headings (underlined with === or ---) are not parsed as sections.
-        // They are treated as content of the parent section.
-        let input = "# Title\n\nSome text\n=======\n\nMore text\n";
-        let parsed = parse("test.md", input);
-
-        assert_eq!(parsed.sections.len(), 1);
-        let content = parsed.sections.get(&vec!["Title".to_string()]).unwrap();
-        assert!(content.contains("======="));
-    }
-
-    #[test]
-    fn parse_heading_with_trailing_hashes() {
-        let input = "# Title ##\n\nContent\n";
-        let parsed = parse("test.md", input);
-        assert_eq!(parsed.section_order, vec![vec!["Title".to_string()]]);
-    }
-
-    #[test]
-    fn parse_heading_without_space_is_not_heading() {
-        let input = "#NotAHeading\n\nContent\n";
-        let parsed = parse("test.md", input);
-        // The #NotAHeading line becomes content under no section
-        assert!(parsed.sections.is_empty());
-    }
-
-    #[test]
-    fn parse_code_blocks_preserved_as_content() {
+    fn markdown_boundaries_preserve_content_without_false_headings() {
         let input = "\
-# Section
+# Title ##
+
+Some text
+=====
 
 ```rust
 fn main() {
@@ -263,62 +224,25 @@ fn main() {
 ```
 
 After code block.
+
+#NotAHeading
 ";
         let parsed = parse("test.md", input);
-        let content = parsed.sections.get(&vec!["Section".to_string()]).unwrap();
+        assert_eq!(parsed.section_order, vec![vec!["Title".to_string()]]);
+        let content = parsed.sections.get(&vec!["Title".to_string()]).unwrap();
+        assert!(content.contains("====="));
         assert!(content.contains("```rust"));
         assert!(content.contains("fn main()"));
         assert!(content.contains("After code block."));
+        assert!(content.contains("#NotAHeading"));
     }
 
     #[test]
-    fn parse_empty_file() {
+    fn empty_input_and_trailing_blank_normalization_are_deterministic() {
         let parsed = parse("empty.md", "");
         assert!(parsed.sections.is_empty());
         assert_eq!(parsed.line_count, 0);
-    }
-
-    #[test]
-    fn parse_section_reorder_same_level() {
-        // Section at same level creates a new sibling, not a child
-        let input = "\
-# A
-content a
-
-# B
-content b
-";
-        let parsed = parse("test.md", input);
-        assert_eq!(parsed.sections.len(), 2);
-        assert!(parsed.sections.contains_key(&vec!["A".to_string()]));
-        assert!(parsed.sections.contains_key(&vec!["B".to_string()]));
-    }
-
-    #[test]
-    fn parse_sibling_sections_at_level_2() {
-        let input = "\
-# Top
-
-## First
-first content
-
-## Second
-second content
-";
-        let parsed = parse("test.md", input);
-        assert_eq!(parsed.sections.len(), 3); // Top, First, Second
-        assert!(parsed
-            .sections
-            .contains_key(&vec!["Top".to_string(), "First".to_string()]));
-        assert!(parsed
-            .sections
-            .contains_key(&vec!["Top".to_string(), "Second".to_string()]));
-    }
-
-    #[test]
-    fn parse_normalizes_trailing_blank_lines() {
-        let input = "# Title\n\ncontent\n\n\n";
-        let parsed = parse("test.md", input);
+        let parsed = parse("test.md", "# Title\n\ncontent\n\n\n");
         let content = parsed.sections.get(&vec!["Title".to_string()]).unwrap();
         assert_eq!(content, "content");
     }

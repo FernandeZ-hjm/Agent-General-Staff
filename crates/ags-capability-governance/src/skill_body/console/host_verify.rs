@@ -1,6 +1,6 @@
 use super::*;
 #[allow(unused_imports)]
-use super::{actions::*, host_probe::*, inventory::*, model::*};
+use super::{host_probe::*, inventory::*, model::*};
 // ── Host verify ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,11 +28,8 @@ pub struct HostVerifySummary {
     pub all_visible: bool,
 }
 
-/// Read-only host thin-index DRIFT report: legacy `.bak*` entries, dangling
-/// symlinks, and real-directory copies in a host's skills dir. AGS only REPORTS
-/// this — cleanup is a separate explicit hygiene action, NEVER performed by
-/// this read-only scan. A clean host has exactly one thin-index symlink per
-/// capability pointing at the canonical store / `~/.agents/skills`.
+/// Read-only host thin-index report for dangling symlinks and real-directory
+/// copies in a host's skills dir.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThinIndexDrift {
     pub host: String,
@@ -40,14 +37,12 @@ pub struct ThinIndexDrift {
     pub total_entries: usize,
     /// Single thin-index symlinks pointing at a valid target (clean).
     pub clean_symlinks: usize,
-    /// `.bak` / `.bak.N` leftover entries from older host-entry relinks.
-    pub bak_leftovers: usize,
     /// Dangling symlinks (target missing) — e.g. retired-skill fallout.
     pub broken_symlinks: usize,
     /// Real-directory copies (non-symlink, not `.system`) — informational: may be
     /// a legitimate local/external skill, not necessarily drift.
     pub real_dir_copies: usize,
-    /// True when removable drift (`.bak*` leftovers or dangling symlinks) exists.
+    /// True when dangling symlinks exist.
     pub has_drift: bool,
     /// Capped sample of drift entry names for operator triage.
     pub drift_samples: Vec<String>,
@@ -77,8 +72,8 @@ pub struct HostVerifyResult {
 
 /// Read-only scan of a host's thin-index dir for drift. NEVER mutates. Returns
 /// `None` for hosts without a skills subdir or when the dir is absent. Counts
-/// `.bak*` leftovers and dangling symlinks as removable drift; real non-`.bak`
-/// directories are reported as informational (could be legitimate local skills).
+/// Dangling symlinks are drift; real directories are informational because
+/// they may be legitimate local skills.
 pub(super) fn scan_thin_index_drift(home: &Path, host: &str) -> Option<ThinIndexDrift> {
     let sub = host_skills_subdir(host)?;
     scan_skill_dir_drift(&home.join(sub), host)
@@ -93,7 +88,7 @@ pub(super) fn scan_shared_thin_index_drift(home: &Path, host: &str) -> Option<Th
 pub(super) fn scan_skill_dir_drift(dir: &Path, label: &str) -> Option<ThinIndexDrift> {
     let read = std::fs::read_dir(dir).ok()?;
     let mut total = 0usize;
-    let (mut clean, mut bak, mut broken, mut realdir) = (0usize, 0usize, 0usize, 0usize);
+    let (mut clean, mut broken, mut realdir) = (0usize, 0usize, 0usize);
     let mut samples: Vec<String> = Vec::new();
     for entry in read.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
@@ -106,12 +101,7 @@ pub(super) fn scan_skill_dir_drift(dir: &Path, label: &str) -> Option<ThinIndexD
             .map(|m| m.file_type().is_symlink())
             .unwrap_or(false);
         let target_exists = path.exists(); // follows the symlink
-        if name.contains(".bak") {
-            bak += 1;
-            if samples.len() < 12 {
-                samples.push(format!("{name} (.bak leftover)"));
-            }
-        } else if is_link && !target_exists {
+        if is_link && !target_exists {
             broken += 1;
             if samples.len() < 12 {
                 samples.push(format!("{name} (dangling symlink)"));
@@ -127,10 +117,9 @@ pub(super) fn scan_skill_dir_drift(dir: &Path, label: &str) -> Option<ThinIndexD
         skills_dir: dir.to_string_lossy().to_string(),
         total_entries: total,
         clean_symlinks: clean,
-        bak_leftovers: bak,
         broken_symlinks: broken,
         real_dir_copies: realdir,
-        has_drift: bak > 0 || broken > 0,
+        has_drift: broken > 0,
         drift_samples: samples,
     })
 }
@@ -234,7 +223,7 @@ pub fn verify_host(ctx: &ConsoleContext, host: &str) -> HostVerifyResult {
         checks,
         thin_index_drift,
         shared_thin_index_drift,
-        note: "Read-only host-visibility verify. status=incomplete means an expected capability is not visible; removable host/shared `.bak` or dangling-symlink drift degrades strict verification. Restart the host or open a new task after sync so it re-scans entry points; use --strict to gate (exit nonzero unless status=ok).".to_string(),
+        note: "Read-only host-visibility verify. status=incomplete means an expected capability is not visible; dangling host/shared symlinks degrade strict verification. Restart the host or open a new task after snapshot refresh so it re-scans entry points; use --strict to gate (exit nonzero unless status=ok).".to_string(),
     }
 }
 

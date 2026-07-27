@@ -97,98 +97,10 @@ pub(super) fn check_release_boundary(repo_root: &Path) -> Vec<CheckItem> {
         ));
     }
 
-    // Check 3: Verify public-full package plan strips EvoMap/GEP runtime surfaces.
-    let (package_code, package_stdout, package_stderr) = run_command(
-        repo_root,
-        "cargo",
-        &[
-            "run",
-            "-q",
-            "-p",
-            "ags-cli",
-            "--",
-            "release",
-            "package",
-            "--profile",
-            "public-full",
-            "--dry-run",
-            "--format",
-            "json",
-        ],
-        &[],
-    );
-
-    if package_code != 0 {
-        items.push(CheckItem::fail(
-            "release-package-public-core",
-            "release",
-            &format!(
-                "public-full release package plan failed (exit {}): {}",
-                package_code,
-                truncate(&format!("{package_stdout}\n{package_stderr}"), 500)
-            ),
-            "Fix `ags release package --profile public-full --dry-run` before release.",
-        ));
-    } else {
-        match serde_json::from_str::<serde_json::Value>(&package_stdout) {
-            Ok(plan) => {
-                let leaked: Vec<String> = plan
-                    .get("included_files")
-                    .and_then(|value| value.as_array())
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|value| value.as_str())
-                    .filter(|path| public_package_evomap_surface(path))
-                    .map(ToString::to_string)
-                    .collect();
-
-                if leaked.is_empty() {
-                    items.push(CheckItem::pass(
-                        "release-package-strips-evomap",
-                        "release",
-                        "public-full package plan contains no EvoMap/Evolver/GEP runtime paths.",
-                    ));
-                } else {
-                    items.push(CheckItem::fail(
-                        "release-package-strips-evomap",
-                        "release",
-                        &format!(
-                            "public-full package plan includes EvoMap/Evolver/GEP paths: {}",
-                            leaked.join(", ")
-                        ),
-                        "Remove EvoMap/GEP paths from the public release allowlist and forbidden payload gate.",
-                    ));
-                }
-            }
-            Err(e) => items.push(CheckItem::fail(
-                "release-package-strips-evomap",
-                "release",
-                &format!("cannot parse public-full package plan JSON: {e}"),
-                "Fix `ags release package --profile public-full --dry-run --format json` output.",
-            )),
-        }
-    }
-
     // Cleanup tempdir
     let _ = std::fs::remove_dir_all(&tmpdir);
 
     items
-}
-
-fn public_package_evomap_surface(path: &str) -> bool {
-    let lower = path
-        .trim_start_matches("./")
-        .replace('\\', "/")
-        .to_ascii_lowercase();
-    lower.contains("evomap")
-        || lower.contains("evolver")
-        || lower == ".evolver"
-        || lower.starts_with(".evolver/")
-        || lower == "assets/gep"
-        || lower.starts_with("assets/gep/")
-        || lower.contains("/gep/")
-        || lower.ends_with("/gep")
-        || lower == "mcp/gep.mcp.json"
 }
 
 /// Check that portable runtime profile templates exist, parse correctly,

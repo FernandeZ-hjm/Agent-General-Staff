@@ -15,7 +15,7 @@
 //!   (strings)              │                       (typed enums)
 //!                          │
 //!                          ├─ build_initial_policy()
-//!                          ├─ apply_ultracode_rules()        (M1-M3)
+//!                          ├─ apply_exhaustive_effort()      (M1-M3)
 //!                          ├─ apply_generic_adapter_rule()   (M9)
 //!                          ├─ preserve declared permission state (M4)
 //!                          ├─ apply_parallelism_authority_rule() (M7)
@@ -63,17 +63,17 @@ pub use model::{
 };
 
 use rules::{
-    apply_generic_adapter_rule, apply_launch_args_writability_gate,
+    apply_exhaustive_effort, apply_generic_adapter_rule, apply_launch_args_writability_gate,
     apply_parallelism_authority_rule, apply_stop_before_launch_arg_gate,
-    apply_stop_on_stripped_headless, apply_stop_on_stripped_parallelism, apply_ultracode_rules,
-    build_initial_policy, generate_launch_args, verify_downgrade_invariants,
+    apply_stop_on_stripped_headless, apply_stop_on_stripped_parallelism, build_initial_policy,
+    generate_launch_args, verify_downgrade_invariants,
 };
 
 /// Resolve execution policy from a validated task card's structured fields.
 ///
 /// Applies all MUST rules in order:
 /// 1. Build initial policy from input
-/// 2. M1-M3: Ultracode thinking-intensity rules
+/// 2. M1-M3: Exhaustive-effort thinking-intensity rules
 /// 3. M9: Generic adapter permission cap
 /// 4. M4: Preserve the declared two-state permission independent of task level
 /// 5. M7: Parallelism authority check
@@ -86,8 +86,8 @@ use rules::{
 pub fn resolve_policy(input: TaskPolicyInput) -> ResolvedExecutionPolicy {
     let mut policy = build_initial_policy(&input);
 
-    // M1-M3: ultracode → thinking intensity only
-    apply_ultracode_rules(&input, &mut policy);
+    // M1-M3: exhaustive effort → thinking intensity only
+    apply_exhaustive_effort(&input, &mut policy);
 
     // M9: generic adapter permission cap (may downgrade the permission mode)
     apply_generic_adapter_rule(&input, &mut policy);

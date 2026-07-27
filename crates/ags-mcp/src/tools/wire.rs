@@ -8,7 +8,6 @@ pub const TOOL_AGENT_INSTRUCTIONS: &str = "ags_agent_instructions";
 pub const TOOL_ONBOARDING_PLAN: &str = "ags_onboarding_plan";
 pub const TOOL_TASK_VALIDATE: &str = "ags_task_validate";
 pub const TOOL_POLICY_RESOLVE: &str = "ags_policy_resolve";
-pub const TOOL_VERIFY_LOCAL: &str = "ags_verify_local";
 pub const TOOL_ROUTE_REQUEST: &str = "ags_route_request";
 pub const TOOL_APPLY_ACTION: &str = "ags_apply_action";
 
@@ -46,7 +45,6 @@ pub(super) enum HeldActionKind {
 pub(crate) struct HeldAction {
     pub(super) evidence: DecisionLeaseEvidence,
     pub(super) action_id: String,
-    pub(super) policy_hash: String,
     pub(super) kind: HeldActionKind,
     pub(super) consumed: bool,
 }
@@ -133,15 +131,6 @@ pub fn list_tools() -> ToolListResult {
                 }),
             ),
             tool_def(
-                TOOL_VERIFY_LOCAL,
-                "Read-only compatibility guidance for the fixed local verification action. No command is launched; execution requires a typed ProjectVerify route followed by ags_apply_action.",
-                serde_json::json!({
-                    "type": "object",
-                    "properties": {},
-                    "additionalProperties": false
-                }),
-            ),
-            tool_def(
                 TOOL_ROUTE_REQUEST,
                 "Read-only typed request governance. The host interprets conversation context and submits an exact proposal; AGS validates it and creates daemon-client-session-local action references.",
                 serde_json::json!({
@@ -157,7 +146,7 @@ pub fn list_tools() -> ToolListResult {
                             "required": ["schema_version", "request_fingerprint", "phase", "solution_state", "execution_authority", "scope_hash", "targets"],
                             "additionalProperties": false,
                             "properties": {
-                                "schema_version": { "type": "string", "const": "0.3.0-host-route-proposal" },
+                                "schema_version": { "type": "string", "const": "0.3.4-host-route-proposal" },
                                 "request_fingerprint": { "type": "string" },
                                 "phase": { "type": "string", "enum": ["direct_response", "solution_formation", "execution"] },
                                 "solution_state": { "type": "string", "enum": ["not_required", "open", "confirmed"] },
@@ -325,7 +314,7 @@ pub fn call_tool(
     arguments: &serde_json::Value,
     binding: Option<&PreflightBinding>,
     routing_session: &mut RoutingSession,
-    capability_source: Option<&dyn CapabilityCatalogSource>,
+    capability_source: &dyn CapabilityCatalogSource,
 ) -> Result<String, String> {
     match name {
         TOOL_PREFLIGHT => tool_preflight(arguments, capability_source),
@@ -336,20 +325,17 @@ pub fn call_tool(
         }
         TOOL_TASK_VALIDATE => tool_task_validate(arguments),
         TOOL_POLICY_RESOLVE => tool_policy_resolve(arguments),
-        TOOL_VERIFY_LOCAL => tool_verify_local(arguments, required_binding(binding)?),
         TOOL_ROUTE_REQUEST => tool_route_request_with_source(
             arguments,
             required_binding(binding)?,
             routing_session,
-            &ags_capability_governance::locate_runtime_home(),
             capability_source,
         ),
-        TOOL_APPLY_ACTION => tool_apply_action_with_source(
+        TOOL_APPLY_ACTION => tool_apply_action(
             arguments,
             required_binding(binding)?,
             routing_session,
             &ags_capability_governance::locate_runtime_home(),
-            capability_source,
         ),
         other => Err(format!("Unknown tool: {other}")),
     }

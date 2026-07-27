@@ -12,9 +12,9 @@ verification, receipts, and memory closure. It does not schedule Agent teams
 and is not a task queue, parallel executor, or multi-Agent negotiation runtime.
 
 This repository is the public AGS distribution, licensed **GPL-3.0-only**. The
-current product version and latest release are **v0.3.3**.
+current product version and latest release are **v0.3.4**.
 
-## v0.3.3 governance flow
+## v0.3.4 governance flow
 
 ```text
 human request
@@ -53,7 +53,7 @@ canonical workspace
 ```
 
 The stdio process is only a `connect-or-start` forwarding adapter. The workspace
-daemon publishes the capability bundle atomically, while `session_id`,
+daemon loads one static snapshot per host, while `session_id`,
 preflight binding, and DecisionLease remain isolated per client session.
 Disconnecting one client does not stop the daemon. Idle recycling and
 stop-before-restart executable upgrades are internal service behavior.
@@ -66,7 +66,7 @@ ags mcp serve --transport stdio
 
 ## Twelve major modules
 
-The v0.3.3 runtime workspace exposes exactly twelve authoritative Cargo
+The v0.3.4 runtime workspace exposes exactly twelve authoritative Cargo
 packages:
 
 | Module | Responsibility |
@@ -79,17 +79,17 @@ packages:
 | `ags-governance-decision` | typed proposals, policy, route, and decision contracts |
 | `ags-session` | workspace daemon, client sessions, bindings, and one-shot action storage |
 | `ags-evidence` | receipts, delivery closure, and evidence integrity |
-| `ags-verification` | bootstrap readiness, doctor, sync, and local/promotion/release verification |
-| `ags-lifecycle` | setup, init, onboarding, update, and rollback |
-| `ags-cli` | compatibility-preserving human and Machine CLI adapter |
+| `ags-verification` | bootstrap readiness, doctor, projection, and local/promotion/release verification |
+| `ags-lifecycle` | setup, init, onboarding, and update |
+| `ags-cli` | current human and Machine CLI adapter |
 | `ags-mcp` | thin MCP wire, session connection, and error-mapping adapter |
 
 The former `bootstrap-dry-run`, `capability-registry`,
 `delivery-report-validator`, `execution-policy`, `runner`, `skill-governance`,
 `suite-doctor`, `task-card-validator`, and `workflow-sync-check`
-implementations have moved under their authoritative modules. Compatibility
-remains at command, wire/schema, and necessary re-export surfaces, not as a
-second package authority. See [WORKSPACE.md](WORKSPACE.md) and
+implementations have moved under their authoritative modules. v0.3.4 retains
+only commands, wire/schema types, and re-exports with current callers, not old
+aliases or a second package authority. See [WORKSPACE.md](WORKSPACE.md) and
 [docs/architecture.md](docs/architecture.md).
 
 ## Host support matrix
@@ -99,7 +99,7 @@ second package authority. See [WORKSPACE.md](WORKSPACE.md) and
 | Codex | supported | global/project skills | SessionStart / SessionEnd adapter | native MCP registration probe + MCP process E2E |
 | Claude Code | supported | `/ags` and skills | SessionStart / Stop adapter | native MCP connection probe + MCP process E2E |
 | OMP | supported; may reuse Codex config | native/shared skills | OMP lifecycle extension | native RPC discoverability probe + MCP process E2E |
-| Cursor | supported | host/project skill projection | no complete native memory-closure claim | MCP process E2E; the v0.3.3 native CLI probe was explicitly waived because the local keychain was locked |
+| Cursor | supported | host/project skill projection | no complete native memory-closure claim | MCP process E2E; the v0.3.4 native CLI probe was explicitly waived because the local keychain was locked |
 | CodeBuddy-Code / WorkBuddy | MCP onboarding | setup-generated configuration snippets | no complete native memory-closure claim | initialization and static/visibility verification |
 
 The E2E suite launches the real `ags` stdio adapter and workspace daemon. It
@@ -153,14 +153,14 @@ ags onboarding apply --item project-init --plan-hash <HASH_FROM_PLAN> --host cod
 ags onboarding verify --host codex
 ```
 
-`apply` accepts one plan item at a time. The remote third-party capability
-manifest is pinned to a reviewed immutable commit and expected hash. Failure
-falls back to the packaged hash-frozen manifest.
+`apply` accepts one plan item at a time. The third-party capability manifest is
+fixed in the release package; normal setup, preflight, resource reads, routing,
+and apply never refresh it over the network.
 
 ## Stable command surface
 
-v0.3.3 preserves the captured v0.3.0 human Clap tree and canonical Machine CLI
-contracts. The only permitted visible difference is `ags --version`.
+v0.3.4 supports only the current command surface below. Removed legacy
+commands, aliases, and plan-only fake actions are not compatibility contracts.
 
 ```bash
 ags setup --help
@@ -207,19 +207,19 @@ assets, and remote CI for the exact public commit.
 ## License and release
 
 - License: **GPL-3.0-only**
-- Latest: **v0.3.3**
-- Compatibility baseline: v0.3.0 human/Machine CLI
+- Latest: **v0.3.4**
+- Current contract: v0.3.4 human/Machine CLI
 - History: v0.3.1 release notes remain historical, not current
 
 Release ordering is fixed:
 
 1. Push the public-safe source to GitHub `main` and wait for exact-commit CI.
-2. Align Cargo, npm, manifests, docs, and release notes to `0.3.3`.
-3. The maintainer explicitly pushes the annotated `v0.3.3` tag.
+2. Align Cargo, npm, manifests, docs, and release notes to `0.3.4`.
+3. The maintainer explicitly pushes the annotated `v0.3.4` tag.
 4. The tag workflow builds five platform assets, `SHA256SUMS`, and provenance.
 5. After the Release assets are complete, manually dispatch the npm OIDC
    trusted-publisher workflow and publish
-   `@agent-governance-suite/mcp@0.3.3` as latest.
+   `@agent-governance-suite/mcp@0.3.4` as latest.
 
 Daily CI, the synchronization guard, and the npm workflow never create tags.
 

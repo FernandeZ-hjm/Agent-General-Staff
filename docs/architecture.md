@@ -1,4 +1,4 @@
-# AGS v0.3.3 Architecture
+# AGS v0.3.4 Architecture
 
 AGS is a multi-Agent development governance control plane. It admits typed
 requests, binds authority and policy, validates evidence, and preserves
@@ -26,13 +26,13 @@ reconstructs user intent from keywords.
 | Platform | `ags-platform` | paths, filesystem, process lookup, hashes, atomic writes | governance policy |
 | Workspace facts | `ags-workspace-facts` | canonical project identity, discovery, configuration facts | host mutation |
 | Host integration | `ags-host-integration` | Codex, Claude Code, Cursor, OMP projections and probes | workspace instance identity |
-| Capability governance | `ags-capability-governance` | inventory, exact resolution, lifecycle overlay, atomic snapshot publication | session leases |
+| Capability governance | `ags-capability-governance` | inventory, exact resolution, static snapshot publication | session leases |
 | Task contract | `ags-task-contract` | task-card compile, validation, handoff contract | execution |
 | Governance decision | `ags-governance-decision` | proposal validation, policy and route contracts | I/O effects |
 | Session | `ags-session` | workspace daemon, client session identity, preflight binding source, one-shot action store | MCP JSON-RPC |
 | Evidence | `ags-evidence` | receipts, delivery evidence and integrity | decision authority |
 | Verification | `ags-verification` | doctor, local/release checks, sync and version-surface gates | lifecycle writes |
-| Lifecycle | `ags-lifecycle` | setup, init, onboarding, update and rollback contracts | CLI parsing |
+| Lifecycle | `ags-lifecycle` | setup, init, onboarding and explicit update | CLI parsing |
 | CLI | `ags-cli` | unchanged Clap surface and application-service dispatch | duplicated governance rules |
 | MCP | `ags-mcp` | JSON-RPC conversion, session connection and error mapping | workspace-global state |
 
@@ -56,7 +56,8 @@ canonical workspace path
 
 - The instance key is the SHA-256 of the canonical workspace path only.
 - Host identity is a client attribute and never participates in the key.
-- Capability bundles are validated and atomically replaced by the daemon.
+- Each host has one persisted static capability snapshot. The daemon loads and
+  validates it once; request paths never rebuild or compare live capability state.
 - Preflight binding and DecisionLease state are per client session.
 - A new preflight or route invalidates earlier actions in that session.
 - Shape-invalid apply input is rejected before consumption; after the governed
@@ -71,16 +72,10 @@ must validate the canonical payload authority, exact tracked inventory and
 content hashes, public-safe source topology, compatibility contracts, release
 workflows, and absence of private runtime or third-party skill bodies.
 
-## Compatibility boundary
+## Current surface boundary
 
-The complete 36-node visible public v0.3.0 Clap help tree and canonical Machine
-CLI paths are captured in
-`crates/ags-cli/tests/fixtures/human-cli-v0.3.0.json`. v0.3.3 matches those
-surfaces byte-for-byte. Only `ags --version` changes.
-
-Product version, wire/schema version, and historical release version are
-separate classes:
-
-- Product metadata is aligned to `0.3.3`.
-- v0.3.0 wire/schema identifiers remain stable for compatibility.
-- v0.3.0 release notes and fixtures remain historical evidence.
+The current 0.3.4 CLI, MCP schema and typed contracts are authoritative.
+Removed aliases, dynamic capability lifecycle commands and historical
+behavior fixtures are not hidden compatibility interfaces. Product version,
+wire/schema version and historical release notes remain separate version
+classes.

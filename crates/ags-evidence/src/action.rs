@@ -29,7 +29,6 @@ pub fn build_action_receipt(
     applied: Vec<ReceiptWrite>,
     advised: Vec<ReceiptAdvised>,
     verification: Vec<VerificationResult>,
-    rollback: RollbackPlan,
     apply_status: &str,
     applied_flag: bool,
 ) -> ActionReceipt {
@@ -53,7 +52,7 @@ pub fn build_action_receipt(
     }
     let hash = sha256_hex(basis.as_bytes());
     ActionReceipt {
-        schema_version: "2.0-action-receipt".to_string(),
+        schema_version: "0.3.4-action-receipt".to_string(),
         receipt_id: format!("ar-{action}-{stamp}-{}", &hash[..16.min(hash.len())]),
         action: action.to_string(),
         timestamp: format!("unix-{stamp}"),
@@ -63,7 +62,6 @@ pub fn build_action_receipt(
         applied_writes: applied,
         advised_commands: advised,
         verification_results: verification,
-        rollback,
         apply_status: apply_status.to_string(),
         applied: applied_flag,
     }

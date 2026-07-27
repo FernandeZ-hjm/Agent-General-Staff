@@ -1,14 +1,10 @@
 use super::*;
 #[allow(unused_imports)]
-use crate::{
-    authority::*, catalog::*, hashing::*, overlay_transaction::*, private_store::*, usage_ledger::*,
-};
+use crate::{authority::*, catalog::*, hashing::*, private_store::*};
 #[derive(Debug, Deserialize)]
 pub(crate) struct RegistryDocument {
     #[serde(default)]
     pub(crate) skills: Vec<RegistrySkill>,
-    #[serde(default)]
-    pub(super) demand_routes: Vec<DemandRoute>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -104,10 +100,6 @@ pub(crate) fn load_registry_document(root: &Path) -> Result<RegistryDocument, Re
     let content = std::fs::read_to_string(root.join("manifests/skills-registry.yaml"))
         .map_err(RegistryError::Read)?;
     serde_yaml::from_str(&content).map_err(RegistryError::Parse)
-}
-
-pub fn load_demand_routes(root: &Path) -> Result<Vec<DemandRoute>, RegistryError> {
-    load_registry_document(root).map(|document| document.demand_routes)
 }
 
 #[derive(Debug, Deserialize, Default)]

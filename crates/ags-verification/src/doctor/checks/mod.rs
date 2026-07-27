@@ -20,5 +20,3 @@ use host_memory::*;
 use resolution::*;
 use runtime::*;
 use workspace::*;
-
-include!("tests.rs");

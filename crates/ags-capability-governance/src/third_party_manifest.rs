@@ -1,16 +1,11 @@
-//! Third-party capability manifest retrieval and integrity verification.
+//! Static third-party capability manifest loading and validation.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::process::Command;
 
 pub const THIRD_PARTY_MANIFEST_PATH: &str = "manifests/third-party-capabilities.yaml";
-pub const DEFAULT_THIRD_PARTY_MANIFEST_REVISION: &str = "821fb728b58c131c70a82dad51ccf83eb0372413";
-pub const DEFAULT_THIRD_PARTY_MANIFEST_URL: &str = "https://raw.githubusercontent.com/FernandeZ-hjm/Agent-General-Staff/821fb728b58c131c70a82dad51ccf83eb0372413/manifests/third-party-capabilities.yaml";
-pub const DEFAULT_THIRD_PARTY_MANIFEST_HASH: &str =
-    "sha256:77af54eab76a8d031d8ec6ffdd79224c1b0f5b829e392402ac349557940a9324";
 const EMBEDDED_THIRD_PARTY_MANIFEST: &str =
     include_str!("../../../manifests/third-party-capabilities.yaml");
 const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
@@ -52,9 +47,6 @@ pub struct ManifestResolution {
     pub manifest: ThirdPartyManifest,
     pub source: String,
     pub content_hash: String,
-    pub freshness: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fallback_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -167,8 +159,6 @@ pub struct HookContract {
     pub managed_by: String,
     #[serde(default)]
     pub health_probe: String,
-    #[serde(default)]
-    pub rollback: String,
 }
 
 pub fn read_third_party_manifest(root: &Path) -> Result<ThirdPartyManifest, String> {
@@ -182,46 +172,16 @@ pub fn read_third_party_manifest(root: &Path) -> Result<ThirdPartyManifest, Stri
 }
 
 pub fn resolve_third_party_manifest(root: &Path) -> Result<ManifestResolution, String> {
-    if !cfg!(test) && std::env::var("AGS_THIRD_PARTY_MANIFEST_OFFLINE").as_deref() != Ok("1") {
-        let url = std::env::var("AGS_THIRD_PARTY_MANIFEST_URL")
-            .unwrap_or_else(|_| DEFAULT_THIRD_PARTY_MANIFEST_URL.to_string());
-        if is_allowed_registry_url(&url) {
-            match fetch_remote_manifest(&url) {
-                Ok((manifest, content_hash)) => {
-                    return Ok(ManifestResolution {
-                        manifest,
-                        source: url,
-                        content_hash,
-                        freshness: "github-pinned".into(),
-                        fallback_reason: None,
-                    });
-                }
-                Err(error) => return local_resolution(root, Some(error)),
-            }
-        }
-        return local_resolution(
-            root,
-            Some("remote registry URL is not an allowed raw GitHub HTTPS URL".into()),
-        );
-    }
-    local_resolution(root, Some("remote refresh disabled".into()))
+    local_resolution(root)
 }
 
-fn local_resolution(
-    root: &Path,
-    fallback_reason: Option<String>,
-) -> Result<ManifestResolution, String> {
+fn local_resolution(root: &Path) -> Result<ManifestResolution, String> {
     let path = root.join(THIRD_PARTY_MANIFEST_PATH);
-    let (content, source, freshness) = match std::fs::read_to_string(&path) {
-        Ok(content) => (
-            content,
-            path.display().to_string(),
-            "workspace-snapshot".to_string(),
-        ),
+    let (content, source) = match std::fs::read_to_string(&path) {
+        Ok(content) => (content, path.display().to_string()),
         Err(_) => (
             EMBEDDED_THIRD_PARTY_MANIFEST.to_string(),
             "embedded:third-party-capabilities.yaml".to_string(),
-            "embedded-fallback".to_string(),
         ),
     };
     if content.len() > MAX_MANIFEST_BYTES {
@@ -234,54 +194,7 @@ fn local_resolution(
         manifest,
         source,
         content_hash: sha256(content.as_bytes()),
-        freshness,
-        fallback_reason,
     })
-}
-
-fn fetch_remote_manifest(url: &str) -> Result<(ThirdPartyManifest, String), String> {
-    let output = Command::new("curl")
-        .args([
-            "--fail",
-            "--silent",
-            "--show-error",
-            "--location",
-            "--max-time",
-            "8",
-            "--proto",
-            "=https",
-            "--tlsv1.2",
-            url,
-        ])
-        .output()
-        .map_err(|error| format!("GitHub registry fetch could not start: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "GitHub registry fetch failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    if output.stdout.len() > MAX_MANIFEST_BYTES {
-        return Err("GitHub registry response exceeds 1 MiB".into());
-    }
-    let content = String::from_utf8(output.stdout)
-        .map_err(|_| "GitHub registry response is not UTF-8".to_string())?;
-    let content_hash = sha256(content.as_bytes());
-    if url == DEFAULT_THIRD_PARTY_MANIFEST_URL && content_hash != DEFAULT_THIRD_PARTY_MANIFEST_HASH
-    {
-        return Err(format!(
-            "pinned GitHub registry hash mismatch: expected {DEFAULT_THIRD_PARTY_MANIFEST_HASH}, got {content_hash}"
-        ));
-    }
-    let manifest = parse_manifest(&content)
-        .map_err(|error| format!("cannot parse GitHub registry: {error}"))?;
-    validate_manifest(&manifest)?;
-    Ok((manifest, content_hash))
-}
-
-fn is_allowed_registry_url(url: &str) -> bool {
-    url.starts_with("https://raw.githubusercontent.com/")
-        && url.ends_with("/manifests/third-party-capabilities.yaml")
 }
 
 fn parse_manifest(content: &str) -> Result<ThirdPartyManifest, serde_yaml::Error> {
@@ -346,13 +259,7 @@ fn validate_source(capability: &ThirdPartyCapability) -> Result<(), String> {
 }
 
 fn validate_install(capability: &ThirdPartyCapability) -> Result<(), String> {
-    const STRATEGIES: &[&str] = &[
-        "ags-skill-adopt",
-        "npm-global",
-        "host-registrar",
-        "external-manager",
-        "none",
-    ];
+    const STRATEGIES: &[&str] = &["npm-global", "host-registrar", "external-manager", "none"];
     if !STRATEGIES.contains(&capability.install.strategy.as_str()) {
         return Err(format!(
             "{} has unsupported install strategy {}; arbitrary shell is forbidden",
@@ -400,10 +307,9 @@ fn validate_hook(capability: &ThirdPartyCapability) -> Result<(), String> {
         || hook.config_glob.is_empty()
         || hook.managed_by.is_empty()
         || hook.health_probe.is_empty()
-        || hook.rollback.is_empty()
     {
         return Err(format!(
-            "{} hook must declare host, events, config, owner, health probe, and rollback",
+            "{} hook must declare host, events, config, owner, and health probe",
             capability.id
         ));
     }
@@ -466,7 +372,6 @@ capabilities:
       config_glob: hooks.json
       managed_by: plugin
       health_probe: plugin-config
-      rollback: plugin-manager
 "#;
         let manifest: ThirdPartyManifest = serde_yaml::from_str(yaml).unwrap();
         assert!(validate_manifest(&manifest).is_err());
@@ -483,20 +388,5 @@ capabilities:
     unexpected: true
 "#;
         assert!(parse_manifest(content).is_err());
-    }
-
-    #[test]
-    fn default_registry_uses_an_immutable_reviewed_commit() {
-        assert_eq!(DEFAULT_THIRD_PARTY_MANIFEST_REVISION.len(), 40);
-        assert!(DEFAULT_THIRD_PARTY_MANIFEST_REVISION
-            .chars()
-            .all(|character| character.is_ascii_hexdigit()));
-        assert!(DEFAULT_THIRD_PARTY_MANIFEST_URL
-            .contains(&format!("/{DEFAULT_THIRD_PARTY_MANIFEST_REVISION}/")));
-        assert!(!DEFAULT_THIRD_PARTY_MANIFEST_URL.contains("/main/"));
-        assert_eq!(DEFAULT_THIRD_PARTY_MANIFEST_HASH.len(), 71);
-        assert!(DEFAULT_THIRD_PARTY_MANIFEST_HASH
-            .strip_prefix("sha256:")
-            .is_some_and(|hash| hash.chars().all(|character| character.is_ascii_hexdigit())));
     }
 }

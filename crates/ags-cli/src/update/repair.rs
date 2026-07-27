@@ -1,7 +1,7 @@
 //! Thin CLI adapter for lifecycle-owned local repair.
 
 use crate::context::{
-    guard_writable_target, home_dir, private_install_target, source_root_or_exit, unix_timestamp,
+    guard_writable_target, home_dir, private_install_target, source_root_or_exit,
 };
 use crate::receipt_bridge::emit_ags_action_receipt;
 use std::path::PathBuf;
@@ -39,16 +39,14 @@ pub(in crate::update) fn cmd_update_repair_local(
     guard_writable_target("ags update repair-local", &runtime_target);
     let source_root = source_root_or_exit("ags setup");
     let home = home_dir();
-    let outcome =
-        ags_lifecycle::update::repair::execute(ags_lifecycle::setup::PrivateApplyRequest {
-            source_root: &source_root,
-            target: &runtime_target,
-            home: &home,
-            force,
-            include_optional_extensions: false,
-            register_claude: false,
-            backup_stamp: unix_timestamp(),
-        });
+    let outcome = ags_lifecycle::setup::apply_private(ags_lifecycle::setup::PrivateApplyRequest {
+        source_root: &source_root,
+        target: &runtime_target,
+        home: &home,
+        force,
+        include_optional_extensions: false,
+        register_claude: false,
+    });
     let passed = outcome.report.passed();
     let exit_code = outcome.report.exit_code();
     let receipt = ags_evidence::build_action_receipt(
@@ -70,7 +68,6 @@ pub(in crate::update) fn cmd_update_repair_local(
             exit_code,
             output_hash: ags_evidence::sha256_hex(b"repair-local"),
         }],
-        ags_evidence::RollbackPlan::backup_restore(vec![]),
         if passed { "applied" } else { "failed" },
         passed,
     );

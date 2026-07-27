@@ -23,7 +23,7 @@ pub(in crate::agents) fn cmd_agents_verify(host: &str, strict: bool, format: &st
         "json" => println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
-                "schema_version": "0.3.0-agent-host-verification",
+                "schema_version": "0.3.4-agent-host-verification",
                 "host": host,
                 "status": if ok { "ok" } else { "drifted" },
                 "capability_visibility": capability,

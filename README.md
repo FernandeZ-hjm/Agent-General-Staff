@@ -11,9 +11,9 @@ Agent Governance Suite（AGS）是一个**多 Agent 开发治理控制面**。�
 队列、并行执行器或多 Agent 协商运行时。
 
 本仓是 AGS 的公开发行版，采用 **GPL-3.0-only**。当前产品版本和 latest release
-是 **v0.3.3**。
+是 **v0.3.4**。
 
-## v0.3.3 核心链路
+## v0.3.4 核心链路
 
 ```text
 用户请求
@@ -46,8 +46,8 @@ canonical workspace
        -> OMP client session
 ```
 
-stdio 进程只是 `connect-or-start` 薄转发。能力 bundle 由工作区 daemon 原子发布，
-而 `session_id`、preflight binding 和 DecisionLease 始终按客户端会话隔离。断开某个
+stdio 进程只是 `connect-or-start` 薄转发。工作区 daemon 为每个宿主加载一次静态
+snapshot，而 `session_id`、preflight binding 和 DecisionLease 始终按客户端会话隔离。断开某个
 客户端不会停止 daemon；空闲回收和二进制 stop-before-restart 升级由服务内部处理。
 
 这项架构**不增加任何用户命令**。宿主仍然启动：
@@ -58,7 +58,7 @@ ags mcp serve --transport stdio
 
 ## 十二个主要 module
 
-v0.3.3 的 runtime workspace 只暴露十二个权威 Cargo package：
+v0.3.4 的 runtime workspace 只暴露十二个权威 Cargo package：
 
 | Module | 职责 |
 |---|---|
@@ -70,16 +70,16 @@ v0.3.3 的 runtime workspace 只暴露十二个权威 Cargo package：
 | `ags-governance-decision` | typed proposal、policy、route 和 decision contracts |
 | `ags-session` | workspace daemon、client session、binding 和一次性 action store |
 | `ags-evidence` | receipt、delivery closure 和证据完整性 |
-| `ags-verification` | bootstrap readiness、doctor、sync、local/promotion/release 验证 |
-| `ags-lifecycle` | setup、init、onboarding、update、rollback |
-| `ags-cli` | 保持兼容的人类 CLI 和 Machine CLI adapter |
+| `ags-verification` | bootstrap readiness、doctor、projection、local/promotion/release 验证 |
+| `ags-lifecycle` | setup、init、onboarding、update |
+| `ags-cli` | 当前人类 CLI 和 Machine CLI adapter |
 | `ags-mcp` | MCP wire、session connection 和错误映射薄 adapter |
 
 原 `bootstrap-dry-run`、`capability-registry`、
 `delivery-report-validator`、`execution-policy`、`runner`、
 `skill-governance`、`suite-doctor`、`task-card-validator`、
-`workflow-sync-check` 的实现已收口到对应权威 module。兼容性保留在命令、
-wire/schema 和必要 re-export 上，不再保留第二套 package authority。详见
+`workflow-sync-check` 的实现已收口到对应权威 module。0.3.4 只保留当前实际调用的
+命令、wire/schema 和必要 re-export，不再保留旧命令或第二套 package authority。详见
 [WORKSPACE.md](WORKSPACE.md) 和 [docs/architecture.md](docs/architecture.md)。
 
 ## 宿主支持矩阵
@@ -89,7 +89,7 @@ wire/schema 和必要 re-export 上，不再保留第二套 package authority。
 | Codex | 支持 | 全局/项目 skills | SessionStart / SessionEnd adapter | 原生 MCP 登记探针 + MCP 进程 E2E |
 | Claude Code | 支持 | `/ags` 与 skills | SessionStart / Stop adapter | 原生 MCP 连接探针 + MCP 进程 E2E |
 | OMP | 支持；可复用 Codex 配置 | native/shared skills | OMP lifecycle extension | 原生 RPC 可发现性探针 + MCP 进程 E2E |
-| Cursor | 支持 | host/project skill projection | 尚无完整原生记忆闭环声明 | MCP 进程 E2E；v0.3.3 原生 CLI 探针因本机钥匙串锁定而由操作者显式豁免 |
+| Cursor | 支持 | host/project skill projection | 尚无完整原生记忆闭环声明 | MCP 进程 E2E；v0.3.4 原生 CLI 探针因本机钥匙串锁定而由操作者显式豁免 |
 | CodeBuddy-Code / WorkBuddy | MCP 接入 | setup 生成配置片段 | 尚无完整原生记忆闭环声明 | 初始化与静态/可见性验证 |
 
 这里的 E2E 会启动真实 `ags` stdio adapter 和 workspace daemon，覆盖同工作区共享、
@@ -136,13 +136,12 @@ ags onboarding apply --item project-init --plan-hash <HASH_FROM_PLAN> --host cod
 ags onboarding verify --host codex
 ```
 
-`apply` 一次只接受一个 plan item。远端第三方 capability manifest 固定到经过评审的
-不可变 commit，并校验预期哈希；失败时使用同包 hash-frozen fallback。
+`apply` 一次只接受一个 plan item。第三方 capability manifest 随发布包固定；普通
+setup、preflight、resource read、route 和 apply 都不联网刷新。
 
 ## 稳定命令面
 
-v0.3.3 保持 v0.3.0 捕获的人类 Clap 树和 canonical Machine CLI 合同；唯一允许变化的
-可见字段是 `ags --version`。
+v0.3.4 只承诺下列当前命令面。已删除的旧命令、alias 和 plan-only 假动作不再作为兼容合同。
 
 ```bash
 ags setup --help
@@ -184,18 +183,18 @@ git diff --check
 ## 许可证与发布
 
 - 许可证：**GPL-3.0-only**
-- latest：**v0.3.3**
-- 兼容基线：v0.3.0 human/Machine CLI
+- latest：**v0.3.4**
+- 当前合同：v0.3.4 human/Machine CLI
 - 历史：v0.3.1 release notes 保留，不作为 current version
 
 发布顺序不可倒置：
 
 1. public-safe 源码进入 GitHub `main`，等待 exact commit CI 全绿；
-2. Cargo、npm、manifest、文档和 release notes 统一为 `0.3.3`；
-3. 维护者显式推送 annotated `v0.3.3` tag；
+2. Cargo、npm、manifest、文档和 release notes 统一为 `0.3.4`；
+3. 维护者显式推送 annotated `v0.3.4` tag；
 4. tag workflow 构建五个平台资产、`SHA256SUMS` 和 provenance；
 5. Release 资产齐全后，手动 dispatch npm OIDC trusted-publisher workflow，
-   发布 `@agent-governance-suite/mcp@0.3.3` 为 latest。
+   发布 `@agent-governance-suite/mcp@0.3.4` 为 latest。
 
 日常 CI、同步 guard 和 npm workflow 都不会替维护者创建 tag。
 

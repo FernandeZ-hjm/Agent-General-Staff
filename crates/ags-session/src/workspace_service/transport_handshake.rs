@@ -23,8 +23,6 @@ pub(super) struct Handshake {
     pub(super) token: String,
     pub(super) kind: String,
     #[serde(default)]
-    pub(super) session_id: Option<String>,
-    #[serde(default)]
     pub(super) command: Option<String>,
     pub(super) workspace: PathBuf,
 }
@@ -39,7 +37,6 @@ pub(super) struct HandshakeResult {
     pub(super) process_start_identity: String,
     #[serde(default)]
     pub(super) daemon_nonce: String,
-    pub(super) session_id: Option<String>,
 }
 
 pub(super) struct SessionActivity {
@@ -155,7 +152,6 @@ pub(super) fn finish_workspace_session(
         protocol: WIRE_SCHEMA.to_string(),
         token: registry.token.clone(),
         kind: "session".to_string(),
-        session_id: Some(fresh_id("session", workspace)),
         command: None,
         workspace: workspace.to_path_buf(),
     };
@@ -245,7 +241,6 @@ pub(super) fn handle_connection(
                 executable_hash: registry.executable_hash,
                 process_start_identity: registry.process_start_identity,
                 daemon_nonce: registry.daemon_nonce,
-                session_id: None,
             },
         )?;
         shutdown.store(true, Ordering::Release);
@@ -264,7 +259,6 @@ pub(super) fn handle_connection(
             executable_hash: registry.executable_hash,
             process_start_identity: registry.process_start_identity,
             daemon_nonce: registry.daemon_nonce,
-            session_id: Some(session_id.clone()),
         },
     )?;
     handler.run(reader, writer, state, session_id);

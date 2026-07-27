@@ -1,4 +1,4 @@
-//! Hidden kernel commands (MCP / CI / compatibility surface).
+//! Hidden kernel commands used by MCP and CI.
 
 pub(crate) mod awareness;
 pub(crate) mod bootstrap;
@@ -9,7 +9,6 @@ pub(crate) mod mcp;
 pub(crate) mod policy;
 pub(crate) mod receipt;
 pub(crate) mod release;
-pub(crate) mod rollback;
 pub(crate) mod runner;
 pub(crate) mod sync;
 pub(crate) mod task;

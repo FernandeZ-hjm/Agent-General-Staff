@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 
 use crate::{
     classify_snapshot_load_error, unavailable, CapabilityBinding, CapabilityCatalogSource,
@@ -17,8 +17,7 @@ pub struct WorkspaceState {
     root: PathBuf,
     instance_key: String,
     runtime_home: PathBuf,
-    enforce_root: bool,
-    snapshots: RwLock<HashMap<String, ags_capability_governance::HostCapabilitySnapshot>>,
+    catalogs: RwLock<HashMap<String, ValidatedCapabilityCatalog>>,
 }
 
 impl WorkspaceState {
@@ -28,23 +27,7 @@ impl WorkspaceState {
             root,
             instance_key,
             runtime_home,
-            enforce_root: true,
-            snapshots: RwLock::new(HashMap::new()),
-        })
-    }
-
-    #[doc(hidden)]
-    pub fn standalone() -> Arc<Self> {
-        let root = canonical_workspace_root(
-            &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-        )
-        .unwrap_or_else(|_| PathBuf::from("."));
-        Arc::new(Self {
-            instance_key: workspace_key(&root),
-            root,
-            runtime_home: ags_capability_governance::locate_runtime_home(),
-            enforce_root: false,
-            snapshots: RwLock::new(HashMap::new()),
+            catalogs: RwLock::new(HashMap::new()),
         })
     }
 
@@ -56,13 +39,8 @@ impl WorkspaceState {
         &self.instance_key
     }
 
-    pub fn is_daemon_owned(&self) -> bool {
-        self.enforce_root
-    }
-
     pub fn target_matches(&self, target: &Path) -> bool {
-        !self.enforce_root
-            || canonical_workspace_root(target).is_ok_and(|target| target == self.root)
+        canonical_workspace_root(target).is_ok_and(|target| target == self.root)
     }
 
     pub fn read_catalog(
@@ -70,10 +48,10 @@ impl WorkspaceState {
         binding: &PreflightBinding,
     ) -> Result<ags_capability_governance::HostCapabilitySnapshot, String> {
         let Some(reference) = binding.capability.as_ref() else {
-            return Err(CapabilityLoadFailure::SnapshotStale.into_legacy_error());
+            return Err(CapabilityLoadFailure::SnapshotStale.into_error_message());
         };
         if let Some(failure) = reference.as_failure() {
-            return Err(failure.into_legacy_error());
+            return Err(failure.into_error_message());
         }
         let accepted = reference
             .ready_binding()
@@ -86,7 +64,7 @@ impl WorkspaceState {
                     Err(CapabilityLoadFailure::SnapshotStale)
                 }
             })
-            .map_err(CapabilityLoadFailure::into_legacy_error)
+            .map_err(CapabilityLoadFailure::into_error_message)
     }
 
     fn load_validated_catalog(
@@ -99,7 +77,7 @@ impl WorkspaceState {
                 error.to_string(),
             )
         })?;
-        if self.enforce_root && target != self.root {
+        if target != self.root {
             return Err(unavailable(
                 CapabilityDiagnosticCode::WorkspaceTargetInvalid,
                 format!(
@@ -109,24 +87,25 @@ impl WorkspaceState {
                 ),
             ));
         }
-        let mut snapshots = self.snapshots.write().map_err(|_| {
-            unavailable(
-                CapabilityDiagnosticCode::StateLockUnavailable,
-                "workspace snapshot lock poisoned",
-            )
-        })?;
-        if !snapshots.contains_key(&binding.host) {
-            let (snapshot, _) =
-                ags_capability_governance::load_static_snapshot(&self.runtime_home, &binding.host)
-                    .map_err(|error| {
-                        classify_snapshot_load_error(error, &self.runtime_home, &binding.host)
-                    })?;
-            snapshots.insert(binding.host.clone(), snapshot);
-        }
-        let snapshot = snapshots
+        if let Some(catalog) = self
+            .catalogs
+            .read()
+            .map_err(|_| {
+                unavailable(
+                    CapabilityDiagnosticCode::StateLockUnavailable,
+                    "workspace catalog lock poisoned",
+                )
+            })?
             .get(&binding.host)
-            .expect("static host snapshot inserted before read")
-            .clone();
+        {
+            return Ok(catalog.clone());
+        }
+
+        let (snapshot, _) =
+            ags_capability_governance::load_static_snapshot(&self.runtime_home, &binding.host)
+                .map_err(|error| {
+                    classify_snapshot_load_error(error, &self.runtime_home, &binding.host)
+                })?;
         let table = snapshot
             .validate_integrity(&binding.host)
             .map_err(|error| {
@@ -135,11 +114,21 @@ impl WorkspaceState {
                     format!("active capability table is invalid: {error:?}"),
                 )
             })?;
-        Ok(ValidatedCapabilityCatalog {
+        let catalog = ValidatedCapabilityCatalog {
             binding: self.capability_binding(&snapshot.snapshot_hash),
             snapshot,
             table,
-        })
+        };
+        let mut catalogs = self.catalogs.write().map_err(|_| {
+            unavailable(
+                CapabilityDiagnosticCode::StateLockUnavailable,
+                "workspace catalog lock poisoned",
+            )
+        })?;
+        Ok(catalogs
+            .entry(binding.host.clone())
+            .or_insert(catalog)
+            .clone())
     }
 
     fn capability_binding(&self, snapshot_hash: &str) -> CapabilityBinding {

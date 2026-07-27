@@ -158,9 +158,8 @@ Verification gate:
 - 任务级别按 `protocol/task-routing.md` 定义。
 - **Task-card request gate**：`ags task compile` 在没有 `--task-card-requested` 参数时拒绝输出可执行任务卡，报告 `executable_allowed=false`、`block_reason=task_card_not_requested`。只有用户明确发出任务卡指令后，generator 才能带 `--task-card-requested` 调用 compiler。参见 `protocol/agent-task-protocol.md` 生命周期阶段 3.5。
 - Executor、Runtime adapter、Execution surface、Permission mode、Parallelism、Verification gate 按 `protocol/runtime-adapters.md` 定义；Review gate 的唯一规则表在 `protocol/agent-task-protocol.md`。
-- 需要让 runner 自动选择执行层时，可以使用 `scripts/run-task-card.sh <task-card> --auto`；auto mode 不会提高任务卡声明的权限。
-- runner 默认启用 Learning Runner：任务卡进入执行前会临时编译 Task IR / compiled brief 并注入给 Claude Code；这些编译产物不是第三种任务卡格式，默认不长期保留，只在本地 memory 中沉淀可复用 `learning-gaps/`。
-- 涉及本地 Agent 技能同步、proposal、adoption log 或 ignore list 时，必须引用项目内对应治理文档；如无项目治理文档，使用套件级 `scripts/govern-new-skills.sh` 流程。最终输出仍使用本文件的固定任务卡骨架。
+- `ags run` 是唯一 LaunchPlan 准备入口。它只返回 `HOST_EXECUTION_REQUIRED` 或 `STOP`，不启动宿主、不执行任务、不验证结果。
+- 涉及本地 Agent 技能目录时，必须引用项目内对应治理文档；如无项目治理文档，只使用 `ags skill inventory` / `ags skill verify` 和 `ags capability snapshot`。不存在运行时 adopt、ignore、dedupe 或 sync 命令。最终输出仍使用本文件的固定任务卡骨架。
 
 ## 与全局提示词生成器的关系
 
@@ -177,20 +176,20 @@ Verification gate:
 
 ## Skill Governance 治理任务补充
 
-涉及本地 Agent 技能、下载/拖拽导入、proposal、adoption log 或 ignore list 时，固定任务卡按以下方式填槽：
+涉及本地 Agent 技能或第三方能力升级时，固定任务卡按以下方式填槽：
 
-- `相关路径`：列出 `global-skills/`、`skill-packs/`、`proposals/skill-adoption/`、`governance/skill-adoption-log.yaml`、`governance/skill-ignore-list.yaml`。
+- `相关路径`：列出实际 skill 源目录、`manifests/skills-registry.yaml`、`manifests/third-party-capabilities.yaml` 与静态 snapshot 刷新入口。
 - `目标文件夹路径`：填写本次技能治理实际读写的仓库根目录或目标技能根目录的绝对路径。
-- `本次任务相关文件`：列出本次涉及的 skill 源目录、proposal、adoption log 或 ignore list。
+- `本次任务相关文件`：列出本次涉及的 skill 源目录和 registry 文件。
 - `项目画像`：如存在，填写 `config/agent-project-profile.yaml`；不要复制无关画像内容。
 - `记忆胶囊`：如存在，填写 `$HOME/.agents/memory/projects/<project-slug>/context-capsule.md`；不要复制长记忆。开始执行前同步读取同目录 `task-memory.md`。
 - `任务存档`：如存在，填写 `$HOME/.agents/memory/projects/<project-slug>/task-memory.md`；没有任务记忆时填 `无`。runner 执行后默认由 `context-memory.sh capture` 刷新本机 `task-memory.md`、归档完整收据，并在沉淀后打印最终交付报告；直接粘贴给 Claude Code 的任务卡在 Stop hook 检测到交付报告后也会自动归档。
 - `适用治理文档`：填写项目内治理文档；如无项目治理文档，填写 `AGENT_SUITE_PROTOCOL.md`。
 - `非目标`：明确不得写 `$HOME/.agents/skills`、`$HOME/.codex/skills`、`$HOME/.codex/plugins/cache`，不得运行 `lark-cli update`、`npx skills add/remove/update`，不得接管外部官方 CLI 或项目自管输出层技能，不得自动应用 patch。
-- `实施要求`：说明默认先 scan / dry-run，人工确认后才能 adopt / ignore。
-- `边界声明`：如任务涉及 `notebooklm`、项目自管输出层业务契约、`notebooklm_task_card`、`local_context_pack` 或 `fairness_check_questions`，必须写明它们只可被引用，不能被开发套件 adopt / update / 打包。
-- `Verification gate`：优先使用 `bash scripts/govern-new-skills.sh scan`、`bash -n` 脚本语法检查和 `bash scripts/verify.sh`。
-- `交付`：必须说明是否生成 proposal / adoption log / ignore list，是否触碰本地 skill 目录，仍需人工确认的事项。
+- `实施要求`：说明来源变更只发生在明确安装/升级中；验证后每个宿主只刷新一次静态 snapshot。
+- `边界声明`：如任务涉及 `notebooklm`、项目自管输出层业务契约、`notebooklm_task_card`、`local_context_pack` 或 `fairness_check_questions`，必须写明它们只可被引用，不能被开发套件接管、更新或打包。
+- `Verification gate`：优先使用 `ags skill inventory`、`ags skill verify --strict`、`bash -n` 脚本语法检查和 `bash scripts/verify.sh`。
+- `交付`：必须说明是否触碰本地 skill 目录、是否刷新静态 snapshot，以及仍需人工确认的事项。
 
 ## Heavy 任务补充
 

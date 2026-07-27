@@ -16,8 +16,8 @@ mod session_preflight;
 mod workspace_facts;
 
 pub use ags_host_integration::{
-    compute_memory_lifecycle, compute_memory_lifecycle_at, compute_memory_lifecycle_at_for_host,
-    compute_memory_lifecycle_for_host, AgentType, MemoryLifecycle,
+    compute_memory_lifecycle_at_for_host, compute_memory_lifecycle_for_host, AgentType,
+    MemoryLifecycle,
 };
 pub use instruction_projection::{
     generate_agent_instructions, AgentInstructions, AgentPermissions, InstructionFile,

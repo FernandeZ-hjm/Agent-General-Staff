@@ -203,8 +203,7 @@ Use `/ags setup` to initialize this machine and `/ags init` to onboard the curre
 Diagnostics remain available as `/ags preflight` and `/ags doctor`; verification gates drive `ags verify` internally.\n\n\
 ## Codex skills\n\n\
 `ags setup --yes` installs visible top-level command skills: `$ags-setup`, `$ags-agents`, `$ags-skill`, `$ags-init`, and `$ags-doctor`.\n\
-Retired visible skills (`$ags`, `$ags-preflight`, `$ags-verify`, `$ags-capability`) are removed from the Codex skill list during setup.\n\
-`ags capability` remains the Cross-Agent visibility/sync CLI and is no longer installed as a visible Codex command skill.\n\
+Retired visible skills (`$ags`, `$ags-preflight`, `$ags-verify`, `$ags-capability`) are removed from the Codex skill list during setup; `ags capability` remains the explicit inventory, verification, and static-snapshot CLI.\n\
 `ags verify` remains a kernel/CI verification command and is not installed as a visible Codex skill.\n\
 Each command skill routes through AGS preflight before acting.\n",
         target.display()
@@ -483,16 +482,13 @@ fn is_ags_generated_codex_skill_dir(dir: &Path) -> bool {
 /// the cleanup path for `retired_codex_ags_skill_dirs`; it never does a blind
 /// `remove_dir_all`:
 ///   - a thin-index symlink is unlinked only (the canonical body is untouched);
-///   - a real directory AGS recognizably generated is MOVED to a timestamped
-///     backup (reversible quarantine), not deleted;
+///   - a real directory AGS recognizably generated is removed;
 ///   - a real entry with unrecognized (possibly user-edited) content is left in
-///     place unless `force`, in which case it is also quarantined to a backup.
+///     place unless `force`, in which case it is removed.
 ///
-/// Nothing is ever irreversibly deleted.
 pub(in crate::setup) fn cleanup_install_dir(
     path: &Path,
     force: bool,
-    backup_stamp: u64,
 ) -> crate::setup::SetupFinding {
     let id = format!("cleanup-{}", sanitize_name(&path.to_string_lossy()));
     let Ok(meta) = std::fs::symlink_metadata(path) else {
@@ -523,21 +519,18 @@ pub(in crate::setup) fn cleanup_install_dir(
                 "retired skill entry has unrecognized (possibly user-edited) content: {}",
                 path.display()
             ),
-            "not modifying it automatically — back it up and remove manually, or rerun `ags setup --yes --force` to quarantine it to a backup",
+            "not modifying it automatically — remove it manually, or rerun `ags setup --yes --force` to delete it",
         );
     }
 
-    // Quarantine to a timestamped backup instead of deleting (reversible).
-    let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("skill");
-    let backup = path.with_file_name(format!("{file_name}.retired.bak.{backup_stamp}"));
-    match std::fs::rename(path, &backup) {
+    match if meta.is_dir() {
+        std::fs::remove_dir_all(path)
+    } else {
+        std::fs::remove_file(path)
+    } {
         Ok(()) => crate::setup::SetupFinding::pass(
             id,
-            format!(
-                "retired (quarantined to backup): {} -> {}",
-                path.display(),
-                backup.display()
-            ),
+            format!("removed retired AGS entry: {}", path.display()),
         ),
         Err(e) => crate::setup::SetupFinding::fail(
             id,

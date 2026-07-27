@@ -1,10 +1,7 @@
 //! Human CLI adapter for the private-runtime setup lifecycle.
 
-pub(crate) mod memory;
-pub(crate) mod rollback;
-
 use crate::context::{
-    guard_writable_target, home_dir, private_install_target, source_root_or_exit, unix_timestamp,
+    guard_writable_target, home_dir, private_install_target, source_root_or_exit,
 };
 use crate::host_platforms::{
     cross_platform_init_json, cross_platform_init_plan, render_cross_platform_init_text,
@@ -17,57 +14,11 @@ pub(crate) fn private_install_health_report(
     target: &std::path::Path,
     include_optional_extensions: bool,
 ) -> ags_verification::doctor::HealthReport {
-    into_health_report(ags_lifecycle::setup::private_install_health_report(
+    ags_lifecycle::setup::private_install_health_report(
         target,
         &home_dir(),
         include_optional_extensions,
-    ))
-}
-
-fn into_health_report(
-    report: ags_lifecycle::setup::SetupReport,
-) -> ags_verification::doctor::HealthReport {
-    let mut converted = ags_verification::doctor::HealthReport::new(report.title.clone());
-    append_setup_report(&mut converted, report);
-    converted
-}
-
-pub(in crate::setup) fn append_setup_report(
-    target: &mut ags_verification::doctor::HealthReport,
-    report: ags_lifecycle::setup::SetupReport,
-) {
-    for finding in report.findings {
-        target.add(ags_verification::doctor::Finding {
-            check_name: finding.check_name,
-            status: match finding.status {
-                ags_lifecycle::setup::SetupCheckStatus::Pass => {
-                    ags_verification::doctor::CheckStatus::Pass
-                }
-                ags_lifecycle::setup::SetupCheckStatus::Fail => {
-                    ags_verification::doctor::CheckStatus::Fail
-                }
-                ags_lifecycle::setup::SetupCheckStatus::Warn => {
-                    ags_verification::doctor::CheckStatus::Warn
-                }
-                ags_lifecycle::setup::SetupCheckStatus::Skip => {
-                    ags_verification::doctor::CheckStatus::Skip
-                }
-            },
-            severity: match finding.severity {
-                ags_lifecycle::setup::SetupSeverity::Info => {
-                    ags_verification::doctor::Severity::Info
-                }
-                ags_lifecycle::setup::SetupSeverity::Warn => {
-                    ags_verification::doctor::Severity::Warn
-                }
-                ags_lifecycle::setup::SetupSeverity::Fail => {
-                    ags_verification::doctor::Severity::Fail
-                }
-            },
-            message: finding.message,
-            detail: finding.detail,
-        });
-    }
+    )
 }
 
 pub(crate) fn cmd_private_plan(profile: &str, target: Option<PathBuf>, format: &str) {
@@ -151,13 +102,8 @@ pub(crate) fn run_private_apply(
         force,
         include_optional_extensions,
         register_claude,
-        backup_stamp: unix_timestamp(),
     });
-    (
-        into_health_report(result.report),
-        result.target,
-        result.plan_text,
-    )
+    (result.report, result.target, result.plan_text)
 }
 
 pub(crate) fn cmd_private_apply(
@@ -284,7 +230,6 @@ pub(crate) fn cmd_setup(
                 exit_code: report.exit_code(),
                 output_hash: ags_evidence::sha256_hex(b"setup-applied"),
             }],
-            ags_evidence::RollbackPlan::backup_restore(vec![]),
             if passed { "applied" } else { "failed" },
             passed,
         );

@@ -15,9 +15,7 @@
 
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-
-use sha2::{Digest, Sha256};
+use std::sync::Arc;
 
 use crate::protocol::{
     InitializeResult, JsonRpcRequest, JsonRpcResponse, PromptsCapability, ResourcesCapability,
@@ -37,41 +35,20 @@ use ags_session::WorkspaceState;
 #[derive(Debug)]
 struct PreflightState {
     governance: ags_session::WorkspaceClientSession<tools::HeldAction>,
-    runtime_process: RuntimeProcessIdentity,
 }
 
 impl PreflightState {
-    #[cfg(test)]
-    fn new() -> Self {
-        Self::with_runtime_process(RuntimeProcessIdentity::capture())
-    }
-
-    #[cfg(test)]
-    fn with_runtime_process(runtime_process: RuntimeProcessIdentity) -> Self {
-        Self {
-            governance: ags_session::WorkspaceClientSession::standalone(host_home()),
-            runtime_process,
-        }
-    }
-
-    fn for_workspace(
-        workspace: Arc<WorkspaceState>,
-        session_id: String,
-        runtime_process: RuntimeProcessIdentity,
-    ) -> Self {
+    fn for_workspace(workspace: Arc<WorkspaceState>, session_id: String) -> Self {
         Self {
             governance: ags_session::WorkspaceClientSession::new(
                 workspace,
                 session_id,
                 host_home(),
             ),
-            runtime_process,
         }
     }
 
-    /// Clear per-connection governance state while retaining the identity of the
-    /// executable loaded when this process started. Re-initializing a stdio
-    /// connection must not make an old process look like a newly loaded binary.
+    /// Clear per-connection governance state.
     fn reset_session(&mut self) {
         self.governance.reset();
     }
@@ -81,15 +58,15 @@ impl PreflightState {
     /// JSON, not the raw call arguments.
     fn mark_completed(
         &mut self,
-        agent: Option<String>,
-        target: Option<String>,
+        agent: String,
+        target: String,
         capability: Option<ags_session::CapabilityReference>,
     ) {
-        self.governance.mark_completed(agent, target, capability);
+        self.governance.bind_ready(agent, target, capability);
     }
 
-    fn mark_bootstrap_required(&mut self, agent: Option<String>, target: Option<String>) {
-        self.governance.mark_bootstrap_required(agent, target);
+    fn mark_bootstrap_required(&mut self, agent: String, target: String) {
+        self.governance.bind_bootstrap_required(agent, target);
     }
 
     fn binding(&self) -> Option<tools::PreflightBinding> {
@@ -101,266 +78,6 @@ fn host_home() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct RuntimeProcessIdentity {
-    executable: Option<PathBuf>,
-    started_hash: Option<String>,
-    observation: Arc<Mutex<RuntimeExecutableObservation>>,
-    #[cfg(test)]
-    full_hash_reads: Arc<std::sync::atomic::AtomicU64>,
-}
-
-#[derive(Debug)]
-struct RuntimeExecutableObservation {
-    /// File identity whose bytes produced `started_hash`.
-    ///
-    /// On Unix this includes inode/device plus content-relevant timestamps.
-    /// Other platforms deliberately leave this unset and retain the conservative
-    /// full-hash check on every governed request.
-    fingerprint: Option<ExecutableFingerprint>,
-}
-
-#[cfg(unix)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ExecutableFingerprint {
-    device: u64,
-    inode: u64,
-    size: u64,
-    modified_seconds: i64,
-    modified_nanoseconds: i64,
-    changed_seconds: i64,
-    changed_nanoseconds: i64,
-}
-
-#[derive(Debug, Clone)]
-struct RuntimeProcessStaleEvidence {
-    executable: PathBuf,
-    started_hash: String,
-    installed_hash: String,
-}
-
-impl RuntimeProcessIdentity {
-    pub(crate) fn capture() -> Self {
-        let executable = std::env::current_exe().ok();
-        let (started_hash, fingerprint) = executable
-            .as_deref()
-            .map(capture_executable)
-            .unwrap_or((None, None));
-        Self {
-            executable,
-            started_hash,
-            observation: Arc::new(Mutex::new(RuntimeExecutableObservation { fingerprint })),
-            #[cfg(test)]
-            full_hash_reads: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        }
-    }
-
-    #[cfg(test)]
-    fn capture_from_path(executable: PathBuf) -> Self {
-        let (started_hash, fingerprint) = capture_executable(&executable);
-        Self {
-            executable: Some(executable),
-            started_hash,
-            observation: Arc::new(Mutex::new(RuntimeExecutableObservation { fingerprint })),
-            full_hash_reads: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        }
-    }
-
-    fn stale_evidence(&self) -> Option<RuntimeProcessStaleEvidence> {
-        let executable = self.executable.clone()?;
-        let Some(started_hash) = self.started_hash.clone() else {
-            return Some(RuntimeProcessStaleEvidence {
-                executable,
-                started_hash: "unavailable:startup-hash-read-failed".to_string(),
-                installed_hash: "unverified".to_string(),
-            });
-        };
-        let before = match executable_fingerprint(&executable) {
-            Ok(fingerprint) => fingerprint,
-            Err(error) => {
-                return Some(RuntimeProcessStaleEvidence {
-                    executable,
-                    started_hash,
-                    installed_hash: format!("unavailable:{error}"),
-                });
-            }
-        };
-        let mut observation = self
-            .observation
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if before.is_some() && before == observation.fingerprint {
-            return None;
-        }
-
-        #[cfg(test)]
-        self.full_hash_reads
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let installed_hash = match executable_sha256(&executable) {
-            Some(hash) => hash,
-            None => {
-                return Some(RuntimeProcessStaleEvidence {
-                    executable,
-                    started_hash,
-                    installed_hash: "unavailable:hash-read-failed".to_string(),
-                });
-            }
-        };
-        let after = executable_fingerprint(&executable).ok().flatten();
-        if before != after {
-            return Some(RuntimeProcessStaleEvidence {
-                executable,
-                started_hash,
-                installed_hash: format!("unstable:{installed_hash}"),
-            });
-        }
-        if installed_hash == started_hash {
-            observation.fingerprint = after;
-            return None;
-        }
-        Some(RuntimeProcessStaleEvidence {
-            executable,
-            started_hash,
-            installed_hash,
-        })
-    }
-
-    #[cfg(test)]
-    fn full_hash_reads(&self) -> u64 {
-        self.full_hash_reads
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-}
-
-fn capture_executable(path: &Path) -> (Option<String>, Option<ExecutableFingerprint>) {
-    let before = executable_fingerprint(path).ok().flatten();
-    let hash = executable_sha256(path);
-    let after = executable_fingerprint(path).ok().flatten();
-    let fingerprint = (before == after).then_some(after).flatten();
-    (hash, fingerprint)
-}
-
-#[cfg(unix)]
-fn executable_fingerprint(path: &Path) -> std::io::Result<Option<ExecutableFingerprint>> {
-    use std::os::unix::fs::MetadataExt;
-
-    let metadata = std::fs::metadata(path)?;
-    Ok(Some(ExecutableFingerprint {
-        device: metadata.dev(),
-        inode: metadata.ino(),
-        size: metadata.size(),
-        modified_seconds: metadata.mtime(),
-        modified_nanoseconds: metadata.mtime_nsec(),
-        changed_seconds: metadata.ctime(),
-        changed_nanoseconds: metadata.ctime_nsec(),
-    }))
-}
-
-#[cfg(not(unix))]
-fn executable_fingerprint(path: &Path) -> std::io::Result<Option<ExecutableFingerprint>> {
-    // No std API exposes a portable file identity strong enough to prove that
-    // a path still names the bytes hashed at daemon start. Keep the existing
-    // full-hash-per-call behavior on these platforms.
-    let _ = std::fs::metadata(path)?;
-    Ok(None)
-}
-
-#[cfg(not(unix))]
-type ExecutableFingerprint = ();
-
-fn executable_sha256(path: &Path) -> Option<String> {
-    let bytes = std::fs::read(path).ok()?;
-    let digest = Sha256::digest(bytes);
-    Some(format!("sha256:{digest:x}"))
-}
-
-fn attach_runtime_process_stale(result: &str, evidence: &RuntimeProcessStaleEvidence) -> String {
-    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(result) else {
-        return result.to_string();
-    };
-    let Some(object) = value.as_object_mut() else {
-        return result.to_string();
-    };
-
-    object.insert(
-        "runtime_process".to_string(),
-        serde_json::json!({
-            "status": "stale",
-            "executable": evidence.executable,
-            "started_hash": evidence.started_hash,
-            "installed_hash": evidence.installed_hash,
-            "restart_required": true
-        }),
-    );
-
-    let capability = object
-        .entry("capability_catalog".to_string())
-        .or_insert_with(|| serde_json::json!({}));
-    if let Some(capability) = capability.as_object_mut() {
-        capability.insert(
-            "status".to_string(),
-            serde_json::json!("runtime_process_stale"),
-        );
-        capability.insert("refresh_required".to_string(), serde_json::json!(false));
-        capability.insert("requires_host_restart".to_string(), serde_json::json!(true));
-        capability.remove("refresh");
-    }
-
-    let already_stopped = object
-        .get("overall_status")
-        .and_then(|status| status.as_str())
-        .is_some_and(|status| status == "stop");
-    if !already_stopped {
-        object.insert("overall_status".to_string(), serde_json::json!("warning"));
-        object.insert(
-            "governance_status".to_string(),
-            serde_json::json!("NEEDS_USER_DECISION"),
-        );
-    }
-
-    let warning = "AGS workspace daemon is stale after an executable upgrade; the host may still reply directly outside AGS, but all AGS-governed routing, actions, and resources are blocked until the host reconnects through the stdio adapter.";
-    let warnings = object
-        .entry("warnings".to_string())
-        .or_insert_with(|| serde_json::json!([]));
-    if let Some(warnings) = warnings.as_array_mut() {
-        if !warnings
-            .iter()
-            .any(|entry| entry.as_str().is_some_and(|entry| entry == warning))
-        {
-            warnings.push(serde_json::json!(warning));
-        }
-    }
-
-    let mut existing_steps = object
-        .get("next_steps")
-        .and_then(|steps| steps.as_array())
-        .cloned()
-        .unwrap_or_default();
-    existing_steps.retain(|step| {
-        step.as_str().is_none_or(|text| {
-            !text.contains("All clear")
-                && !text.contains("may execute tasks")
-                && !text.contains("Capability snapshot refresh")
-                && !text.contains("capability_catalog.refresh.argv")
-        })
-    });
-    let mut next_steps = vec![
-        serde_json::json!(
-            "⚠ Reconnect the AGS MCP stdio adapter so it stops the old workspace daemon before starting the installed executable."
-        ),
-        serde_json::json!(
-            "  Do not refresh the capability snapshot for this condition; rerun ags_preflight after reconnecting."
-        ),
-    ];
-    next_steps.append(&mut existing_steps);
-    object.insert(
-        "next_steps".to_string(),
-        serde_json::Value::Array(next_steps),
-    );
-
-    serde_json::to_string_pretty(&value).unwrap_or_else(|_| result.to_string())
 }
 
 fn is_successful_preflight_result(result: &str) -> bool {
@@ -380,43 +97,7 @@ fn is_successful_preflight_result(result: &str) -> bool {
         .get("failures")
         .and_then(|v| v.as_array())
         .is_some_and(|failures| failures.is_empty());
-    let runtime_process_current = value
-        .get("runtime_process")
-        .and_then(|runtime| runtime.get("status"))
-        .and_then(|status| status.as_str())
-        .is_none_or(|status| status != "stale");
-
-    exit_code_ok && !should_stop && failures_empty && runtime_process_current
-}
-
-fn is_runtime_process_stale_result(result: &str) -> bool {
-    serde_json::from_str::<serde_json::Value>(result)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("runtime_process")
-                .and_then(|runtime| runtime.get("status"))
-                .and_then(|status| status.as_str())
-                .map(str::to_string)
-        })
-        .is_some_and(|status| status == "stale")
-}
-
-fn runtime_process_stale_error(
-    id: Option<serde_json::Value>,
-    preflight: &PreflightState,
-) -> Option<JsonRpcResponse> {
-    let evidence = preflight.runtime_process.stale_evidence()?;
-    Some(JsonRpcResponse::error(
-        id,
-        -32001,
-        &format!(
-            "runtime_process_stale: AGS executable changed from {} to {} at {}; reconnect through the stdio adapter before using governed tools or resources",
-            evidence.started_hash,
-            evidence.installed_hash,
-            evidence.executable.display()
-        ),
-    ))
+    exit_code_ok && !should_stop && failures_empty
 }
 
 /// Extract the normalized agent and resolved target from a successful preflight
@@ -568,10 +249,9 @@ pub(crate) fn run_mcp_session<R: BufRead, W: Write>(
     mut writer: W,
     workspace: Arc<WorkspaceState>,
     session_id: String,
-    runtime_process: RuntimeProcessIdentity,
 ) {
     let mut initialized = false;
-    let mut preflight = PreflightState::for_workspace(workspace, session_id, runtime_process);
+    let mut preflight = PreflightState::for_workspace(workspace, session_id);
 
     for line in reader.lines() {
         let line = match line {
@@ -682,8 +362,7 @@ fn handle_initialize(
     };
 
     *initialized = true;
-    // Reset connection governance state while preserving the executable
-    // identity captured when this process started.
+    // Reset connection governance state.
     preflight.reset_session();
 
     let json_result = serde_json::to_value(&result).unwrap_or(serde_json::Value::Null);
@@ -727,16 +406,6 @@ fn handle_tools_call(req: &JsonRpcRequest, preflight: &mut PreflightState) -> Js
         return JsonRpcResponse::error(req.id.clone(), -32000, PREFLIGHT_GATE_ERROR);
     }
 
-    // Check the loaded executable before any governed adapter can invalidate a
-    // decision generation, mint a lease, read a bound resource, or cross the
-    // apply consumption point. Discovery and host-instruction bootstrap remain
-    // available; preflight retains its structured stale report.
-    if tool_name != tools::TOOL_PREFLIGHT && tool_name != tools::TOOL_AGENT_INSTRUCTIONS {
-        if let Some(response) = runtime_process_stale_error(req.id.clone(), preflight) {
-            return response;
-        }
-    }
-
     // Every preflight attempt invalidates actions from the preceding binding,
     // even when the new preflight ultimately reports a stop condition.
     if tools::is_preflight_tool_name(tool_name) {
@@ -745,27 +414,15 @@ fn handle_tools_call(req: &JsonRpcRequest, preflight: &mut PreflightState) -> Js
 
     let binding = preflight.binding();
     let workspace = Arc::clone(preflight.governance.workspace());
-    let capability_source: Option<&dyn tools::CapabilityCatalogSource> =
-        workspace.is_daemon_owned().then_some(workspace.as_ref());
 
     match tools::call_tool(
         tool_name,
         &arguments,
         binding.as_ref(),
         preflight.governance.action_store_mut(),
-        capability_source,
+        workspace.as_ref(),
     ) {
         Ok(result) => {
-            let result = if tools::is_preflight_tool_name(tool_name) {
-                if let Some(evidence) = preflight.runtime_process.stale_evidence() {
-                    preflight.reset_session();
-                    attach_runtime_process_stale(&result, &evidence)
-                } else {
-                    result
-                }
-            } else {
-                result
-            };
             let result = if tools::is_preflight_tool_name(tool_name) {
                 attach_workspace_service(&result, preflight)
             } else {
@@ -775,27 +432,30 @@ fn handle_tools_call(req: &JsonRpcRequest, preflight: &mut PreflightState) -> Js
             // Mark preflight as completed only when the preflight report itself
             // is clean. A successful JSON-RPC tool call may still report
             // overall_status=Stop / exit_code=1 for an ungoverned target.
-            if tools::is_preflight_tool_name(tool_name) && is_runtime_process_stale_result(&result)
-            {
-                // The process cannot safely establish any governed binding
-                // after its on-disk executable changes.
-            } else if tools::is_preflight_tool_name(tool_name)
-                && is_successful_preflight_result(&result)
-            {
+            if tools::is_preflight_tool_name(tool_name) && is_successful_preflight_result(&result) {
                 // Use the NORMALIZED agent + RESOLVED target from the preflight
                 // result JSON, not the raw call arguments.
                 let (agent, target, capability) = preflight_context_from_result(&result);
-                preflight.mark_completed(agent, target, capability);
-                log_error(&format!(
-                    "preflight completed for agent: {} target: {}",
-                    preflight.governance.preflight_agent().unwrap_or("unknown"),
-                    preflight.governance.preflight_target().unwrap_or("unknown"),
-                ));
+                if let (Some(agent), Some(target)) = (agent, target) {
+                    preflight.mark_completed(agent, target, capability);
+                    log_error(&format!(
+                        "preflight completed for agent: {} target: {}",
+                        preflight.governance.preflight_agent().unwrap_or("unknown"),
+                        preflight.governance.preflight_target().unwrap_or("unknown"),
+                    ));
+                } else {
+                    preflight.reset_session();
+                    log_error("preflight result omitted normalized binding");
+                }
             } else if tools::is_preflight_tool_name(tool_name)
                 && is_bootstrap_required_preflight_result(&result)
             {
                 let (agent, target, _) = preflight_context_from_result(&result);
-                preflight.mark_bootstrap_required(agent, target);
+                if let (Some(agent), Some(target)) = (agent, target) {
+                    preflight.mark_bootstrap_required(agent, target);
+                } else {
+                    preflight.reset_session();
+                }
                 if preflight.governance.is_bootstrap_required() {
                     log_error("preflight established restricted bootstrap_required binding");
                 }
@@ -848,9 +508,6 @@ fn handle_resources_read(req: &JsonRpcRequest, preflight: &PreflightState) -> Js
     };
 
     if uri == tools::CURRENT_HOST_CAPABILITIES_URI {
-        if let Some(response) = runtime_process_stale_error(req.id.clone(), preflight) {
-            return response;
-        }
         let Some(binding) = preflight.binding() else {
             return JsonRpcResponse::error(req.id.clone(), -32000, PREFLIGHT_GATE_ERROR);
         };
@@ -908,12 +565,6 @@ fn handle_prompts_get(req: &JsonRpcRequest, preflight: &PreflightState) -> JsonR
     {
         return JsonRpcResponse::error(req.id.clone(), -32000, PREFLIGHT_GATE_ERROR);
     }
-    if PHASE_GATED_PROMPTS.contains(&prompt_name) {
-        if let Some(response) = runtime_process_stale_error(req.id.clone(), preflight) {
-            return response;
-        }
-    }
-
     let arguments = params
         .get("arguments")
         .cloned()
@@ -948,6 +599,3 @@ fn log_error(msg: &str) {
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod tests;

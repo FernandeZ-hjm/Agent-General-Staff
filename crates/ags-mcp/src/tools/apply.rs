@@ -1,140 +1,46 @@
 use super::*;
 #[allow(unused_imports)]
 use super::{decision::*, preflight::*, wire::*};
-#[cfg(test)]
 pub(super) fn tool_apply_action(
     args: &serde_json::Value,
     binding: &PreflightBinding,
     session: &mut RoutingSession,
     runtime_home: &Path,
 ) -> Result<String, String> {
-    tool_apply_action_with_source(args, binding, session, runtime_home, None)
-}
-
-pub(super) fn tool_apply_action_with_source(
-    args: &serde_json::Value,
-    binding: &PreflightBinding,
-    session: &mut RoutingSession,
-    runtime_home: &Path,
-    capability_source: Option<&dyn CapabilityCatalogSource>,
-) -> Result<String, String> {
     let lease_id = get_string(args, "lease_id")?;
     let action_id = get_string(args, "action_id")?;
-    let generation = session.generation;
     {
         let action = session
-            .actions
             .get(&action_id)
             .ok_or_else(|| "decision_lease_invalid_or_expired".to_string())?;
         if action.consumed || action.evidence.lease_id != lease_id {
             return Err("decision_lease_invalid_or_consumed".to_string());
         }
         validate_apply_shape(args, &action.kind)?;
-
-        if action.evidence.host != binding.host
-            || Path::new(&action.evidence.target) != binding.target
-        {
-            return Err("preflight_binding_conflict".to_string());
-        }
-        let policy_hash = match &action.kind {
-            HeldActionKind::Machine {
-                capability,
-                input,
-                skill_outcome,
-            } => machine_policy_hash(*capability, input, skill_outcome.as_ref())?,
-            HeldActionKind::RecordOutcome {
-                request_fingerprint,
-                skill_id,
-                entrypoint,
-            } => outcome_policy_hash(request_fingerprint, skill_id, entrypoint.as_deref()),
-            HeldActionKind::Onboarding {
-                plan_hash,
-                item_id,
-                action,
-            } => onboarding_policy_hash(plan_hash, item_id, action),
-        };
-        if policy_hash != action.policy_hash || policy_hash != action.evidence.policy_hash {
-            return Err("decision_lease_policy_hash_mismatch".to_string());
-        }
-        if !matches!(action.kind, HeldActionKind::Onboarding { .. }) {
-            if capability_source.is_some() {
-                let failure = binding
-                    .capability
-                    .as_ref()
-                    .and_then(ags_session::CapabilityReference::as_failure)
-                    .or_else(|| {
-                        binding
-                            .capability
-                            .is_none()
-                            .then_some(ags_session::CapabilityLoadFailure::SnapshotStale)
-                    });
-                if let Some(error) = failure {
-                    return Err(error.into_legacy_error());
-                }
-            }
-            let catalog = capability_source
-                .map_or_else(
-                    || {
-                        ags_session::LocalCapabilityCatalogSource::new(runtime_home.to_path_buf())
-                            .load_validated_snapshot(binding)
-                    },
-                    |source| source.load_validated_snapshot(binding),
-                )
-                .map_err(ags_session::CapabilityLoadFailure::into_legacy_error)?;
-            if capability_source.is_some()
-                && binding
-                    .capability
-                    .as_ref()
-                    .and_then(ags_session::CapabilityReference::ready_binding)
-                    != Some(&catalog.binding)
-            {
-                return Err("decision_lease_preflight_capability_binding_stale".to_string());
-            }
-            if catalog.snapshot.registry_hash != action.evidence.registry_hash {
-                return Err("decision_lease_registry_hash_mismatch".to_string());
-            }
-            if catalog.snapshot.snapshot_hash != action.evidence.snapshot_hash {
-                return Err("decision_lease_snapshot_hash_mismatch".to_string());
-            }
-        }
     }
 
     // Only the effect boundary consumes the one-shot lease. Everything above is
     // admission and can be retried after correcting transient bindings, hashes,
     // catalogs, snapshots, or input. Once invocation begins, success or failure
     // is final and replay stays fail-closed for every action on this lease.
-    for held in session.actions.values_mut() {
+    for held in session.values_mut() {
         if held.evidence.lease_id == lease_id {
             held.consumed = true;
         }
     }
     let action = session
-        .actions
         .get(&action_id)
         .expect("validated held action remains daemon-client-session-local");
-
-    let (machine_result, onboarding_result, outcome_event_id, status, requires_repreflight) =
+    let (machine_result, onboarding_result, outcome_accepted, status, requires_repreflight) =
         match &action.kind {
             HeldActionKind::Machine {
                 capability,
                 input,
                 skill_outcome,
             } => {
-                let outcome = match (skill_outcome, args.get("outcome")) {
-                    (Some(_), Some(value)) => Some(
-                        serde_json::from_value::<OutcomeInput>(value.clone())
-                            .expect("apply shape validated machine outcome"),
-                    ),
-                    (None, Some(_)) => unreachable!("apply shape rejected unexpected outcome"),
-                    (_, None) => None,
-                };
-                let result = invoke_machine_cli(
-                    *capability,
-                    input,
-                    &binding.host,
-                    &binding.target,
-                    runtime_home,
-                )?;
+                let outcome_accepted = skill_outcome.is_some() && args.get("outcome").is_some();
+                let result =
+                    invoke_machine_cli(*capability, input, &binding.host, &binding.target)?;
                 let status = if result.success {
                     if capability.is_handoff_capability() {
                         GovernanceStatus::HostExecutionRequired
@@ -144,52 +50,9 @@ pub(super) fn tool_apply_action_with_source(
                 } else {
                     GovernanceStatus::BlockedByPolicy
                 };
-                let outcome_event_id = match (skill_outcome, outcome) {
-                    (Some(skill), Some(outcome)) => Some(append_outcome_event(
-                        runtime_home,
-                        binding,
-                        action,
-                        generation,
-                        skill,
-                        outcome,
-                        &session.connection_nonce,
-                    )?),
-                    _ => None,
-                };
-                (Some(result), None, outcome_event_id, status, false)
+                (Some(result), None, outcome_accepted, status, false)
             }
-            HeldActionKind::RecordOutcome {
-                request_fingerprint,
-                skill_id,
-                entrypoint,
-            } => {
-                let outcome: OutcomeInput = serde_json::from_value(
-                    args.get("outcome")
-                        .cloned()
-                        .expect("apply shape required an outcome"),
-                )
-                .expect("apply shape validated recorded outcome");
-                let event_id = append_outcome_event(
-                    runtime_home,
-                    binding,
-                    action,
-                    generation,
-                    &SkillOutcomeBinding {
-                        request_fingerprint: request_fingerprint.clone(),
-                        skill_id: skill_id.clone(),
-                        entrypoint: entrypoint.clone(),
-                    },
-                    outcome,
-                    &session.connection_nonce,
-                )?;
-                (
-                    None,
-                    None,
-                    Some(event_id),
-                    GovernanceStatus::DoneWithReceipt,
-                    false,
-                )
-            }
+            HeldActionKind::RecordOutcome { .. } => (None, None, true, GovernanceStatus::Ok, false),
             HeldActionKind::Onboarding {
                 item_id,
                 action: onboarding_action,
@@ -207,18 +70,18 @@ pub(super) fn tool_apply_action_with_source(
                 } else {
                     GovernanceStatus::BlockedByPolicy
                 };
-                (None, Some(result), None, status, true)
+                (None, Some(result), false, status, true)
             }
         };
     pretty(&ApplyResult {
-        schema_version: "0.3.0-apply-result",
+        schema_version: "0.3.4-apply-result",
         governance_status: status,
         lease_id,
         action_id,
         consumed: true,
         machine_result,
         onboarding_result,
-        outcome_event_id,
+        outcome_accepted,
         requires_repreflight,
     })
 }
@@ -248,8 +111,12 @@ pub(super) fn validate_apply_shape(
             | HeldActionKind::RecordOutcome { .. },
             Some(value),
         ) => {
-            serde_json::from_value::<OutcomeInput>(value.clone())
+            let outcome = serde_json::from_value::<OutcomeInput>(value.clone())
                 .map_err(|error| format!("invalid_outcome: {error}"))?;
+            if outcome.quality.is_some_and(|quality| quality > 100) {
+                return Err("invalid_outcome: quality must be in 0..=100".to_string());
+            }
+            let _ = outcome.status;
             Ok(())
         }
         (HeldActionKind::RecordOutcome { .. }, None) => Err("outcome_required".to_string()),
@@ -265,33 +132,6 @@ pub(super) fn validate_apply_shape(
         }
         _ => Ok(()),
     }
-}
-
-pub(super) fn append_outcome_event(
-    runtime_home: &Path,
-    binding: &PreflightBinding,
-    action: &HeldAction,
-    generation: u64,
-    skill: &SkillOutcomeBinding,
-    outcome: OutcomeInput,
-    connection_nonce: &str,
-) -> Result<String, String> {
-    let event_id = stable_id("outcome", &action.action_id, connection_nonce, generation);
-    let event = ags_capability_governance::SkillUsageEvent {
-        schema_version: ags_capability_governance::SKILL_USAGE_EVENT_SCHEMA_VERSION.to_string(),
-        event_id: event_id.clone(),
-        timestamp_unix: unix_timestamp(),
-        request_fingerprint: skill.request_fingerprint.clone(),
-        proposal_id: action.evidence.proposal_hash.clone(),
-        decision_id: action.evidence.decision_id.clone(),
-        lease_id: action.evidence.lease_id.clone(),
-        skill_id: skill.skill_id.clone(),
-        entrypoint: skill.entrypoint.clone(),
-        outcome: outcome.status,
-        quality: outcome.quality,
-    };
-    ags_capability_governance::append_usage_event(runtime_home, &binding.host, &event)?;
-    Ok(event_id)
 }
 
 pub(super) fn invoke_onboarding_action(
@@ -319,22 +159,6 @@ pub(super) fn emit_onboarding_receipt(
     held: &HeldAction,
     result: &OnboardingExecutionResult,
 ) -> Result<String, String> {
-    let rollback = match &held.kind {
-        HeldActionKind::Onboarding { action, .. } => {
-            let steps = ags_lifecycle::rollback_advice(action)
-                .into_iter()
-                .map(|advice| ags_evidence::RollbackStep {
-                    affected_path: advice.affected_path,
-                    inverse_op: "manual-confirm".to_string(),
-                    backup_path: None,
-                    inverse_command: advice.inverse_command,
-                    detail: advice.detail,
-                })
-                .collect();
-            ags_evidence::RollbackPlan::manual_confirm(steps)
-        }
-        _ => ags_evidence::RollbackPlan::none(),
-    };
     let receipt = ags_evidence::build_action_receipt(
         "mcp-onboarding-apply",
         Some(&binding.target.to_string_lossy()),
@@ -352,7 +176,6 @@ pub(super) fn emit_onboarding_receipt(
                 format!("{}\n{}", result.stdout, result.stderr).as_bytes(),
             ),
         }],
-        rollback,
         if result.success { "applied" } else { "failed" },
         result.success,
     );
@@ -375,7 +198,6 @@ pub(super) fn invoke_machine_cli(
     input: &TypedCliInput,
     host: &str,
     target: &Path,
-    _runtime_home: &Path,
 ) -> Result<MachineCliResult, String> {
     let executable = std::env::var_os("AGS_CLI_BIN")
         .map(PathBuf::from)
@@ -418,7 +240,7 @@ pub(super) fn machine_invocation(
         TypedCliInput::ConfirmedHandoffContract { content, .. }
         | TypedCliInput::TaskCard { content }
         | TypedCliInput::Receipt { content } => content.clone(),
-        TypedCliInput::SkillAdopt { .. } | TypedCliInput::Empty => String::new(),
+        TypedCliInput::Empty => String::new(),
     };
     let args = match capability {
         CliCapabilityId::TaskCompile => {
@@ -476,56 +298,9 @@ pub(super) fn machine_invocation(
                 stdin,
             ));
         }
-        CliCapabilityId::SkillAdopt => {
-            let TypedCliInput::SkillAdopt {
-                source,
-                host,
-                apply,
-            } = input
-            else {
-                unreachable!("validated SkillAdopt input kind");
-            };
-            let mut args = vec![
-                "skill".to_string(),
-                "adopt".to_string(),
-                "--host".to_string(),
-                host.clone(),
-                "--format".to_string(),
-                "json".to_string(),
-            ];
-            if *apply {
-                args.push("--apply".to_string());
-            }
-            args.push("--".to_string());
-            args.push(source.clone());
-            return Ok((args, stdin));
-        }
         CliCapabilityId::ReceiptVerify => vec!["receipt", "verify", "-", "--format", "json"],
     };
     Ok((args.into_iter().map(str::to_string).collect(), stdin))
-}
-
-pub(super) fn stable_id(
-    prefix: &str,
-    basis: &str,
-    connection_nonce: &str,
-    generation: u64,
-) -> String {
-    let digest = sha256(format!("{connection_nonce}\n{generation}\n{basis}").as_bytes());
-    format!(
-        "{prefix}-{}",
-        digest
-            .trim_start_matches("sha256:")
-            .get(..20)
-            .unwrap_or("invalid")
-    )
-}
-
-pub(super) fn unix_timestamp() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
 }
 
 pub(super) fn get_string(args: &serde_json::Value, key: &str) -> Result<String, String> {

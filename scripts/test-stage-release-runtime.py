@@ -21,7 +21,7 @@ class StageReleaseRuntimeTests(unittest.TestCase):
         plan.write_text(
             json.dumps(
                 {
-                    "schema_version": "2.0-release",
+                    "schema_version": "0.3.4-release-plan",
                     "profile": "public-full",
                     "authority_errors": [],
                     "required_missing": [],

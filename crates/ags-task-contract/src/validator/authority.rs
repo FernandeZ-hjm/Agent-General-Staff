@@ -32,18 +32,15 @@ pub(crate) fn check_execution_authority_gate(
     let workflow_lower = normalize_workflow_request_text(&workflow_text.to_lowercase());
 
     // ── Execution effort: the exhaustive tier must not be abused as authority ──
-    // `exhaustive` is the neutral value; `ultracode` is the legacy alias. Either
-    // way, effort is thinking-intensity only, never permission / review-skip /
-    // auto-execute authority.
-    let execution_effort = get_execution_effort(fields);
-    if is_exhaustive_effort(execution_effort) {
+    let execution_effort = field_val(fields, "Execution effort:");
+    if execution_effort == "exhaustive" {
         let effort_abuse = EXHAUSTIVE_EFFORT_AUTHORITY_ABUSE_KEYWORDS
             .iter()
             .any(|kw| action_lower.contains(&kw.to_lowercase()));
         if effort_abuse {
             errors.push(format!(
                 "[{}] Execution effort 为 {}（exhaustive 强度），但任务行动区域将其当作执行权限/跳过 review/自动执行的依据。Execution effort 只能表示思考强度，不能映射为 plan、parallel、permission escalation 或 workflow authority",
-                error_code::ULTRACODE_AUTHORITY_ABUSE,
+                error_code::EXECUTION_EFFORT_POLICY_VIOLATION,
                 execution_effort
             ));
         }
@@ -106,7 +103,7 @@ pub(crate) fn check_execution_authority_gate(
                 ));
             }
         }
-        "none" | "limited" | "parallel" => {
+        "none" => {
             // These parallelism values are compatible with any Workflow
             // authority at the field level.  BUT: if the action body text
             // still asks for subagent/multi-session/agent-team, we must
@@ -116,10 +113,10 @@ pub(crate) fn check_execution_authority_gate(
     }
 
     // ── Parallelism body-text contradiction checks ──
-    // When Parallelism is none/limited/parallel but the task body asks for
+    // When Parallelism is none but the task body asks for
     // delegation patterns, fail.  This catches the case where the field
     // says "none" but the task text says "用 subagent 处理".
-    if parallelism == "none" || parallelism == "limited" || parallelism == "parallel" {
+    if parallelism == "none" {
         let asks_delegation = PARALLELISM_BODY_KEYWORDS
             .iter()
             .any(|kw| action_lower.contains(&kw.to_lowercase()));

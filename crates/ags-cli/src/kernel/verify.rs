@@ -1,7 +1,7 @@
 use crate::cli::VerifyAction;
 use std::path::Path;
 
-/// Shared dispatch: `verify` and backward-compatible `verify run`.
+/// Run the top-level `verify` command.
 fn cmd_verify_run(scope: &str, format: &str, target: &Path, public_root: Option<&Path>) {
     if !target.exists() {
         eprintln!("verify: target does not exist — {}", target.display());
@@ -84,12 +84,6 @@ pub(crate) fn run(
     public_root: Option<&Path>,
 ) {
     match action {
-        Some(VerifyAction::Run {
-            scope,
-            format,
-            target,
-            public_root,
-        }) => cmd_verify_run(&scope, &format, &target, public_root.as_deref()),
         Some(VerifyAction::Lane {
             range,
             format,

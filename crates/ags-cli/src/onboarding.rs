@@ -74,7 +74,6 @@ pub(crate) fn run(action: CliOnboardingAction) {
                         format!("{}\n{}", result.stdout, result.stderr).as_bytes(),
                     ),
                 }],
-                onboarding_rollback_plan(action),
                 if success { "applied" } else { "failed" },
                 success,
             );
@@ -82,7 +81,7 @@ pub(crate) fn run(action: CliOnboardingAction) {
                 .ok()
                 .map(|path| path.display().to_string());
             let output = ApplyOutput {
-                schema_version: "0.3.0-onboarding-apply",
+                schema_version: "0.3.4-onboarding-apply",
                 plan_hash: &plan.plan_hash,
                 item_id: &item,
                 success,
@@ -109,22 +108,6 @@ pub(crate) fn run(action: CliOnboardingAction) {
             }
         }
     }
-}
-
-fn onboarding_rollback_plan(
-    action: &ags_lifecycle::OnboardingAction,
-) -> ags_evidence::RollbackPlan {
-    let steps = ags_lifecycle::rollback_advice(action)
-        .into_iter()
-        .map(|advice| ags_evidence::RollbackStep {
-            affected_path: advice.affected_path,
-            inverse_op: "manual-confirm".to_string(),
-            backup_path: None,
-            inverse_command: advice.inverse_command,
-            detail: advice.detail,
-        })
-        .collect();
-    ags_evidence::RollbackPlan::manual_confirm(steps)
 }
 
 fn plan_or_exit(target: &Path, host: &str) -> OnboardingPlan {
@@ -197,12 +180,9 @@ fn print_plan(plan: &OnboardingPlan, format: &str) {
     println!("Target: {}", plan.target);
     println!("Plan hash: {}", plan.plan_hash);
     println!(
-        "Capability registry: {} ({}, {})",
-        plan.manifest_source, plan.manifest_freshness, plan.manifest_hash
+        "Capability registry snapshot: {} ({})",
+        plan.manifest_source, plan.manifest_hash
     );
-    if let Some(reason) = &plan.manifest_fallback_reason {
-        println!("Registry fallback: {reason}");
-    }
     println!(
         "State: {}",
         if plan.ready {

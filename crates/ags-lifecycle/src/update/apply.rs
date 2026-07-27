@@ -1,6 +1,7 @@
 //! Effect orchestration for `ags update apply`.
 
 use super::{ProjectInventory, ProjectUpdate, UpdateLane};
+use ags_workspace_facts::managed_projects;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -13,20 +14,17 @@ pub struct BuildStep {
 
 #[derive(Debug, Clone)]
 pub struct RuntimeUpdate {
-    pub ok: bool,
-    pub exit_code: i32,
-    pub human_output: String,
-}
-
-pub trait UpdateEffects {
-    fn apply_runtime(&mut self) -> RuntimeUpdate;
-    fn refresh_projects(&mut self) -> ProjectInventory;
+    pub report: crate::setup::SetupReport,
 }
 
 #[derive(Debug, Clone)]
 pub struct ApplyRequest {
     pub lane: Option<UpdateLane>,
     pub source_root: PathBuf,
+    pub runtime_target: PathBuf,
+    pub home: PathBuf,
+    pub force: bool,
+    pub include_optional_extensions: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -138,7 +136,7 @@ pub fn advised_commands(lane: Option<UpdateLane>) -> Vec<AdvisedCommand> {
         .map(|candidate| {
             let command = match candidate {
                 UpdateLane::Agents => "ags agents govern",
-                UpdateLane::Skills => "ags skill sync --apply",
+                UpdateLane::Skills => "ags capability snapshot --write --host <host>",
                 UpdateLane::Public => "review public boundary; AGS never publishes by default",
                 _ => "",
             };
@@ -150,7 +148,65 @@ pub fn advised_commands(lane: Option<UpdateLane>) -> Vec<AdvisedCommand> {
         .collect()
 }
 
-pub fn execute(request: &ApplyRequest, effects: &mut impl UpdateEffects) -> ApplyOutcome {
+pub fn inspect_projects(source_root: &Path, runtime_home: &Path, apply: bool) -> ProjectInventory {
+    let registry = match managed_projects::load(&managed_projects::registry_path(runtime_home)) {
+        Ok(registry) => registry,
+        Err(error) => {
+            return ProjectInventory {
+                registry_error: Some(error),
+                ..ProjectInventory::default()
+            };
+        }
+    };
+    let (existing, stale) = managed_projects::partition_existing(&registry);
+    let reports = existing
+        .iter()
+        .map(|project| {
+            let report = crate::init::refresh_managed_project(
+                Path::new(&project.path),
+                &project.slug,
+                source_root,
+                apply,
+            );
+            ProjectUpdate {
+                target: report.target,
+                slug: report.slug,
+                status: report.status,
+                drift: report.drift,
+                changed_files: report.changed_files,
+                unchanged_files: report.unchanged_files,
+                blocked_reasons: report.blocked_reasons,
+            }
+        })
+        .collect();
+    let stale_reports = stale
+        .iter()
+        .map(|project| ProjectUpdate {
+            target: project.path.clone(),
+            slug: project.slug.clone(),
+            status: "stale".to_string(),
+            drift: true,
+            changed_files: Vec::new(),
+            unchanged_files: Vec::new(),
+            blocked_reasons: vec!["registered project directory is missing".to_string()],
+        })
+        .collect();
+    ProjectInventory {
+        registered: registry.projects.len(),
+        present: existing.len(),
+        stale: stale.len(),
+        remote_backed: registry
+            .projects
+            .iter()
+            .filter(|project| managed_projects::is_remote_backed(project))
+            .count(),
+        reports,
+        stale_reports,
+        registry_error: None,
+    }
+}
+
+pub fn execute(request: &ApplyRequest) -> ApplyOutcome {
     let run_core = request
         .lane
         .map(|lane| lane == UpdateLane::Core)
@@ -181,11 +237,22 @@ pub fn execute(request: &ApplyRequest, effects: &mut impl UpdateEffects) -> Appl
         .collect::<Vec<_>>();
 
     let runtime = if run_runtime && all_ok {
-        let runtime = effects.apply_runtime();
-        all_ok &= runtime.ok;
+        let result = crate::setup::apply_private(crate::setup::PrivateApplyRequest {
+            source_root: &request.source_root,
+            target: &request.runtime_target,
+            home: &request.home,
+            force: request.force,
+            include_optional_extensions: request.include_optional_extensions,
+            register_claude: false,
+        });
+        let runtime = RuntimeUpdate {
+            report: result.report,
+        };
+        let exit_code = runtime.report.exit_code();
+        all_ok &= exit_code == 0;
         verifications.push(UpdateVerification {
             command: "ags setup --yes (runtime/thin-index)".to_string(),
-            exit_code: runtime.exit_code,
+            exit_code,
             detail: "runtime-reapplied".to_string(),
         });
         Some(runtime)
@@ -196,7 +263,7 @@ pub fn execute(request: &ApplyRequest, effects: &mut impl UpdateEffects) -> Appl
     let mut projects = Vec::new();
     let mut project_registry_error = None;
     if run_projects && all_ok {
-        let inventory = effects.refresh_projects();
+        let inventory = inspect_projects(&request.source_root, &request.runtime_target, true);
         project_registry_error = inventory.registry_error;
         if project_registry_error.is_some() {
             all_ok = false;
@@ -280,28 +347,16 @@ pub fn execute(request: &ApplyRequest, effects: &mut impl UpdateEffects) -> Appl
 mod tests {
     use super::*;
 
-    struct PanicEffects;
-
-    impl UpdateEffects for PanicEffects {
-        fn apply_runtime(&mut self) -> RuntimeUpdate {
-            panic!("advice-only execution must not call runtime")
-        }
-
-        fn refresh_projects(&mut self) -> ProjectInventory {
-            panic!("advice-only execution must not refresh projects")
-        }
-    }
-
     #[test]
     fn advice_only_lane_is_never_reported_as_applied() {
-        let mut effects = PanicEffects;
-        let outcome = execute(
-            &ApplyRequest {
-                lane: Some(UpdateLane::Agents),
-                source_root: PathBuf::from("."),
-            },
-            &mut effects,
-        );
+        let outcome = execute(&ApplyRequest {
+            lane: Some(UpdateLane::Agents),
+            source_root: PathBuf::from("."),
+            runtime_target: PathBuf::from("must-not-be-used"),
+            home: PathBuf::from("must-not-be-used"),
+            force: false,
+            include_optional_extensions: false,
+        });
         assert!(!outcome.executed_local);
         assert_eq!(outcome.apply_status, "advised-only");
         assert!(!outcome.applied);

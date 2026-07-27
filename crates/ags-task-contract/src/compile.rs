@@ -1,13 +1,13 @@
-//! Typed and legacy-compatible task-card compilation.
+//! Typed task-card compilation.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
 use crate::context::{gather_project_context, ProjectContext, SlotSource};
+use crate::fields::{rendered_fields, required_fields, task_field, TASK_FIELDS};
 use crate::intent::{
-    is_structured_contract_intent, parse_intent, HandoffContract, HandoffSource, FIELD_HEADERS,
-    HANDOFF_CONTRACT_SCHEMA_VERSION, REQUIRED_FIELDS, SCHEMA_VERSION,
+    HandoffContract, HandoffSource, HANDOFF_CONTRACT_SCHEMA_VERSION, SCHEMA_VERSION,
 };
 
 // ── Compilation ─────────────────────────────────────────────────────────
@@ -36,9 +36,7 @@ pub struct CompileReport {
     pub missing_slots: Vec<String>,
     /// Assumptions made during compilation.
     pub assumptions: Vec<String>,
-    /// Compatibility notices for legacy loose contracts.
-    pub deprecations: Vec<String>,
-    /// `typed` for [`HandoffContract`], otherwise `legacy_loose`.
+    /// `typed` for a valid [`HandoffContract`], otherwise `typed_invalid`.
     pub contract_format: String,
     /// Whether the compiled card passes `ags task validate`.
     pub validation_passed: bool,
@@ -71,8 +69,7 @@ pub struct CompileReport {
 /// task card.
 ///
 /// The canonical input is a confirmed execution contract from the solution phase,
-/// not raw user chat. The compiler accepts flexible intents for backward
-/// compatibility, but callers should only pass confirmed execution contracts.
+/// not raw user chat. Only the typed JSON [`HandoffContract`] is accepted.
 ///
 /// # Task-card request gate
 ///
@@ -117,42 +114,32 @@ pub fn compile_with_handoff_source(
     confirmed_handoff_contract: bool,
     handoff_source: HandoffSource,
 ) -> (String, CompileReport) {
-    if intent.trim_start().starts_with('{') {
-        return match serde_json::from_str::<HandoffContract>(intent) {
-            Ok(contract) => match compile_typed_handoff_contract_with_source(
-                &contract,
-                project_root,
-                check_only,
-                task_card_requested,
-                confirmed_handoff_contract,
-                handoff_source,
-            ) {
-                Ok(result) => result,
-                Err(errors) => invalid_typed_contract_report(
-                    errors,
-                    check_only,
-                    task_card_requested,
-                    confirmed_handoff_contract,
-                    handoff_source,
-                ),
-            },
-            Err(error) => invalid_typed_contract_report(
-                vec![format!("invalid typed handoff contract: {error}")],
+    match serde_json::from_str::<HandoffContract>(intent) {
+        Ok(contract) => match compile_typed_handoff_contract_with_source(
+            &contract,
+            project_root,
+            check_only,
+            task_card_requested,
+            confirmed_handoff_contract,
+            handoff_source,
+        ) {
+            Ok(result) => result,
+            Err(errors) => invalid_typed_contract_report(
+                errors,
                 check_only,
                 task_card_requested,
                 confirmed_handoff_contract,
                 handoff_source,
             ),
-        };
+        },
+        Err(error) => invalid_typed_contract_report(
+            vec![format!("invalid typed handoff contract: {error}")],
+            check_only,
+            task_card_requested,
+            confirmed_handoff_contract,
+            handoff_source,
+        ),
     }
-    compile_legacy_contract(
-        intent,
-        project_root,
-        check_only,
-        task_card_requested,
-        confirmed_handoff_contract,
-        handoff_source,
-    )
 }
 
 fn invalid_typed_contract_report(
@@ -170,7 +157,6 @@ fn invalid_typed_contract_report(
             slot_sources: Vec::new(),
             missing_slots: Vec::new(),
             assumptions: Vec::new(),
-            deprecations: Vec::new(),
             contract_format: "typed_invalid".to_string(),
             validation_passed: false,
             validation_errors: errors,
@@ -210,23 +196,22 @@ pub fn compile_typed_handoff_contract_with_source(
     confirmed_handoff_contract: bool,
     handoff_source: HandoffSource,
 ) -> Result<(String, CompileReport), Vec<String>> {
-    let intent = render_typed_handoff_contract(contract)?;
-    let (card, mut report) = compile_legacy_contract(
-        &intent,
+    let (contract_material, parsed_fields) = prepare_typed_handoff_contract(contract)?;
+    let (card, report) = compile_parsed_contract(
+        &contract_material,
+        parsed_fields,
         project_root,
         check_only,
         task_card_requested,
         confirmed_handoff_contract,
         handoff_source,
     );
-    report.contract_format = "typed".to_string();
-    report
-        .deprecations
-        .retain(|notice| notice != "legacy_loose_contract_missing_task_level_defaulted_to_medium");
     Ok((card, report))
 }
 
-fn render_typed_handoff_contract(contract: &HandoffContract) -> Result<String, Vec<String>> {
+fn prepare_typed_handoff_contract(
+    contract: &HandoffContract,
+) -> Result<(String, HashMap<String, String>), Vec<String>> {
     let mut errors = Vec::new();
     if contract.schema_version != HANDOFF_CONTRACT_SCHEMA_VERSION {
         errors.push(format!(
@@ -245,7 +230,7 @@ fn render_typed_handoff_contract(contract: &HandoffContract) -> Result<String, V
             errors.push(format!(
                 "typed field {key} cannot override a required typed member"
             ));
-        } else if !FIELD_HEADERS.iter().any(|(header, _)| key == header) {
+        } else if task_field(key).is_none() {
             errors.push(format!("unknown typed handoff field: {key}"));
         }
     }
@@ -257,25 +242,32 @@ fn render_typed_handoff_contract(contract: &HandoffContract) -> Result<String, V
         format!("任务级别：{}", contract.task_level.as_str()),
         format!("任务：{}", contract.task.trim()),
     ];
+    let mut parsed_fields = HashMap::from([
+        (
+            "任务级别：".to_string(),
+            contract.task_level.as_str().to_string(),
+        ),
+        ("任务：".to_string(), contract.task.trim().to_string()),
+    ]);
     let mut fields = contract.fields.iter().collect::<Vec<_>>();
     fields.sort_by(|left, right| left.0.cmp(right.0));
     for (header, value) in fields {
-        let inline = FIELD_HEADERS
-            .iter()
-            .find(|(known, _)| header == known)
-            .map(|(_, inline)| *inline)
-            .unwrap_or(false);
+        let value = value.trim();
+        parsed_fields.insert(header.clone(), value.to_string());
+        let inline = task_field(header).is_some_and(|field| field.inline);
         if inline {
-            lines.push(format!("{header} {}", value.trim()));
+            lines.push(format!("{header} {value}"));
         } else {
-            lines.push(format!("{header}\n{}", value.trim()));
+            lines.push(format!("{header}\n{value}"));
         }
     }
-    Ok(lines.join("\n"))
+    Ok((lines.join("\n"), parsed_fields))
 }
 
-fn compile_legacy_contract(
-    intent: &str,
+#[allow(clippy::too_many_arguments)]
+fn compile_parsed_contract(
+    contract_material: &str,
+    parsed_fields: HashMap<String, String>,
     project_root: &Path,
     check_only: bool,
     task_card_requested: bool,
@@ -283,17 +275,14 @@ fn compile_legacy_contract(
     handoff_source: HandoffSource,
 ) -> (String, CompileReport) {
     let ctx = gather_project_context(project_root);
-    let parsed = parse_intent(intent);
-    let contract_is_structured = is_structured_contract_intent(intent);
-
     let mut slot_sources: Vec<SlotEntry> = Vec::new();
     let mut assumptions: Vec<String> = Vec::new();
-    let mut deprecations: Vec<String> = Vec::new();
     let mut fields: HashMap<String, String> = HashMap::new();
 
     // ── Phase 1: fill fields from intent ────────────────────────────
-    for (header, _is_inline) in FIELD_HEADERS {
-        if let Some(val) = parsed.fields.get(*header) {
+    for field in TASK_FIELDS {
+        let header = field.header;
+        if let Some(val) = parsed_fields.get(header) {
             if !val.is_empty() {
                 fields.insert(header.to_string(), val.clone());
                 slot_sources.push(SlotEntry {
@@ -309,7 +298,7 @@ fn compile_legacy_contract(
     // deterministic and cannot be overridden by loose or typed input.
     let contract_material = format!(
         "{}\n---handoff-source---\n{}",
-        intent.trim(),
+        contract_material.trim(),
         handoff_source.as_str()
     );
     let contract_hash = ags_platform::sha256_hex(contract_material.as_bytes());
@@ -400,22 +389,6 @@ fn compile_legacy_contract(
         slot_sources.push(SlotEntry {
             field: "Parallelism:".to_string(),
             value: "none".to_string(),
-            source: SlotSource::Default,
-        });
-    }
-
-    // 任务级别：— typed contracts always provide it. A legacy loose contract
-    // may omit it for one compatibility window; the only allowed fallback is
-    // Medium plus an explicit deprecation. Natural-language keywords are never
-    // a task-level authority.
-    if !has_field(&fields, "任务级别：") {
-        let level = "Medium".to_string();
-        fields.insert("任务级别：".to_string(), level.clone());
-        deprecations
-            .push("legacy_loose_contract_missing_task_level_defaulted_to_medium".to_string());
-        slot_sources.push(SlotEntry {
-            field: "任务级别：".to_string(),
-            value: level,
             source: SlotSource::Default,
         });
     }
@@ -591,10 +564,9 @@ fn compile_legacy_contract(
     }
 
     // ── Phase 4: detect missing required slots ──────────────────────
-    let missing_slots: Vec<String> = REQUIRED_FIELDS
-        .iter()
-        .filter(|h| !has_field(&fields, h))
-        .map(|h| h.to_string())
+    let missing_slots: Vec<String> = required_fields()
+        .filter(|field| !has_field(&fields, field.header))
+        .map(|field| field.header.to_string())
         .collect();
 
     // Also check that 任务：and 目标：have meaningful content
@@ -654,8 +626,6 @@ fn compile_legacy_contract(
         (false, Some("task_card_not_requested".to_string()))
     } else if !confirmed_handoff_contract {
         (false, Some("handoff_contract_not_confirmed".to_string()))
-    } else if !contract_is_structured {
-        (false, Some("handoff_contract_not_structured".to_string()))
     } else if check_only {
         (false, Some("check_only".to_string()))
     } else if !missing_slots.is_empty() {
@@ -689,7 +659,6 @@ fn compile_legacy_contract(
                     "task card not requested (use --task-card-requested only after an explicit handoff instruction)"
                 }
                 "handoff_contract_not_confirmed" => "handoff contract not confirmed (supply structured --confirmed-handoff-contract evidence)",
-                "handoff_contract_not_structured" => "handoff contract must contain a `任务：` field and no unscoped free text",
                 "check_only" => "check-only mode",
                 "missing_slots" => "missing required slots",
                 other => other,
@@ -705,8 +674,7 @@ fn compile_legacy_contract(
         slot_sources,
         missing_slots,
         assumptions,
-        deprecations,
-        contract_format: "legacy_loose".to_string(),
+        contract_format: "typed".to_string(),
         validation_passed: effective_validation_passed,
         validation_errors: effective_validation_errors,
         check_only,
@@ -786,43 +754,9 @@ fn render_task_card(fields: &HashMap<String, String>) -> String {
     lines.push("## 任务卡".to_string());
     lines.push(String::new());
 
-    // Field order matching the canonical classic skeleton
-    // (protocol/task-card-template.md). The removed compact fields
-    // (路径/读取/关键路径/停止条件) are intentionally never rendered.
-    let order: &[&str] = &[
-        "读取并遵守：",
-        "Contract ID:",
-        "Handoff source:",
-        "Executor:",
-        "Runtime adapter:",
-        "Execution surface:",
-        "Permission mode:",
-        "Parallelism:",
-        "Execution effort:",
-        "Workflow authority:",
-        "任务级别：",
-        "Review gate:",
-        "任务：",
-        "背景：",
-        "项目画像：",
-        "记忆胶囊：",
-        "任务存档：",
-        "适用治理文档：",
-        "目标文件夹路径：",
-        "相关路径：",
-        "本次任务相关文件：",
-        "目标：",
-        "验收标准：",
-        "非目标：",
-        "子任务编排：",
-        "实施要求：",
-        "验证：",
-        "Verification gate:",
-        "交付：",
-    ];
-
-    for header in order {
-        if let Some(value) = fields.get(*header) {
+    for field in rendered_fields() {
+        let header = field.header;
+        if let Some(value) = fields.get(header) {
             let val = value.trim();
             if val.is_empty() {
                 continue;
@@ -830,7 +764,7 @@ fn render_task_card(fields: &HashMap<String, String>) -> String {
             lines.push(header.to_string());
             // Multi-line fields get their content on separate lines,
             // inline fields stay on the same line
-            if is_inline_field(header) {
+            if field.inline {
                 // Inline — replace the bare header line with "Header: value".
                 let last = lines.last_mut().unwrap();
                 *last = format!("{} {}", header, val);
@@ -855,22 +789,6 @@ fn render_task_card(fields: &HashMap<String, String>) -> String {
     }
 
     lines.join("\n") + "\n"
-}
-
-fn is_inline_field(header: &str) -> bool {
-    matches!(
-        header,
-        "Contract ID:"
-            | "Handoff source:"
-            | "Executor:"
-            | "Runtime adapter:"
-            | "Execution surface:"
-            | "Permission mode:"
-            | "Parallelism:"
-            | "任务级别："
-            | "Execution effort:"
-            | "Workflow authority:"
-    )
 }
 
 // ── Public API ──────────────────────────────────────────────────────────

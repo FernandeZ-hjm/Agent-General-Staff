@@ -38,6 +38,11 @@ fn has_token_like_secret(text: &str, prefix: &str, min_tail: usize) -> bool {
     }
     false
 }
+fn codex_command_skill_is_current(content: &str, name: &str) -> bool {
+    content.contains(&format!("name: \"{name}\""))
+        && content.contains("ags session preflight --for")
+        && content.contains(AGS_VERSION)
+}
 fn mcp_smoke_current_exe() -> Result<(), String> {
     use std::io::Write;
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -256,11 +261,7 @@ pub(in crate::setup) fn private_install_health_report(
         let check_suffix = sanitize_name(name);
         if skill_path.exists() {
             match std::fs::read_to_string(&skill_path) {
-                Ok(content)
-                    if content.contains(&format!("name: \"{name}\""))
-                        && content.contains("ags session preflight --for codex")
-                        && content.contains(AGS_VERSION) =>
-                {
+                Ok(content) if codex_command_skill_is_current(&content, name) => {
                     report.add(crate::setup::SetupFinding::pass(
                         format!("private-install-codex-command-skill-{check_suffix}"),
                         format!("Codex command skill present: {name}"),

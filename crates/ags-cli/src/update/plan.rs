@@ -3,9 +3,9 @@ use crate::context::{
     capability_authority_root_or_exit, default_private_runtime_home, source_root_or_exit,
     AGS_VERSION,
 };
-use crate::managed_projects;
 use crate::update::lanes::{build_all_update_lanes, lifecycle_lane, update_lane_json};
 use ags_lifecycle::update::UpdateLanePlan;
+use ags_workspace_facts::managed_projects;
 use std::path::PathBuf;
 
 /// Runtime home verified by `ags update verify`. An explicit `--target` is the
@@ -19,10 +19,6 @@ pub(in crate::update) fn cmd_update_check(format: &str) {
     let source = source_root_or_exit("ags update check");
     let home = default_private_runtime_home();
     let lanes = build_all_update_lanes(&source, &home);
-    // Read-only notifier status: reflects stored update-state.json only. NO
-    // network probe, NO state write here — due fetch/write belongs to
-    // `ags update notify`. Read from the notifier's own runtime home.
-    let notify_home = ags_capability_governance::locate_runtime_home();
     if format == "json" {
         let arr: Vec<_> = lanes.iter().map(update_lane_json).collect();
         let reg =
@@ -36,7 +32,6 @@ pub(in crate::update) fn cmd_update_check(format: &str) {
                 "version": AGS_VERSION,
                 "lanes": arr,
                 "managed_projects": reg_json,
-                "notifier": crate::update::notifier::notifier_status_json(&notify_home),
             }))
             .unwrap()
         );
@@ -57,10 +52,6 @@ pub(in crate::update) fn cmd_update_check(format: &str) {
                 p.summary
             );
         }
-        println!(
-            "{}",
-            crate::update::notifier::notifier_status_line(&notify_home)
-        );
         println!("\nNext: `ags update plan` for the full plan; `ags update apply --apply` updates local executable lanes.");
     }
 }

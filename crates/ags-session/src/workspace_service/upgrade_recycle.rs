@@ -54,7 +54,6 @@ pub(super) fn run_workspace_daemon_impl(
         executable_hash: owner.owner.executable_hash.clone(),
         process_start_identity: owner.owner.process_start_identity.clone(),
         daemon_nonce: owner.owner.daemon_nonce.clone(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
     };
     let state = Arc::new(WorkspaceState::new(workspace.clone(), runtime_home)?);
     publish_registry(&paths.registry, &registry)?;
@@ -220,19 +219,18 @@ pub(super) fn connect_registered(
     let Some(registry) = read_registry(&paths.registry)? else {
         return Ok(None);
     };
-    if registry.schema_version != REGISTRY_SCHEMA || registry.workspace != workspace {
+    if registry.workspace != workspace {
         return Err("workspace daemon registry identity mismatch".to_string());
+    }
+    if registry.schema_version != REGISTRY_SCHEMA {
+        if !registry_matches_process(&registry) {
+            remove_registry_if_owned(&paths.registry, &registry.token);
+        }
+        return Ok(None);
     }
     match TcpStream::connect(&registry.endpoint) {
         Ok(stream) => Ok(Some((stream, registry))),
-        Err(_)
-            if registry.process_start_identity.is_empty()
-                || !registry_matches_process(&registry) =>
-        {
-            // A v0.3.1 registry has no process-start identity. A reused PID
-            // therefore cannot prove that the old daemon still owns this
-            // unreachable endpoint. New registries are reclaimed only after
-            // their PID + process-start identity no longer matches.
+        Err(_) if !registry_matches_process(&registry) => {
             remove_registry_if_owned(&paths.registry, &registry.token);
             Ok(None)
         }
@@ -264,14 +262,14 @@ fn retire_mismatched_daemon(
     let Some(registry) = read_registry(&paths.registry)? else {
         return Ok(());
     };
-    if registry.schema_version != REGISTRY_SCHEMA || registry.workspace != workspace {
+    if registry.workspace != workspace {
         return Err("workspace daemon registry identity mismatch".to_string());
     }
     if !registry_matches_process(&registry) {
         remove_registry_if_owned(&paths.registry, &registry.token);
         return Ok(());
     }
-    if registry.executable_hash == executable_hash {
+    if registry.schema_version == REGISTRY_SCHEMA && registry.executable_hash == executable_hash {
         return Ok(());
     }
     if request_shutdown(&registry)? {
@@ -304,7 +302,6 @@ fn request_shutdown(registry: &WorkspaceRegistry) -> Result<bool, String> {
             protocol: WIRE_SCHEMA.to_string(),
             token: registry.token.clone(),
             kind: "control".to_string(),
-            session_id: None,
             command: Some("shutdown".to_string()),
             workspace: registry.workspace.clone(),
         },

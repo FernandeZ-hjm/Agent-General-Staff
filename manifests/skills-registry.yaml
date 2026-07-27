@@ -5,7 +5,7 @@
 # ownership. Upstreams remain read-only comparison sources: crawl remote ->
 # generate diff proposal -> human accepts or rejects.
 # `route_priority`, examples, and demand_routes remain 0.2.x compatibility
-# metadata only. The 0.3.3 resolver never consumes them as selection authority;
+# metadata only. The 0.3.4 resolver never consumes them as selection authority;
 # hosts choose exact SkillTargets from the thin SkillCard catalog.
 
 registry:
@@ -14,7 +14,7 @@ registry:
     Public skills registry for Agent General Staff. This indexes the
     required global skills and records which existing skills should watch
     upstream skill repositories for future changes.
-  update_policy: read_only_crawl_then_diff_proposal
+  update_policy: explicit_release_refresh
   upstreams:
     mattpocock_skills:
       type: git
@@ -94,7 +94,7 @@ skills:
       upstream: mattpocock_skills
       path: skills/engineering/diagnosing-bugs
       relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
+      update_policy: explicit_release_refresh
 
   - name: codebase-design
     profile: required
@@ -119,7 +119,7 @@ skills:
       upstream: mattpocock_skills
       path: skills/engineering/codebase-design
       relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
+      update_policy: explicit_release_refresh
 
   - name: domain-modeling
     profile: required
@@ -144,7 +144,7 @@ skills:
       upstream: mattpocock_skills
       path: skills/engineering/domain-modeling
       relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
+      update_policy: explicit_release_refresh
 
   - name: webapp-testing
     routing:
@@ -180,7 +180,7 @@ skills:
       upstream: mattpocock_skills
       path: skills/engineering/grill-with-docs
       relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
+      update_policy: explicit_release_refresh
 
   - name: grilling
     profile: required
@@ -205,7 +205,7 @@ skills:
       upstream: mattpocock_skills
       path: skills/productivity/grilling
       relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
+      update_policy: explicit_release_refresh
 
   - name: grill-me
     description: Stateless plan/design grilling for work that does not live in a repo
@@ -218,7 +218,7 @@ skills:
       upstream: mattpocock_skills
       path: skills/productivity/grill-me
       relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
+      update_policy: explicit_release_refresh
 
   - name: to-prd
     profile: required
@@ -243,7 +243,7 @@ skills:
       upstream: mattpocock_skills
       path: skills/engineering/to-prd
       relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
+      update_policy: explicit_release_refresh
 
   - name: to-issues
     profile: required
@@ -268,7 +268,7 @@ skills:
       upstream: mattpocock_skills
       path: skills/engineering/to-issues
       relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
+      update_policy: explicit_release_refresh
 
   - name: triage
     profile: required
@@ -293,7 +293,7 @@ skills:
       upstream: mattpocock_skills
       path: skills/engineering/triage
       relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
+      update_policy: explicit_release_refresh
 
   - name: handoff
     profile: required
@@ -318,7 +318,7 @@ skills:
       upstream: mattpocock_skills
       path: skills/productivity/handoff
       relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
+      update_policy: explicit_release_refresh
 
   - name: improve-codebase-architecture
     profile: required
@@ -341,7 +341,7 @@ skills:
       upstream: mattpocock_skills
       path: skills/engineering/improve-codebase-architecture
       relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
+      update_policy: explicit_release_refresh
 
   - name: prototype
     profile: required
@@ -364,7 +364,7 @@ skills:
       upstream: mattpocock_skills
       path: skills/engineering/prototype
       relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
+      update_policy: explicit_release_refresh
 
   - name: resolving-merge-conflicts
     profile: required
@@ -389,7 +389,7 @@ skills:
       upstream: mattpocock_skills
       path: skills/engineering/resolving-merge-conflicts
       relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
+      update_policy: explicit_release_refresh
 
   - name: review
     profile: required
@@ -414,7 +414,7 @@ skills:
       upstream: mattpocock_skills
       path: skills/in-progress/review
       relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
+      update_policy: explicit_release_refresh
 
   - name: decision-mapping
     profile: required
@@ -439,7 +439,7 @@ skills:
       upstream: mattpocock_skills
       path: skills/in-progress/decision-mapping
       relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
+      update_policy: explicit_release_refresh
 
   - name: database-migration
     routing:
@@ -478,7 +478,7 @@ skills:
       upstream: mattpocock_skills
       path: skills/productivity/writing-great-skills
       relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
+      update_policy: explicit_release_refresh
 
   - name: graphify
     routing:
@@ -516,7 +516,7 @@ skills:
       upstream: superpowers
       path: skills
       relationship: bundled_parent
-      update_policy: crawl_then_diff_proposal
+      update_policy: explicit_release_refresh
 
   # ── host-system skill-authoring entry (adopted into the registry; NOT a suite
   #    body) ──
@@ -1020,7 +1020,7 @@ skills:
   # ── AGS governance ops command skills (not-routable) ──
   - name: ags-agents
     profile: required
-    local_path: global-skills/ags-agents
+    local_path: templates/command-skills/ags-agents
     routing:
       route_state: not-routable
       routing_surface: host_command
@@ -1031,20 +1031,9 @@ skills:
       examples:
         positive: ["检查本机 Agent 宿主和 AGS MCP 注册状态"]
         negative: ["让其他 Agent 并行执行代码任务"]
-  # ags-capability retired from the front-stage command-skill set (0.2.7): the
-  # `ags capability ...` CLI and cross-Agent sync engine remain; the command
-  # skill is no longer suite-required. The registry row is KEPT with
-  # route_state: retired (the canonical global-skills/ags-capability body is
-  # still on disk) so the skill console refuses to re-adopt/sync it into any
-  # host — a resurrection guard. See governance/skill-adoption-log.yaml.
-  - name: ags-capability
-    routing:
-      route_state: retired
-      capability_group: [ags-governance-ops]
-      upstream_group: "suite-local"
   - name: ags-doctor
     profile: required
-    local_path: global-skills/ags-doctor
+    local_path: templates/command-skills/ags-doctor
     routing:
       route_state: not-routable
       routing_surface: host_command
@@ -1057,7 +1046,7 @@ skills:
         negative: ["诊断项目代码里的业务 bug"]
   - name: ags-init
     profile: required
-    local_path: global-skills/ags-init
+    local_path: templates/command-skills/ags-init
     routing:
       route_state: not-routable
       routing_surface: host_command
@@ -1070,7 +1059,7 @@ skills:
         negative: ["初始化本机 AGS runtime"]
   - name: ags-setup
     profile: required
-    local_path: global-skills/ags-setup
+    local_path: templates/command-skills/ags-setup
     routing:
       route_state: not-routable
       routing_surface: host_command
@@ -1083,11 +1072,22 @@ skills:
         negative: ["初始化当前项目的 AGS 协议文件"]
   - name: ags-skill
     profile: required
-    local_path: global-skills/ags-skill
+    local_path: templates/command-skills/ags-skill
+    description: Govern catalog, local and GitHub skills through the unified AGS skill lifecycle
     routing:
-      route_state: not-routable
+      route_state: routable
+      intent_tags: [skill-adoption, third-party-skill, skill-index, cross-host-skill]
+      scope_tags: ["AGS 纳管 Skill", "第三方能力接入 AGS", "GitHub Skill", "给 Skill 加索引", "跨宿主可见", "中文自然语言唤醒", "adopt skill", "third-party skill"]
+      mutation_surface: local-write
+      requires_auth: false
+      cost_class: free
+      invoke_hint: "[skill: ags-skill]"
+      route_priority: 70
       capability_group: [ags-governance-ops]
       upstream_group: "suite-local"
+      examples:
+        positive: ["用 AGS 纳管这个 Skill", "下载并纳管这个 GitHub Skill", "让这个 Skill 在 Codex 和 Claude 都能用"]
+        negative: ["直接运行这个 Skill 帮我完成设计", "解释一下 Skill 是什么", "不用 AGS 直接执行第三方安装脚本"]
   - name: guizang-ppt-skill
     profile: optional
     local_path: skill-packs/optional/guizang-ppt-skill
@@ -1126,7 +1126,7 @@ skills:
       upstream: mattpocock_skills
       path: skills/personal/obsidian-vault
       relationship: upstream_aligned
-      update_policy: crawl_then_diff_proposal
+      update_policy: explicit_release_refresh
   - name: 产经破壁机-撰稿
     profile: personal
     local_path: skill-packs/personal/产经破壁机-撰稿
@@ -1235,7 +1235,7 @@ candidate_skills:
       path: skills/deprecated/ubiquitous-language
 
 # 0.2.x compatibility metadata only. `demand_routes` contributes intent tags
-# and legacy deserialization coverage; it is NOT a 0.3.3 route authority. Hosts
+# and legacy deserialization coverage; it is NOT a 0.3.4 route authority. Hosts
 # select an exact SkillTarget from SkillCard metadata, and Resolver validates
 # skill_id + entrypoint + snapshot_hash with no fallback. Superpowers playbooks
 # remain internal entrypoints of one host-visible parent.

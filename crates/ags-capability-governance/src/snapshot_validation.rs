@@ -1,13 +1,13 @@
 use super::*;
 #[allow(unused_imports)]
-use super::{authority::*, catalog::*, hashing::*, overlay_transaction::*, snapshot_compiler::*};
+use super::{authority::*, catalog::*, hashing::*, snapshot_compiler::*};
 #[derive(Debug)]
 pub enum SnapshotBuildError {
     Read(std::io::Error),
     Registry(RegistryError),
     Resolve(ResolveError),
     Parse(serde_json::Error),
-    Overlay(String),
+    Manifest(String),
 }
 
 /// Load the single persisted snapshot for one host and validate only its sealed

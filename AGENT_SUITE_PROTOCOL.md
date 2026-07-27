@@ -3,7 +3,7 @@
 本文件是 Agent General Staff 公开版治理控制面协议概述。Canonical 协议文件位于本仓库
 `protocol/` 目录下，自包含，不依赖私有基础设施或私有仓库。
 
-Current product version: **0.3.3**.
+Current product version: **0.3.4**.
 
 这是 Agent General Staff Public Edition 的当前 latest 产品版本。AGS 负责准入、
 授权、策略、验证、回执、能力快照和记忆闭环，不提供任务队列、Agent 调度器、
@@ -27,7 +27,7 @@ Current product version: **0.3.3**.
 - `ags bootstrap --dry-run`（别名：`bootstrap-dry-run`） — 引导干运行模拟
 - `ags project detect` / `ags protocol status` / `ags agent instructions` — M2 Agent 感知能力（只读）
 - `ags project integrate --dry-run|--confirm` — 增量融合 AGS 托管入口块到用户项目入口文件，不覆盖用户自有内容
-- `ags session preflight --for codex|claude-code|cursor` — 聚合 Agent 唤醒检查（CLI 降级/独立检查入口，不依赖 skill governance）
+- `ags session preflight --for codex|claude-code|cursor|omp` — 聚合 Agent 唤醒检查（CLI 降级/独立检查入口，不依赖 skill governance）
 - `ags verify --scope local|full|release|promotion` — 结构化验证入口；`release`
   自包含验证公开源码树，`promotion` 只在显式提供 public worktree 时验证 A→B
   边界，二者都提供稳定 CheckItem 模型和 text/json 双格式报告
@@ -40,7 +40,7 @@ MCP 不可用时的降级路径。
 `ags mcp serve` 是薄 stdio adapter，连接或启动按工作区 canonical path 唯一键控的
 AGS daemon。host 不参与实例键；Codex、Claude Code、Cursor 与 OMP 是同一工作区
 服务的不同客户端。每个客户端拥有独立 `session_id`、preflight binding 和
-DecisionLease，能力快照由 daemon 单点缓存并原子更新。断开客户端不等于关闭
+DecisionLease，能力快照由 daemon 在生命周期内单点缓存且保持不变。断开客户端不等于关闭
 daemon；升级必须先停止旧实例，再启动新二进制。
 开发请求到达时，宿主在 preflight 后读取当前宿主能力薄目录，结合完整对话形成
 typed `HostRouteProposal` 并交给严格只读的 `ags_route_request`。自然语言语义判断只在
@@ -80,13 +80,11 @@ Canonical 协议文件位于本仓库：
 - `manifests/suite.yaml` — 公开版 suite manifest
 - `manifests/skills-registry.yaml` — governed skill registry + routing metadata
 - `manifests/mcp-registry.yaml` — governed MCP registry
-- `manifests/skill-recommendations.yaml` — public-safe skill recommendations
 
 关键脚本入口：
 
 - `scripts/verify.sh` — full verification wrapper
 - `scripts/validate.sh` — canonical task-card validator wrapper
-- `scripts/run-task-card.sh` — runner wrapper
 - `scripts/lane-decision.sh` — change-lane / verification profile helper
 - `scripts/raw-tool-call-stop-guard.js` — Claude Stop hook raw tool-call guard
 - `scripts/context-memory.sh` — context capsule / task memory helper
@@ -134,10 +132,8 @@ workflow-sync-check 是 **read-only drift checker**，不决定任务是否进�
   `archive-index.md`、`task-archive/README.md`；
 - 项目入口融合模板：`templates/project-integration/AGENTS.md.template`、
   `templates/project-integration/CLAUDE.md.template`；
-- 空白治理审计骨架：`governance/skill-adoption-log.yaml`、
-  `governance/skill-ignore-list.yaml`；
-- 确认式技能治理和安装能力：scan/check/propose/install/adopt/ignore 等命令必须
-  遵守 dry-run、人工确认、不得静默覆盖用户目录的门禁。
+- 静态能力治理：第三方能力只在显式升级时审查，setup/update 为每个宿主生成唯一
+  current snapshot；请求路径不联网、不扫描、不刷新。
 
 公开版不得包含：
 
@@ -164,16 +160,15 @@ ags project integrate --target /path/to/repo --confirm
 该命令只管理 `<!-- AGS:BEGIN managed-entry v2 -->` 到
 `<!-- AGS:END managed-entry v2 -->` 之间的 AGS 块。用户自有内容保留在块外。
 如果入口文件已有完整托管块，则原地更新该块；如果没有，则追加；如果只存在半截
-marker 或发现与 AGS 治理冲突的入口规则，则停止并报告 conflict。确认写入时必须
-先保留备份，默认 dry-run 不写文件。
+marker 或发现与 AGS 治理冲突的入口规则，则停止并报告 conflict。确认写入使用原子
+替换，不生成持久备份；默认 dry-run 不写文件。
 
 ## Skill Governance
 
-Agent General Staff 在公开版中提供完整的技能治理框架，但不预装第三方技能或
-用户本地技能。`protocol/skill-governance.md` 定义推荐、扫描、检查、提案、确认安装、
-审计记录和回滚边界。公开版用户如需安装第三方开发技能，可以使用
-`ags skill install --skill <name> --confirm` 或参考 `docs/skill-recommendations.md`。
-所有第三方技能必须由用户自行选择可信来源并显式确认安装。
+Agent General Staff 在公开版中提供静态技能治理框架，但不预装第三方技能或
+用户本地技能。`protocol/skill-governance.md` 定义权威清单、显式刷新、精确路由和
+写入边界。第三方能力由用户选择可信来源，在维护者审查升级后通过 setup/update
+刷新一次当前快照；运行时没有 adopt/ignore/rollback/sync 写入面。
 
 Capability expected 集合以已安装 AGS source authority 为准，不得随执行命令的项目 cwd
 变化。registry 声明为 required+routable 的真实父能力即使本体缺失也必须进入 inventory

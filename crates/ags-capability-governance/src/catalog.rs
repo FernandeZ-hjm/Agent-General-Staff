@@ -17,7 +17,6 @@ pub enum GovernanceState {
     Candidate,
     ManagedInactive,
     Active,
-    Ignored,
     Retired,
 }
 
@@ -40,15 +39,6 @@ impl AvailabilityState {
     pub fn is_ready(&self) -> bool {
         matches!(self, Self::Ready)
     }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ActivityState {
-    #[default]
-    Unobserved,
-    Warm,
-    Cold,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,8 +93,6 @@ pub struct SkillCard {
     pub reason_codes: Vec<String>,
     pub requires_auth: bool,
     pub auth_state: AuthState,
-    #[serde(default)]
-    pub activity: ActivityState,
     pub version: String,
     pub source_hash: String,
 }
@@ -149,8 +137,6 @@ pub struct ActiveSkill {
     pub allowed_entrypoints: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub intent_tags: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub legacy_demands: Vec<SkillDemand>,
     pub source_hash: String,
 }
 
@@ -255,10 +241,7 @@ pub struct HostCapabilitySnapshot {
     pub schema_version: String,
     pub host: String,
     pub registry_hash: String,
-    pub overlay_hash: String,
     pub runtime_hash: String,
-    pub catalog_hash: String,
-    pub active_table_hash: String,
     pub snapshot_hash: String,
     pub catalog: Vec<SkillCard>,
     pub third_party_registry_url: String,
@@ -281,7 +264,6 @@ impl HostCapabilitySnapshot {
     pub fn new(
         host: impl Into<String>,
         registry_hash: impl Into<String>,
-        overlay_hash: impl Into<String>,
         runtime_hash: impl Into<String>,
         mut catalog: Vec<SkillCard>,
         third_party_registry_url: impl Into<String>,
@@ -294,16 +276,11 @@ impl HostCapabilitySnapshot {
         sort_third_party_cards(&mut third_party_catalog);
         let table = ActiveSkillTable::new(host.clone(), "pending", active_skills)?;
         active_skills = table.active_skills();
-        let catalog_hash = catalog_hash(&catalog, &third_party_catalog);
-        let active_table_hash = active_table_hash(&active_skills);
         let mut snapshot = Self {
             schema_version: HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION.to_string(),
             host,
             registry_hash: registry_hash.into(),
-            overlay_hash: overlay_hash.into(),
             runtime_hash: runtime_hash.into(),
-            catalog_hash,
-            active_table_hash,
             snapshot_hash: String::new(),
             catalog,
             third_party_registry_url: third_party_registry_url.into(),
@@ -329,10 +306,7 @@ impl HostCapabilitySnapshot {
         {
             return Err(SnapshotError::SkillSnapshotStale);
         }
-        if self.catalog_hash != catalog_hash(&self.catalog, &self.third_party_catalog)
-            || self.active_table_hash != active_table_hash(&self.active_skills)
-            || self.snapshot_hash != snapshot_integrity_hash(self)
-        {
+        if self.snapshot_hash != snapshot_integrity_hash(self) {
             return Err(SnapshotError::SnapshotIntegrityFailed);
         }
         ActiveSkillTable::new(

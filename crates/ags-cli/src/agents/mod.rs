@@ -1,7 +1,6 @@
 //! `ags agents` lifecycle (五段链路第 2 段) — host governance dispatch.
 
 mod govern;
-mod host_specs;
 mod scan;
 mod verify;
 

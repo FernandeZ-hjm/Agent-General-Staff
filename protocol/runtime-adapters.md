@@ -659,7 +659,7 @@ The resolver enforces the following MUST rules (canonical rule IDs M1–M10).
 
 | Rule | Description |
 |---|---|
-| M1–M3 | `ultracode` is thinking intensity only. It does **not** change permission mode, enable parallelism, or inject any launch arg. |
+| M1–M3 | Execution effort is thinking intensity only. It does **not** change permission mode, enable parallelism, or inject any launch arg. |
 | M4 | Task level never rewrites the permission mode. A resolved `execute-and-verify` card runs directly; Heavy adds no extra planning round. `current-task-approval` / `approve-writes` remain structured audit/hint signals; `approve-writes` may still act as the M9 generic-adapter capability override. |
 | M5–M6 | `plan-only` must **never** produce write-type launch args. Active parallelism flags (`--parallel`, `--worktree`) and `--headless` are stripped. |
 | M7 | `subagent`, `multi-session`, `agent-team` require Workflow authority `within-card` or `allowed`. `worktree` requires Workflow authority **not** `none`. |
@@ -674,8 +674,6 @@ Validate and resolve execution policy in one command:
 ```bash
 ags policy resolve <task-card> --format text|json [--current-task-approval] [--approve-writes]
 ```
-
-The old `ags resolve-policy` is kept as a hidden backward-compatible alias.
 
 The command runs the canonical task-card validator first; on validation failure
 it prints errors to stderr and exits 1.  On success it outputs the resolved
@@ -703,11 +701,9 @@ task level never downgrades an explicitly declared permission mode.
 
 `Execution effort` accepts the neutral execution-intensity values `low` /
 `normal` / `high` / `exhaustive` (default `unknown` when absent). The exhaustive
-tier (`exhaustive`) sets `is_exhaustive_mode`; `ultracode` is retained only as a
-parse-compatible legacy alias mapping to the same exhaustive semantics and must
-not be generated into the front-stage task card. Host-private depth/workflow
-trigger words are translated to execution behavior only by the claude-code
-adapter / runner from the resolved policy — never read from the task-card body.
+tier sets `is_exhaustive_mode`. Host-private depth/workflow trigger words are
+translated to execution behavior only by the host adapter from the resolved
+policy — never read from the task-card body.
 
 The resolver does not accept `approval_source` from the task card text — only
 structured launch inputs can set it: `--current-task-approval` →
@@ -718,7 +714,7 @@ environment override (`AGS_APPROVE_WRITES=1` → `runner-env`). Task card text i
 ### Stop before host execution
 
 The resolver has one host-execution blocking mechanism. The field name remains
-`stop_before_launch` for schema compatibility; AGS 0.3.3 Runner never launches:
+`stop_before_launch` is retained as an explicit policy result; AGS 0.3.4 Runner never launches:
 
 | Mechanism | Meaning | Runner behavior |
 |---|---|---|
@@ -761,13 +757,13 @@ human-readable diagnostics only.
 | `effective_permission_mode` | string | `plan-only` or `execute-and-verify`. This is the only permission mode a host may use. |
 | `effective_parallelism` | string | `none`, `subagent`, `worktree`, `multi-session`, `agent-team`. This is the resolved value after authority and writability gates. |
 | `effective_execution_surface` | string | `local-workspace`, `cli`, `ide`, `web`, `remote-control`, `background-agent`. If `background-agent` is blocked by `plan-only`, this becomes `cli`. |
-| `allowed_launch_args` | string array | Compatibility-named exact host CLI args. Runner may only copy them verbatim into `AdapterPlan`; it never launches and MUST NOT synthesize arguments from raw task-card fields. |
+| `allowed_launch_args` | string array | Exact host CLI args. Runner may only copy them verbatim into `AdapterPlan`; it never launches and MUST NOT synthesize arguments from raw task-card fields. |
 | `stop_before_launch` | boolean | If `true`, Runner MUST return a stopped LaunchPlan and the host MUST NOT launch. |
-| `stop_reasons` | object array | Canonical stop reasons. This plural array is the only stop-reason field; legacy singular `stop_reason` MUST NOT be emitted or consumed. |
+| `stop_reasons` | object array | Canonical stop reasons. |
 | `was_downgraded` | boolean | Whether any field was downgraded from the input card. |
 | `downgrade_reasons` | object array | Full audit trail; each entry has `rule_id`, `field`, `before`, `after`, `reason`. |
 | `execution_effort` | string | Declared effort, defaulting to `unknown` when absent. |
-| `is_exhaustive_mode` | boolean | `true` for the exhaustive execution-effort tier (`Execution effort: exhaustive`, or the legacy `ultracode` alias); it never grants permission or parallelism. |
+| `is_exhaustive_mode` | boolean | `true` for `Execution effort: exhaustive`; it never grants permission or parallelism. |
 | `approval_source` | string | `none`, `current-task-instruction`, `cli-flag`, or `runner-env`. Task-card text is never an approval source. |
 
 Stopped policy invariant:
@@ -776,15 +772,13 @@ Stopped policy invariant:
 - Runner MUST check `stop_before_launch` before exposing adapter args, and the
   host MUST check it before execution.
 
-## Script Wrapper (`run-task-card.sh`) → `ags run`
+## `ags run` LaunchPlan Contract
 
-`scripts/run-task-card.sh` is a **thin compatibility wrapper** that preserves the
-historical script entry point. It performs no validation, gate, policy, adapter,
-receipt, notifier, or execution logic of its own. It `exec`s the canonical Rust
-LaunchPlan preparer `ags run` with the task-card path and a small fixed set of
-flags.
+`ags run` is the sole LaunchPlan preparation entrypoint. It validates the card,
+resolves policy, applies gates, and returns either `HOST_EXECUTION_REQUIRED` or
+`STOP`; it never launches the host process.
 
-The wrapper's only real flags are:
+Its flags are:
 
 - `--check-only` — stop after the gate check; exit `0` if allowed and `1` if
   stopped.
@@ -797,17 +791,13 @@ The wrapper's only real flags are:
 - `--format text|json` — output format passed through to `ags run`
   (default `text`).
 
-The task-card path must come FIRST; options follow it. The wrapper adds no
-post-task behavior because `ags run` does not execute a task. It never reads raw
-task-card fields and never synthesizes launch flags.
+The task-card path comes first. `ags run` adds no post-task behavior, never reads
+raw task-card fields to synthesize launch flags, and never executes a task.
 
 ### Flow
 
 ```
 task card
-    │
-    ▼
-run-task-card.sh                           ◄── thin wrapper; forwards args only
     │
     ▼
 ags run <task-card> [flags]                ◄── canonical plan preparer owns:
@@ -886,46 +876,3 @@ When a Heavy card omits `Permission mode:`, the compiler default is `plan-only`;
 an explicit `execute-and-verify` mode is preserved without an extra planning
 round, but actual execution still belongs to the host. Receipt generation is a
 post-execution host obligation; Runner only returns `ReceiptPlan` metadata.
-
-### Planned — standalone auto-orchestration (not implemented)
-
-> **Status: planned, not implemented in the current wrapper.** A standalone
-> `run-task-card.sh --auto` orchestration mode — where the script itself reads
-> the resolved policy JSON and decides launch flags — does **not** exist. The
-> wrapper supports only `--check-only`, `--dry-run`, `--current-task-approval`,
-> `--approve-writes`, and `--format`; it delegates the entire resolver-first launch contract above to
-> `ags run`. Treat the resolver-first rules in this section as the LaunchPlan
-> contract `ags run` already enforces, not as a separate script-level auto mode.
-
-## Planned — Learning Runner (not implemented)
-
-> **Status: planned, not implemented in the current wrapper.** Neither
-> `scripts/run-task-card.sh` nor `ags run` is "learning-enabled by default."
-> The wrapper has no Task IR / compiled-brief compile step, no `--no-learning`
-> or `--keep-ir` flags, and writes no `learning-gaps/` entries. The flags it
-> actually accepts are `--check-only`, `--dry-run`, `--current-task-approval`,
-> `--approve-writes`, and `--format`. The design below records the intended future capability and its
-> boundary rules so they are not reinvented incompatibly; do not describe any
-> of it as live behavior.
-
-The planned learning runner would, before launching the executor, validate the
-canonical task card, compile a transient Task IR / compiled brief, and inject the
-brief as an execution guardrail.
-
-Intended rules (planned):
-
-- Task IR and compiled brief are not task-card formats.
-- They must not be pasted into, appended to, or required as part of the
-  canonical task-card skeleton.
-- They would be temporary by default and deleted after the run.
-- A `--keep-ir` flag would retain them in the receipt package for compiler
-  debugging.
-- A `--no-learning` flag would disable the transient compile and learning-gap
-  extraction for a run.
-- Long-term retention would be limited to `learning-gaps/` entries under local
-  project memory when the runner detects reusable misses such as weak
-  verification, executor delivery failure, nonzero execution, or compiler
-  coverage gaps.
-- Learning gaps would be review proposals. They must not automatically update
-  `context-capsule.md`, task-card templates, protocol files, validator rules, or
-  project profiles.

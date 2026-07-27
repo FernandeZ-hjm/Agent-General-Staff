@@ -55,8 +55,8 @@ def main() -> int:
     if args.plan.is_symlink():
         raise SystemExit(f"release plan must not be a symlink: {args.plan}")
     plan = json.loads(args.plan.read_text(encoding="utf-8"))
-    if plan.get("schema_version") != "2.0-release":
-        raise SystemExit("release plan schema_version must be 2.0-release")
+    if plan.get("schema_version") != "0.3.4-release-plan":
+        raise SystemExit("release plan schema_version must be 0.3.4-release-plan")
     if plan.get("profile") != "public-full":
         raise SystemExit("release plan profile must be public-full")
     if plan.get("authority_errors"):

@@ -3,6 +3,13 @@ use std::sync::Arc;
 
 use crate::{CapabilityReference, PreflightBinding, SessionActionStore, WorkspaceState};
 
+#[derive(Debug)]
+enum AdmissionState {
+    Unbound,
+    Ready(PreflightBinding),
+    BootstrapRequired(PreflightBinding),
+}
+
 /// Governance state for one daemon client session.
 ///
 /// The workspace service is shared, but the accepted preflight binding and
@@ -10,11 +17,7 @@ use crate::{CapabilityReference, PreflightBinding, SessionActionStore, Workspace
 /// they do not own or reimplement its state transitions.
 #[derive(Debug)]
 pub struct WorkspaceClientSession<T> {
-    preflight_completed: bool,
-    bootstrap_required: bool,
-    preflight_agent: Option<String>,
-    preflight_target: Option<String>,
-    capability: Option<CapabilityReference>,
+    admission: AdmissionState,
     actions: SessionActionStore<T>,
     workspace: Arc<WorkspaceState>,
     session_id: String,
@@ -24,11 +27,7 @@ pub struct WorkspaceClientSession<T> {
 impl<T> WorkspaceClientSession<T> {
     pub fn new(workspace: Arc<WorkspaceState>, session_id: String, host_home: PathBuf) -> Self {
         Self {
-            preflight_completed: false,
-            bootstrap_required: false,
-            preflight_agent: None,
-            preflight_target: None,
-            capability: None,
+            admission: AdmissionState::Unbound,
             actions: SessionActionStore::for_session(&session_id),
             workspace,
             session_id,
@@ -36,27 +35,8 @@ impl<T> WorkspaceClientSession<T> {
         }
     }
 
-    #[doc(hidden)]
-    pub fn standalone(host_home: PathBuf) -> Self {
-        Self {
-            preflight_completed: false,
-            bootstrap_required: false,
-            preflight_agent: None,
-            preflight_target: None,
-            capability: None,
-            actions: SessionActionStore::default(),
-            workspace: WorkspaceState::standalone(),
-            session_id: format!("standalone-{}", std::process::id()),
-            host_home,
-        }
-    }
-
     pub fn reset(&mut self) {
-        self.preflight_completed = false;
-        self.bootstrap_required = false;
-        self.preflight_agent = None;
-        self.preflight_target = None;
-        self.capability = None;
+        self.admission = AdmissionState::Unbound;
         self.actions.invalidate();
     }
 
@@ -64,57 +44,69 @@ impl<T> WorkspaceClientSession<T> {
         self.actions.invalidate();
     }
 
-    pub fn mark_completed(
+    pub fn bind_ready(
         &mut self,
-        agent: Option<String>,
-        target: Option<String>,
+        agent: String,
+        target: String,
         capability: Option<CapabilityReference>,
     ) {
-        self.preflight_completed = true;
-        self.bootstrap_required = false;
-        self.preflight_agent = agent;
-        self.preflight_target = target;
-        self.capability = capability;
+        self.admission = AdmissionState::Ready(PreflightBinding {
+            host: agent,
+            target: target.into(),
+            host_home: self.host_home.clone(),
+            capability,
+        });
     }
 
-    pub fn mark_bootstrap_required(&mut self, agent: Option<String>, target: Option<String>) {
-        self.preflight_completed = false;
-        self.bootstrap_required = agent.is_some() && target.is_some();
-        self.preflight_agent = agent;
-        self.preflight_target = target;
-        self.capability = None;
+    pub fn bind_bootstrap_required(&mut self, agent: String, target: String) {
+        self.admission = AdmissionState::BootstrapRequired(PreflightBinding {
+            host: agent,
+            target: target.into(),
+            host_home: self.host_home.clone(),
+            capability: None,
+        });
     }
 
     pub fn binding(&self) -> Option<PreflightBinding> {
-        if !self.preflight_completed && !self.bootstrap_required {
-            return None;
+        match &self.admission {
+            AdmissionState::Unbound => None,
+            AdmissionState::Ready(binding) | AdmissionState::BootstrapRequired(binding) => {
+                Some(binding.clone())
+            }
         }
-        Some(PreflightBinding {
-            host: self.preflight_agent.clone()?,
-            target: self.preflight_target.as_deref()?.into(),
-            host_home: self.host_home.clone(),
-            capability: self.capability.clone(),
-        })
     }
 
     pub fn capability_reference(&self) -> Option<&CapabilityReference> {
-        self.capability.as_ref()
+        match &self.admission {
+            AdmissionState::Ready(binding) => binding.capability.as_ref(),
+            AdmissionState::Unbound | AdmissionState::BootstrapRequired(_) => None,
+        }
     }
 
     pub fn is_preflight_completed(&self) -> bool {
-        self.preflight_completed
+        matches!(self.admission, AdmissionState::Ready(_))
     }
 
     pub fn is_bootstrap_required(&self) -> bool {
-        self.bootstrap_required
+        matches!(self.admission, AdmissionState::BootstrapRequired(_))
     }
 
     pub fn preflight_agent(&self) -> Option<&str> {
-        self.preflight_agent.as_deref()
+        match &self.admission {
+            AdmissionState::Ready(binding) | AdmissionState::BootstrapRequired(binding) => {
+                Some(&binding.host)
+            }
+            AdmissionState::Unbound => None,
+        }
     }
 
     pub fn preflight_target(&self) -> Option<&str> {
-        self.preflight_target.as_deref()
+        match &self.admission {
+            AdmissionState::Ready(binding) | AdmissionState::BootstrapRequired(binding) => {
+                binding.target.to_str()
+            }
+            AdmissionState::Unbound => None,
+        }
     }
 
     pub fn action_store(&self) -> &SessionActionStore<T> {
@@ -138,30 +130,45 @@ impl<T> WorkspaceClientSession<T> {
 mod tests {
     use super::*;
 
+    fn session<T>(host_home: PathBuf, session_id: &str) -> WorkspaceClientSession<T> {
+        let root = ags_platform::canonical_workspace_root(
+            &std::env::current_dir().expect("current test directory"),
+        )
+        .expect("canonical test workspace");
+        let workspace = Arc::new(
+            WorkspaceState::new(root, ags_capability_governance::locate_runtime_home())
+                .expect("test workspace state"),
+        );
+        WorkspaceClientSession::new(workspace, session_id.to_string(), host_home)
+    }
+
     #[test]
-    fn reset_clears_binding_and_invalidates_only_this_session() {
+    fn reset_clears_binding_and_expires_only_this_sessions_actions() {
         let home = PathBuf::from("/tmp/ags-session-test-home");
-        let mut first = WorkspaceClientSession::<()>::standalone(home.clone());
-        let second = WorkspaceClientSession::<()>::standalone(home);
-        first.mark_completed(Some("codex".to_string()), Some(".".to_string()), None);
-        let first_generation = first.action_store().generation;
-        let second_generation = second.action_store().generation;
+        let mut first = session::<()>(home.clone(), "first-session");
+        let mut second = session::<()>(home, "second-session");
+        first.bind_ready("codex".to_string(), ".".to_string(), None);
+        first
+            .action_store_mut()
+            .insert("first-action".to_string(), ());
+        second
+            .action_store_mut()
+            .insert("second-action".to_string(), ());
 
         first.reset();
 
         assert!(first.binding().is_none());
-        assert_eq!(first.action_store().generation, first_generation + 1);
-        assert_eq!(second.action_store().generation, second_generation);
+        assert!(first.action_store().get("first-action").is_none());
+        assert!(second.action_store().get("second-action").is_some());
     }
 
     #[test]
     fn bootstrap_binding_is_explicit_and_session_local() {
-        let mut session =
-            WorkspaceClientSession::<()>::standalone(PathBuf::from("/tmp/ags-session-test-home"));
-        session.mark_bootstrap_required(
-            Some("claude-code".to_string()),
-            Some("/tmp/project".to_string()),
+        let mut session = session::<()>(
+            PathBuf::from("/tmp/ags-session-test-home"),
+            "bootstrap-session",
         );
+        session.bind_bootstrap_required("claude-code".to_string(), "/tmp/project".to_string());
 
         assert!(session.is_bootstrap_required());
         assert!(!session.is_preflight_completed());

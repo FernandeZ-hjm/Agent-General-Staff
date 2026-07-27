@@ -1,5 +1,4 @@
-# Public remote source:
-# https://raw.githubusercontent.com/FernandeZ-hjm/Agent-General-Staff/821fb728b58c131c70a82dad51ccf83eb0372413/manifests/third-party-capabilities.yaml
+# Reviewed static third-party capability manifest.
 #
 # This is discovery metadata, not an instruction script. AGS accepts only the
 # closed install strategies implemented in Rust, pins every npm/git payload,
@@ -180,7 +179,6 @@ capabilities:
       config_glob: "$HOME/.claude/plugins/cache/thedotmack/claude-mem/*/hooks/hooks.json"
       managed_by: "Claude Code plugin manager"
       health_probe: "plugin manifest exists and every declared event has a handler"
-      rollback: "use the Claude Code plugin manager to restore the previous plugin version"
 
   - id: superpowers
     kind: skill
@@ -196,7 +194,7 @@ capabilities:
       repository: "https://github.com/obra/superpowers"
       license: MIT
     install:
-      strategy: ags-skill-adopt
+      strategy: external-manager
       install_location: "$HOME/.agents/skills/superpowers/"
     routing:
       route_state: routable
@@ -220,7 +218,7 @@ capabilities:
       license: MIT
       subdir: "skills/productivity/grilling"
     install: &matt_install
-      strategy: ags-skill-adopt
+      strategy: external-manager
       install_location: "$HOME/.agents/skills/grilling/"
     routing:
       route_state: routable

@@ -274,7 +274,7 @@ fn cleanup_retire_unlinks_symlink_without_touching_canonical() {
     std::fs::write(canonical.join("SKILL.md"), "canonical body\n").unwrap();
     std::os::unix::fs::symlink(&canonical, &host).unwrap();
 
-    let finding = cleanup_install_dir(&host, false, 7);
+    let finding = cleanup_install_dir(&host, false);
     assert_eq!(finding.status, crate::setup::SetupCheckStatus::Pass);
     assert!(finding.message.contains("unlinked thin-index symlink"));
     assert!(std::fs::symlink_metadata(&host).is_err(), "symlink removed");
@@ -286,10 +286,8 @@ fn cleanup_retire_unlinks_symlink_without_touching_canonical() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
-/// An AGS-generated retired dir is MOVED to a timestamped backup (reversible),
-/// never deleted.
 #[test]
-fn cleanup_retire_quarantines_ags_generated_dir_reversibly() {
+fn cleanup_retire_removes_ags_generated_dir() {
     let base = std::env::temp_dir().join(format!("ags-cleanup-ags-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
     let dir = base.join("ags-capability");
@@ -300,17 +298,15 @@ fn cleanup_retire_quarantines_ags_generated_dir_reversibly() {
     )
     .unwrap();
 
-    let finding = cleanup_install_dir(&dir, false, 42);
+    let finding = cleanup_install_dir(&dir, false);
     assert_eq!(finding.status, crate::setup::SetupCheckStatus::Pass);
-    assert!(finding.message.contains("quarantined to backup"));
-    assert!(!dir.exists(), "original retired entry moved aside");
-    let backup = base.join("ags-capability.retired.bak.42");
-    assert!(backup.join("SKILL.md").is_file(), "backup is reversible");
+    assert!(finding.message.contains("removed retired AGS entry"));
+    assert!(!dir.exists(), "retired AGS entry removed");
     let _ = std::fs::remove_dir_all(&base);
 }
 
 /// Unrecognized (possibly user-edited) content is left in place without
-/// --force; with --force it is quarantined to backup, never deleted.
+/// --force; with --force it is removed.
 #[test]
 fn cleanup_retire_refuses_unrecognized_content_without_force() {
     let base = std::env::temp_dir().join(format!("ags-cleanup-user-{}", std::process::id()));
@@ -323,20 +319,16 @@ fn cleanup_retire_refuses_unrecognized_content_without_force() {
     )
     .unwrap();
 
-    let finding = cleanup_install_dir(&dir, false, 1);
+    let finding = cleanup_install_dir(&dir, false);
     assert_eq!(finding.status, crate::setup::SetupCheckStatus::Fail);
     assert!(
         dir.join("SKILL.md").is_file(),
         "user content must be left untouched without --force"
     );
 
-    let finding = cleanup_install_dir(&dir, true, 2);
+    let finding = cleanup_install_dir(&dir, true);
     assert_eq!(finding.status, crate::setup::SetupCheckStatus::Pass);
     assert!(!dir.exists());
-    assert!(base
-        .join("ags-capability.retired.bak.2")
-        .join("SKILL.md")
-        .is_file());
     let _ = std::fs::remove_dir_all(&base);
 }
 
@@ -344,7 +336,7 @@ fn cleanup_retire_refuses_unrecognized_content_without_force() {
 fn cleanup_retire_absent_is_pass() {
     let base = std::env::temp_dir().join(format!("ags-cleanup-absent-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
-    let finding = cleanup_install_dir(&base.join("nope"), false, 1);
+    let finding = cleanup_install_dir(&base.join("nope"), false);
     assert_eq!(finding.status, crate::setup::SetupCheckStatus::Pass);
     assert!(finding.message.contains("absent"));
 }

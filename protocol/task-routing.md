@@ -1,6 +1,6 @@
 # Agent Task Routing
 
-> AGS 0.3.3 的需求治理协议。自然语言语义判断属于宿主；AGS 只校验 typed proposal 和确定性准入。
+> AGS 0.3.4 的需求治理协议。自然语言语义判断属于宿主；AGS 只校验 typed proposal 和确定性准入。
 
 ## 唯一链路
 
@@ -15,7 +15,7 @@ preflight
 → 若且仅若存在 ServerHeldAction：ags_apply_action(lease_id, action_id)
 ```
 
-AGS 0.3.3 没有原始文本关键词路由。`ags_route_request` 不接受 `{request: ...}`，不启动进程、不写文件，也不在失败时回退到 substring、BM25、embedding、`SkillDemand` 或第二套路由器。
+AGS 0.3.4 没有原始文本关键词路由。`ags_route_request` 不接受 `{request: ...}`，不启动进程、不写文件，也不在失败时回退到 substring、BM25、embedding、`SkillDemand` 或第二套路由器。
 
 ## HostRouteProposal
 
@@ -59,7 +59,7 @@ route 返回 `skill_target_kind_mismatch`。
 skill_id + entrypoint + snapshot_hash → ActiveSkill
 ```
 
-缺失、歧义、entrypoint 不允许或快照 stale 均 fail closed；不做关键词、相似度、候选 fallback 或自动替代。旧 `SkillDemand` / `demand_routes` 只作为 `intent_tags` 与旧序列化迁移信息，不再决定技能。
+缺失、歧义、entrypoint 不允许或快照 stale 均 fail closed；不做关键词、相似度、候选 fallback、旧分类迁移或自动替代。
 
 ## DecisionLease 与显式 Apply
 
@@ -75,7 +75,7 @@ host/target 冲突一律 fail closed。
 
 ## Machine CLI
 
-`TaskPrepareExecution` 是 canonical capability；旧 `task_execute` 只作为反序列化兼容别名。`ags run` 仅执行 validate → policy → gate → LaunchPlan，并返回 `HOST_EXECUTION_REQUIRED`；真实执行、验证和收据由宿主完成。
+`TaskPrepareExecution` 是唯一执行准备 capability。`ags run` 仅执行 validate → policy → gate → LaunchPlan，并返回 `HOST_EXECUTION_REQUIRED`；真实执行、验证和收据由宿主完成。
 
 ## 任务级别与权限
 
@@ -89,4 +89,4 @@ host/target 冲突一律 fail closed。
 
 ## Handoff Compiler
 
-新 typed `HandoffContract` 必须显式给出 `task_level`。旧 loose contract 缺失时仅兼容为 Medium 并产生 deprecation，不得靠关键词猜级别。Compiler 不重新解释原始聊天，也不选择技能。
+typed `HandoffContract` 必须显式给出 `task_level`；缺失即拒绝。Compiler 不重新解释原始聊天，也不选择技能。

@@ -41,9 +41,8 @@ pub struct TaskPolicyInput {
     /// Task level: "Light" | "Medium" | "Heavy"
     pub task_level: String,
 
-    /// Execution effort: neutral tiers "low" | "normal" | "high" | "exhaustive"
-    /// (absent → "unknown"). "ultracode" is a legacy parse-compatible alias that
-    /// maps to the same exhaustive semantics as "exhaustive".
+    /// Execution effort: "low" | "normal" | "high" | "exhaustive"
+    /// (absent → "unknown").
     pub execution_effort: Option<String>,
 
     /// Workflow authority: "none" | "within-card" | "plan-only" | "allowed" (absent → "none")
@@ -123,12 +122,9 @@ impl TaskPolicyInput {
         self.execution_effort.as_deref().unwrap_or("unknown")
     }
 
-    /// Whether the effective execution effort is the exhaustive tier. `exhaustive`
-    /// is the neutral canonical value; `ultracode` is the legacy parse-compatible
-    /// alias mapping to the same exhaustive semantics. Effort is thinking-intensity
-    /// only — being exhaustive never escalates permission, parallelism, or args.
+    /// Whether the effective execution effort is the exhaustive tier.
     pub fn is_exhaustive_effort(&self) -> bool {
-        matches!(self.effort(), "exhaustive" | "ultracode")
+        self.effort() == "exhaustive"
     }
 
     /// Return the effective workflow authority, defaulting to `"none"`.

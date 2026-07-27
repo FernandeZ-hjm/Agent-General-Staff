@@ -3,7 +3,7 @@ use super::*;
 use super::{apply::*, decision::*, wire::*};
 pub(super) fn tool_preflight(
     args: &serde_json::Value,
-    capability_source: Option<&dyn CapabilityCatalogSource>,
+    capability_source: &dyn CapabilityCatalogSource,
 ) -> Result<String, String> {
     let agent = get_string(args, "agent")?;
     let agent_type = ags_workspace_facts::AgentType::from_str(&agent)
@@ -23,15 +23,7 @@ pub(super) fn tool_preflight(
             .unwrap_or_else(|| PathBuf::from(".")),
         capability: None,
     };
-    let reference = capability_source.map_or_else(
-        || {
-            ags_session::LocalCapabilityCatalogSource::new(
-                ags_capability_governance::locate_runtime_home(),
-            )
-            .capability_reference(&binding)
-        },
-        |source| source.capability_reference(&binding),
-    );
+    let reference = capability_source.capability_reference(&binding);
     let capability = capability_reference_json(reference, &resolved_target, agent_type.as_str());
     attach_capability_catalog(&mut value, capability);
     pretty(&value)
@@ -293,12 +285,11 @@ pub(super) fn tool_onboarding_plan(
         }
     }
     let lease = session
-        .actions
         .values()
         .next()
         .map(|action| action.evidence.clone());
     pretty(&OnboardingPlanResult {
-        schema_version: "0.3.0-onboarding-plan-result",
+        schema_version: "0.3.4-onboarding-plan-result",
         governance_status: if plan.bootstrap_required {
             GovernanceStatus::NeedsUserDecision
         } else {
@@ -343,31 +334,4 @@ pub(super) fn tool_policy_resolve(args: &serde_json::Value) -> Result<String, St
         bool_arg(args, "current_task_approval"),
     );
     pretty(&ags_governance_decision::policy::resolve_policy(input))
-}
-
-pub(super) fn tool_verify_local(
-    args: &serde_json::Value,
-    binding: &PreflightBinding,
-) -> Result<String, String> {
-    if args
-        .as_object()
-        .map(|object| !object.is_empty())
-        .unwrap_or(true)
-    {
-        return Err("ags_verify_local_is_preflight_bound".to_string());
-    }
-    pretty(&serde_json::json!({
-        "schema_version": "0.3.0-read-only-verification-guidance",
-        "governance_status": GovernanceStatus::AdvisoryNoMutation,
-        "host": binding.host,
-        "target": binding.target.to_string_lossy(),
-        "mutation_performed": false,
-        "process_launched": false,
-        "next_action": {
-            "kind": "machine_cli",
-            "capability": CliCapabilityId::ProjectVerify,
-            "input": TypedCliInput::Empty
-        },
-        "instruction": "submit the fixed ProjectVerify target through ags_route_request, then consume its connection-held action with ags_apply_action"
-    }))
 }

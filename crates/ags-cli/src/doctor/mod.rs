@@ -1,6 +1,6 @@
 //! `ags doctor` thin facade.
 use crate::context::{default_private_runtime_home, guard_writable_target, home_dir};
-use crate::managed_projects;
+use ags_workspace_facts::managed_projects;
 use std::path::Path;
 
 fn compose_doctor_report(
@@ -73,6 +73,7 @@ fn host_entry_semantic_report(core_path: &Path) -> ags_verification::doctor::Hea
         "RequestDecision",
         "把完整当前请求交给 `ags_route_request`",
         "`RequestDecision` 的 `SkillDemand`",
+        "demand_routes",
     ];
     let stale: Vec<&str> = forbidden
         .iter()
@@ -127,7 +128,7 @@ fn host_entry_semantic_report(core_path: &Path) -> ags_verification::doctor::Hea
     report
 }
 
-/// Shared dispatch: `doctor` / `suite-doctor`
+/// Dispatch the current `doctor` command.
 pub(crate) fn cmd_doctor(format: &str, repair: bool, dry_run: bool, target: &Path) {
     if !repair {
         // Read-only diagnosis. Doctor is the global-pipeline diagnostic authority;
@@ -175,7 +176,7 @@ pub(crate) fn cmd_doctor(format: &str, repair: bool, dry_run: bool, target: &Pat
     }
 
     // Actual repair (safe items only)
-    guard_writable_target("ags doctor --repair", target);
+    guard_writable_target("ags doctor --fix", target);
     let result = ags_verification::doctor::repair(target);
     match format {
         "json" => println!("{}", ags_verification::doctor::render_repair_json(&result)),
@@ -221,7 +222,7 @@ mod tests {
     }
 
     #[test]
-    fn host_entry_semantic_report_rejects_legacy_router_and_accepts_typed_plan_flow() {
+    fn host_entry_semantic_report_rejects_unsupported_router_and_accepts_typed_plan_flow() {
         let base =
             std::env::temp_dir().join(format!("ags-host-entry-doctor-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
@@ -234,7 +235,7 @@ mod tests {
             "AGS 0.2.8 入口\nRequestDecision\n把完整当前请求交给 `ags_route_request`\n",
         )
         .unwrap();
-        fs::write(&handoff, "legacy").unwrap();
+        fs::write(&handoff, "unsupported").unwrap();
         let stale = host_entry_semantic_report(&core);
         assert_eq!(stale.exit_code(), 1);
         assert!(stale.findings[0].message.contains("semantic drift"));

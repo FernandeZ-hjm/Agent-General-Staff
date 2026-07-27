@@ -19,11 +19,7 @@ pub use change_lane::{
     classify_from_git_range, classify_lane, ChangeClassification, ChangeLane, VerificationProfile,
 };
 
-pub mod visible_status;
-#[allow(deprecated)]
-pub use visible_status::{
-    derive_governance_status, derive_visible_status, GovernanceStatus, StatusSignals, VisibleStatus,
-};
+pub use ags_governance_decision::GovernanceStatus;
 
 mod edition;
 mod local_checks;

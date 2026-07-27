@@ -115,8 +115,6 @@ pub fn assess_public_with_resolution(
         target,
         manifest_source: third_party.source.clone(),
         manifest_hash: third_party.content_hash.clone(),
-        manifest_freshness: third_party.freshness.clone(),
-        manifest_fallback_reason: third_party.fallback_reason.clone(),
         bootstrap_required,
         ready,
         plan_hash: String::new(),
@@ -288,7 +286,7 @@ fn cli_item(capability: &ThirdPartyCapability) -> OnboardingItem {
         },
         reason: if present {
             format!(
-                "{} is available; version drift is checked by `ags skill update`",
+                "{} is available; version changes require an explicit upstream refresh",
                 command.unwrap_or_default()
             )
         } else if action.is_some() {
@@ -444,18 +442,10 @@ pub(super) fn skill_item(ctx: &AssessContext<'_>, skill: &ThirdPartyCapability) 
             None,
         )
     } else {
-        let source = pin_github_source(
-            skill.source.repository.as_deref().unwrap_or_default(),
-            revision.unwrap_or_default(),
-            skill.source.subdir.as_deref(),
-        );
         (
             ComponentState::Absent,
-            "reviewed skill is available for explicit per-item adoption".to_string(),
-            Some(OnboardingAction::AdoptSkill {
-                source,
-                host: ctx.host.to_string(),
-            }),
+            "reviewed skill is available through its external manager; install or update it explicitly, then refresh the static host snapshot once".to_string(),
+            None,
         )
     };
     OnboardingItem {

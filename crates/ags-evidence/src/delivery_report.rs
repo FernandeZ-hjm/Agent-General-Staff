@@ -4,7 +4,7 @@
 use serde::Serialize;
 use std::collections::BTreeSet;
 
-pub const SCHEMA_VERSION: &str = "1.0-delivery-closure";
+pub const SCHEMA_VERSION: &str = "0.3.4-delivery-closure";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ClosureCheck {

@@ -1,23 +1,4 @@
 use super::*;
-#[cfg(test)]
-thread_local! {
-    static INJECT_PRIVATE_SYNC_FAILURE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
-}
-
-#[cfg(test)]
-pub(super) fn inject_private_sync_failure(file_name: Option<&str>) {
-    INJECT_PRIVATE_SYNC_FAILURE.with(|slot| {
-        *slot.borrow_mut() = file_name.map(str::to_string);
-    });
-}
-
-#[cfg(test)]
-pub(super) fn private_sync_failure_is_injected(path: &Path) -> bool {
-    INJECT_PRIVATE_SYNC_FAILURE.with(|slot| {
-        slot.borrow().as_deref() == path.file_name().and_then(|file_name| file_name.to_str())
-    })
-}
-
 pub fn write_private_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT_STAGE: AtomicU64 = AtomicU64::new(1);
@@ -48,13 +29,6 @@ pub fn write_private_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
             .map_err(|error| format!("cannot write {}: {error}", stage.display()))?;
         file.sync_all()
             .map_err(|error| format!("cannot sync {}: {error}", stage.display()))?;
-        #[cfg(test)]
-        if private_sync_failure_is_injected(path) {
-            return Err(format!(
-                "injected sync failure before replacing {}",
-                path.display()
-            ));
-        }
         commit_private_stage(&stage, path)
     })();
     if write_result.is_err() {
@@ -75,4 +49,14 @@ pub(super) fn commit_private_stage(stage: &Path, path: &Path) -> Result<(), Stri
             stage.display()
         )
     })
+}
+
+fn set_private_permissions(_path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(_path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|error| format!("cannot chmod {}: {error}", _path.display()))?;
+    }
+    Ok(())
 }

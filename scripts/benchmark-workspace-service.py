@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare current workspace-service paths against a v0.3.0 binary."""
+"""Compare current workspace-service paths against a stable AGS binary."""
 
 from __future__ import annotations
 
@@ -26,7 +26,9 @@ def percentile(values: list[float], fraction: float) -> float:
 
 
 class Bench:
-    def __init__(self, binary: Path, source: Path, label: str) -> None:
+    def __init__(
+        self, binary: Path, source: Path, route_schema: str, label: str
+    ) -> None:
         self.temp = tempfile.TemporaryDirectory(prefix=f"ags-bench-{label}-")
         root = Path(self.temp.name)
         self.home = root / "home"
@@ -36,6 +38,7 @@ class Bench:
             path.mkdir()
         subprocess.run(["git", "init", "--quiet"], cwd=self.project, check=True)
         self.binary = binary
+        self.route_schema = route_schema
         self.env = os.environ.copy()
         self.env.update(
             {
@@ -151,7 +154,7 @@ class Bench:
                         "name": "ags_route_request",
                         "arguments": {
                             "proposal": {
-                                "schema_version": "0.3.0-host-route-proposal",
+                                "schema_version": self.route_schema,
                                 "request_fingerprint": "sha256:benchmark-request",
                                 "phase": "execution",
                                 "solution_state": "confirmed",
@@ -207,7 +210,7 @@ class Bench:
     def session_rss_kib(self, adapter_pid: int, daemon_pid: int) -> int:
         """Measure every AGS process simultaneously serving this MCP session.
 
-        v0.3.0 has one stdio process, so both PIDs are identical and counted
+        A single-process baseline has identical adapter and service PIDs, counted
         once. A daemon release has a live stdio adapter plus the workspace
         daemon; both are counted. This keeps the baseline and candidate on the
         same total-process footprint rather than comparing one process from
@@ -283,10 +286,23 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--candidate", type=Path, required=True)
-    parser.add_argument("--source-root", type=Path, required=True)
+    parser.add_argument("--baseline-source-root", type=Path, required=True)
+    parser.add_argument("--candidate-source-root", type=Path, required=True)
+    parser.add_argument("--baseline-route-schema", required=True)
+    parser.add_argument("--candidate-route-schema", required=True)
     args = parser.parse_args()
-    baseline = Bench(args.baseline.resolve(), args.source_root.resolve(), "baseline")
-    candidate = Bench(args.candidate.resolve(), args.source_root.resolve(), "candidate")
+    baseline = Bench(
+        args.baseline.resolve(),
+        args.baseline_source_root.resolve(),
+        args.baseline_route_schema,
+        "baseline",
+    )
+    candidate = Bench(
+        args.candidate.resolve(),
+        args.candidate_source_root.resolve(),
+        args.candidate_route_schema,
+        "candidate",
+    )
     baseline_result = baseline.measure()
     candidate_result = candidate.measure()
 

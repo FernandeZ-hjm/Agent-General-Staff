@@ -161,17 +161,6 @@ impl CommandRunner for NoProcessDiscovery {
     }
 }
 
-pub(super) fn routes_by_skill(routes: &[DemandRoute]) -> HashMap<&str, Vec<DemandRoute>> {
-    let mut result: HashMap<&str, Vec<DemandRoute>> = HashMap::new();
-    for route in routes {
-        result
-            .entry(route.skill_id.as_str())
-            .or_default()
-            .push(route.clone());
-    }
-    result
-}
-
 pub(super) fn auth_state_for(requires_auth: bool, observed: Option<AuthState>) -> AuthState {
     if !requires_auth {
         AuthState::NotRequired
@@ -184,34 +173,25 @@ pub(crate) fn skill_card(
     manifest_root: &Path,
     capability: &ManagedCapability,
     registry: Option<&RegistrySkill>,
-    overlay: Option<&UserOverlayEntry>,
-    legacy_routes: &[DemandRoute],
     auth_state: AuthState,
 ) -> SkillCard {
     let file_metadata = load_skill_file_metadata(manifest_root, capability);
     let routing = registry.and_then(|item| item.routing.as_ref());
     let retired = routing.is_some_and(|routing| routing.route_state == RouteState::Retired);
-    let ignored = overlay.is_some_and(|entry| entry.state == OverlayEntryState::Ignored)
-        || capability.managed_status == ManagedStatus::Ignored;
     let routing_surface = routing
         .and_then(|routing| routing.routing_surface)
         .unwrap_or_else(|| {
-            if routing.is_some_and(|routing| routing.route_state == RouteState::Routable)
-                || overlay.is_some_and(|entry| entry.state == OverlayEntryState::Active)
-            {
+            if routing.is_some_and(|routing| routing.route_state == RouteState::Routable) {
                 SkillRoutingSurface::SkillTarget
             } else {
                 SkillRoutingSurface::NotRoutable
             }
         });
     let routable = routing_surface == SkillRoutingSurface::SkillTarget
-        && (routing.is_some_and(|routing| routing.route_state == RouteState::Routable)
-            || overlay.is_some_and(|entry| entry.state == OverlayEntryState::Active));
+        && routing.is_some_and(|routing| routing.route_state == RouteState::Routable);
     let registered = capability.registry_status == RegistryStatus::Registered;
     let governance = if retired {
         GovernanceState::Retired
-    } else if ignored {
-        GovernanceState::Ignored
     } else if routable {
         GovernanceState::Active
     } else if registered {
@@ -223,9 +203,6 @@ pub(crate) fn skill_card(
     };
 
     let mut reasons = Vec::new();
-    if governance == GovernanceState::Candidate || governance == GovernanceState::Discovered {
-        reasons.push("candidate_requires_adoption".to_string());
-    }
     if governance == GovernanceState::ManagedInactive
         && routing_surface == SkillRoutingSurface::NotRoutable
     {
@@ -250,14 +227,9 @@ pub(crate) fn skill_card(
     if matches!(auth_state, AuthState::Missing | AuthState::Unknown) {
         reasons.push("auth_required".to_string());
     }
-    if overlay.is_some_and(|entry| entry.source_hash != source_hash(manifest_root, capability)) {
-        reasons.push("source_hash_changed".to_string());
-    }
-
     let declared_summary = registry
         .map(|item| item.description.trim().to_string())
         .filter(|summary| !summary.is_empty())
-        .or_else(|| overlay.map(|entry| entry.summary.trim().to_string()))
         .or_else(|| {
             let summary = if file_metadata.summary.trim().is_empty() {
                 file_metadata.description.trim()
@@ -272,29 +244,16 @@ pub(crate) fn skill_card(
         .unwrap_or_else(|| capability.name.clone());
     let mut intent_tags = routing
         .map(|routing| routing.intent_tags.clone())
-        .or_else(|| overlay.map(|entry| entry.intent_tags.clone()))
         .unwrap_or_else(|| file_metadata.intent_tags.clone());
     if intent_tags.is_empty() && declared_summary.is_some() {
         intent_tags.push(capability.name.clone());
     }
-    for route in legacy_routes {
-        intent_tags.push(legacy_demand_tag(route.demand));
-    }
     intent_tags.sort();
     intent_tags.dedup();
-    let mut entrypoints = legacy_routes
-        .iter()
-        .filter_map(|route| route.entrypoint.clone())
-        .collect::<Vec<_>>();
-    if let Some(entry) = overlay {
-        entrypoints.extend(entry.entrypoints.clone());
-    } else {
-        entrypoints.extend(file_metadata.entrypoints.clone());
-    }
+    let mut entrypoints = file_metadata.entrypoints.clone();
     entrypoints.sort();
     entrypoints.dedup();
     let invoke_hint_present = routing.is_some_and(|routing| !routing.invoke_hint.trim().is_empty())
-        || overlay.is_some_and(|entry| !entry.invoke_hint.trim().is_empty())
         || !file_metadata.invoke_hint.trim().is_empty();
     let semantic_examples_complete = routing.is_none_or(|routing| {
         routing.route_state != RouteState::Routable
@@ -335,18 +294,15 @@ pub(crate) fn skill_card(
     };
     SkillCard {
         skill_id: capability.name.clone(),
-        display_name: overlay
-            .map(|entry| entry.display_name.trim().to_string())
-            .filter(|display| !display.is_empty())
-            .or_else(|| {
-                let display = if file_metadata.display_name.trim().is_empty() {
-                    file_metadata.name.trim()
-                } else {
-                    file_metadata.display_name.trim()
-                };
-                (!display.is_empty()).then(|| display.to_string())
-            })
-            .unwrap_or_else(|| capability.name.clone()),
+        display_name: {
+            let display = if file_metadata.display_name.trim().is_empty() {
+                file_metadata.name.trim()
+            } else {
+                file_metadata.display_name.trim()
+            };
+            (!display.is_empty()).then(|| display.to_string())
+        }
+        .unwrap_or_else(|| capability.name.clone()),
         summary,
         intent_tags,
         positive_examples,
@@ -362,21 +318,11 @@ pub(crate) fn skill_card(
         availability,
         reason_codes: reasons,
         requires_auth: routing.is_some_and(|routing| routing.requires_auth)
-            || overlay.is_some_and(|entry| entry.requires_auth)
             || file_metadata.requires_auth,
         auth_state,
-        activity: ActivityState::Unobserved,
-        version: overlay
-            .map(|entry| entry.metadata_version.clone())
-            .filter(|version| !version.is_empty())
-            .or_else(|| {
-                (!file_metadata.version.trim().is_empty())
-                    .then(|| file_metadata.version.trim().to_string())
-            })
+        version: (!file_metadata.version.trim().is_empty())
+            .then(|| file_metadata.version.trim().to_string())
             .unwrap_or_else(|| "registry".to_string()),
-        source_hash: overlay
-            .map(|entry| entry.source_hash.clone())
-            .filter(|hash| !hash.is_empty())
-            .unwrap_or_else(|| source_hash(manifest_root, capability)),
+        source_hash: source_hash(manifest_root, capability),
     }
 }

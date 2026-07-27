@@ -1,5 +1,5 @@
 use super::*;
-pub const CONSOLE_SCHEMA_VERSION: &str = "0.3.0-skill-console";
+pub const CONSOLE_SCHEMA_VERSION: &str = "0.3.4-skill-console";
 
 // ── Command runner seam ─────────────────────────────────────────────────────
 
@@ -103,24 +103,23 @@ pub enum ManagedStatus {
     Governed,
     /// AGS self — host initialization adapter (governance authority).
     SuiteInterface,
-    /// Present/known but not yet adopted — an opt-in candidate. Covers
+    /// Present/known but not declared in the reviewed registry — an opt-in candidate. Covers
     /// repo-local skills outside the manifest AND user-installed skills
     /// discovered on disk in a host skills dir (discovered-local).
     Discovered,
     /// A host built-in / system skill (e.g. a Codex `.system` skill such as
     /// `skill-creator`). Recognized READ-ONLY: AGS never holds, copies, or
-    /// relinks the body. Fail-closed not-routable until explicitly adopted.
+    /// relinks the body. Fail-closed not-routable until a reviewed registry
+    /// release includes it.
     HostSystem,
     /// A skill scoped to a project repo other than the AGS suite (its canonical
     /// body resolves inside another git project). Read-only recognition only.
     ProjectLocal,
-    /// Explicitly ignored (in the ignore list / rejected in adoption log).
-    Ignored,
     /// Present but outside AGS governance.
     Unmanaged,
     /// An internal entrypoint route target (playbook / MCP tool / CLI
     /// subcommand) of a real parent capability. Routing-only: never a host
-    /// body, never adopted / synced / relinked, never the primary itself.
+    /// body, never installed / refreshed / relinked, never the primary itself.
     RouteTarget,
 }
 
@@ -128,7 +127,7 @@ pub enum ManagedStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RegistryStatus {
-    /// Present in suite.yaml / mcp-registry.yaml / adoption log.
+    /// Present in suite.yaml or mcp-registry.yaml.
     Registered,
     /// Not in any AGS registry.
     NotRegistered,
@@ -242,7 +241,7 @@ pub struct RouteExamples {
 /// belongs to. When a routing block carries this, the member is a route target
 /// (an internal entrypoint such as a superpowers playbook, an MCP tool, or a CLI
 /// subcommand), NOT a standalone body: it never produces `expected_hosts`, never
-/// enters sync / apply / propose, and is never the `primary` itself — primary
+/// enters install / refresh, and is never the `primary` itself — primary
 /// derefs to the parent and availability is inherited from it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParentRef {
@@ -331,7 +330,7 @@ pub struct RoutingMetadata {
     /// When set, this routing block belongs to an internal ENTRYPOINT of the
     /// named real, host-visible parent capability (i.e. the member is a route
     /// target). The route target never produces `expected_hosts`, never enters
-    /// sync / apply / propose, and is never the `primary` itself — primary
+    /// install / refresh, and is never the `primary` itself — primary
     /// derefs to this parent and availability is inherited from it. A real body
     /// leaves this `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -387,8 +386,6 @@ pub struct ManagedCapability {
     /// Per-host thin-index visibility (the discoverable entry each host owns).
     pub host_visibility: Vec<HostVisibility>,
     pub health_status: HealthStatus,
-    /// Management actions the console offers for this capability.
-    pub actions: Vec<String>,
     pub risk_notes: Vec<String>,
     /// Stable routing facts from the manifest (Skill Resolver input). `None`
     /// when the manifest declares no `routing:` block — production routing does
@@ -400,7 +397,7 @@ pub struct ManagedCapability {
 impl ManagedCapability {
     /// Whether this is an internal-entrypoint route target — it carries a
     /// `routing.parent`. Route targets are routing-only: no `expected_hosts`, no
-    /// sync / apply / propose / relink, and never the `primary` themselves
+    /// install / refresh / relink, and never the `primary` themselves
     /// (primary derefs to the parent capability).
     pub fn is_route_target(&self) -> bool {
         self.routing.as_ref().is_some_and(|r| r.parent.is_some())

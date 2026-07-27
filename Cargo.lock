@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "ags-capability-governance"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "ags-governance-decision",
  "ags-platform",
@@ -17,7 +17,7 @@ dependencies = [
 
 [[package]]
 name = "ags-cli"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "ags-capability-governance",
  "ags-evidence",
@@ -37,7 +37,7 @@ dependencies = [
 
 [[package]]
 name = "ags-evidence"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "ags-governance-decision",
  "ags-platform",
@@ -49,7 +49,7 @@ dependencies = [
 
 [[package]]
 name = "ags-governance-decision"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -58,7 +58,7 @@ dependencies = [
 
 [[package]]
 name = "ags-host-integration"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "ags-platform",
  "serde",
@@ -67,7 +67,7 @@ dependencies = [
 
 [[package]]
 name = "ags-lifecycle"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "ags-capability-governance",
  "ags-platform",
@@ -80,7 +80,7 @@ dependencies = [
 
 [[package]]
 name = "ags-mcp"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "ags-capability-governance",
  "ags-evidence",
@@ -94,13 +94,12 @@ dependencies = [
  "getrandom",
  "serde",
  "serde_json",
- "sha2",
  "tempfile",
 ]
 
 [[package]]
 name = "ags-platform"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "sha2",
  "tempfile",
@@ -108,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "ags-session"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "ags-capability-governance",
  "ags-platform",
@@ -121,7 +120,7 @@ dependencies = [
 
 [[package]]
 name = "ags-task-contract"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "ags-capability-governance",
  "ags-governance-decision",
@@ -132,10 +131,11 @@ dependencies = [
 
 [[package]]
 name = "ags-verification"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "ags-capability-governance",
  "ags-governance-decision",
+ "ags-lifecycle",
  "ags-platform",
  "ags-workspace-facts",
  "serde",
@@ -147,7 +147,7 @@ dependencies = [
 
 [[package]]
 name = "ags-workspace-facts"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "ags-governance-decision",
  "ags-host-integration",

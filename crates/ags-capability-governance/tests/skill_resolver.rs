@@ -1,10 +1,9 @@
 use ags_capability_governance::{
-    build_capability_snapshot_with_runtime_home, load_demand_routes, load_static_snapshot,
+    build_capability_snapshot_with_runtime_home, load_static_snapshot,
     resolve_capability_authority_root, resolve_skill, snapshot_path, ActiveSkill, ActiveSkillTable,
     AuthState, AvailabilityState, CapabilitySnapshot, GovernanceState, ResolveError, SkillCard,
     SkillSourceKind, SnapshotError, HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION,
 };
-use ags_governance_decision::{EngineeringDemand, SkillDemand};
 
 fn temp_path(name: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("ags-skill-resolver-{name}-{}", std::process::id()))
@@ -66,9 +65,6 @@ fn architecture_skill() -> ActiveSkill {
         invoke_hint: "[skill: superpowers]".to_string(),
         allowed_entrypoints: vec!["brainstorming".to_string()],
         intent_tags: vec!["system-architecture".to_string()],
-        legacy_demands: vec![SkillDemand::Engineering(
-            EngineeringDemand::SystemArchitecture,
-        )],
         source_hash: "sha256:source".to_string(),
     }
 }
@@ -90,7 +86,6 @@ fn architecture_card() -> SkillCard {
         reason_codes: Vec::new(),
         requires_auth: false,
         auth_state: AuthState::NotRequired,
-        activity: ags_capability_governance::ActivityState::Unobserved,
         version: "registry".to_string(),
         source_hash: "sha256:source".to_string(),
     }
@@ -147,7 +142,6 @@ fn snapshot() -> CapabilitySnapshot {
     CapabilitySnapshot::new(
         "codex",
         "sha256:registry-a",
-        "sha256:overlay-a",
         "sha256:runtime-a",
         vec![architecture_card()],
         "https://example.com/third-party-capabilities.yaml",
@@ -165,8 +159,6 @@ fn static_snapshot_validates_sealed_integrity_before_routing() {
         snapshot.schema_version,
         HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION
     );
-    assert!(snapshot.active_table_hash.starts_with("sha256:"));
-    assert!(snapshot.catalog_hash.starts_with("sha256:"));
     assert!(snapshot.snapshot_hash.starts_with("sha256:"));
     assert!(snapshot.validate_integrity("codex").is_ok());
 }
@@ -174,11 +166,19 @@ fn static_snapshot_validates_sealed_integrity_before_routing() {
 #[test]
 fn wrong_host_or_tampered_static_snapshot_fails_closed() {
     let mut snapshot = snapshot();
+    let untampered = snapshot.clone();
     assert_eq!(
         snapshot.validate_integrity("omp").unwrap_err(),
         SnapshotError::SkillSnapshotStale
     );
     snapshot.snapshot_hash = "sha256:tampered".to_string();
+    assert_eq!(
+        snapshot.validate_integrity("codex").unwrap_err(),
+        SnapshotError::SnapshotIntegrityFailed
+    );
+
+    let mut snapshot = untampered;
+    snapshot.active_skills.clear();
     assert_eq!(
         snapshot.validate_integrity("codex").unwrap_err(),
         SnapshotError::SnapshotIntegrityFailed
@@ -207,22 +207,6 @@ fn host_scoped_snapshots_coexist_and_validate_independently() {
         assert_eq!(snapshot.host, host);
     }
 
-    let _ = std::fs::remove_dir_all(runtime);
-}
-
-#[test]
-fn legacy_single_snapshot_is_not_a_hidden_fallback() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let runtime = temp_path("legacy-snapshot");
-    let legacy = runtime
-        .join("capability-snapshot")
-        .join("capability-snapshot.json");
-    let _ = std::fs::remove_dir_all(&runtime);
-    std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-    let snapshot = build_capability_snapshot_with_runtime_home(&root, "codex", &runtime).unwrap();
-    std::fs::write(&legacy, serde_json::to_string(&snapshot).unwrap()).unwrap();
-
-    assert!(load_static_snapshot(&runtime, "codex").is_err());
     let _ = std::fs::remove_dir_all(runtime);
 }
 
@@ -293,22 +277,6 @@ fn cursor_catalog_discovers_shared_user_skills() {
         .iter()
         .any(|card| card.skill_id == "cursor-shared-demo"));
     let _ = std::fs::remove_dir_all(base);
-}
-
-#[test]
-fn registry_legacy_demands_are_metadata_complete_but_not_route_authority() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let routes = load_demand_routes(&root).unwrap();
-    let unique: std::collections::HashSet<_> = routes.iter().map(|route| route.demand).collect();
-
-    assert_eq!(routes.len(), unique.len());
-    assert_eq!(unique.len(), SkillDemand::all().len());
-    for demand in SkillDemand::all() {
-        assert!(
-            unique.contains(demand),
-            "missing registry metadata: {demand:?}"
-        );
-    }
 }
 
 #[cfg(unix)]
@@ -416,102 +384,6 @@ fn catalog_unifies_all_enabled_sources_and_excludes_disabled_plugin_cache() {
             .iter()
             .any(|active| active.skill_id == skill_id));
     }
-
-    let _ = std::fs::remove_dir_all(base);
-}
-
-#[test]
-fn adopted_authenticated_skill_is_ready_only_after_nonsensitive_auth_state() {
-    let base = temp_path("auth-gate");
-    let _ = std::fs::remove_dir_all(&base);
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let home = base.join("home");
-    let runtime = base.join("runtime");
-    let skill_id = "catalog-auth-demo";
-    let body = home.join(".agents/skills").join(skill_id);
-    std::fs::create_dir_all(&body).unwrap();
-    std::fs::write(
-        body.join("SKILL.md"),
-        "---\nname: catalog-auth-demo\ndescription: Auth-gated catalog fixture.\nintent_tags: [auth-demo]\nrequires_auth: true\n---\nbody\n",
-    )
-    .unwrap();
-    ags_capability_governance::mutate_user_overlay(
-        &root,
-        &runtime,
-        &home,
-        "codex",
-        skill_id,
-        ags_capability_governance::OverlayMutationOperation::Adopt,
-        None,
-        true,
-    )
-    .unwrap();
-
-    let missing = ags_capability_governance::build_capability_snapshot_with_roots(
-        &root, "codex", &runtime, &home,
-    )
-    .unwrap();
-    let card = missing
-        .catalog
-        .iter()
-        .find(|card| card.skill_id == skill_id)
-        .unwrap();
-    assert_eq!(card.auth_state, AuthState::Unknown);
-    assert!(card
-        .reason_codes
-        .iter()
-        .any(|reason| reason == "auth_required"));
-    assert!(!missing
-        .active_skills
-        .iter()
-        .any(|skill| skill.skill_id == skill_id));
-
-    let auth_path = runtime.join("auth-state/codex.json");
-    std::fs::create_dir_all(auth_path.parent().unwrap()).unwrap();
-    std::fs::write(
-        &auth_path,
-        format!(r#"{{"skills":{{"{skill_id}":"satisfied"}}}}"#),
-    )
-    .unwrap();
-    let ready = ags_capability_governance::build_capability_snapshot_with_roots(
-        &root, "codex", &runtime, &home,
-    )
-    .unwrap();
-    let card = ready
-        .catalog
-        .iter()
-        .find(|card| card.skill_id == skill_id)
-        .unwrap();
-    assert_eq!(card.auth_state, AuthState::Satisfied);
-    assert_eq!(card.availability, AvailabilityState::Ready);
-    assert!(ready
-        .active_skills
-        .iter()
-        .any(|skill| skill.skill_id == skill_id));
-    assert!(!std::fs::read_to_string(&auth_path)
-        .unwrap()
-        .contains("secret"));
-
-    std::fs::write(
-        &auth_path,
-        format!(r#"{{"skills":{{"{skill_id}":"satisfied"}},"token":"secret"}}"#),
-    )
-    .unwrap();
-    let rejected_secret_bearing_state =
-        ags_capability_governance::build_capability_snapshot_with_roots(
-            &root, "codex", &runtime, &home,
-        )
-        .unwrap();
-    let card = rejected_secret_bearing_state
-        .catalog
-        .iter()
-        .find(|card| card.skill_id == skill_id)
-        .unwrap();
-    assert_eq!(card.auth_state, AuthState::Unknown);
-    assert!(!rejected_secret_bearing_state
-        .active_skills
-        .iter()
-        .any(|skill| skill.skill_id == skill_id));
 
     let _ = std::fs::remove_dir_all(base);
 }

@@ -11,7 +11,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ags_platform::{atomic_write, sha256_file};
 
-pub(super) const REGISTRY_SCHEMA: &str = "0.3.0-workspace-service";
+pub(super) const REGISTRY_SCHEMA: &str = "ags-workspace-registry/1";
 pub(super) const START_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,7 +27,6 @@ pub(super) struct WorkspaceRegistry {
     pub(super) process_start_identity: String,
     #[serde(default)]
     pub(super) daemon_nonce: String,
-    pub(super) version: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,7 +170,7 @@ pub(super) fn read_owner(path: &Path) -> Result<Option<WorkspaceOwner>, String> 
         Err(error) => return Err(format!("workspace owner read failed: {error}")),
     };
     // Atomic hard-link publication means an incomplete record cannot belong to
-    // a live current daemon. Legacy empty/truncated records are reclaimable.
+    // a live current daemon. Empty or truncated stale records are reclaimable.
     Ok(serde_json::from_slice(&bytes).ok())
 }
 
@@ -280,10 +279,7 @@ pub(super) fn owner_matches_process(owner: &WorkspaceOwner) -> bool {
 
 pub(super) fn registry_matches_process(registry: &WorkspaceRegistry) -> bool {
     if registry.process_start_identity.is_empty() {
-        // Compatibility is intentionally limited to the registry seam so an
-        // installed v0.3.1 daemon can be authenticated by token and stopped
-        // before v0.3.2 starts. New owner records never use PID-only identity.
-        return process_is_alive(registry.pid);
+        return false;
     }
     process_start_identity(registry.pid)
         .is_some_and(|identity| identity == registry.process_start_identity)

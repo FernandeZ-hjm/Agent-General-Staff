@@ -48,11 +48,11 @@ pub(crate) fn render_cross_platform_init_text(plan: &CrossPlatformInitPlan) -> S
         .collect::<Vec<_>>();
     if detected.is_empty() {
         lines.push(
-            "No Agent platforms detected — nothing to sync. Install a host CLI (claude/codex/omp) or rerun setup after onboarding."
+            "No Agent platforms detected. Install a host CLI (claude/codex/omp) or rerun setup after onboarding."
                 .to_string(),
         );
     } else {
-        lines.push("Cross-platform sync plan (no external registrar is run):".to_string());
+        lines.push("Cross-platform setup plan (no external registrar is run):".to_string());
         for platform in detected {
             lines.push(format!("  → {} ({})", platform.id, platform.display));
             lines.push(format!(
@@ -60,11 +60,11 @@ pub(crate) fn render_cross_platform_init_text(plan: &CrossPlatformInitPlan) -> S
                 platform.mcp_host_command
             ));
             lines.push(
-                "      AGS skill lifecycle:     plan — `ags skill adopt <source>` audits catalog/local/GitHub sources; confirmed `--apply` writes only reviewed machine-private adoption state and planned-host thin indexes"
+                "      Skill catalog:           read-only inventory; source changes happen only in an explicit reviewed install/update"
                     .to_string(),
             );
             lines.push(
-                "      Adopted capability sync: plan — via `ags capability sync` (apply writes AGS-owned thin-index)"
+                "      Static capability state: refresh once with `ags capability snapshot --write --host <host>` after that install/update"
                     .to_string(),
             );
             lines.push(format!(
@@ -75,7 +75,7 @@ pub(crate) fn render_cross_platform_init_text(plan: &CrossPlatformInitPlan) -> S
     }
     lines.push(String::new());
     lines.push(
-        "NOTE: This wizard is plan-only. AGS advises host MCP commands but never executes external registrars/installers; AGS-owned skill thin-index writes go through the confirmation-protected guard. Cross-Agent capability sync/verify is available via the `ags capability` layer (`ags capability sync`, `ags capability verify`)."
+        "NOTE: This wizard is plan-only. AGS advises host MCP commands but never executes external registrars/installers. Capability inventory and verification are read-only; static snapshots refresh only after an explicit setup/update."
             .to_string(),
     );
     lines.join("\n")
@@ -97,7 +97,7 @@ pub(crate) fn cross_platform_init_json(plan: &CrossPlatformInitPlan) -> serde_js
             })
         })
         .collect::<Vec<_>>();
-    let sync_plan = plan
+    let capability_plan = plan
         .platforms
         .iter()
         .filter(|platform| platform.detected)
@@ -106,8 +106,8 @@ pub(crate) fn cross_platform_init_json(plan: &CrossPlatformInitPlan) -> serde_js
                 "host": platform.id,
                 "ags_self_mcp": "plan",
                 "mcp_host_command": platform.mcp_host_command,
-                "ags_skill_thin_index": "plan-guarded-apply",
-                "adopted_capability_sync": "plan-via-capability-layer",
+                "skill_catalog": "read-only",
+                "static_snapshot": "explicit-refresh-after-install-or-update",
                 "drift_check": platform.drift_check,
             })
         })
@@ -116,8 +116,8 @@ pub(crate) fn cross_platform_init_json(plan: &CrossPlatformInitPlan) -> serde_js
         "wizard_mode": "plan-only",
         "primary_agent": plan.primary_agent,
         "platforms": platforms,
-        "sync_plan": sync_plan,
-        "note": "AGS never runs external host registrars/installers; AGS-owned skill thin-index writes go through the confirmation guard. Cross-Agent capability sync/verify is available via the `ags capability` layer.",
+        "capability_plan": capability_plan,
+        "note": "AGS never runs external host registrars/installers. Capability inventory and verification are read-only; static snapshots refresh only after explicit setup/update.",
     })
 }
 
@@ -136,7 +136,7 @@ mod tests {
         assert!(render_cross_platform_init_text(&plan).contains("No Agent platforms detected"));
         let json = cross_platform_init_json(&plan);
         assert_eq!(json["wizard_mode"], "plan-only");
-        assert_eq!(json["sync_plan"].as_array().unwrap().len(), 0);
+        assert_eq!(json["capability_plan"].as_array().unwrap().len(), 0);
         let _ = std::fs::remove_dir_all(home);
     }
 

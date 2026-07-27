@@ -56,29 +56,29 @@ pub(super) fn mcp_registry_entry_status(
         }))
 }
 
-pub(super) fn mcp_registry_adopted_check(
+pub(super) fn mcp_registry_active_check(
     repo_root: &Path,
     mcp_name: &str,
     display_name: &str,
 ) -> Finding {
-    let check_name = format!("mcp_registry_{mcp_name}_adopted");
+    let check_name = format!("mcp_registry_{mcp_name}_active");
     let status = match mcp_registry_entry_status(repo_root, mcp_name) {
         Ok(status) => status,
         Err(finding) => return finding,
     };
 
     let has_mcp = status.is_some();
-    let has_adopted = status.as_deref() == Some("adopted");
+    let is_active = status.as_deref() == Some("active");
 
-    if has_mcp && has_adopted {
+    if has_mcp && is_active {
         Finding::info(
             check_name,
-            format!("{display_name} MCP registered and adopted in mcp-registry.yaml"),
+            format!("{display_name} MCP is active in mcp-registry.yaml"),
         )
     } else if has_mcp {
         Finding::warn(
             check_name,
-            format!("{display_name} MCP found but status is not adopted"),
+            format!("{display_name} MCP found but status is not active"),
             format!("Review manifests/mcp-registry.yaml {mcp_name} entry"),
         )
     } else {
@@ -92,6 +92,6 @@ pub(super) fn mcp_registry_adopted_check(
 /// Check that `manifests/mcp-registry.yaml` has a `codegraph` MCP entry with
 /// `status: adopted`. This is an **info** check — host verification checks
 /// enforce actual Claude Code registration.
-pub fn mcp_registry_codegraph_adopted(repo_root: &Path) -> Finding {
-    mcp_registry_adopted_check(repo_root, "codegraph", "CodeGraph")
+pub fn mcp_registry_codegraph_active(repo_root: &Path) -> Finding {
+    mcp_registry_active_check(repo_root, "codegraph", "CodeGraph")
 }

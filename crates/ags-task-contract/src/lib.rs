@@ -6,6 +6,7 @@
 
 mod compile;
 mod context;
+mod fields;
 mod intent;
 mod render;
 
@@ -21,13 +22,10 @@ pub use compile::{
 };
 pub use context::{gather_project_context, ProjectContext, SlotSource};
 pub use intent::{
-    is_structured_contract_intent, parse_intent, HandoffContract, HandoffSource, ParsedIntent,
-    TaskLevel, HANDOFF_CONTRACT_SCHEMA_VERSION, SCHEMA_VERSION,
+    HandoffContract, HandoffSource, TaskLevel, HANDOFF_CONTRACT_SCHEMA_VERSION, SCHEMA_VERSION,
 };
 pub use render::{render_card_text, render_report_json, render_report_text};
 
-#[cfg(test)]
-pub(crate) use intent::{normalise_key, FIELD_HEADERS};
 #[cfg(test)]
 use std::path::Path;
 #[cfg(test)]

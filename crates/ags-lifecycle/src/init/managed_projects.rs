@@ -1,8 +1,10 @@
-//! Managed-project refresh planning, apply, and rollback.
+//! Managed-project refresh planning and atomic apply.
 
 use super::model::InitFile;
 use super::plan::{guard_path, project_init_plan_with_protocol, ProjectInitPlan};
+use super::{InitFinding, InitReport};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 const AGS_MANAGED_BEGIN: &str = "<!-- BEGIN AGS MANAGED BLOCK -->";
 const AGS_MANAGED_END: &str = "<!-- END AGS MANAGED BLOCK -->";
@@ -11,9 +13,9 @@ fn managed_block_text(desired: &str) -> String {
     format!("{AGS_MANAGED_BEGIN}\n{}\n{AGS_MANAGED_END}", desired.trim())
 }
 
-/// Replace only the AGS-owned section of a user-owned entry file. Legacy
-/// unmarked sections are migrated once; ambiguous project-owned sections fail
-/// closed instead of being overwritten.
+/// Replace only the explicitly marked AGS-owned section of a user-owned entry
+/// file. Files without a managed block receive one; generated full-entry files
+/// are handled separately by `is_generated_full_entry`.
 pub(crate) fn merge_managed_project_block(existing: &str, desired: &str) -> Result<String, String> {
     let replacement = managed_block_text(desired);
     if let Some(begin) = existing.find(AGS_MANAGED_BEGIN) {
@@ -21,27 +23,6 @@ pub(crate) fn merge_managed_project_block(existing: &str, desired: &str) -> Resu
             return Err("AGS managed block begin marker has no end marker".to_string());
         };
         let end = begin + end_rel + AGS_MANAGED_END.len();
-        return Ok(format!(
-            "{}{}{}",
-            &existing[..begin],
-            replacement,
-            &existing[end..]
-        ));
-    }
-
-    let heading = "## Agent Governance Suite";
-    if let Some(begin) = existing.find(heading) {
-        let section_tail = &existing[begin + heading.len()..];
-        let end = section_tail
-            .find("\n## ")
-            .map(|offset| begin + heading.len() + offset)
-            .unwrap_or(existing.len());
-        let legacy = &existing[begin..end];
-        if !legacy.contains("This project is governed by AGS")
-            && !legacy.contains("This project is governed by Agent Governance Suite")
-        {
-            return Err("existing Agent Governance Suite section is not AGS-managed".to_string());
-        }
         return Ok(format!(
             "{}{}{}",
             &existing[..begin],
@@ -66,6 +47,98 @@ pub struct ManagedProjectRefresh {
     pub changed_files: Vec<String>,
     pub unchanged_files: Vec<String>,
     pub blocked_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ManagedProjectRegistration {
+    pub registry_path: PathBuf,
+    pub project_path: String,
+    pub change: &'static str,
+}
+
+pub(crate) fn register_managed_project(
+    runtime_home: &Path,
+    target: &Path,
+    slug: &str,
+    now: u64,
+    report: &mut InitReport,
+) -> Option<ManagedProjectRegistration> {
+    use ags_workspace_facts::managed_projects as registry;
+
+    let registry_path = registry::registry_path(runtime_home);
+    let mut managed_projects = match registry::load(&registry_path) {
+        Ok(registry) => registry,
+        Err(error) => {
+            report.add(InitFinding::warn(
+                "managed-project-registry",
+                "managed-projects.yaml is malformed; reporting drift instead of overwriting",
+                error,
+            ));
+            return None;
+        }
+    };
+    let canonical = std::fs::canonicalize(target).unwrap_or_else(|_| target.to_path_buf());
+    let project_path = canonical.display().to_string();
+    let is_git = Command::new("git")
+        .arg("-C")
+        .arg(&canonical)
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+    let origin = is_git
+        .then(|| {
+            Command::new("git")
+                .arg("-C")
+                .arg(&canonical)
+                .args(["remote", "get-url", "origin"])
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+        .flatten();
+    let vcs = if is_git {
+        registry::ProjectVcs::Git
+    } else {
+        registry::ProjectVcs::None
+    };
+    let entry =
+        registry::describe_project(project_path.clone(), slug.to_string(), now, vcs, origin);
+    let change = registry::upsert(&mut managed_projects, entry);
+    if change == registry::RegistryChange::Unchanged {
+        report.add(InitFinding::pass(
+            "managed-project-registry",
+            format!("already registered: {project_path}"),
+        ));
+        return None;
+    }
+    if let Some(parent) = registry_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Err(error) = std::fs::write(&registry_path, registry::render_yaml(&managed_projects)) {
+        report.add(InitFinding::warn(
+            "managed-project-registry",
+            "could not write managed-projects.yaml",
+            error.to_string(),
+        ));
+        return None;
+    }
+    let change = if change == registry::RegistryChange::Added {
+        "added"
+    } else {
+        "refreshed"
+    };
+    report.add(InitFinding::pass(
+        "managed-project-registry",
+        format!("registered in managed-projects.yaml: {project_path} ({change})"),
+    ));
+    Some(ManagedProjectRegistration {
+        registry_path,
+        project_path,
+        change,
+    })
 }
 
 struct PendingProjectWrite {
@@ -242,7 +315,7 @@ pub fn refresh_managed_project(
                 }
             }
             blocked.push(format!(
-                "write failed {}: {e}; prior writes rolled back",
+                "write failed {}: {e}; this apply was restored to its original state",
                 write.path.display()
             ));
             return ManagedProjectRefresh {

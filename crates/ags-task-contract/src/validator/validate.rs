@@ -64,9 +64,12 @@ pub fn validate(input: &str) -> Vec<String> {
 
     // Rule 3/4: check required fields (single canonical set).
     let mut missing: Vec<&str> = Vec::new();
-    for field in REQUIRED_FIELDS {
-        if !input.contains(field) {
-            missing.push(field);
+    for field in crate::fields::required_fields() {
+        let marker = field
+            .required_marker
+            .expect("required task field has a marker");
+        if !input.contains(marker) {
+            missing.push(marker);
         }
     }
 

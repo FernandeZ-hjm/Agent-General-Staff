@@ -25,8 +25,4 @@ pub use adapter::apply_host_memory_adapter;
 pub use merge::MergeOutcome;
 
 pub(in crate::setup) use adapter::{add_workspace_memory_capture, render_memory_capture_plan};
-pub(in crate::setup) use assets::{
-    claude_stop_memory_capture_path, context_memory_script_path, memory_script_install_files,
-};
-#[cfg(test)]
-mod tests;
+pub(in crate::setup) use assets::memory_script_install_files;

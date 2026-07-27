@@ -9,7 +9,6 @@ pub fn apply_host_memory_adapter(
     home: &Path,
     workspace_root: &Path,
     host: &str,
-    backup_stamp: u64,
 ) {
     let supported = match host {
         "claude-code" => {
@@ -17,24 +16,19 @@ pub fn apply_host_memory_adapter(
             report.add(wire_workspace_memory_start(
                 &settings,
                 &memory_start_command(),
-                backup_stamp,
             ));
             report.add(wire_workspace_memory_capture(
                 &settings,
                 &memory_capture_command(),
-                backup_stamp.saturating_add(1),
             ));
             true
         }
         "codex" => {
-            report.add(wire_codex_memory_lifecycle(
-                &home.join(".codex/hooks.json"),
-                backup_stamp,
-            ));
+            report.add(wire_codex_memory_lifecycle(&home.join(".codex/hooks.json")));
             true
         }
         "omp" => {
-            report.add(ensure_omp_memory_extension(home, backup_stamp));
+            report.add(ensure_omp_memory_extension(home));
             true
         }
         other => {
@@ -110,28 +104,24 @@ pub(in crate::setup) fn add_workspace_memory_capture(
     report: &mut crate::setup::SetupReport,
     home: &Path,
     workspace_root: &Path,
-    backup_stamp: u64,
 ) {
-    add_workspace_memory_capture_inner(report, home, workspace_root, backup_stamp, None);
+    add_workspace_memory_capture_inner(report, home, workspace_root, None);
 }
 
 pub(super) fn add_workspace_memory_capture_inner(
     report: &mut crate::setup::SetupReport,
     home: &Path,
     workspace_root: &Path,
-    backup_stamp: u64,
     memory_root: Option<&Path>,
 ) {
     let settings_path = workspace_root.join(".claude").join("settings.json");
     report.add(wire_workspace_memory_start(
         &settings_path,
         &memory_start_command(),
-        backup_stamp,
     ));
     report.add(wire_workspace_memory_capture(
         &settings_path,
         &memory_capture_command(),
-        backup_stamp.saturating_add(1),
     ));
     let script_path = context_memory_script_path(home);
     report.add(bootstrap_workspace_memory_with(
@@ -225,7 +215,7 @@ pub(in crate::setup) fn render_memory_capture_plan(
         );
     } else {
         lines.push(
-            "  - Action: setup refreshes shared scripts + OMP extension. Use `ags agents govern --agent <claude-code|codex|omp> --apply` for explicit native host wiring; use --register-claude only for the legacy Claude MCP/workspace path."
+            "  - Action: setup refreshes shared scripts + OMP extension. Use `ags agents govern --agent <claude-code|codex|omp> --apply` for explicit native host wiring; use --register-claude only for explicit Claude MCP/workspace registration."
                 .to_string(),
         );
     }

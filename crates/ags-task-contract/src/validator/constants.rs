@@ -24,20 +24,9 @@ pub(crate) const VALID_PARALLELISM: &[&str] = &[
     "agent-team",
 ];
 pub(crate) const VALID_TASK_LEVELS: &[&str] = &["Light", "Medium", "Heavy"];
-/// Allowed `Execution effort` values. `low` / `normal` / `high` / `exhaustive`
-/// are the NEUTRAL canonical execution-intensity values that the front-stage
-/// task-card generation path uses. `ultracode` is retained ONLY as a
-/// parse-compatible legacy alias (a host-private trigger word) that maps to the
-/// same exhaustive semantics; task compiler must not generate it. `unknown` is the
-/// absent default.
-pub(crate) const VALID_EXECUTION_EFFORT: &[&str] = &[
-    "low",
-    "normal",
-    "high",
-    "exhaustive",
-    "ultracode",
-    "unknown",
-];
+/// Allowed `Execution effort` values. `unknown` is the absent default.
+pub(crate) const VALID_EXECUTION_EFFORT: &[&str] =
+    &["low", "normal", "high", "exhaustive", "unknown"];
 pub(crate) const VALID_WORKFLOW_AUTHORITY: &[&str] =
     &["none", "within-card", "plan-only", "allowed"];
 pub(crate) const VALID_HANDOFF_SOURCES: &[&str] =
@@ -49,13 +38,6 @@ pub(crate) const VALID_HANDOFF_SOURCES: &[&str] =
 /// slot only DECLARES splittable structure — actual subagent/workflow ignition is
 /// translated by the claude-code adapter / runner from the resolved policy.
 pub(crate) const VALID_SUBTASK_ORCHESTRATION_MODES: &[&str] = &["none", "optional", "required"];
-
-/// Whether an `Execution effort` value is the exhaustive tier. `exhaustive` is
-/// the neutral canonical value; `ultracode` is the parse-compatible legacy alias
-/// mapping to the same semantics.
-pub(crate) fn is_exhaustive_effort(effort: &str) -> bool {
-    matches!(effort, "exhaustive" | "ultracode")
-}
 
 /// Map Executor to its required Runtime adapter.
 pub(crate) fn expected_adapter(executor: &str) -> Option<&'static str> {
@@ -157,37 +139,4 @@ pub(crate) const WEAK_GOAL_VALUES: &[&str] = &[
     "待明确",
     "待补充",
     "以后再说",
-];
-
-// ── Required fields (format check) ──────────────────────────────────────
-
-/// Required fields for the canonical task card — the classic fixed skeleton
-/// defined in `protocol/task-card-template.md`. This is the single legal
-/// task-card format; the compact task-card format has been removed.
-/// Excludes `## 任务卡` (checked separately by the first-line rule).
-pub(crate) const REQUIRED_FIELDS: &[&str] = &[
-    "读取并遵守：",
-    "Contract ID:",
-    "Handoff source:",
-    "Executor:",
-    "Runtime adapter:",
-    "Execution surface:",
-    "Permission mode:",
-    "Parallelism:",
-    "任务级别",
-    "Review gate:",
-    "任务：",
-    "背景：",
-    "项目画像：",
-    "记忆胶囊：",
-    "任务存档：",
-    "目标文件夹路径：",
-    "相关路径：",
-    "本次任务相关文件：",
-    "目标：",
-    "验收标准：",
-    "非目标：",
-    "验证：",
-    "Verification gate:",
-    "交付：",
 ];

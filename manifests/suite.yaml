@@ -10,19 +10,38 @@
 # archive.
 #
 # Third-party skills are optional and NEVER auto-installed by AGS.
-# See docs/skill-recommendations.md for the public recommendation list and
-# manual install steps. Inspect governance status with `ags skill inventory`.
+# Inspect reviewed static capability metadata with `ags skill inventory`.
 
 schema_version: "2.0-skill"
 suite:
   name: "agent-general-staff"
-  version: "0.3.3"
+  version: "0.3.4"
   description: >
-    Agent General Staff 0.3.3 public edition — Rust-native governance control
+    Agent General Staff 0.3.4 public edition — Rust-native governance control
     plane for multi-agent development. It governs admission, authority, policy,
     evidence, capability state, and lifecycle; it is not an Agent scheduler.
     Optional third-party development skills require confirmed installation.
-  required: []
+  required:
+    - name: "ags-agents"
+      version: "0.3.4"
+      source: "templates/command-skills/ags-agents"
+      hash: "ead45bd7153c1bbdb182881ee33f0ddf9b4abb71caacf1ef801f0413b7431d6b"
+    - name: "ags-doctor"
+      version: "0.3.4"
+      source: "templates/command-skills/ags-doctor"
+      hash: "96cec5efdbdbb64ec046ca501d736fdea573de9bc5385665f371a495be4490cc"
+    - name: "ags-init"
+      version: "0.3.4"
+      source: "templates/command-skills/ags-init"
+      hash: "6244330d2ac5fa6210f7d41306f33ca7cd3b84084a253fffa203a1b7de360d33"
+    - name: "ags-setup"
+      version: "0.3.4"
+      source: "templates/command-skills/ags-setup"
+      hash: "6f28bef949ba984ed4f6306cc5467657c252ab1e02ea4c95a05f7fffb7ba3916"
+    - name: "ags-skill"
+      version: "0.3.4"
+      source: "templates/command-skills/ags-skill"
+      hash: "cbfb4a527cba70cf2bdc00a4ee8ccde73a608933eb82860e86fa686da30e2209"
   optional:
     # The host submits a typed HostRouteProposal. Skill Resolver validates exact
     # SkillTarget identifiers against the machine-local HostCapabilitySnapshot;

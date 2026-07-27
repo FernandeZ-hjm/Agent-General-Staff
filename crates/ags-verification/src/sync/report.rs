@@ -157,7 +157,7 @@ mod tests {
     }
 
     #[test]
-    fn text_report_includes_status_and_files() {
+    fn text_and_json_renderers_preserve_the_report_contract() {
         let report = sample_report();
         let text = render_text(&report);
 
@@ -169,11 +169,7 @@ mod tests {
         assert!(text.contains("DRIFT_LEGAL_REDACTION"));
         assert!(text.contains("Executor"));
         assert!(text.contains("Heavy Tasks"));
-    }
-
-    #[test]
-    fn text_passed_report_shows_pass() {
-        let report = DriftReport {
+        let passed = DriftReport {
             source_root: PathBuf::from("/tmp/src"),
             source_name: "private".into(),
             projects: vec![ProjectDrift {
@@ -183,13 +179,7 @@ mod tests {
                 drifts: vec![],
             }],
         };
-        let text = render_text(&report);
-        assert!(text.contains("PASS"));
-    }
-
-    #[test]
-    fn json_report_is_valid_json() {
-        let report = sample_report();
+        assert!(render_text(&passed).contains("PASS"));
         let json = render_json(&report);
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 

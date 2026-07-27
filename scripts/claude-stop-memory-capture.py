@@ -67,7 +67,7 @@ def emit_close_receipt(
     target.write_text(
         json.dumps(
             {
-                "schema_version": "0.3.0-memory-close-receipt",
+                "schema_version": "0.3.4-memory-close-receipt",
                 "created_at": _dt.datetime.now().isoformat(timespec="seconds"),
                 "host": host,
                 "session_id": str(hook_input.get("session_id") or ""),
@@ -268,8 +268,8 @@ def write_receipt(repo_path: pathlib.Path, task_card: str, report: str, hook_inp
     receipt_dir = receipt_root / repo_slug / f"{now_stamp()}-{host}-memory"
     receipt_dir.mkdir(parents=True, exist_ok=True)
 
-    (receipt_dir / "task-card.md").write_text(task_card + "\n", encoding="utf-8")
-    (receipt_dir / "delivery-report.md").write_text(report + "\n", encoding="utf-8")
+    (receipt_dir / "task-card.md").write_text(task_card, encoding="utf-8")
+    (receipt_dir / "delivery-report.md").write_text(report, encoding="utf-8")
     (receipt_dir / "hook-input.json").write_text(
         json.dumps(hook_input, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -304,109 +304,53 @@ def write_receipt(repo_path: pathlib.Path, task_card: str, report: str, hook_inp
     return receipt_dir
 
 
-def inline_value(text: str, key: str) -> str:
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith(key):
-            return stripped[len(key):].strip()
-    return ""
+def delivery_closure(receipt_dir: pathlib.Path) -> dict[str, Any]:
+    executable = os.environ.get("AGS_CLI_BIN") or shutil.which("ags")
+    if not executable:
+        return {
+            "schema_version": "0.3.4-delivery-closure",
+            "valid": False,
+            "checks": [
+                {
+                    "name": "ags-cli-available",
+                    "passed": False,
+                    "detail": "AGS_CLI_BIN is unset and ags is not on PATH",
+                }
+            ],
+        }
 
-
-def declared_ids(text: str, prefix: str) -> list[str]:
-    pattern = rf"(?m)^\s*-\s*({re.escape(prefix)}\d{{2}})\s*(?::|->)"
-    return re.findall(pattern, text)
-
-
-def report_section(text: str, heading: str) -> str:
-    marker = f"{heading}\n"
-    if marker not in text:
-        return ""
-    body = text.split(marker, 1)[1]
-    return body.split("\n## ", 1)[0].strip()
-
-
-def delivery_closure(task_card: str, report: str) -> dict[str, Any]:
-    task_hash = hashlib.sha256(task_card.encode("utf-8")).hexdigest()
-    contract_id = inline_value(task_card, "Contract ID:")
-    expected_receipt_id = f"receipt-{task_hash[:12]}"
-    checks: list[dict[str, Any]] = []
-
-    def check(name: str, passed: bool, detail: str) -> None:
-        checks.append({"name": name, "passed": passed, "detail": detail})
-
-    check("closure-schema", inline_value(report, "Closure schema:") == "1.0", "expected 1.0")
-    check(
-        "contract-id-binding",
-        inline_value(report, "Contract ID:") == contract_id and bool(contract_id),
-        f"expected {contract_id}",
+    result = subprocess.run(
+        [
+            executable,
+            "task",
+            "close",
+            str(receipt_dir / "task-card.md"),
+            str(receipt_dir / "delivery-report.md"),
+            "--format",
+            "json",
+        ],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
-    check(
-        "task-card-hash-binding",
-        inline_value(report, "task-card-hash:") == task_hash,
-        f"expected {task_hash}",
-    )
-    check(
-        "receipt-id-binding",
-        inline_value(report, "receipt-id:") == expected_receipt_id,
-        f"expected {expected_receipt_id}",
-    )
-
-    closure_sets = [
-        ("goal-closure", declared_ids(task_card, "G-"), declared_ids(report_section(report, "## 目标闭环"), "G-")),
-        (
-            "acceptance-closure",
-            declared_ids(task_card, "AC-"),
-            declared_ids(report_section(report, "## 验收闭环"), "AC-"),
-        ),
-        (
-            "verification-closure",
-            declared_ids(report_section(task_card, "Verification gate:"), "V-"),
-            declared_ids(report_section(report, "## 验证闭环"), "V-"),
-        ),
-    ]
-    for name, expected, actual in closure_sets:
-        check(
-            name,
-            bool(expected) and sorted(expected) == sorted(actual) and len(actual) == len(set(actual)),
-            f"expected={expected}, actual={actual}",
-        )
-
-    status = inline_value(report, "状态:")
-    unresolved = report_section(report, "## 未闭环项")
-    if status == "completed":
-        status_rows = "\n".join(
-            report_section(report, heading)
-            for heading in ("## 目标闭环", "## 验收闭环", "## 验证闭环")
-        )
-        closed_statuses = not any(
-            marker in status_rows
-            for marker in (": partial", ": skipped", ": fail", ": not-run")
-        )
-        review_closed = inline_value(report, "review-gate:") in ("passed", "n/a")
-        unresolved_none = any(
-            line.strip().lstrip("-").strip() == "none" for line in unresolved.splitlines()
-        )
-        check(
-            "completed-state-consistency",
-            closed_statuses and review_closed and unresolved_none,
-            f"closed_statuses={closed_statuses}, review_closed={review_closed}, unresolved_none={unresolved_none}",
-        )
-    else:
-        check(
-            "open-state-consistency",
-            status in ("partial", "blocked") and bool(unresolved) and "- none" not in unresolved,
-            "partial/blocked requires concrete unresolved IDs",
-        )
-
-    return {
-        "schema_version": "1.0-delivery-closure",
-        "valid": all(item["passed"] for item in checks),
-        "contract_id": contract_id,
-        "task_card_hash": task_hash,
-        "delivery_report_hash": hashlib.sha256(report.encode("utf-8")).hexdigest(),
-        "receipt_id": expected_receipt_id,
-        "checks": checks,
-    }
+    try:
+        closure = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {
+            "schema_version": "0.3.4-delivery-closure",
+            "valid": False,
+            "checks": [
+                {
+                    "name": "ags-task-close",
+                    "passed": False,
+                    "detail": f"exit={result.returncode}; stderr={result.stderr.strip()}",
+                }
+            ],
+        }
+    if result.returncode != 0:
+        closure["valid"] = False
+    return closure
 
 
 def capture_memory(receipt_dir: pathlib.Path, repo_path: pathlib.Path) -> bool:
@@ -481,7 +425,7 @@ def main() -> int:
 
     repo_path = resolve_repo_path(str(hook_input.get("cwd") or ""))
     receipt_dir = write_receipt(repo_path, task_card, report, hook_input)
-    closure = delivery_closure(task_card, report)
+    closure = delivery_closure(receipt_dir)
     (receipt_dir / "closure.json").write_text(
         json.dumps(closure, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",

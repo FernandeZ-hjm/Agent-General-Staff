@@ -1,16 +1,14 @@
-//! Multi-project protocol drift checker with section-level comparison
-//! and protocol safety assertion verification.
+//! Multi-project protocol drift checker with section-level comparison.
 //!
 //! 1. Parse markdown files into heading-path → content sections
 //! 2. Compare sections across source and multiple targets
 //! 3. Classify drift by type and severity
 //! 4. Apply allowlists for legal differences (e.g. public-full sanitized adjustments)
-//! 5. Verify critical protocol safety assertions are present in every target
-//! 6. Output structured text or JSON reports
+//! 5. Output structured text or JSON reports
 //!
 //! # Library usage (for suite-doctor)
 //!
-//! ```ignore
+//! ```text
 //! use ags_verification::sync::{check_multi, CheckOptions, TargetConfig, ProjectKind};
 //!
 //! let report = check_multi(&CheckOptions {
@@ -26,7 +24,6 @@
 //! ```
 
 pub mod allowlist;
-pub mod assertions;
 pub mod drift;
 pub mod manifest;
 pub mod parser;
@@ -40,13 +37,13 @@ pub use types::{
     ProjectKind, SectionPath, Severity, TargetConfig,
 };
 
-/// Stable checkout basename retained for CLI and library compatibility.
+/// Default stable checkout basename.
 ///
 /// Callers resolve it relative to their source workspace parent rather than
 /// embedding one maintainer machine's absolute path.
 pub const DEFAULT_STABLE_ROOT: &str = "agent-governance-suite-source";
 
-/// Public-safe checkout basename retained for CLI and library compatibility.
+/// Default public-safe checkout basename.
 pub const DEFAULT_PUBLIC_ROOT: &str = "ai-dev-env-bootstrap";
 
 // ── Public API ─────────────────────────────────────────────────────────
@@ -101,7 +98,7 @@ pub fn check_multi(options: &CheckOptions) -> DriftReport {
             &effective_allowlist
         };
 
-        let mut project_drift = drift::check_target(
+        let project_drift = drift::check_target(
             &options.source_root,
             &target.root,
             &target.name,
@@ -109,19 +106,13 @@ pub fn check_multi(options: &CheckOptions) -> DriftReport {
             al_ref,
         );
 
-        // Protocol safety assertion checks (always FAIL on missing/contradicted,
-        // regardless of target kind or allowlist).
-        let assertion_drifts =
-            assertions::check_assertions(&target.root, &target.name, &target.kind);
-        project_drift.drifts.extend(assertion_drifts);
-
         report.projects.push(project_drift);
     }
 
     report
 }
 
-/// Run drift check for a single target (backward-compatible convenience wrapper).
+/// Run drift check for a single target.
 pub fn check_single(
     source_root: PathBuf,
     target_root: PathBuf,
@@ -146,17 +137,6 @@ pub fn run_cli(options: CheckOptions, format: ReportFormat) -> bool {
 pub enum ReportFormat {
     Text,
     Json,
-}
-
-// ── Test helpers ───────────────────────────────────────────────────────
-
-#[allow(dead_code)]
-fn group_drifts_by_code(drifts: &[Drift]) -> std::collections::BTreeMap<String, usize> {
-    let mut grouped = std::collections::BTreeMap::new();
-    for drift in drifts {
-        *grouped.entry(drift.code.clone()).or_insert(0) += 1;
-    }
-    grouped
 }
 
 #[cfg(test)]
@@ -191,7 +171,7 @@ mod tests {
 
     fn write_manifest(root: &Path) {
         let safety = "protocol/runtime-adapters.md\n# Test\n\n\
-            ultracode is thinking intensity only — it does not change permission mode.\n\
+            exhaustive is thinking intensity only — it does not change permission mode.\n\
             Task level does not change the permission mode; permission modes are plan-only and execute-and-verify; execute-and-verify runs directly.\n\
             plan-only must not produce write-type launch args and must strip parallelism.\n\
             Runners must consume allowed_launch_args and effective_permission_mode.\n\

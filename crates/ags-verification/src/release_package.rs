@@ -21,13 +21,7 @@ fn public_release_forbidden_patterns() -> Vec<&'static str> {
     crate::sync::manifest::PUBLIC_FORBIDDEN_PAYLOAD
         .iter()
         .copied()
-        .chain([
-            "proposals/",
-            "graphify-out/",
-            "governance/backups/",
-            ".claude/",
-            ".codegraph/",
-        ])
+        .chain(["proposals/", "graphify-out/", ".claude/", ".codegraph/"])
         .collect()
 }
 fn walk_release_files(root: &Path, prefix: &str, files: &mut Vec<String>) {
@@ -156,7 +150,7 @@ pub fn release_package_plan(
         .collect();
 
     let plan = serde_json::json!({
-        "schema_version": "2.0-release",
+        "schema_version": "0.3.4-release-plan",
         "profile": profile,
         "dry_run": dry_run,
         "source_root": source_root.to_string_lossy(),
@@ -219,7 +213,7 @@ mod tests {
             "scripts/verify.sh"
         ));
         assert!(!matches_path_boundary(
-            "scripts/verify.sh.bak",
+            "scripts/verify.sh.tmp",
             "scripts/verify.sh"
         ));
         assert!(!matches_path_boundary(

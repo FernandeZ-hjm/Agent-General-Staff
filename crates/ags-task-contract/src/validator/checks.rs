@@ -54,44 +54,18 @@ pub(crate) const PARALLELISM_BODY_KEYWORDS: &[&str] = &[
 
 /// Keywords that indicate the exhaustive execution-effort tier is being abused as
 /// execution-authority rather than thinking-intensity.  Matched case-insensitively
-/// against the full action-bearing context.  Covers the neutral `exhaustive`
-/// value and the legacy `ultracode` alias equally — effort is never authority.
+/// against the full action-bearing context.
 pub(crate) const EXHAUSTIVE_EFFORT_AUTHORITY_ABUSE_KEYWORDS: &[&str] = &[
-    // Chinese — ultracode as authority / permission escalation
-    "以 ultracode 权限",
-    "以 ultracode 执行",
-    "ultracode 权限执行",
-    "ultracode 自动执行",
-    "ultracode 可以跳过",
-    "ultracode 可以直接",
-    "因为 ultracode",
-    "ultracode 模式下",
-    // Chinese — review bypass
-    "ultracode 无需人工",
-    "ultracode 不需要 review",
-    "ultracode 跳过 review",
-    // Chinese — neutral `exhaustive` value abuse
     "以 exhaustive 权限",
     "exhaustive 权限执行",
     "exhaustive 自动执行",
     "exhaustive 可以跳过",
     "exhaustive 跳过 review",
     "因为 exhaustive",
-    // English — authority mapping
-    "ultracode allows",
-    "ultracode enables",
-    "ultracode authorizes",
-    "with ultracode authority",
-    "ultracode mode enables",
-    "because ultracode",
     "exhaustive allows",
     "exhaustive enables",
     "exhaustive authorizes",
     "with exhaustive authority",
-    // English — review bypass
-    "ultracode skip review",
-    "ultracode bypass",
-    "ultracode auto-approve",
     "exhaustive skip review",
     "exhaustive bypass",
 ];

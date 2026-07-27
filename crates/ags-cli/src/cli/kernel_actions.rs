@@ -264,7 +264,7 @@ pub(crate) enum SyncAction {
         #[arg(long = "targets", value_name = "NAME=PATH", num_args = 1.., value_parser = parse_target)]
         targets: Vec<(String, PathBuf)>,
 
-        /// Single target root (backward compatible).
+        /// Single target root.
         #[arg(long = "target")]
         target: Option<PathBuf>,
 
@@ -368,27 +368,6 @@ pub(crate) enum SessionAction {
 /// worktree.
 #[derive(Subcommand)]
 pub(crate) enum VerifyAction {
-    /// Run verification checks for the given scope.
-    ///
-    /// Scope determines which checks run:
-    ///   local   — fmt, test, build, fixtures, YAML, preflight
-    ///   full    — local + drift checks (stable, public)
-    ///   release   — self-contained public release checks
-    ///   promotion — source-to-public checks with --public-root
-    Run {
-        /// Verification scope: local, full, release, or promotion
-        #[arg(long, default_value = "local", value_parser = ["local", "full", "release", "promotion"])]
-        scope: String,
-        /// Output format: text (default) or json
-        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
-        format: String,
-        /// Target repository path, or private runtime home with --profile private.
-        #[arg(long, default_value = ".")]
-        target: PathBuf,
-        /// Explicit public worktree for promotion verification.
-        #[arg(long)]
-        public_root: Option<PathBuf>,
-    },
     /// Classify the change lane for a git diff range (diff-aware verification).
     ///
     /// Maps the changed files in `--range` to a change lane and the
@@ -453,7 +432,7 @@ pub(crate) enum HooksAction {
     },
 }
 
-// ── Release / Rollback actions ─────────────────────────────────────────────
+// ── Release actions ─────────────────────────────────────────────────────────
 /// Release verification operations — dry-run only, no apply to stable/public.
 #[derive(Subcommand)]
 pub(crate) enum ReleaseAction {
@@ -482,25 +461,6 @@ pub(crate) enum ReleaseAction {
         /// Dry-run: list files but do not write any package.
         #[arg(long, default_value_t = false)]
         dry_run: bool,
-        /// Output format: text (default) or json
-        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
-        format: String,
-    },
-}
-/// Rollback operations — plan only, no apply.
-#[derive(Subcommand)]
-pub(crate) enum RollbackAction {
-    /// Plan a rollback — maps what would change without applying.
-    ///
-    /// Dry-run only: output a structured rollback plan with affected files,
-    /// current state, and rollback target. Does not modify any files.
-    Plan {
-        /// Rollback profile. `private` plans rollback of the local AGS runtime home.
-        #[arg(long, value_parser = ["private"])]
-        profile: Option<String>,
-        /// Target runtime home (default: $AGS_HOME or ~/.ags/private-runtime).
-        #[arg(long)]
-        target: Option<PathBuf>,
         /// Output format: text (default) or json
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,

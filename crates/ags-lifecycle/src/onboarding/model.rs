@@ -36,10 +36,6 @@ pub enum OnboardingAction {
         registrar: String,
         executable: String,
     },
-    AdoptSkill {
-        source: String,
-        host: String,
-    },
     RegisterNpmMcp {
         registrar: String,
         server_name: String,
@@ -104,9 +100,6 @@ pub struct OnboardingPlan {
     pub target: String,
     pub manifest_source: String,
     pub manifest_hash: String,
-    pub manifest_freshness: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub manifest_fallback_reason: Option<String>,
     pub bootstrap_required: bool,
     pub ready: bool,
     pub plan_hash: String,
@@ -120,12 +113,4 @@ pub struct ActionExecution {
     pub exit_code: Option<i32>,
     pub stdout: String,
     pub stderr: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RollbackAdvice {
-    pub affected_path: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub inverse_command: Option<String>,
-    pub detail: String,
 }

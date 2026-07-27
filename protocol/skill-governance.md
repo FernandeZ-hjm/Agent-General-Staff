@@ -1,120 +1,56 @@
 # Skill Governance Protocol
 
-> AGS 0.3.3 的机器本地技能生命周期、统一目录与确定性解析协议。
+> AGS 0.3.4 使用显式刷新、运行时只读的静态能力模型。
 
-## Source of Truth
+## 权威数据
 
-- `manifests/skills-registry.yaml`：官方/团队技能身份、canonical source、routing/auth metadata；优先级最高。
-- `manifests/suite.yaml`：suite required / optional / personal 集合。
-- `<runtime_home>/skill-registry/user-overlay.yaml`：机器私有 adopt/ignore/rollback overlay，不入库。
-- `<runtime_home>/capability-snapshot/<host>.json`：每宿主单一能力快照，不入库。
-- `<runtime_home>/skill-usage/<host>.ndjson`：非敏感、append-only outcome ledger，不入库。
+- `manifests/skills-registry.yaml`：AGS Skill 元数据与路由权威。
+- `manifests/third-party-capabilities.yaml`：经审查的第三方能力版本清单。
+- `<runtime_home>/capability-snapshot/<host>.json`：安装或更新时生成的一份宿主快照。
 
-## 显式刷新时的统一候选目录
+运行时不维护 user overlay、source registry、usage ledger、adoption plan 或历史
+snapshot bundle。canonical body 仍由仓库或明确的外部 manager 持有，但 AGS 路由
+只读取当前静态快照。
 
-只有 setup、update、adopt/sync apply 或
-`ags capability snapshot --host <host> --write` 这类显式生命周期动作会重新
-发现并发布 `HostCapabilitySnapshot`。刷新时统一发现：
-
-- suite roots；
-- 宿主 `.system` 技能；
-- `~/.agents/skills` 等用户安装技能；
-- project-local 技能；
-- 宿主配置明确证明 enabled 的 plugin roots。
-
-不得遍历整棵 disabled plugin cache。候选技能也进入 `catalog`，但只有 `governance=Active` 且 `availability=Ready` 的技能进入 `active_skills`。
-
-## SkillCard 与 ActiveSkill
-
-薄 `SkillCard` 至少包含：`skill_id`、展示名、summary、`intent_tags`、entrypoints、
-`routing_surface`、可选 `routing_hint`、source kind、governance、
-availability/reason codes、requires_auth/AuthState、version/source hash 和 activity。
-
-`routing_surface` 是闭集：
-
-- `skill_target`：只有这类条目可以进入 `ActiveSkillTable` 并提交为 `SkillTarget`；
-- `host_command`：宿主前台命令技能，只能按静态 `routing_hint` 直接调用 CLI；
-- `not_routable`：支持文件、共享父技能、personal/retired 等非路由条目。
-
-安装与宿主可见不等于 `skill_target`。把 `host_command`（例如 `ags-setup`）
-提交为 `SkillTarget` 必须返回 `skill_target_kind_mismatch` 和静态命令提示，
-不得降格成含糊的 `skill_not_active`，也不得刷新快照尝试“修复”。
-
-`ActiveSkill` 以 `skill_id + allowed entrypoints + invoke_hint` 精确索引。Resolver 只接受精确 `SkillTarget`，不读取自然语言、不做关键词/相似度/fallback。旧 `SkillDemand` 与 `demand_routes` 只保留为 intent metadata 与旧序列化兼容输入。
-
-## 正交状态
-
-以下事实保持正交，不压成一个互斥大状态机：ManagedStatus、RegistryStatus、RouteState、HealthStatus、HostVisibility、AuthState。
-
-派生状态：
-
-- governance：`Discovered | Candidate | ManagedInactive | Active | Ignored | Retired`
-- availability：`Ready | Degraded(reason_codes) | Unavailable(reason_codes)`
-- activity：`Unobserved | Warm | Cold`
-
-reason codes 至少覆盖：`candidate_requires_adoption`、`registry_not_routable`、`retired`、`canonical_missing`、`host_not_visible`、`health_degraded`、`auth_required`、`metadata_incomplete`、`snapshot_stale`。
-
-requires_auth 的技能只有在不含 secret 的 runtime `AuthState=satisfied` 时才可 Ready。tracked registry 不得保存凭据或伪造认证完成状态。
-
-## Snapshot determinism
-
-每个宿主只持久化一个静态 `HostCapabilitySnapshot`：
+## 生命周期
 
 ```text
-schema_version + host
-+ registry_hash + overlay_hash + runtime_hash
-+ catalog_hash + active_table_hash
-→ snapshot_hash
+审查上游版本
+→ 更新仓库内权威清单/canonical body
+→ 运行显式 setup 或 update
+→ 为 codex / claude-code / omp / cursor / codebuddy-code 各生成一份快照
+→ preflight
+→ read ags://capabilities/current-host
+→ typed HostRouteProposal
+→ exact route
+→ optional leased apply
 ```
 
-时间戳和 activity 不参与 catalog/snapshot/lease hash。请求期只读取并验证快照
-自身的 schema、host 与内容 hash，不重新扫描 PATH、宿主可见性、认证、health、
-usage、registry 或 overlay，也不比较实时目录。不存在 workspace capability
-bundle、bundle epoch 或请求期 refresh。
+preflight、resource read、route 和 apply 不联网、不抓取仓库、不比较上游、不写快照，
+也没有 `bundle_epoch`。相同静态文件始终产生相同 `snapshot_hash`。显式替换快照后，
+旧连接/lease fail closed，调用方重新 preflight。
 
-显式刷新使用 `ags capability snapshot --host <host> --write`，以私有权限原子
-替换该宿主唯一快照。刷新时采样到的上游、第三方能力、认证和宿主可见性会冻结
-到新快照；下一次显式刷新前保持不变。快照缺失、损坏或内部 hash 不一致时 fail
-closed。正在运行的 workspace daemon 每宿主只加载一次；磁盘快照更新后，重启
-daemon/重新连接才采用新快照，旧 session 与 lease 随服务重启失效。
+## 路由语义
 
-## 私有 Overlay 生命周期
+安装可见不等于可路由。`SkillTarget` 必须同时满足：
 
-前台命令：
+1. 注册表 `route_state: routable`；
+2. 当前宿主快照中 `Active + Ready`；
+3. `skill_id` 与可选 entrypoint 精确存在；
+4. proposal 的 `snapshot_hash` 与 preflight binding 相同。
 
-```bash
-ags skill adopt <skill-id> [--apply]
-ags skill ignore <skill-id> [--apply]
-ags skill rollback <skill-id> --to <revision> [--apply]
-```
+`ags-setup`、`ags-init`、`ags-doctor`、`ags-agents` 是宿主前台命令技能，由宿主按
+冻结的 CLI hint 直接调用。把它们提交为 MCP `SkillTarget` 必须返回
+`skill_target_kind_mismatch` 和直接命令提示；刷新快照不会改变它们的类型。
+`ags-skill` 是这组命令技能中唯一同时允许进入 `ActiveSkillTable` 的治理目标。
 
-默认 dry-run。`--apply` 使用 0600、同目录原子替换，并追加 mutation receipt；记录 revision、source_hash、metadata_version 与 before/after。隐藏 `propose` 只作 deprecated wrapper，并调用同一服务。
+## OMP
 
-硬规则：
+OMP 使用独立 host id `omp` 和独立静态快照。setup/update 必须生成 OMP snapshot；
+route、verify 和 lease 绑定都使用 `omp`，不得复用其他宿主的快照。
 
-- overlay 只能纳管 external/user/project/enabled-plugin 候选；
-- suite tracked registry 对官方/团队 ID 永远优先；
-- overlay 不能 shadow 官方 ID、覆盖 retired 条目或改写官方 routing/auth；
-- 写失败必须保持或恢复到前一 revision；
-- 所有测试使用临时 HOME/runtime/host roots。
+## 写入边界
 
-## Usage 与冷技能闭环
-
-只有 `ags_apply_action` 可以为受控技能动作追加 outcome。ledger 仅记录：event id、timestamp、request fingerprint、proposal/decision/lease id、skill id、entrypoint、`succeeded|failed|abandoned` 和非敏感质量字段；禁止 raw prompt、凭据和绝对路径。
-
-activity 只在显式快照刷新时从 ledger 采样并冻结到快照；请求、resource read、
-route 和 apply 不会重算或刷新 activity：
-
-- 从未有 outcome：`Unobserved`；
-- Active 连续 30 天无 outcome，或最后 outcome 超过 90 天：`Cold`；
-- 其他：`Warm`。
-
-Cold 只提示，不影响 snapshot hash/lease，不自动 ignore/retire。每个不与 MachineCli 共存的精确 SkillTarget 都会得到一个 daemon client session 内受控 outcome action，solution formation 与 direct-edit 使用同一记录路径。route correction 用旧 decision 的 `outcome=abandoned` 表示，宿主须在提交新 route 前消费旧 outcome action；离线评估按相同 `request_fingerprint` 关联前后 decision。correction 与 outcome 都不得自动改 registry、overlay 或生产路由。
-
-## Task Card Gate
-
-任务卡 `[skill: name]` 仍必须同时满足：registry routable、合法 invoke_hint、机器快照 Active+Ready。任一失败即停止；不得替换成职责相似技能。技能永远不能改变 task level、permission、review、verification、protected path 或 release boundary。
-
-## Public / Stable Projection
-
-只投影协议、schema 与官方 registry。真实 catalog snapshot、user overlay、usage ledger、lease、auth state、runtime receipt 和机器绝对路径必须排除在 tracked diff、stable/public fixture 与 release payload 之外。
+`ags capability snapshot --host <host> --write` 只允许在显式 setup/update 工作中调用。
+快照通过同目录临时文件原子替换，不生成持久副本、quarantine 或回滚计划。
+进程内临时状态可以用于一次原子事务失败恢复，事务结束即销毁。

@@ -32,8 +32,6 @@ pub mod error_code {
     pub const ALLOWLIST_LOAD_FAILED: &str = "DRIFT_ALLOWLIST_LOAD_FAILED";
 
     // Protocol safety assertions
-    pub const INVARIANT_MISSING: &str = "INVARIANT_MISSING";
-    pub const INVARIANT_CONTRADICTED: &str = "INVARIANT_CONTRADICTED";
 
     // Public release boundary
     pub const PUBLIC_FORBIDDEN_PAYLOAD: &str = "PUBLIC_FORBIDDEN_PAYLOAD";
@@ -120,12 +118,6 @@ pub enum DriftKind {
     /// Allowlist file failed to load (missing, unreadable, or invalid JSON).
     #[serde(rename = "allowlist_load_failed")]
     AllowlistLoadFailed,
-    /// A required protocol safety assertion is absent from the target.
-    #[serde(rename = "invariant_missing")]
-    InvariantMissing,
-    /// A protocol safety assertion is present but has been contradictorily rewritten.
-    #[serde(rename = "invariant_contradicted")]
-    InvariantContradicted,
     /// A forbidden private runtime/build artifact is present in a public-full target.
     #[serde(rename = "public_forbidden_payload")]
     PublicForbiddenPayload,
@@ -143,8 +135,6 @@ impl fmt::Display for DriftKind {
             DriftKind::LegalRedaction => write!(f, "legal_redaction"),
             DriftKind::ExtraProtocolFile => write!(f, "extra_protocol_file"),
             DriftKind::AllowlistLoadFailed => write!(f, "allowlist_load_failed"),
-            DriftKind::InvariantMissing => write!(f, "invariant_missing"),
-            DriftKind::InvariantContradicted => write!(f, "invariant_contradicted"),
             DriftKind::PublicForbiddenPayload => write!(f, "public_forbidden_payload"),
         }
     }
@@ -289,7 +279,7 @@ pub struct CheckOptions {
 }
 
 impl CheckOptions {
-    /// Single-target convenience constructor (backward compatible).
+    /// Single-target convenience constructor.
     pub fn single(
         source: impl Into<PathBuf>,
         target: impl Into<PathBuf>,

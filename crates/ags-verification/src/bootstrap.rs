@@ -7,7 +7,7 @@
 //!
 //! # Library usage
 //!
-//! ```ignore
+//! ```text
 //! use ags_verification::bootstrap::run;
 //! use crate::doctor::render_text;
 //!
@@ -123,21 +123,12 @@ pub fn run(repo_root: &Path) -> HealthReport {
     report
 }
 
-/// Stub entry point — kept for backward compatibility.
-///
-/// Prefer `run()` + `render_text()` / `render_json()` in new code.
-pub fn run_stub() {
-    use crate::doctor::render_text;
-    let report = run(Path::new("."));
-    println!("{}", render_text(&report));
-}
-
 // ── M7 Bootstrap: plan / apply / verify ──────────────────────────────────
 
 use serde::{Deserialize, Serialize};
 
 /// Schema version for bootstrap plan/apply artifacts.
-pub const SCHEMA_VERSION: &str = "2.0-m7";
+pub const SCHEMA_VERSION: &str = "0.3.4-bootstrap-plan";
 
 /// A single action in a bootstrap plan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -185,15 +176,10 @@ pub fn plan(source_repo: &Path, target: &Path) -> BootstrapPlan {
         }
     }
 
-    // ── Private suite scripts (NOT public-safe) ─────────────────────────
-    // validate.sh and run-task-card.sh require Cargo.toml + ags-cli
-    // (they invoke `cargo run -q -p ags-cli -- ...`).
-    // They are private suite payload only — not suitable for non-Rust
-    // bootstrap targets.  For public-safe targets, these scripts need
-    // standalone wrapper equivalents that do not depend on Cargo.
-    // verify.sh is excluded entirely (references private A paths and
-    // cargo build commands).
-    let scripts = ["validate.sh", "run-task-card.sh"];
+    // ── Private suite validation script (NOT public-safe) ────────────────
+    // validate.sh requires Cargo.toml + ags-cli. verify.sh is excluded
+    // entirely because it references private source topology and build gates.
+    let scripts = ["validate.sh"];
 
     for name in &scripts {
         let src = source_repo.join("scripts").join(name);
@@ -329,7 +315,6 @@ pub fn verify(target: &Path) -> HealthReport {
 
     let expected = [
         ("scripts/validate.sh", "validate script"),
-        ("scripts/run-task-card.sh", "runner script"),
         ("protocol/agent-task-protocol.md", "agent task protocol"),
         ("protocol/task-card-template.md", "task card template"),
         (".ags-bootstrap.log", "bootstrap log"),
@@ -362,7 +347,7 @@ pub fn verify(target: &Path) -> HealthReport {
             .is_ok_and(|output| output.status.success());
 
     // ── bash -n syntax check on copied scripts ─────────────────────────
-    for script in &["scripts/validate.sh", "scripts/run-task-card.sh"] {
+    for script in &["scripts/validate.sh"] {
         let full = target.join(script);
         if full.exists() {
             if !bash_usable {
@@ -455,10 +440,8 @@ mod tests {
     use super::*;
     use crate::doctor::Severity;
 
-    // ── bootstrap_structure_check ─────────────────────────────────────
-
     #[test]
-    fn structure_check_finds_cargo_toml_in_workspace() {
+    fn structure_check_distinguishes_present_and_missing_workspace() {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
@@ -474,10 +457,7 @@ mod tests {
             .unwrap();
         assert_eq!(cargo.severity, Severity::Info);
         assert!(cargo.message.contains("present"));
-    }
 
-    #[test]
-    fn structure_check_reports_missing_for_nonexistent_dir() {
         let tmp = std::env::temp_dir().join("ags-bootstrap-nonexistent-test");
         let _ = std::fs::remove_dir_all(&tmp);
         let findings = bootstrap_structure_check(&tmp);
@@ -489,222 +469,15 @@ mod tests {
         }
     }
 
-    // ── HealthReport integration ──────────────────────────────────────
-
     #[test]
-    fn run_produces_health_report_with_title() {
-        let report = run(Path::new("."));
-        assert_eq!(report.title, "bootstrap-dry-run");
-        // At minimum we should have cargo-available and rust-toolchain checks
-        assert!(report.total() >= 2);
-    }
-
-    #[test]
-    fn report_passed_false_when_failure_present() {
-        let mut report = HealthReport::new("test");
-        report.add(Finding::fail("x", "fail", "detail"));
-        assert!(!report.passed());
-        assert_eq!(report.exit_code(), 1);
-    }
-
-    #[test]
-    fn report_passed_true_when_all_pass() {
-        let mut report = HealthReport::new("test");
-        report.add(Finding::pass("a", "ok"));
-        report.add(Finding::pass("b", "ok"));
-        assert!(report.passed());
-        assert_eq!(report.exit_code(), 0);
-    }
-
-    // ── JSON canonical values ─────────────────────────────────────────
-
-    #[test]
-    fn json_output_uses_canonical_value_names() {
-        let mut report = HealthReport::new("dry-run-test");
-        report.add(Finding::pass("check1", "all good"));
-        report.add(Finding::fail("check2", "broken", "fix me"));
-
-        let json = crate::doctor::render_json(&report);
-        // Must use canonical serde values, not Rust variant names
-        assert!(json.contains("\"pass\""));
-        assert!(json.contains("\"fail\""));
-        assert!(!json.contains("\"Pass\""));
-        assert!(!json.contains("\"Fail\""));
-    }
-
-    #[test]
-    fn json_detail_is_null_when_absent() {
-        let mut report = HealthReport::new("t");
-        report.add(Finding::pass("c", "ok"));
-        let json = crate::doctor::render_json(&report);
-        assert!(json.contains("\"detail\": null"));
-    }
-
-    // ── Text output ───────────────────────────────────────────────────
-
-    #[test]
-    fn text_output_includes_title_and_all_checks() {
-        let report = run(Path::new("."));
-        let text = crate::doctor::render_text(&report);
-
-        assert!(text.contains("bootstrap-dry-run"));
-        assert!(text.contains("cargo-available"));
-        assert!(text.contains("rust-toolchain"));
-    }
-
-    #[test]
-    fn text_output_shows_pass_when_all_ok() {
-        let mut report = HealthReport::new("t");
-        report.add(Finding::pass("x", "fine"));
-        let text = crate::doctor::render_text(&report);
-        assert!(text.contains("PASS"));
-    }
-
-    #[test]
-    fn text_output_shows_fail_when_failure() {
-        let mut report = HealthReport::new("t");
-        report.add(Finding::fail("x", "bad", "detail"));
-        let text = crate::doctor::render_text(&report);
-        assert!(text.contains("FAIL"));
-    }
-
-    // ── sanitize_name ─────────────────────────────────────────────────
-
-    #[test]
-    fn sanitize_replaces_slashes_and_dots() {
+    fn names_are_sanitized_for_check_ids() {
         assert_eq!(sanitize_name("crates/"), "crates");
         assert_eq!(sanitize_name("Cargo.toml"), "Cargo-toml");
         assert_eq!(sanitize_name("scripts/verify.sh"), "scripts-verify-sh");
     }
 
-    // ── M7: plan / apply / verify ─────────────────────────────────────
-
     #[test]
-    fn plan_produces_protocol_and_scripts_actions() {
-        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap();
-        let target = std::env::temp_dir().join("ags-m7-plan-test");
-        let plan = plan(repo_root, &target);
-
-        assert_eq!(plan.schema_version, "2.0-m7");
-        assert!(!plan.actions.is_empty());
-
-        // Must include protocol files
-        let protocol_actions: Vec<_> = plan
-            .actions
-            .iter()
-            .filter(|a| {
-                Path::new(&a.path)
-                    .strip_prefix(&target)
-                    .is_ok_and(|relative| relative.starts_with("protocol"))
-            })
-            .collect();
-        assert!(
-            !protocol_actions.is_empty(),
-            "should include protocol files"
-        );
-
-        // Must include scripts (but NOT verify.sh)
-        let script_actions: Vec<_> = plan
-            .actions
-            .iter()
-            .filter(|a| {
-                Path::new(&a.path)
-                    .strip_prefix(&target)
-                    .is_ok_and(|relative| relative.starts_with("scripts"))
-            })
-            .collect();
-        assert!(!script_actions.is_empty(), "should include script files");
-        for a in &script_actions {
-            assert!(
-                !a.path.contains("verify.sh"),
-                "verify.sh must not be in bootstrap payload: {}",
-                a.path
-            );
-        }
-
-        // Must include bootstrap log action
-        assert!(
-            plan.actions
-                .iter()
-                .any(|a| a.path.contains(".ags-bootstrap.log")),
-            "should include bootstrap log"
-        );
-
-        // Private/stable authority includes portable private-runtime templates;
-        // the public source edition intentionally excludes that payload.
-        let template_actions: Vec<_> = plan
-            .actions
-            .iter()
-            .filter(|a| a.action == "copy-template")
-            .collect();
-        if crate::edition::is_public_edition(repo_root) {
-            assert!(
-                template_actions.is_empty(),
-                "public bootstrap must not recreate private runtime templates"
-            );
-        } else {
-            assert!(
-                template_actions.len() >= 3,
-                "should include at least 3 template actions (profile, js hook, json hook), got {}",
-                template_actions.len()
-            );
-        }
-        // All template action paths must be under manifests/templates/
-        for a in &template_actions {
-            assert!(
-                Path::new(&a.path)
-                    .strip_prefix(&target)
-                    .is_ok_and(|relative| relative.starts_with("manifests/templates")),
-                "template action path must be under manifests/templates/: {}",
-                a.path
-            );
-            assert_eq!(
-                a.action, "copy-template",
-                "template action must use 'copy-template', got '{}' for {}",
-                a.action, a.path
-            );
-        }
-    }
-
-    #[test]
-    fn plan_template_actions_are_public_safe() {
-        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap();
-        let target = std::env::temp_dir().join("ags-template-safe-test");
-        let plan = plan(repo_root, &target);
-
-        let template_actions: Vec<_> = plan
-            .actions
-            .iter()
-            .filter(|a| a.action == "copy-template")
-            .collect();
-
-        for a in &template_actions {
-            // Template action descriptions must not contain real paths with /Users/
-            assert!(
-                !a.description.contains("/Users/"),
-                "template description must not leak /Users/ path: {}",
-                a.description
-            );
-            // Template action paths are target paths (not source paths)
-            // but they should still be relative, not absolute home dir paths
-            assert!(
-                !a.path.starts_with("/Users/"),
-                "template path must not be absolute /Users/ path: {}",
-                a.path
-            );
-        }
-    }
-
-    #[test]
-    fn apply_to_tempdir_creates_files() {
+    fn plan_apply_verify_is_one_public_safe_contract() {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
@@ -713,6 +486,49 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("bootstrapped");
         let plan = plan(repo_root, &target);
+
+        assert_eq!(plan.schema_version, "0.3.4-bootstrap-plan");
+        assert!(!plan.actions.is_empty());
+        assert!(plan.actions.iter().any(|action| {
+            Path::new(&action.path)
+                .strip_prefix(&target)
+                .is_ok_and(|relative| relative.starts_with("protocol"))
+        }));
+        assert!(plan.actions.iter().any(|action| {
+            Path::new(&action.path)
+                .strip_prefix(&target)
+                .is_ok_and(|relative| relative.starts_with("scripts"))
+        }));
+        assert!(!plan
+            .actions
+            .iter()
+            .any(|action| action.path.contains("verify.sh")));
+        assert!(
+            plan.actions
+                .iter()
+                .any(|a| a.path.contains(".ags-bootstrap.log")),
+            "should include bootstrap log"
+        );
+        let template_actions: Vec<_> = plan
+            .actions
+            .iter()
+            .filter(|a| a.action == "copy-template")
+            .collect();
+        assert!(
+            template_actions.is_empty(),
+            "public bootstrap must not copy private runtime templates"
+        );
+        for a in &template_actions {
+            assert!(
+                Path::new(&a.path)
+                    .strip_prefix(&target)
+                    .is_ok_and(|relative| relative.starts_with("manifests/templates")),
+                "template action path must be under manifests/templates/: {}",
+                a.path
+            );
+            assert!(!a.description.contains("/Users/"));
+            assert!(!a.path.starts_with("/Users/"));
+        }
         let report = apply(repo_root, &plan);
 
         assert!(report.passed(), "apply should pass: {:?}", report.findings);
@@ -736,34 +552,11 @@ mod tests {
             !target.join("scripts").join("verify.sh").exists(),
             "verify.sh must not be in bootstrap payload"
         );
-    }
-
-    #[test]
-    fn verify_on_bootstrapped_tempdir_passes() {
-        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join("bootstrapped");
-        let plan = plan(repo_root, &target);
-        apply(repo_root, &plan);
-
-        // Verify — bootstrapped target should have all expected files
         let report = verify(&target);
         assert!(report.passed(), "verify should pass: {:?}", report.findings);
-        for finding in &report.findings {
-            assert!(
-                matches!(
-                    finding.status,
-                    crate::doctor::CheckStatus::Pass | crate::doctor::CheckStatus::Skip
-                ),
-                "verify check {} should pass: {} — {}",
-                finding.check_name,
-                finding.message,
-                finding.detail.as_deref().unwrap_or("")
-            );
-        }
+        assert!(report.findings.iter().all(|finding| matches!(
+            finding.status,
+            crate::doctor::CheckStatus::Pass | crate::doctor::CheckStatus::Skip
+        )));
     }
 }

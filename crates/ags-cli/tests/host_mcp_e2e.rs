@@ -1,611 +1,13 @@
-use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::BTreeSet;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::{Duration, Instant};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 const HOSTS: &[&str] = &["codex", "claude-code", "cursor", "omp"];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum NativeProbeStatus {
-    Passed,
-    Unavailable,
-    Unsupported,
-    Failed,
-}
-
-#[derive(Debug, Clone)]
-enum RegistrationProbe {
-    Registered(String),
-    ConfiguredOnly(String),
-    NotRegistered(String),
-    Unsupported(String),
-    Failed(String),
-}
-
-#[derive(Debug, Serialize)]
-struct NativeHostDiagnostic {
-    harness_kind: &'static str,
-    host: &'static str,
-    status: NativeProbeStatus,
-    executable: Option<String>,
-    version: Option<String>,
-    registration_source: Option<String>,
-    evidence: String,
-}
-
-fn classify_native_probe(
-    host_detected: bool,
-    registration: RegistrationProbe,
-) -> NativeProbeStatus {
-    if !host_detected {
-        return NativeProbeStatus::Unavailable;
-    }
-    match registration {
-        RegistrationProbe::Registered(_) => NativeProbeStatus::Passed,
-        RegistrationProbe::ConfiguredOnly(_) | RegistrationProbe::Unsupported(_) => {
-            NativeProbeStatus::Unsupported
-        }
-        RegistrationProbe::NotRegistered(_) | RegistrationProbe::Failed(_) => {
-            NativeProbeStatus::Failed
-        }
-    }
-}
-
-fn first_output_line(output: &std::process::Output) -> Option<String> {
-    [&output.stdout[..], &output.stderr[..]]
-        .into_iter()
-        .flat_map(|bytes| {
-            String::from_utf8_lossy(bytes)
-                .lines()
-                .map(str::to_owned)
-                .collect::<Vec<_>>()
-        })
-        .map(|line| line.trim().to_string())
-        .find(|line| !line.is_empty())
-        .map(|line| line.chars().take(240).collect())
-}
-
-fn executable_version(path: &Path) -> Result<String, String> {
-    let output = Command::new(path)
-        .arg("--version")
-        .output()
-        .map_err(|error| format!("version probe failed: {error}"))?;
-    let line = first_output_line(&output).unwrap_or_else(|| "no version output".to_string());
-    if output.status.success() {
-        Ok(line)
-    } else {
-        Err(format!("version probe exited {}: {line}", output.status))
-    }
-}
-
-fn executable_override(host: &str) -> Option<PathBuf> {
-    let variable = match host {
-        "codex" => "AGS_NATIVE_CODEX_BIN",
-        "claude-code" => "AGS_NATIVE_CLAUDE_CODE_BIN",
-        "cursor" => "AGS_NATIVE_CURSOR_BIN",
-        "omp" => "AGS_NATIVE_OMP_BIN",
-        _ => return None,
-    };
-    std::env::var_os(variable).map(PathBuf::from)
-}
-
-fn executable_names(host: &str) -> &'static [&'static str] {
-    match host {
-        "codex" => &["codex"],
-        "claude-code" => &["claude"],
-        "cursor" => &["cursor"],
-        "omp" => &["omp"],
-        _ => &[],
-    }
-}
-
-fn executable_on_path(names: &[&str]) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for directory in std::env::split_paths(&path) {
-        for name in names {
-            let candidate = directory.join(name);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-            #[cfg(windows)]
-            for extension in ["exe", "cmd", "bat", "com"] {
-                let candidate = directory.join(format!("{name}.{extension}"));
-                if candidate.is_file() {
-                    return Some(candidate);
-                }
-            }
-        }
-    }
-    None
-}
-
-fn native_executable(host: &str, home: &Path) -> Option<PathBuf> {
-    if let Some(path) = executable_override(host) {
-        return path.is_file().then_some(path);
-    }
-    if let Some(path) = executable_on_path(executable_names(host)) {
-        return Some(path);
-    }
-    if host == "cursor" {
-        for candidate in [
-            PathBuf::from("/Applications/Cursor.app/Contents/Resources/app/bin/cursor"),
-            home.join("Applications/Cursor.app/Contents/Resources/app/bin/cursor"),
-        ] {
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
-fn registered_line(
-    executable: &Path,
-    arguments: &[&str],
-    line_matches: impl Fn(&str) -> bool,
-) -> RegistrationProbe {
-    let output = match Command::new(executable).args(arguments).output() {
-        Ok(output) => output,
-        Err(error) => return RegistrationProbe::Failed(error.to_string()),
-    };
-    let combined = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    if !output.status.success() {
-        return RegistrationProbe::Failed(
-            combined
-                .lines()
-                .find(|line| !line.trim().is_empty())
-                .unwrap_or("registration probe failed")
-                .chars()
-                .take(240)
-                .collect(),
-        );
-    }
-    match combined.lines().find(|line| line_matches(line.trim())) {
-        Some(line) => RegistrationProbe::Registered(line.trim().chars().take(240).collect()),
-        None => RegistrationProbe::NotRegistered("AGS registration not found".to_string()),
-    }
-}
-
-fn json_config_registration(paths: &[PathBuf]) -> RegistrationProbe {
-    let mut readable = false;
-    for path in paths {
-        let content = match fs::read_to_string(path) {
-            Ok(content) => {
-                readable = true;
-                content
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                return RegistrationProbe::Failed(format!(
-                    "cannot read {}: {error}",
-                    path.display()
-                ))
-            }
-        };
-        let value: Value = match serde_json::from_str(&content) {
-            Ok(value) => value,
-            Err(error) => {
-                return RegistrationProbe::Failed(format!(
-                    "invalid JSON at {}: {error}",
-                    path.display()
-                ))
-            }
-        };
-        let registered = value
-            .get("mcpServers")
-            .or_else(|| value.get("servers"))
-            .and_then(|servers| servers.get("ags"))
-            .is_some();
-        if registered {
-            return RegistrationProbe::ConfiguredOnly(format!(
-                "AGS entry in {}, but configuration alone is not a live Cursor connection probe",
-                path.display()
-            ));
-        }
-    }
-    if readable {
-        RegistrationProbe::NotRegistered("readable MCP config has no AGS entry".to_string())
-    } else {
-        RegistrationProbe::Unsupported(
-            "no readable Cursor MCP configuration found for a native connection probe".to_string(),
-        )
-    }
-}
-
-fn cursor_agent_executable() -> Option<PathBuf> {
-    std::env::var_os("AGS_NATIVE_CURSOR_AGENT_BIN")
-        .map(PathBuf::from)
-        .filter(|path| path.is_file())
-        .or_else(|| executable_on_path(&["cursor-agent"]))
-}
-
-fn cursor_live_registration_probe() -> (RegistrationProbe, Option<String>) {
-    let Some(cursor_agent) = cursor_agent_executable() else {
-        return (
-            RegistrationProbe::Unsupported(
-                "Cursor IDE is installed, but standalone `cursor-agent` is unavailable; the IDE CLI has no read-only MCP list/connect command and must not be treated as a live probe"
-                    .to_string(),
-            ),
-            Some("standalone `cursor-agent mcp list-tools ags`".to_string()),
-        );
-    };
-    (
-        registered_line(&cursor_agent, &["mcp", "list-tools", "ags"], |line| {
-            line.contains("ags_preflight")
-        }),
-        Some(format!("{} mcp list-tools ags", cursor_agent.display())),
-    )
-}
-
-fn receive_rpc_message(
-    receiver: &mpsc::Receiver<Value>,
-    deadline: Instant,
-) -> Result<Value, String> {
-    let remaining = deadline
-        .checked_duration_since(Instant::now())
-        .ok_or_else(|| "OMP RPC probe timed out".to_string())?;
-    match receiver.recv_timeout(remaining) {
-        Ok(message) => Ok(message),
-        Err(mpsc::RecvTimeoutError::Timeout) => Err("OMP RPC probe timed out".to_string()),
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            Err("OMP RPC stdout closed before the probe completed".to_string())
-        }
-    }
-}
-
-fn omp_log_excerpt(home: &Path) -> String {
-    let Ok(entries) = fs::read_dir(home.join(".omp/logs")) else {
-        return String::new();
-    };
-    let mut lines = Vec::new();
-    for entry in entries.flatten() {
-        let Ok(content) = fs::read_to_string(entry.path()) else {
-            continue;
-        };
-        lines.extend(content.lines().filter_map(|line| {
-            let value: Value = serde_json::from_str(line).ok()?;
-            let message = value["message"].as_str().unwrap_or_default();
-            let path = value["path"].as_str().unwrap_or_default();
-            let level = value["level"].as_str().unwrap_or_default();
-            (message.to_ascii_lowercase().contains("mcp")
-                || path.starts_with("mcp:")
-                || level == "error")
-                .then(|| line.to_string())
-        }));
-    }
-    lines
-        .into_iter()
-        .rev()
-        .take(30)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect::<Vec<_>>()
-        .join(" | ")
-        .chars()
-        .take(1_200)
-        .collect()
-}
-
-fn omp_live_registration_probe(executable: &Path) -> RegistrationProbe {
-    let fixture = TestDir::new("native-omp");
-    let project = fixture.path().join("project");
-    let runtime = fixture.path().join("runtime");
-    let home = fixture.path().join("home");
-    if let Err(error) = fs::create_dir_all(&project)
-        .and_then(|()| fs::create_dir_all(&runtime))
-        .and_then(|()| fs::create_dir_all(home.join(".omp/agent")))
-    {
-        return RegistrationProbe::Failed(format!("cannot prepare isolated OMP probe: {error}"));
-    }
-    if !Command::new("git")
-        .args(["init", "--quiet"])
-        .current_dir(&project)
-        .status()
-        .is_ok_and(|status| status.success())
-    {
-        return RegistrationProbe::Failed(
-            "cannot initialize isolated OMP probe workspace".to_string(),
-        );
-    }
-    let ags = PathBuf::from(env!("CARGO_BIN_EXE_ags"));
-    let config = json!({
-        "mcpServers": {
-            "ags_e2e": {
-                "command": ags,
-                "args": ["mcp", "serve", "--transport", "stdio"]
-            }
-        }
-    });
-    let omp_config_dir = project.join(".omp");
-    let config_bytes = serde_json::to_vec_pretty(&config).unwrap();
-    if let Err(error) = fs::create_dir_all(&omp_config_dir)
-        .and_then(|()| fs::write(omp_config_dir.join("mcp.json"), &config_bytes))
-    {
-        return RegistrationProbe::Failed(format!(
-            "cannot write isolated OMP MCP fixture: {error}"
-        ));
-    }
-
-    let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let mut child = match Command::new(executable)
-        .args(["--mode", "rpc", "--no-session", "--model", "opus", "--cwd"])
-        .arg(&project)
-        .current_dir(&project)
-        .env("AGS_RUNTIME_HOME", &runtime)
-        .env("AGS_SOURCE_ROOT", &source_root)
-        .env("AGS_THIRD_PARTY_MANIFEST_OFFLINE", "1")
-        .env("HOME", &home)
-        .env("USERPROFILE", &home)
-        // RPC state/tool inspection never invokes the model. A deterministic
-        // placeholder only lets isolated OMP startup select its built-in model
-        // catalog without reading the operator's real credential store.
-        .env("ANTHROPIC_API_KEY", "ags-native-e2e-placeholder")
-        .env("OMP_MCP_TIMEOUT_MS", "5000")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(error) => {
-            return RegistrationProbe::Failed(format!("cannot start OMP RPC probe: {error}"))
-        }
-    };
-    let mut stdin = child.stdin.take().unwrap();
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
-    let stderr_capture = Arc::new(Mutex::new(String::new()));
-    let stderr_writer = Arc::clone(&stderr_capture);
-    let stderr_reader = thread::spawn(move || {
-        let mut stderr = BufReader::new(stderr);
-        let mut content = String::new();
-        let _ = stderr.read_to_string(&mut content);
-        if let Ok(mut captured) = stderr_writer.lock() {
-            *captured = content;
-        }
-    });
-    let (sender, receiver) = mpsc::channel();
-    let reader = thread::spawn(move || {
-        for line in BufReader::new(stdout).lines() {
-            let Ok(line) = line else {
-                break;
-            };
-            if let Ok(message) = serde_json::from_str::<Value>(&line) {
-                if sender.send(message).is_err() {
-                    break;
-                }
-            }
-        }
-    });
-
-    let deadline = Instant::now() + Duration::from_secs(15);
-    let result = (|| -> Result<(Vec<String>, bool), String> {
-        loop {
-            let message = receive_rpc_message(&receiver, deadline)?;
-            if message["type"] == "ready" {
-                break;
-            }
-        }
-        // OMP emits `ready` before its asynchronous MCP discovery/connect
-        // tasks have necessarily populated the session tool registry. Poll the
-        // read-only state endpoint until the required tools arrive or the
-        // single startup deadline expires.
-        let required = [
-            "mcp__ags_e2e__ags_preflight",
-            "mcp__ags_e2e__ags_route_request",
-            "mcp__ags_e2e__ags_apply_action",
-        ];
-        let mut attempt = 0_u32;
-        let mut last_names = Vec::new();
-        let mut last_discoverable = false;
-        while Instant::now() < deadline {
-            attempt += 1;
-            let request_id = format!("ags-native-omp-probe-{attempt}");
-            writeln!(stdin, "{}", json!({"id": request_id, "type": "get_state"}))
-                .map_err(|error| format!("cannot write OMP RPC request: {error}"))?;
-            stdin
-                .flush()
-                .map_err(|error| format!("cannot flush OMP RPC request: {error}"))?;
-            loop {
-                let message = receive_rpc_message(&receiver, deadline)?;
-                if message["type"] == "response" && message["id"] == request_id {
-                    if message["success"] != true {
-                        return Err(format!(
-                            "OMP RPC get_state failed: {}",
-                            message["error"].as_str().unwrap_or("unknown error")
-                        ));
-                    }
-                    last_names = message["data"]["dumpTools"]
-                        .as_array()
-                        .ok_or_else(|| "OMP RPC get_state omitted dumpTools".to_string())?
-                        .iter()
-                        .filter_map(|tool| tool["name"].as_str())
-                        .map(str::to_string)
-                        .collect::<Vec<_>>();
-                    let prompt =
-                        serde_json::to_string(&message["data"]["systemPrompt"]).unwrap_or_default();
-                    last_discoverable = ["ags_preflight", "ags_route_request", "ags_apply_action"]
-                        .iter()
-                        .all(|tool| prompt.contains(tool));
-                    break;
-                }
-            }
-            if required
-                .iter()
-                .all(|required| last_names.iter().any(|name| name == required))
-                || last_discoverable
-            {
-                return Ok((last_names, last_discoverable));
-            }
-            thread::sleep(Duration::from_millis(250));
-        }
-        Ok((last_names, last_discoverable))
-    })();
-    let _ = child.kill();
-    let _ = child.wait();
-    drop(receiver);
-    let _ = reader.join();
-    let _ = stderr_reader.join();
-    let stderr = stderr_capture
-        .lock()
-        .map(|captured| captured.trim().chars().take(600).collect::<String>())
-        .unwrap_or_default();
-    let log_excerpt = omp_log_excerpt(&home);
-    let diagnostic_output = match (stderr.is_empty(), log_excerpt.is_empty()) {
-        (true, true) => "(empty)".to_string(),
-        (false, true) => stderr,
-        (true, false) => log_excerpt,
-        (false, false) => format!("{stderr}; log: {log_excerpt}"),
-    };
-
-    match result {
-        Ok((names, discoverable)) => {
-            let required = [
-                "mcp__ags_e2e__ags_preflight",
-                "mcp__ags_e2e__ags_route_request",
-                "mcp__ags_e2e__ags_apply_action",
-            ];
-            let missing = required
-                .iter()
-                .filter(|required| !names.iter().any(|name| name == **required))
-                .copied()
-                .collect::<Vec<_>>();
-            if missing.is_empty() || discoverable {
-                RegistrationProbe::Registered(format!(
-                    "live OMP RPC session loaded AGS preflight/route/apply into its {} surface",
-                    if missing.is_empty() {
-                        "active tool"
-                    } else {
-                        "discoverable MCP"
-                    }
-                ))
-            } else {
-                RegistrationProbe::NotRegistered(format!(
-                    "live OMP RPC session did not expose required AGS tools: {}; observed candidate tools: {}; stderr: {}",
-                    missing.join(", "),
-                    if names.iter().all(|name| !name.starts_with("mcp__")) {
-                        "(none)".to_string()
-                    } else {
-                        names
-                            .iter()
-                            .filter(|name| name.starts_with("mcp__"))
-                            .take(20)
-                            .cloned()
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    },
-                    diagnostic_output
-                ))
-            }
-        }
-        Err(error) => RegistrationProbe::Failed(format!("{error}; stderr: {}", diagnostic_output)),
-    }
-}
-
-fn native_registration_probe(
-    host: &str,
-    executable: Option<&Path>,
-    home: &Path,
-    project: &Path,
-) -> (RegistrationProbe, Option<String>) {
-    match (host, executable) {
-        ("codex", Some(executable)) => (
-            registered_line(executable, &["mcp", "list"], |line| {
-                (line.starts_with("ags ") || line.starts_with("ags:")) && line.contains("enabled")
-            }),
-            Some("codex mcp list".to_string()),
-        ),
-        ("claude-code", Some(executable)) => (
-            registered_line(executable, &["mcp", "list"], |line| {
-                line.starts_with("ags:") && line.contains("Connected")
-            }),
-            Some("claude mcp list".to_string()),
-        ),
-        ("cursor", _) => {
-            let (live, source) = cursor_live_registration_probe();
-            if !matches!(live, RegistrationProbe::Unsupported(_)) {
-                return (live, source);
-            }
-            let paths = [
-                home.join(".cursor/mcp.json"),
-                home.join("Library/Application Support/Cursor/User/mcp.json"),
-                project.join(".cursor/mcp.json"),
-                project.join(".mcp.json"),
-            ];
-            let configured = json_config_registration(&paths);
-            if matches!(configured, RegistrationProbe::Unsupported(_)) {
-                (live, source)
-            } else {
-                (
-                    configured,
-                    Some("Cursor MCP configuration (not a live probe)".to_string()),
-                )
-            }
-        }
-        ("omp", Some(executable)) => (
-            omp_live_registration_probe(executable),
-            Some("isolated live `omp --mode rpc` get_state dumpTools/systemPrompt".to_string()),
-        ),
-        _ => (
-            RegistrationProbe::Unsupported(
-                "no safe read-only native registration probe is available".to_string(),
-            ),
-            None,
-        ),
-    }
-}
-
-fn native_host_diagnostic(host: &'static str, home: &Path, project: &Path) -> NativeHostDiagnostic {
-    let executable = native_executable(host, home);
-    let version = executable.as_deref().map(executable_version);
-    let executable_works = version.as_ref().is_some_and(Result::is_ok);
-    let (registration, source) =
-        native_registration_probe(host, executable.as_deref(), home, project);
-    let detected = executable_works
-        || (host == "cursor"
-            && [
-                home.join(".cursor"),
-                PathBuf::from("/Applications/Cursor.app"),
-            ]
-            .iter()
-            .any(|path| path.exists()));
-    let status = if version.as_ref().is_some_and(Result::is_err) {
-        NativeProbeStatus::Failed
-    } else {
-        classify_native_probe(detected, registration.clone())
-    };
-    let evidence = match registration {
-        RegistrationProbe::Registered(evidence)
-        | RegistrationProbe::ConfiguredOnly(evidence)
-        | RegistrationProbe::NotRegistered(evidence)
-        | RegistrationProbe::Failed(evidence) => evidence,
-        RegistrationProbe::Unsupported(evidence) => evidence,
-    };
-    NativeHostDiagnostic {
-        harness_kind: "native",
-        host,
-        status,
-        executable: executable.map(|path| path.display().to_string()),
-        version: version.map(|result| result.unwrap_or_else(|error| error)),
-        registration_source: source,
-        evidence,
-    }
-}
 
 struct TestDir(PathBuf);
 
@@ -733,15 +135,40 @@ impl TestEnvironment {
     }
 
     fn install_test_skill(&self, skill_id: &str) {
-        let skill_dir = self.home.join(".agents").join("skills").join(skill_id);
-        fs::create_dir_all(&skill_dir).unwrap();
-        fs::write(
-            skill_dir.join("SKILL.md"),
-            format!(
-                "---\nname: {skill_id}\ndescription: Hermetic capability refresh fixture.\n---\n\n# {skill_id}\n"
-            ),
-        )
-        .unwrap();
+        let private_canonical = self.source_root.join("global-skills").join(skill_id);
+        let public_canonical = self
+            .source_root
+            .join("templates/command-skills")
+            .join(skill_id);
+        let canonical = if private_canonical.is_dir() {
+            private_canonical
+        } else {
+            public_canonical
+        };
+        for root in [
+            ".claude/skills",
+            ".codex/skills",
+            ".cursor/skills",
+            ".omp/agent/skills",
+        ] {
+            let skill_dir = self.home.join(root).join(skill_id);
+            fs::create_dir_all(skill_dir.parent().unwrap()).unwrap();
+            if canonical.is_dir() {
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(&canonical, &skill_dir).unwrap();
+                #[cfg(windows)]
+                std::os::windows::fs::symlink_dir(&canonical, &skill_dir).unwrap();
+                continue;
+            }
+            fs::create_dir_all(&skill_dir).unwrap();
+            fs::write(
+                skill_dir.join("SKILL.md"),
+                format!(
+                    "---\nname: {skill_id}\ndescription: Hermetic capability refresh fixture.\n---\n\n# {skill_id}\n"
+                ),
+            )
+            .unwrap();
+        }
     }
 
     fn connect(&self, cwd: &Path) -> McpClient {
@@ -860,29 +287,58 @@ impl McpClient {
     }
 
     fn route_project_verify(&mut self) -> Value {
-        let result = self.request(
+        self.route_targets(
             4,
+            "sha256:e2e-request",
+            "none",
+            json!([{
+                "kind": "machine_cli",
+                "capability": "project_verify",
+                "input": {"kind": "empty"}
+            }]),
+        )
+    }
+
+    fn route_targets(
+        &mut self,
+        id: u64,
+        fingerprint: &str,
+        execution_authority: &str,
+        targets: Value,
+    ) -> Value {
+        let result = self.request(
+            id,
             "tools/call",
             json!({
                 "name": "ags_route_request",
                 "arguments": {
                     "proposal": {
-                        "schema_version": "0.3.0-host-route-proposal",
-                        "request_fingerprint": "sha256:e2e-request",
+                        "schema_version": "0.3.4-host-route-proposal",
+                        "request_fingerprint": fingerprint,
                         "phase": "execution",
                         "solution_state": "confirmed",
-                        "execution_authority": "none",
+                        "execution_authority": execution_authority,
                         "scope_hash": "sha256:e2e-scope",
-                        "targets": [{
-                            "kind": "machine_cli",
-                            "capability": "project_verify",
-                            "input": {"kind": "empty"}
-                        }]
+                        "targets": targets
                     }
                 }
             }),
         );
         serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap()
+    }
+
+    fn apply(&mut self, id: u64, lease_id: &str, action_id: &str) -> Value {
+        self.request(
+            id,
+            "tools/call",
+            json!({
+                "name": "ags_apply_action",
+                "arguments": {
+                    "lease_id": lease_id,
+                    "action_id": action_id
+                }
+            }),
+        )
     }
 
     fn reject_foreign_lease(&mut self, lease_id: &str, action_id: &str) {
@@ -926,10 +382,11 @@ impl Drop for McpClient {
 
 /// Hermetic protocol fixture used by CI. Host names select AGS adapter
 /// behavior; they are not evidence that native host executables are installed
-/// or registered. The ignored native harness below owns that evidence.
+/// or registered.
 #[test]
 fn hermetic_host_adapters_share_one_workspace_service_but_keep_sessions_and_leases_isolated() {
     let environment = TestEnvironment::new();
+    environment.install_test_skill("ags-skill");
 
     let mut expected_hashes = Vec::new();
     for host in HOSTS {
@@ -964,19 +421,16 @@ fn hermetic_host_adapters_share_one_workspace_service_but_keep_sessions_and_leas
         let snapshot = client.current_host_snapshot();
         assert_eq!(snapshot["host"], *host);
         assert_eq!(snapshot["snapshot_hash"], *expected_hash);
+        assert!(snapshot["active_skills"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|skill| skill["skill_id"] == "ags-skill"));
         clients.push(client);
     }
     session_ids.sort();
     session_ids.dedup();
     assert_eq!(session_ids.len(), HOSTS.len());
-    let legacy_capability_bundle = environment.runtime.join("workspace-services").join(format!(
-        "{}.capabilities.json",
-        workspace_key.as_ref().unwrap()
-    ));
-    assert!(
-        !legacy_capability_bundle.exists(),
-        "workspace requests must not publish a dynamic capability bundle"
-    );
     for host in HOSTS {
         assert!(
             ags_capability_governance::snapshot_path(&environment.runtime, host).is_file(),
@@ -991,6 +445,72 @@ fn hermetic_host_adapters_share_one_workspace_service_but_keep_sessions_and_leas
         .unwrap()["pid"]
         .as_u64()
         .unwrap();
+
+    let setup_route = clients[0].route_targets(
+        4,
+        "sha256:command-skill-rejection",
+        "none",
+        json!([{
+            "kind": "skill",
+            "skill_id": "ags-setup",
+            "snapshot_hash": expected_hashes[0]
+        }]),
+    );
+    assert!(setup_route["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|error| error["code"] == "skill_target_kind_mismatch"));
+
+    let handoff = json!({
+        "schema_version": "0.3.4-handoff-contract",
+        "task_level": "Light",
+        "task": "compile the routed E2E task card",
+        "fields": {
+            "目标：": "- G-01: compile the card",
+            "验收标准：": "- AC-01 -> G-01: compiled",
+            "Verification gate:": "- commands:\n  - V-01 -> AC-01: true"
+        }
+    })
+    .to_string();
+    let compile_route = clients[0].route_targets(
+        5,
+        "sha256:skill-plus-task-compile",
+        "task_card_handoff",
+        json!([
+            {
+                "kind": "skill",
+                "skill_id": "ags-skill",
+                "snapshot_hash": expected_hashes[0]
+            },
+            {
+                "kind": "machine_cli",
+                "capability": "task_compile",
+                "input": {
+                    "kind": "confirmed_handoff_contract",
+                    "content": handoff,
+                    "handoff_source": "explicit_handoff"
+                }
+            }
+        ]),
+    );
+    assert!(
+        compile_route["errors"]
+            .as_array()
+            .is_none_or(|errors| errors.is_empty()),
+        "skill + task_compile route failed: {compile_route}"
+    );
+    let compile_lease = compile_route["lease"]["lease_id"].as_str().unwrap();
+    let compile_action = compile_route["resolved_targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|target| target["action_id"].as_str())
+        .unwrap();
+    let applied = clients[0].apply(6, compile_lease, compile_action);
+    assert!(applied["content"][0]["text"]
+        .as_str()
+        .is_some_and(|text| text.contains("0.3.4-task-contract")));
 
     let route = clients[0].route_project_verify();
     let lease_id = route["lease"]["lease_id"].as_str().unwrap();
@@ -1057,7 +577,7 @@ fn hermetic_host_adapters_share_one_workspace_service_but_keep_sessions_and_leas
     );
     assert_ne!(
         preflight["capability_catalog"]["workspace_identity"], workspace_a_capability_identity,
-        "different workspaces shared one capability bundle identity"
+        "different workspaces shared one capability snapshot identity"
     );
     assert!(preflight["capability_catalog"]
         .get("bundle_epoch")
@@ -1070,81 +590,6 @@ fn hermetic_host_adapters_share_one_workspace_service_but_keep_sessions_and_leas
         snapshot["snapshot_hash"],
         preflight["capability_catalog"]["snapshot_hash"]
     );
-}
-
-#[test]
-fn native_probe_classification_distinguishes_unavailable_unsupported_and_passed() {
-    assert_eq!(
-        classify_native_probe(
-            false,
-            RegistrationProbe::Unsupported("no native probe".to_string())
-        ),
-        NativeProbeStatus::Unavailable
-    );
-    assert_eq!(
-        classify_native_probe(
-            true,
-            RegistrationProbe::Unsupported("no native probe".to_string())
-        ),
-        NativeProbeStatus::Unsupported
-    );
-    assert_eq!(
-        classify_native_probe(
-            true,
-            RegistrationProbe::Registered("host-native AGS registration".to_string())
-        ),
-        NativeProbeStatus::Passed
-    );
-}
-
-/// Opt-in native-host harness.
-///
-/// This test reads the real host executables and MCP registrations. It is
-/// ignored in CI because the hermetic adapter fixture is not evidence that a
-/// native Codex/Claude Code/Cursor/OMP installation can see AGS. Operators can
-/// require selected hosts to pass with:
-///
-/// `AGS_NATIVE_HOSTS_REQUIRED=codex,claude-code cargo test -p ags-cli
-/// --test host_mcp_e2e native_host_registration_harness -- --ignored --nocapture`
-#[test]
-#[ignore = "requires native host executables and MCP registrations"]
-fn native_host_registration_harness() {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
-        .unwrap_or_else(|| PathBuf::from("."));
-    let project = std::env::current_dir().unwrap();
-    let diagnostics = HOSTS
-        .iter()
-        .map(|host| native_host_diagnostic(host, &home, &project))
-        .collect::<Vec<_>>();
-    eprintln!("{}", serde_json::to_string_pretty(&diagnostics).unwrap());
-
-    let required = std::env::var("AGS_NATIVE_HOSTS_REQUIRED")
-        .unwrap_or_default()
-        .split(',')
-        .map(str::trim)
-        .filter(|host| !host.is_empty())
-        .map(str::to_string)
-        .collect::<BTreeSet<_>>();
-    let known = HOSTS.iter().copied().collect::<BTreeSet<_>>();
-    for host in &required {
-        assert!(
-            known.contains(host.as_str()),
-            "unknown required host: {host}"
-        );
-    }
-    for diagnostic in diagnostics {
-        if required.contains(diagnostic.host) {
-            assert_eq!(
-                diagnostic.status,
-                NativeProbeStatus::Passed,
-                "required native host did not pass: {} ({})",
-                diagnostic.host,
-                diagnostic.evidence
-            );
-        }
-    }
 }
 
 #[test]
@@ -1203,43 +648,6 @@ fn refreshed_snapshot_does_not_rebind_the_existing_workspace_session() {
         repeated["capability_catalog"]["snapshot_hash"], initial["snapshot_hash"],
         "repeated preflight must not refresh or rebind the live daemon"
     );
-}
-
-#[test]
-fn legacy_workspace_bundle_path_does_not_affect_static_snapshot_reads() {
-    let environment = TestEnvironment::new();
-    environment.write_snapshot("codex");
-
-    let mut client = environment.connect(&environment.project_a);
-    client.initialize("codex");
-    let service_dir = environment.runtime.join("workspace-services");
-    let registry_path = fs::read_dir(&service_dir)
-        .unwrap()
-        .flatten()
-        .map(|entry| entry.path())
-        .find(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "json")
-                && !path
-                    .file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .ends_with(".capabilities.json")
-        })
-        .unwrap();
-    let registry: Value = serde_json::from_slice(&fs::read(registry_path).unwrap()).unwrap();
-    let capability_path = service_dir.join(format!(
-        "{}.capabilities.json",
-        registry["instance_key"].as_str().unwrap()
-    ));
-    fs::create_dir(&capability_path).unwrap();
-
-    let first = client.preflight("codex", &environment.project_a);
-    let second = client.preflight("codex", &environment.project_a);
-    for report in [&first, &second] {
-        assert_eq!(report["capability_catalog"]["status"], "ready");
-        assert!(report["capability_catalog"]["snapshot_hash"].is_string());
-    }
 }
 
 #[test]
@@ -1394,7 +802,7 @@ fn crashed_workspace_daemon_is_replaced_without_reusing_its_session() {
 
 #[cfg(unix)]
 #[test]
-fn executable_upgrade_stops_the_old_workspace_daemon_before_restart() {
+fn new_connection_replaces_daemon_when_executable_hash_changes() {
     use std::fs::OpenOptions;
 
     let environment = TestEnvironment::new();
@@ -1408,15 +816,6 @@ fn executable_upgrade_stops_the_old_workspace_daemon_before_restart() {
     old_connection.initialize("codex");
     let ready = old_connection.preflight("codex", &environment.project_a);
     assert_eq!(ready["capability_catalog"]["status"], "ready");
-    let held = old_connection.route_project_verify();
-    let old_lease = held["lease"]["lease_id"].as_str().unwrap().to_string();
-    let old_action = held["resolved_targets"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find_map(|target| target["action_id"].as_str())
-        .unwrap()
-        .to_string();
     let instance_key = ready["workspace_service"]["instance_key"].as_str().unwrap();
     let registry_path = environment
         .runtime
@@ -1438,45 +837,6 @@ fn executable_upgrade_stops_the_old_workspace_daemon_before_restart() {
         .write_all(b"\0")
         .unwrap();
     fs::rename(&replacement, &live_executable).unwrap();
-
-    let stale_apply = old_connection.request_envelope(
-        5,
-        "tools/call",
-        json!({
-            "name": "ags_apply_action",
-            "arguments": {"lease_id": old_lease, "action_id": old_action}
-        }),
-    );
-    assert!(stale_apply["error"]["message"]
-        .as_str()
-        .is_some_and(|message| message.contains("runtime_process_stale")));
-    let stale_route = old_connection.request_envelope(
-        6,
-        "tools/call",
-        json!({
-            "name": "ags_route_request",
-            "arguments": {"proposal": {
-                "schema_version": "0.3.0-host-route-proposal",
-                "request_fingerprint": "sha256:post-upgrade",
-                "phase": "direct_response",
-                "solution_state": "not_required",
-                "execution_authority": "none",
-                "scope_hash": "sha256:post-upgrade",
-                "targets": [{"kind": "direct_response"}]
-            }}
-        }),
-    );
-    assert!(stale_route["error"]["message"]
-        .as_str()
-        .is_some_and(|message| message.contains("runtime_process_stale")));
-    let stale_resource = old_connection.request_envelope(
-        7,
-        "resources/read",
-        json!({"uri": "ags://capabilities/current-host"}),
-    );
-    assert!(stale_resource["error"]["message"]
-        .as_str()
-        .is_some_and(|message| message.contains("runtime_process_stale")));
 
     let mut reconnected =
         environment.connect_with_executable(&environment.project_a, &live_executable);

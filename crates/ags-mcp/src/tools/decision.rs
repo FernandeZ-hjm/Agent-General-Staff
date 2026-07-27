@@ -1,29 +1,18 @@
 use super::*;
 #[allow(unused_imports)]
 use super::{apply::*, preflight::*, wire::*};
-#[cfg(test)]
-pub(super) fn tool_route_request(
-    args: &serde_json::Value,
-    binding: &PreflightBinding,
-    session: &mut RoutingSession,
-    runtime_home: &Path,
-) -> Result<String, String> {
-    tool_route_request_with_source(args, binding, session, runtime_home, None)
-}
-
 pub(super) fn tool_route_request_with_source(
     args: &serde_json::Value,
     binding: &PreflightBinding,
     session: &mut RoutingSession,
-    runtime_home: &Path,
-    capability_source: Option<&dyn CapabilityCatalogSource>,
+    capability_source: &dyn CapabilityCatalogSource,
 ) -> Result<String, String> {
     // Every route attempt starts a new decision generation, including malformed
-    // or legacy input. A caller cannot probe a new route shape while retaining
+    // or raw input. A caller cannot probe another route shape while retaining
     // an older effectful lease.
     session.invalidate();
     if args.get("request").is_some() {
-        return Err("legacy_raw_request_unsupported".to_string());
+        return Err("raw_request_unsupported".to_string());
     }
     if args.get("active_host").is_some() || args.get("target").is_some() {
         return Err("preflight_binding_conflict".to_string());
@@ -80,12 +69,7 @@ pub(super) fn tool_route_request_with_source(
         .map_err(|error| format!("invalid_typed_proposal: {error}"))?;
 
     let proposal_id = proposal_hash(&proposal);
-    let decision_id = stable_id(
-        "decision",
-        &proposal_id,
-        &session.connection_nonce,
-        session.generation,
-    );
+    let decision_id = session.stable_id("decision", &proposal_id);
     if let Err(errors) = validate_proposal(&proposal) {
         return pretty(&RouteResolution {
             schema_version: ROUTE_RESOLUTION_SCHEMA_VERSION.to_string(),
@@ -106,7 +90,7 @@ pub(super) fn tool_route_request_with_source(
             ProposalTarget::Skill(_) | ProposalTarget::MachineCli(_)
         )
     });
-    if needs_capability_catalog && capability_source.is_some() {
+    if needs_capability_catalog {
         let failure = binding
             .capability
             .as_ref()
@@ -135,13 +119,7 @@ pub(super) fn tool_route_request_with_source(
         _ => None,
     });
     let current_snapshot = if needs_capability_catalog {
-        let loaded = capability_source.map_or_else(
-            || {
-                ags_session::LocalCapabilityCatalogSource::new(runtime_home.to_path_buf())
-                    .load_validated_snapshot(binding)
-            },
-            |source| source.load_validated_snapshot(binding),
-        );
+        let loaded = capability_source.load_validated_snapshot(binding);
         match loaded {
             Ok(catalog) => catalog,
             Err(error) => {
@@ -162,12 +140,11 @@ pub(super) fn tool_route_request_with_source(
             proposal_id,
         );
     };
-    if capability_source.is_some()
-        && binding
-            .capability
-            .as_ref()
-            .and_then(ags_session::CapabilityReference::ready_binding)
-            != Some(&current_snapshot.binding)
+    if binding
+        .capability
+        .as_ref()
+        .and_then(ags_session::CapabilityReference::ready_binding)
+        != Some(&current_snapshot.binding)
     {
         return blocked_route(
             binding,
@@ -320,12 +297,7 @@ pub(super) fn tool_route_request_with_source(
     }
 
     if proposal.execution_authority == ExecutionAuthority::DirectEdit {
-        let action_id = stable_id(
-            "host",
-            &proposal_id,
-            &session.connection_nonce,
-            session.generation,
-        );
+        let action_id = session.stable_id("host", &proposal_id);
         resolved_targets.push(ResolvedTarget::HostNativeDirectEdit { action_id });
     }
 
@@ -362,7 +334,6 @@ pub(super) fn tool_route_request_with_source(
     }
 
     let lease = session
-        .actions
         .values()
         .next()
         .map(|action| action.evidence.clone());
@@ -401,12 +372,7 @@ pub(super) fn finish_route_without_governed_targets(
         .collect::<Vec<_>>();
     if proposal.execution_authority == ExecutionAuthority::DirectEdit {
         resolved_targets.push(ResolvedTarget::HostNativeDirectEdit {
-            action_id: stable_id(
-                "host",
-                &proposal_id,
-                &session.connection_nonce,
-                session.generation,
-            ),
+            action_id: session.stable_id("host", &proposal_id),
         });
     }
     pretty(&RouteResolution {
@@ -501,7 +467,6 @@ pub(super) fn typed_input_kind(input: &TypedCliInput) -> &'static str {
         TypedCliInput::ConfirmedHandoffContract { .. } => "confirmed_handoff_contract",
         TypedCliInput::TaskCard { .. } => "task_card",
         TypedCliInput::Receipt { .. } => "receipt",
-        TypedCliInput::SkillAdopt { .. } => "skill_adopt",
         TypedCliInput::Empty => "empty",
     }
 }
@@ -548,18 +513,8 @@ pub(super) fn hold_action<'a>(
             action,
         } => serde_json::to_string(&(plan_hash, item_id, action)).unwrap_or_default(),
     };
-    let action_id = stable_id(
-        "action",
-        &format!("{}\n{serialized}", context.proposal_id),
-        &session.connection_nonce,
-        session.generation,
-    );
-    let lease_id = stable_id(
-        "lease",
-        context.proposal_id,
-        &session.connection_nonce,
-        session.generation,
-    );
+    let action_id = session.stable_id("action", &format!("{}\n{serialized}", context.proposal_id));
+    let lease_id = session.stable_id("lease", context.proposal_id);
     let evidence = DecisionLeaseEvidence {
         lease_id,
         decision_id: context.decision_id.to_string(),
@@ -571,17 +526,15 @@ pub(super) fn hold_action<'a>(
         snapshot_hash: context.snapshot_hash.to_string(),
         policy_hash: policy_hash.to_string(),
     };
-    session.actions.insert(
+    session.insert(
         action_id.clone(),
         HeldAction {
             evidence,
             action_id: action_id.clone(),
-            policy_hash: policy_hash.to_string(),
             kind,
             consumed: false,
         },
-    );
-    session.actions.get(&action_id).expect("inserted action")
+    )
 }
 
 pub(super) fn onboarding_policy_hash(
@@ -600,26 +553,14 @@ pub(super) fn hold_onboarding_action<'a>(
     action: ags_lifecycle::OnboardingAction,
 ) -> &'a HeldAction {
     let policy_hash = onboarding_policy_hash(plan_hash, item_id, &action);
-    let action_id = stable_id(
+    let action_id = session.stable_id(
         "onboarding-action",
         &format!("{plan_hash}\n{item_id}\n{policy_hash}"),
-        &session.connection_nonce,
-        session.generation,
     );
-    let lease_id = stable_id(
-        "onboarding-lease",
-        plan_hash,
-        &session.connection_nonce,
-        session.generation,
-    );
+    let lease_id = session.stable_id("onboarding-lease", plan_hash);
     let evidence = DecisionLeaseEvidence {
         lease_id,
-        decision_id: stable_id(
-            "onboarding-decision",
-            plan_hash,
-            &session.connection_nonce,
-            session.generation,
-        ),
+        decision_id: session.stable_id("onboarding-decision", plan_hash),
         proposal_hash: plan_hash.to_string(),
         scope_hash: sha256(binding.target.to_string_lossy().as_bytes()),
         host: binding.host.clone(),
@@ -628,12 +569,11 @@ pub(super) fn hold_onboarding_action<'a>(
         snapshot_hash: "sha256:bootstrap-not-applicable".to_string(),
         policy_hash: policy_hash.clone(),
     };
-    session.actions.insert(
+    session.insert(
         action_id.clone(),
         HeldAction {
             evidence,
             action_id: action_id.clone(),
-            policy_hash,
             kind: HeldActionKind::Onboarding {
                 plan_hash: plan_hash.to_string(),
                 item_id: item_id.to_string(),
@@ -641,14 +581,13 @@ pub(super) fn hold_onboarding_action<'a>(
             },
             consumed: false,
         },
-    );
-    session.actions.get(&action_id).expect("inserted action")
+    )
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct OutcomeInput {
-    pub(super) status: ags_capability_governance::SkillOutcome,
+    pub(super) status: ags_governance_decision::SkillOutcome,
     #[serde(default)]
     pub(super) quality: Option<u8>,
 }
@@ -675,7 +614,6 @@ pub(super) struct ApplyResult {
     pub(super) machine_result: Option<MachineCliResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) onboarding_result: Option<OnboardingExecutionResult>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) outcome_event_id: Option<String>,
+    pub(super) outcome_accepted: bool,
     pub(super) requires_repreflight: bool,
 }

@@ -19,12 +19,6 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
-fn legacy_capability_bundle_path(runtime: &Path, workspace: &Path) -> PathBuf {
-    runtime
-        .join("workspace-services")
-        .join(format!("{}.capabilities.json", workspace_key(workspace)))
-}
-
 #[test]
 fn instance_identity_is_only_the_canonical_workspace_path() {
     let root = tempfile::tempdir().unwrap();
@@ -84,10 +78,6 @@ fn workspace_daemon_keeps_one_static_snapshot_for_its_lifetime() {
 
     let loaded = state.read_catalog(&binding).unwrap();
     assert_eq!(loaded.snapshot_hash, initial.snapshot_hash);
-    assert!(
-        !legacy_capability_bundle_path(&runtime, &root).exists(),
-        "request handling must not create a dynamic workspace capability bundle"
-    );
 }
 
 #[test]
@@ -97,24 +87,6 @@ fn abandoned_start_lock_is_reclaimed() {
     fs::write(&lock, u32::MAX.to_string()).unwrap();
     reclaim_stale_lock(&lock);
     assert!(!lock.exists());
-}
-
-#[test]
-fn legacy_dynamic_capability_bundle_is_ignored() {
-    let root = tempfile::tempdir().unwrap();
-    let workspace = root.path().join("workspace");
-    let runtime = root.path().join("runtime");
-    fs::create_dir_all(workspace.join(".git")).unwrap();
-    let canonical = canonical_workspace_root(&workspace).unwrap();
-    let legacy = legacy_capability_bundle_path(&runtime, &canonical);
-    fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-    fs::write(&legacy, b"{not-json").unwrap();
-
-    WorkspaceState::new(canonical, runtime).unwrap();
-    assert!(
-        legacy.exists(),
-        "legacy data is ignored, not mutated at startup"
-    );
 }
 
 #[cfg(unix)]
@@ -152,7 +124,7 @@ fn daemon_owner_is_exclusive_for_the_workspace_lifetime() {
 }
 
 #[test]
-fn incomplete_legacy_owner_records_are_reclaimed() {
+fn incomplete_stale_owner_records_are_reclaimed() {
     let root = tempfile::tempdir().unwrap();
     let workspace = root.path().join("workspace");
     let runtime = root.path().join("runtime");
@@ -199,7 +171,7 @@ fn reused_live_pid_with_different_start_identity_does_not_own_workspace() {
 }
 
 #[test]
-fn legacy_registry_with_reused_live_pid_and_closed_endpoint_is_reclaimed() {
+fn stale_registry_with_reused_live_pid_and_closed_endpoint_is_reclaimed() {
     let root = tempfile::tempdir().unwrap();
     let workspace = root.path().join("workspace");
     let runtime = root.path().join("runtime");
@@ -211,23 +183,22 @@ fn legacy_registry_with_reused_live_pid_and_closed_endpoint_is_reclaimed() {
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let endpoint = listener.local_addr().unwrap().to_string();
     drop(listener);
-    let legacy = WorkspaceRegistry {
-        schema_version: REGISTRY_SCHEMA.to_string(),
+    let stale = WorkspaceRegistry {
+        schema_version: "retired-workspace-registry-schema".to_string(),
         workspace: canonical.clone(),
         instance_key: workspace_key(&canonical),
         endpoint,
-        token: "legacy-reused-pid".to_string(),
+        token: "stale-reused-pid".to_string(),
         pid: std::process::id(),
-        executable_hash: "sha256:legacy".to_string(),
+        executable_hash: "sha256:stale".to_string(),
         process_start_identity: String::new(),
         daemon_nonce: String::new(),
-        version: "0.3.1".to_string(),
     };
-    atomic_write_json(&paths.registry, &legacy).unwrap();
+    atomic_write_json(&paths.registry, &stale).unwrap();
 
     assert!(
         connect_registered(&paths, &canonical).unwrap().is_none(),
-        "an unauthenticated legacy endpoint must not block workspace recovery"
+        "a dead daemon from a retired registry schema must not block workspace recovery"
     );
     assert!(!paths.registry.exists());
 }
@@ -253,7 +224,6 @@ fn reachable_reused_endpoint_is_reclaimed_after_handshake_mismatch() {
         executable_hash: current_executable_hash().unwrap(),
         process_start_identity: "different-process-start".to_string(),
         daemon_nonce: "stale-daemon-nonce".to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
     };
     atomic_write_json(&paths.registry, &registry).unwrap();
 
@@ -272,7 +242,6 @@ fn reachable_reused_endpoint_is_reclaimed_after_handshake_mismatch() {
                 executable_hash: fake_registry.executable_hash,
                 process_start_identity: fake_registry.process_start_identity,
                 daemon_nonce: "different-daemon-nonce".to_string(),
-                session_id: Some("foreign-session".to_string()),
             },
         )
         .unwrap();
@@ -328,7 +297,6 @@ fn daemon_mints_sessions_and_handshake_proves_process_identity() {
         executable_hash: current_executable_hash().unwrap(),
         process_start_identity: current_process_start_identity().unwrap(),
         daemon_nonce: "review-daemon-nonce".to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
     };
     let handler = Arc::new(CapturingHandler::default());
     let server_handler = Arc::clone(&handler);
@@ -348,7 +316,6 @@ fn daemon_mints_sessions_and_handshake_proves_process_identity() {
         }
     });
 
-    let mut issued = Vec::new();
     for _ in 0..2 {
         let mut stream = TcpStream::connect(&endpoint).unwrap();
         write_json_line(
@@ -357,7 +324,6 @@ fn daemon_mints_sessions_and_handshake_proves_process_identity() {
                 protocol: WIRE_SCHEMA.to_string(),
                 token: registry.token.clone(),
                 kind: "session".to_string(),
-                session_id: Some("client-chosen-collision".to_string()),
                 command: None,
                 workspace: workspace.clone(),
             },
@@ -371,16 +337,12 @@ fn daemon_mints_sessions_and_handshake_proves_process_identity() {
             registry.process_start_identity
         );
         assert_eq!(ready.daemon_nonce, registry.daemon_nonce);
-        issued.push(ready.session_id.unwrap());
     }
     server.join().unwrap();
-    issued.sort();
-    issued.dedup();
-    assert_eq!(issued.len(), 2);
     let mut captured = handler.session_ids.lock().unwrap().clone();
     captured.sort();
     captured.dedup();
-    assert_eq!(captured, issued);
+    assert_eq!(captured.len(), 2);
 }
 
 #[test]
@@ -403,7 +365,6 @@ fn workspace_daemon_rejects_a_wrong_handshake_token() {
         executable_hash: current_executable_hash().unwrap(),
         process_start_identity: current_process_start_identity().unwrap(),
         daemon_nonce: "expected-daemon-nonce".to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
     };
     let server_registry = registry.clone();
     let server_workspace = Arc::clone(&state);
@@ -426,7 +387,6 @@ fn workspace_daemon_rejects_a_wrong_handshake_token() {
             protocol: WIRE_SCHEMA.to_string(),
             token: "wrong-token".to_string(),
             kind: "session".to_string(),
-            session_id: Some("untrusted-session".to_string()),
             command: None,
             workspace,
         },

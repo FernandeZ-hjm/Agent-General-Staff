@@ -20,14 +20,13 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
     // route targets (routing.parent set) before they are ever flagged.
     let routing_meta = read_routing_metadata(&ctx.repo_root);
 
-    // 1. Suite-managed skills (from the suite manifest + ignore/adoption).
+    // 1. Suite-managed skills from the static suite manifest.
     let scan = crate::skill_body::scan_skills(&ctx.repo_root);
     let mut known_skill_names: Vec<String> = Vec::new();
     for s in &scan.skills {
         known_skill_names.push(s.name.clone());
         let managed_status = match s.profile.as_str() {
             "required" | "optional" | "personal" => ManagedStatus::SuiteManaged,
-            "ignored" | "rejected" => ManagedStatus::Ignored,
             _ => ManagedStatus::Discovered,
         };
         let registry_status = match managed_status {
@@ -68,7 +67,6 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
             expected_hosts,
             host_visibility: Vec::new(),
             health_status: HealthStatus::Unknown,
-            actions: Vec::new(),
             risk_notes,
             routing: None,
         });
@@ -99,7 +97,6 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
                 .collect(),
             host_visibility: Vec::new(),
             health_status: HealthStatus::Unknown,
-            actions: Vec::new(),
             risk_notes: vec![format!(
                 "External skill body managed by `{}`; AGS owns only governance metadata and host thin indexes.",
                 body.manager
@@ -153,7 +150,6 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
                 .collect(),
             host_visibility: Vec::new(),
             health_status: HealthStatus::Unknown,
-            actions: Vec::new(),
             risk_notes: vec![format!(
                 "Required registry parent (source.type={}); absence remains an expected-host failure.",
                 required.source_type.as_deref().unwrap_or("unspecified")
@@ -191,7 +187,6 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
             expected_hosts: Vec::new(),
             host_visibility: Vec::new(),
             health_status: HealthStatus::Unknown,
-            actions: Vec::new(),
             risk_notes,
             routing: None,
         });
@@ -274,7 +269,6 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
             expected_hosts,
             host_visibility: Vec::new(),
             health_status: HealthStatus::Unknown,
-            actions: Vec::new(),
             risk_notes,
             routing: None,
         });
@@ -306,7 +300,6 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
             expected_hosts: Vec::new(),
             host_visibility: Vec::new(),
             health_status: HealthStatus::Unknown,
-            actions: Vec::new(),
             risk_notes: vec![format!(
                 "External official CLI talking to {}. Referenced, not adopted; AGS never runs `{} update`. Live endpoint health is a degraded observation only.",
                 fam.endpoint, fam.cli
@@ -352,7 +345,6 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
             &probes,
             cli_backed_external,
         );
-        cap.actions = actions_for(&cap.kind, &cap.managed_status);
         // Stable routing facts (or None when the manifest declares none).
         //
         // A host-dir discovered capability can be explicitly adopted by adding a
@@ -410,7 +402,6 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
             expected_hosts: Vec::new(),
             host_visibility: Vec::new(),
             health_status: HealthStatus::Unknown,
-            actions: Vec::new(),
             risk_notes: {
                 let mut notes = vec![
                     "Internal entrypoint route target of a parent capability; routing-only, never a host body, never adopted/synced.".to_string(),
@@ -435,7 +426,7 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
         hosts,
         capabilities: caps,
         summary,
-        note: "Read-only inventory. Third-party capabilities are opt-in; AGS never silently bundles or installs. Use `ags skill adopt <source>` for a catalog/local/GitHub audit plan, then `--apply` to confirm its machine-private body/source registry/overlay and planned-host thin indexes; use `ags skill ignore <skill-id>` for the overlay-only lifecycle.".to_string(),
+        note: "Read-only inventory. Third-party capabilities are opt-in; AGS never silently bundles or installs. Add or update a reviewed source only through an explicit release/setup workflow, then refresh the host's single static snapshot and verify it.".to_string(),
         routing_parse_failures: routing_meta.parse_failures,
     }
 }

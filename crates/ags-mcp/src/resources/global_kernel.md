@@ -20,7 +20,7 @@ human request
 → ags_apply_action(lease_id, action_id) only for a held action
 ```
 
-The host is the only natural-language semantic node. AGS rejects legacy raw request input and never falls back to keywords, similarity search, or SkillDemand routing.
+The host is the only natural-language semantic node. AGS rejects raw request input and never falls back to keywords or similarity search.
 
 ## Proposal Rules
 

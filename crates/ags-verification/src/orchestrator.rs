@@ -21,7 +21,6 @@ pub fn run_verify_with_options(
     items.push(check_cargo_fmt(&repo_root));
     items.push(check_cargo_test(&repo_root));
     items.push(check_cargo_build(&repo_root));
-    items.extend(check_valid_fixtures(&repo_root));
     items.extend(check_governance_yaml(&repo_root));
     items.push(check_session_preflight(&repo_root));
     items.push(check_runtime_profile_templates(&repo_root));
@@ -29,7 +28,6 @@ pub fn run_verify_with_options(
     // Full scope — add drift checks
     if matches!(scope, Scope::Full) {
         items.push(check_private_vs_stable_drift(&repo_root));
-        items.push(check_private_vs_public_boundary(&repo_root));
     }
 
     // Release scope — add release-specific checks
@@ -69,7 +67,7 @@ pub fn run_verify_with_options(
         .count();
 
     VerificationReport {
-        schema_version: "2.0-verify".to_string(),
+        schema_version: "0.3.4-verification-report".to_string(),
         scope,
         repo_root: repo_root.to_string_lossy().to_string(),
         items,

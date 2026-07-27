@@ -16,8 +16,6 @@ pub(super) const PROTOCOL_FILES: &[(&str, &str)] = &[
     ("task-routing.md", "Light/medium/heavy task routing"),
     ("project-profile.md", "Project profile schema"),
     ("context-memory.md", "Context memory protocol"),
-    ("2.0-baseline.md", "M0 baseline freeze document"),
-    ("2.0-roadmap.md", "M0-M8 milestone roadmap"),
 ];
 
 /// Known root-level protocol entry-point documents.

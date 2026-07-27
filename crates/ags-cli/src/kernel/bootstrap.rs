@@ -42,10 +42,6 @@ fn cmd_bootstrap_apply(target: &Path, format: &str) {
         std::process::exit(1);
     }
 }
-/// Shared dispatch: `bootstrap --dry-run` / `bootstrap-dry-run`
-pub(crate) fn cmd_bootstrap_dry_run(format: &str) {
-    cmd_bootstrap_dry_run_target(std::path::Path::new("."), format);
-}
 /// Shared dispatch: `bootstrap --dry-run --target <dir>`
 fn cmd_bootstrap_dry_run_target(target: &Path, format: &str) {
     let report = ags_verification::bootstrap::run(target);

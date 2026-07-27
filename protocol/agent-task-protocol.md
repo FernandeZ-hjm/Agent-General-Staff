@@ -1,6 +1,6 @@
 # Agent Task Protocol
 
-> AGS 0.3.3 权威任务协议。宿主解释语义；AGS 校验结构化提案、权限与确定性能力准入。
+> AGS 0.3.4 权威任务协议。宿主解释语义；AGS 校验结构化提案、权限与确定性能力准入。
 
 ## 完整生命周期
 
@@ -25,7 +25,7 @@ ags session preflight --for <agent> --target <path>
 → RouteResolution
 ```
 
-宿主负责语义理解与候选选择。AGS 不接收原始自然语言，不运行 substring/关键词、BM25、embedding 或另一套分类器。旧 `{request: ...}` 必须返回 `legacy_raw_request_unsupported`。
+宿主负责语义理解与候选选择。AGS 不接收原始自然语言，不运行 substring/关键词、BM25、embedding 或另一套分类器。`{request: ...}` 必须返回 `raw_request_unsupported`。
 
 Proposal 必须提供 `schema_version`、`request_fingerprint`、`phase`、`solution_state`、`execution_authority`、`scope_hash` 和 `targets`。`DirectResponse` 独占；否则至多一个精确 `SkillTarget` 加至多一个闭集 `MachineCliTarget`。
 
@@ -49,7 +49,7 @@ skill_id + optional entrypoint + snapshot_hash
 → exact SkillSelection | blocked reason
 ```
 
-Skill Resolver 不读自然语言、不相似匹配、不 fallback。`SkillDemand` / `demand_routes` 仅是 0.2.x 迁移 metadata，不再拥有路由权威。候选目录与 overlay 规则见 `protocol/skill-governance.md`。
+Skill Resolver 不读自然语言、不相似匹配、不 fallback，也不保留旧分类迁移层。静态目录规则见 `protocol/skill-governance.md`。
 
 ### 5. Read-only Resolve / Explicit Apply
 
@@ -83,13 +83,13 @@ Plan UI 可用 `<proposed_plan>` 包住任务卡供界面识别，但 envelope �
 canonical task card。用户选择 Execute 后，宿主先退出 Plan mode，再把同一份任务卡正文与
 `task_card_hash` 原样派发；禁止重新生成、摘要或补写第二张卡。
 
-新 typed `HandoffContract` 必须显式声明 `task_level`。旧 loose contract 缺失时仅兼容默认 Medium，并发出 deprecation；禁止关键词推断。Compiler 不重新解释原始聊天、不选择技能。
+typed `HandoffContract` 必须显式声明 `task_level`；缺失即拒绝。Compiler 不重新解释原始聊天、不选择技能。
 Compiler 派生稳定 `Contract ID` 与 `Handoff source`；任务目标、验收标准、验证命令和证据
 分别使用 `G-*`、`AC-*`、`V-*`、`EV-*` 建立一一可校验的闭环映射。
 
 ### 7. Validate / Policy / Gate / LaunchPlan
 
-`TaskPrepareExecution`（旧 `task_execute` 仅反序列化 alias）执行：
+`TaskPrepareExecution` 执行：
 
 ```text
 validate → policy → gate → LaunchPlan → HOST_EXECUTION_REQUIRED
@@ -100,7 +100,7 @@ Runner 不启动宿主、不执行项目任务、不运行事后验证、不写�
 
 ### 8. Receipt
 
-新收据 writer 输出 `2.1-m6`，reader/verifier 同时接受 `2.0-m6` 与 `2.1-m6`。`governance_evidence` 只保存 decision/lease/proposal/scope/snapshot/policy hash、skill selection 与 outcome event id，不保存原始请求。只有
+收据 writer、reader 与 verifier 只接受当前 `0.3.4-task-receipt` schema。`governance_evidence` 只保存 decision/lease/proposal/scope/snapshot/policy hash、skill selection 与 outcome event id，不保存原始请求。只有
 `ags task close <task-card> <delivery-report>` 返回 `valid: true` 后，交付报告才可进入最终
 receipt 或 Stop-hook 任务存档。
 
@@ -137,7 +137,7 @@ preflight、route、apply、CLI、Runner 与 receipt 共享 `GovernanceStatus`�
 
 ## 验证规则
 
-声称完成前至少提供与风险匹配的目标测试、workspace 测试、local/full verify、路由/租约/技能/兼容/projection 矩阵和 diff 证据。无法证明 route 零副作用、lease 不可篡改、overlay 不覆盖官方 registry、旧收据可读或 public-safe 排除有效时，停止交付。
+声称完成前至少提供与风险匹配的目标测试、workspace 测试、local/full verify、路由/租约/技能/projection 矩阵和 diff 证据。无法证明 route 零副作用、lease 不可篡改、静态 snapshot 绑定一致或 public-safe 排除有效时，停止交付。
 
 ## 交付报告
 

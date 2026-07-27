@@ -1,12 +1,8 @@
-schema_version: "0.3.0"
+schema_version: "0.3.4-public-onboarding"
 profile: public
 description: >
   Public AGS onboarding only. This profile deliberately excludes private,
   personal, EvoMap, and GEP capabilities.
-third_party_registry:
-  url: "https://raw.githubusercontent.com/FernandeZ-hjm/Agent-General-Staff/821fb728b58c131c70a82dad51ccf83eb0372413/manifests/third-party-capabilities.yaml"
-  fallback: "manifests/third-party-capabilities.yaml"
-  policy: "immutable reviewed commit; exact manifest hash bound to reviewed plan"
 
 excluded_capabilities:
   - evomap

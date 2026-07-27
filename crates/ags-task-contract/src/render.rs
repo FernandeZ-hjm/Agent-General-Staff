@@ -79,14 +79,6 @@ pub fn render_report_text(report: &CompileReport) -> String {
         lines.push(String::new());
     }
 
-    if !report.deprecations.is_empty() {
-        lines.push("Deprecations:".to_string());
-        for notice in &report.deprecations {
-            lines.push(format!("  - {notice}"));
-        }
-        lines.push(String::new());
-    }
-
     if !report.validation_errors.is_empty() {
         lines.push("Validation Errors:".to_string());
         for e in &report.validation_errors {

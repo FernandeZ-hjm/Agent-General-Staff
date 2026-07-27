@@ -150,7 +150,7 @@ Verification gate:
 - `任务存档` 是任务记忆入口。存在本地 `task-memory.md` 时填写该路径；没有任务记忆时填写 `无`。`ags run` 只准备 LaunchPlan，不会自动执行任务、写入任务记忆或归档交付；真实 Executor/宿主完成后按项目记忆协议写入。
 - `目标文件夹路径` 是本次任务的实际工作目录或目标仓库根目录，必须填写绝对路径；远程控制、挂载目录、跨仓库或启动目录与目标目录不一致时，以实际会被读写的目标文件夹为准。
 - 默认不生成 `.md` 文件产物；只有用户明确要求落盘或需要 `ags run` 从路径读取任务卡时，才创建任务卡文件。
-- 技能标记是可选的末尾元数据，不属于任务级别默认项。仅当 typed proposal 或已确认 handoff contract 给出精确 `skill_id`，并且 Skill Resolver 以相同 `entrypoint + snapshot_hash` 准入时，才在 `交付` 段之后追加 0..n 行 `[skill: <canonical-name>]`；没有精确命中就完全省略。不得从 `SkillDemand`、关键词或任务级别推导标签。
+- 技能标记是可选的末尾元数据，不属于任务级别默认项。仅当 typed proposal 或已确认 handoff contract 给出精确 `skill_id`，并且 Skill Resolver 以相同 `entrypoint + snapshot_hash` 准入时，才在 `交付` 段之后追加 0..n 行 `[skill: <canonical-name>]`；没有精确命中就完全省略。不得从关键词或任务级别推导标签。
 - Verification gate 是协议要求，不默认依赖任何技能。只有精确 SkillTarget / 已确认 contract 选择 Superpowers 父技能与 internal entrypoint 时，才写入对应要求和一次父标签。
 - 任务卡只有唯一形态：本文件 `protocol/task-card-template.md` 定义的固定骨架。跨仓库、外部 agent、或 Executor 无法访问本项目文件时，仍使用同一骨架，并把所需固定规则内联进去使其自包含；不得切换到第二套模板或按任务级别选用不同模板文件。任务级别 Light / Medium / Heavy 只是 `任务级别：` 字段值，不决定模板文件。
 - “完整”“压缩”“compact”“full”“可粘贴”“可复制给 Claude Code”“直接发给 CC 执行”只是对话展示偏好，不是任务卡形态。compact 任务卡格式已删除：任务卡只有唯一经典固定骨架，这些词不得改变任务卡骨架、标题或槽位顺序，也不得据此生成 compact 骨架或“默认 compact 可执行卡”。
@@ -175,7 +175,7 @@ Verification gate:
 - `Permission mode` 只允许 `plan-only` 和 `execute-and-verify`；生成器不得输出第三种过渡、确认或自治模式。
 - 任务卡字段使用 `任务级别：`。`Task level:` 只能出现在用户原始材料或外部笔记中，不能作为最终任务卡字段。
 - 如果用户明确要求单个 literal copy block 或文件 artifact，且任务卡正文包含内嵌代码块时，外层必须使用 `~~~~markdown` / `~~~~`，不得使用三反引号 ` ```markdown `；本模板包含 `.claude/review_targets.json` 的 ` ```json ` 示例，使用三反引号外层会被内部代码块提前截断。
-- 实际任务卡进入 runner 前必须通过 Rust task-card-validator 只读校验（`cargo run -p ags-cli -- task validate <task-card>` 或 `bash scripts/validate.sh <task-card>`；旧 `task-card-validator` 命令仅作为隐藏兼容别名保留）；对话输出可通过 `bash scripts/validate.sh -` 从 stdin 校验；校验失败时停止，不进入执行或收据流程。
+- 实际任务卡进入 runner 前必须通过 Rust validator 只读校验（`cargo run -p ags-cli -- task validate <task-card>` 或 `bash scripts/validate.sh <task-card>`）；对话输出可通过 `bash scripts/validate.sh -` 从 stdin 校验；校验失败时停止，不进入执行或收据流程。
 - 首个非空行已经是 `## 任务卡` 的输入是已有任务卡：合法卡跳过生成，直接进入 policy / runner；非法卡停止，不得回落为原始意图重新生成。
 - 远程控制、SSH、挂载目录、跨仓库任务中，`cwd` 不一定等于实际修改仓库。任务卡必须显式要求 Executor 为本次任务重写 `.claude/review_targets.json`，让显式 review 的审查范围对准实际目标仓库。
 - Executor 启动后按固定顺序读取：
@@ -187,12 +187,11 @@ Verification gate:
 - 任务级别按 `protocol/task-routing.md` 定义。
 - **Task-card handoff gate**：显式交接需要 `--task-card-requested` 与 `--confirmed-handoff-contract`；宿主 Plan mode 最终产物以 `--host-plan-mode-final` 替代 `--task-card-requested`，仍必须同时提供 `--confirmed-handoff-contract`。两条路径都只生成交接 artifact，不授权 mutation；输入重开 solution work 时以 `solution_formation_required` 拒绝。此规则不限制已授权的同会话 `direct-edit`。参见 `protocol/agent-task-protocol.md` 生命周期阶段 3.5。
 - Executor、Runtime adapter、Execution surface、Permission mode、Parallelism、Verification gate 按 `protocol/runtime-adapters.md` 定义；Review gate 的唯一规则表在 `protocol/agent-task-protocol.md`。
-- `Execution effort` 使用中性执行强度语义（`low` / `normal` / `high` / `exhaustive`），默认 `normal`；它只表示思考强度，绝不映射为权限、并行或 review 豁免。宿主私有深度/工作流触发词（如 `ultracode`）不得写进任务卡前台生成路径；`ags run` 只在 resolved LaunchPlan 中保留该提示供宿主消费。`ultracode` 仅作为旧值解析兼容保留，task compiler 不再生成。
+- `Execution effort` 使用中性执行强度语义（`low` / `normal` / `high` / `exhaustive`），默认 `normal`；它只表示思考强度，绝不映射为权限、并行或 review 豁免。其他旧值一律拒绝。
 - `Workflow authority` 声明是否允许 subagent / workflow（`none` / `within-card` / `plan-only` / `allowed`），默认 `none`；它只声明授权，不直接点火。
 - `子任务编排` 是可选槽位，`mode` 取 `none` / `optional` / `required`，默认 `none`（省略即 `none`）。`mode != none` 时 validator 要求 `Workflow authority` 非 none 且 `Parallelism` 为 subagent/worktree/multi-session/agent-team；该槽位只声明可拆分结构、子任务边界与回收要求，`ags run` 只把 resolved policy 放入 LaunchPlan，真正 subagent / workflow 点火由宿主决定，不由任务卡正文或 Runner 触发。子任务只能装可并行工作（只读审计 / 实现 / 文档同步 / 测试补充）；最终验证、交付报告、commit、push、release gate 必须由主 executor 独做，子任务结果合并为单一 diff 后由主 executor 统一验证与交付（见 `protocol/runtime-adapters.md` §Subtask Scope Rules）。
-- `scripts/run-task-card.sh` 是薄包装层，把校验 / policy / gate / LaunchPlan 准备委托给 Rust runner（`ags run`）。允许时返回 `HOST_EXECUTION_REQUIRED`；它不启动宿主、不执行任务、不验证结果、不写最终收据。`--check-only` 只做 gate 预览，`--dry-run` 输出相同结构化计划。
-- 自动执行层选择 / Learning Runner / 临时 Task IR / compiled brief 注入 / `learning-gaps/` 沉淀均为协议目标，planned（尚未实现）：当前 `scripts/run-task-card.sh` 与 `ags run` 不编译 Task IR，不注入 compiled brief，不沉淀 learning-gaps。任务卡不得假设这些行为已生效。
-- 涉及本地 Agent 技能同步、proposal、adoption log 或 ignore list 时，必须引用项目内对应治理文档；如无项目治理文档，使用前台技能治理控制台 `ags skill`（`inventory` / `dedupe` / `update` / `sync` / `verify`）。套件级 `scripts/govern-new-skills.sh` 为 Phase 2 规划项，尚未实现，不得作为可运行步骤引用。最终输出仍使用本文件的固定任务卡骨架。
+- `ags run` 是唯一 LaunchPlan 准备入口。允许时返回 `HOST_EXECUTION_REQUIRED`；它不启动宿主、不执行任务、不验证结果、不写最终收据。`--check-only` 只做 gate 预览，`--dry-run` 输出相同结构化计划。
+- 涉及本地 Agent 技能目录时，必须引用项目内对应治理文档；如无项目治理文档，只使用 `ags skill inventory` / `ags skill verify` 和 `ags capability snapshot`。不存在运行时 adopt、ignore、dedupe 或 sync 命令。最终输出仍使用本文件的固定任务卡骨架。
 
 ## 与全局提示词生成器的关系
 
@@ -209,20 +208,20 @@ Verification gate:
 
 ## Skill Governance 治理任务补充
 
-涉及本地 Agent 技能、下载/拖拽导入、proposal、adoption log 或 ignore list 时，固定任务卡按以下方式填槽：
+涉及本地 Agent 技能或第三方能力升级时，固定任务卡按以下方式填槽：
 
-- `相关路径`：列出 `global-skills/`、`skill-packs/`、`proposals/skill-adoption/`、`governance/skill-adoption-log.yaml`、`governance/skill-ignore-list.yaml`。
+- `相关路径`：列出实际 skill 源目录、`manifests/skills-registry.yaml`、`manifests/third-party-capabilities.yaml` 与静态 snapshot 刷新入口。
 - `目标文件夹路径`：填写本次技能治理实际读写的仓库根目录或目标技能根目录的绝对路径。
-- `本次任务相关文件`：列出本次涉及的 skill 源目录、proposal、adoption log 或 ignore list。
+- `本次任务相关文件`：列出本次涉及的 skill 源目录和 registry 文件。
 - `项目画像`：如存在，填写 `config/agent-project-profile.yaml`；不要复制无关画像内容。
 - `记忆胶囊`：如存在，填写 `$HOME/.agents/memory/projects/<project-slug>/context-capsule.md`；不要复制长记忆。AGS start hook 已注入时以注入上下文为准；hook 不可用时，开始执行前同步读取同目录 `task-memory.md`。
 - `任务存档`：如存在，填写 `$HOME/.agents/memory/projects/<project-slug>/task-memory.md`；没有任务记忆时填 `无`。任务开始由宿主原生 start adapter 通过 `context-memory-start.py` 只读注入 capsule / `task-memory.md`；会话或任务结束由宿主原生 close adapter 调用兼容名 `claude-stop-memory-capture.py`，只有合法交付闭环才经 `context-memory.sh capture` 归档并刷新本机 `task-memory.md`，普通对话只写 `skipped` close receipt。Claude Code 使用 SessionStart/Stop，Codex 使用 SessionStart/SessionEnd，OMP 使用原生 extension。共享脚本由 `ags setup --yes --force` 安装，宿主 wiring 由 `ags agents govern --agent <host> --apply` 显式纳管；`context-capsule.md` 绝不被自动覆盖。
 - `适用治理文档`：填写项目内治理文档；如无项目治理文档，填写 `AGENT_SUITE_PROTOCOL.md`。
 - `非目标`：明确不得写 `$HOME/.agents/skills`、`$HOME/.codex/skills`、`$HOME/.codex/plugins/cache`，不得运行 `lark-cli update`、`npx skills add/remove/update`，不得接管外部官方 CLI 或项目自管输出层技能，不得自动应用 patch。
-- `实施要求`：说明默认先 scan / dry-run，人工确认后才能 adopt / ignore。
-- `边界声明`：如任务涉及 `notebooklm`、Hermes 输出层技能、TempoFlow 输出层业务契约、`notebooklm_task_card`、`local_context_pack` 或 `fairness_check_questions`，必须写明它们只可被引用，不能被开发套件 adopt / update / 打包。
+- `实施要求`：说明来源变更只发生在明确安装/升级中；验证后每个宿主只刷新一次静态 snapshot。
+- `边界声明`：如任务涉及 `notebooklm`、Hermes 输出层技能、TempoFlow 输出层业务契约、`notebooklm_task_card`、`local_context_pack` 或 `fairness_check_questions`，必须写明它们只可被引用，不能被开发套件接管、更新或打包。
 - `Verification gate`：优先使用 `ags skill inventory`（前台技能治理控制台的只读盘点）、`bash -n` 脚本语法检查和 `bash scripts/verify.sh`。`scripts/govern-new-skills.sh scan` 为 Phase 2 规划项、尚未实现，不得作为 Verification gate 步骤引用。
-- `交付`：必须说明是否生成 proposal / adoption log / ignore list，是否触碰本地 skill 目录，仍需人工确认的事项。
+- `交付`：必须说明是否触碰本地 skill 目录、是否刷新静态 snapshot，以及仍需人工确认的事项。
 
 ## Heavy 任务补充
 

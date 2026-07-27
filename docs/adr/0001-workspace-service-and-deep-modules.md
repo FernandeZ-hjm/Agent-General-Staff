@@ -1,14 +1,14 @@
 # ADR 0001: Workspace Service and Deep Module Boundaries
 
 - Status: Accepted
-- Product version: 0.3.3
+- Product version: 0.3.4
 
 ## Context
 
 Per-stdio governance state allowed multiple hosts in one project to observe
 different capability hashes and connection-bound leases. Large source files
-also mixed read models, host probes, mutation planning, apply transactions,
-rollback, snapshot publication, and rendering.
+also mixed read models, host probes, lifecycle writes, snapshot publication,
+and rendering.
 
 ## Decision
 
@@ -26,12 +26,11 @@ sessions and leases.
 
 Split the four largest modules by cohesive change reason:
 
-- capability governance: authority, catalog, snapshot compiler/validation,
-  user overlay transaction, usage ledger, hashing;
+- capability governance: authority, catalog, static snapshot compiler/validation
+  and hashing;
 - workspace facts: discovery, instruction projection, protocol audit,
   preflight and rendering;
-- skill console: model, inventory, probe, actions, apply transaction,
-  synchronization, dedupe and rendering;
+- lifecycle: setup, project initialization, updates and onboarding assessment;
 - MCP tools: wire, preflight, decision, apply and tests.
 
 Cargo package names identify the twelve major architectural boundaries. No
@@ -41,9 +40,9 @@ mutation implementation.
 ## Consequences
 
 Four hosts can share one workspace service without sharing decision authority.
-Capability scans occur only in explicit setup/update/adoption/snapshot
-publication, never while serving a request. Cross-session, cross-host,
+Capability scans occur only in explicit setup, update, or snapshot publication,
+never while serving a request. Cross-session, cross-host,
 cross-workspace, and replayed leases fail
-closed. The human CLI and Machine CLI remain byte-compatible with v0.3.0 help
-and output contracts. Future refactors move behavior behind these boundaries
-before changing adapters.
+closed. The current CLI and Machine CLI contracts are authoritative; removed
+dynamic lifecycle and compatibility fixtures are not preserved behind hidden
+adapters.

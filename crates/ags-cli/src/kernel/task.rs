@@ -1,7 +1,7 @@
 use crate::cli::TaskAction;
 use std::path::PathBuf;
 
-/// Shared dispatch: `task validate` / `task-card-validator`
+/// Dispatch the current `task validate` command.
 pub(crate) fn cmd_task_validate(paths: &[String]) {
     let paths: Vec<String> = if paths.is_empty() {
         vec!["-".to_string()]
@@ -136,7 +136,6 @@ fn cmd_task_compile(
         slot_sources: report.slot_sources,
         missing_slots: report.missing_slots,
         assumptions: report.assumptions,
-        deprecations: report.deprecations,
         contract_format: report.contract_format,
         validation_passed: if report.executable_allowed {
             validation_passed

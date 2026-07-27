@@ -2,14 +2,14 @@
 //!
 //! Reads Skill entries from `manifests/third-party-capabilities.yaml` and
 //! computes READ-ONLY local-install + host-visibility status by
-//! filesystem stat only. Installation is never silent: the onboarding layer
-//! may offer a confirmation-protected per-item action that delegates to the
-//! existing audited `ags skill adopt` lifecycle.
+//! filesystem stat only. Skill installation is never offered by onboarding;
+//! an explicit external-manager install/update must finish before one static
+//! host snapshot refresh.
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-/// Compatibility projection of the unified third-party capability manifest.
+/// Read-only public-skill view of the unified third-party capability manifest.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct RecommendationsDoc {
     #[serde(default)]
@@ -155,7 +155,7 @@ pub fn recommendation_status(rec: &Recommendation, home: &Path) -> Recommendatio
     let next_step = match capability_state {
         "active-ready" => "Installed and visible — verify host visibility with `ags skill verify --strict`."
             .to_string(),
-        "installed-not-visible" => "Installed locally — run a confirmed host visibility sync, then verify.".to_string(),
+        "installed-not-visible" => "Installed locally — repair the host entry during an explicit setup/update, refresh the static snapshot once, then verify.".to_string(),
         "visible-not-ready" => "A host entry exists without the reviewed local body — repair or remove the stale entry before routing.".to_string(),
         _ => {
         match rec.source.as_deref() {

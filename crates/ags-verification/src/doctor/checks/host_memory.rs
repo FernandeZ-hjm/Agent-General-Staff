@@ -11,10 +11,6 @@ use super::*;
 // advisory (Warn/Skip) so a
 // not-yet-bootstrapped machine reports the gap without blocking the gate.
 
-#[allow(dead_code)] // retained for focused legacy Claude-hook diagnostics/tests
-const MEMORY_CAPTURE_MARKER: &str = "claude-stop-memory-capture";
-#[allow(dead_code)] // retained for focused legacy Claude-hook diagnostics/tests
-const MEMORY_START_MARKER: &str = "context-memory-start";
 const RAW_GUARD_MARKER: &str = "raw-tool-call-stop-guard";
 
 /// Project slug from `config/agent-project-profile.yaml` `project.slug`,
@@ -73,28 +69,6 @@ pub(super) fn hook_commands(settings_path: &Path, event_name: &str) -> Option<Ve
 
 pub(super) fn stop_hook_commands(settings_path: &Path) -> Option<Vec<String>> {
     hook_commands(settings_path, "Stop")
-}
-
-#[allow(dead_code)] // focused legacy Claude-hook diagnostic
-pub(super) fn session_start_hook_commands(settings_path: &Path) -> Option<Vec<String>> {
-    hook_commands(settings_path, "SessionStart")
-}
-
-#[allow(dead_code)] // focused legacy Claude-hook diagnostic
-pub(super) fn ordered_pipeline(cmds: &[String]) -> String {
-    let mut seen: Vec<&str> = Vec::new();
-    for c in cmds {
-        if c.contains(RAW_GUARD_MARKER) && !seen.contains(&"raw-guard") {
-            seen.push("raw-guard");
-        } else if c.contains(MEMORY_CAPTURE_MARKER) && !seen.contains(&"memory-capture") {
-            seen.push("memory-capture");
-        }
-    }
-    if seen.is_empty() {
-        "order: <none>".to_string()
-    } else {
-        format!("order: {}", seen.join(" → "))
-    }
 }
 
 pub(super) fn newest_subdir_mtime(dir: &Path) -> Option<std::time::SystemTime> {
@@ -319,79 +293,6 @@ pub(super) fn host_skill_body_singleton_check_at(repo_root: &Path, home: &Path) 
         "host skill entries do not resolve to a single canonical body",
         shown.join("\n"),
     )
-}
-
-/// Check that the workspace `.claude/settings.json` Stop pipeline wires the
-/// project-memory capture step. Warns (advisory) when missing.
-#[allow(dead_code)] // focused legacy Claude-hook diagnostic
-pub fn claude_code_memory_capture_wired(repo_root: &Path) -> Finding {
-    let check = "claude_code_memory_capture_wired";
-    if is_public_edition(repo_root) {
-        return Finding::skip(
-            check,
-            "public edition does not require project memory capture wiring",
-        );
-    }
-    let cmds = match stop_hook_commands(&repo_root.join(".claude/settings.json")) {
-        Some(c) => c,
-        None => {
-            return Finding::warn(
-                check,
-                "no readable Stop pipeline in .claude/settings.json",
-                "Run `ags setup --yes --register-claude` to wire the project memory capture step.",
-            );
-        }
-    };
-    let has_memory = cmds.iter().any(|c| c.contains(MEMORY_CAPTURE_MARKER));
-    if has_memory {
-        Finding::pass(
-            check,
-            format!("project memory capture wired ({})", ordered_pipeline(&cmds)),
-        )
-    } else {
-        Finding::warn(
-            check,
-            "project memory capture not wired in Stop pipeline",
-            "Run `ags setup --yes --register-claude` to wire claude-stop-memory-capture.py.",
-        )
-    }
-}
-
-/// Check that the workspace `.claude/settings.json` SessionStart pipeline wires
-/// the read-only project-memory injection hook. Warns when missing because
-/// missing start injection breaks new-conversation continuity but does not make
-/// an existing workspace unsafe.
-#[allow(dead_code)] // focused legacy Claude-hook diagnostic
-pub fn claude_code_memory_start_wired(repo_root: &Path) -> Finding {
-    let check = "claude_code_memory_start_wired";
-    if is_public_edition(repo_root) {
-        return Finding::skip(
-            check,
-            "public edition does not require project memory start wiring",
-        );
-    }
-    let cmds = match session_start_hook_commands(&repo_root.join(".claude/settings.json")) {
-        Some(c) => c,
-        None => {
-            return Finding::warn(
-                check,
-                "no readable SessionStart pipeline in .claude/settings.json",
-                "Run `ags setup --yes --register-claude` to wire context-memory-start.py.",
-            );
-        }
-    };
-    if cmds.iter().any(|c| c.contains(MEMORY_START_MARKER)) {
-        Finding::pass(
-            check,
-            "project memory start hook wired in SessionStart pipeline",
-        )
-    } else {
-        Finding::warn(
-            check,
-            "project memory start hook missing from SessionStart pipeline",
-            "Run `ags setup --yes --register-claude` to wire context-memory-start.py.",
-        )
-    }
 }
 
 /// Check that the raw-tool-call Stop guard is preserved in the Stop pipeline.

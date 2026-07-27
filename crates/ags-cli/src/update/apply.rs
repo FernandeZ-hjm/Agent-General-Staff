@@ -2,47 +2,13 @@
 
 use crate::cli::UpdateLane;
 use crate::context::{
-    guard_writable_target, home_dir, private_install_target, source_root_or_exit, unix_timestamp,
+    guard_writable_target, home_dir, private_install_target, source_root_or_exit,
 };
 use crate::receipt_bridge::emit_ags_action_receipt;
-use crate::update::lanes::{inspect_projects, lifecycle_lane};
+use crate::update::lanes::lifecycle_lane;
 use crate::update::plan::cmd_update_plan;
-use ags_lifecycle::update::apply::{ApplyRequest, RuntimeUpdate, UpdateEffects};
-use std::path::{Path, PathBuf};
-
-struct CliUpdateEffects<'a> {
-    source_root: &'a Path,
-    runtime_target: &'a Path,
-    home: &'a Path,
-    force: bool,
-    include_optional_extensions: bool,
-    backup_stamp: u64,
-}
-
-impl UpdateEffects for CliUpdateEffects<'_> {
-    fn apply_runtime(&mut self) -> RuntimeUpdate {
-        let result =
-            ags_lifecycle::setup::apply_private(ags_lifecycle::setup::PrivateApplyRequest {
-                source_root: self.source_root,
-                target: self.runtime_target,
-                home: self.home,
-                force: self.force,
-                include_optional_extensions: self.include_optional_extensions,
-                register_claude: false,
-                backup_stamp: self.backup_stamp,
-            });
-        let report = result.report;
-        RuntimeUpdate {
-            ok: report.exit_code() == 0,
-            exit_code: report.exit_code(),
-            human_output: crate::update::render_setup_report(&report),
-        }
-    }
-
-    fn refresh_projects(&mut self) -> ags_lifecycle::update::ProjectInventory {
-        inspect_projects(self.source_root, self.runtime_target, true)
-    }
-}
+use ags_lifecycle::update::apply::ApplyRequest;
+use std::path::PathBuf;
 
 pub(in crate::update) fn cmd_update_apply(
     lane: Option<UpdateLane>,
@@ -59,21 +25,14 @@ pub(in crate::update) fn cmd_update_apply(
     let runtime_target = private_install_target(target.clone());
     guard_writable_target("ags update apply", &runtime_target);
     let home = home_dir();
-    let mut effects = CliUpdateEffects {
-        source_root: &source,
-        runtime_target: &runtime_target,
-        home: &home,
+    let outcome = ags_lifecycle::update::apply::execute(&ApplyRequest {
+        lane: lane.map(lifecycle_lane),
+        source_root: source.clone(),
+        runtime_target: runtime_target.clone(),
+        home,
         force,
         include_optional_extensions: false,
-        backup_stamp: unix_timestamp(),
-    };
-    let outcome = ags_lifecycle::update::apply::execute(
-        &ApplyRequest {
-            lane: lane.map(lifecycle_lane),
-            source_root: source.clone(),
-        },
-        &mut effects,
-    );
+    });
 
     if format != "json" {
         for step in &outcome.steps {
@@ -85,7 +44,7 @@ pub(in crate::update) fn cmd_update_apply(
             );
         }
         if let Some(runtime) = &outcome.runtime {
-            println!("{}", runtime.human_output);
+            println!("{}", crate::update::render_setup_report(&runtime.report));
         }
         for project in outcome
             .projects
@@ -126,7 +85,6 @@ pub(in crate::update) fn cmd_update_apply(
                 op: "refresh".to_string(),
                 path: write.path.clone(),
                 from: None,
-                backup: None,
                 detail: write.detail.clone(),
             })
             .collect(),
@@ -148,7 +106,6 @@ pub(in crate::update) fn cmd_update_apply(
                 output_hash: ags_evidence::sha256_hex(verification.detail.as_bytes()),
             })
             .collect(),
-        ags_evidence::RollbackPlan::backup_restore(vec![]),
         outcome.apply_status,
         outcome.applied,
     );

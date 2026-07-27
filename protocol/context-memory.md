@@ -143,7 +143,7 @@ Command responsibilities:
   MCP plus current-workspace hooks.
 - `ags agents govern --agent <claude-code|codex|omp> --apply` performs the
   explicit host-adapter write. It structurally preserves unrelated hooks,
-  backs up changed JSON or extension files, and bootstraps the current
+  atomically replaces AGS-owned JSON or extension content, and bootstraps the current
   repository's memory store. External MCP registration remains advice-only.
 - Codex migration removes only the retired AGS
   `UserPromptSubmit -> memory-start-context.sh` entry; memory then loads once at
@@ -159,9 +159,8 @@ Boundary notes:
 
 - The runner (`ags run`) prepares a LaunchPlan and returns
   `HOST_EXECUTION_REQUIRED`; it does not execute, verify, write the task receipt,
-  or generate a delivery report. `scripts/run-task-card.sh` is a thin wrapper
-  over that read-only preparation surface. The host owns post-execution memory,
-  receipt, and delivery-report writes.
+  or generate a delivery report. The host owns post-execution memory, receipt,
+  and delivery-report writes.
 - The startup reader, close bridge, Claude/Codex hooks, and OMP extension are
   distinct adapters over the same project-memory authority.
 - No capture path may overwrite `context-capsule.md`.

@@ -17,6 +17,5 @@ ags-session = { path = "../ags-session" }
 ags-platform = { path = "../ags-platform" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
 tempfile = "3"
 getrandom = "0.4.2"

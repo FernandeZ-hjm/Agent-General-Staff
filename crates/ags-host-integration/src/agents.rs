@@ -73,7 +73,6 @@ pub fn ags_mcp_tool_surface() -> Vec<&'static str> {
         "ags_policy_resolve",
         "ags_route_request",
         "ags_apply_action",
-        "ags_verify_local",
     ]
 }
 /// Production probe: Claude Code via `claude mcp list` and Codex via

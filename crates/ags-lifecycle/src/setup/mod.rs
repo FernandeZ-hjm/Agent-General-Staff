@@ -1,7 +1,7 @@
 //! Private runtime setup lifecycle.
 //!
 //! This module is the single authority for setup planning, mutation,
-//! verification, rollback planning, generated templates, and host-memory
+//! verification, generated templates, and host-memory
 //! mutation. Human-facing adapters resolve CLI arguments, render the returned
 //! presentations, and own process exit behaviour.
 
@@ -10,10 +10,10 @@ mod global_entry;
 mod memory;
 mod plan;
 mod recommendations;
-mod rollback;
 mod templates;
 mod verify;
 
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -29,12 +29,11 @@ use plan::{
 use recommendations::{render_third_party_recommendations_text, third_party_recommendations_json};
 
 pub use memory::{apply_host_memory_adapter, MergeOutcome};
-pub use rollback::PrivateRollbackPresentation;
 
-pub const PRIVATE_INSTALL_SCHEMA: &str = "2.4-private-install";
+pub const PRIVATE_INSTALL_SCHEMA: &str = "0.3.4-private-install";
 const AGS_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub enum SetupSeverity {
     #[serde(rename = "info")]
     Info,
@@ -42,6 +41,16 @@ pub enum SetupSeverity {
     Warn,
     #[serde(rename = "fail")]
     Fail,
+}
+
+impl fmt::Display for SetupSeverity {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Info => write!(formatter, "INFO"),
+            Self::Warn => write!(formatter, "WARN"),
+            Self::Fail => write!(formatter, "FAIL"),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -54,6 +63,23 @@ pub enum SetupCheckStatus {
     Warn,
     #[serde(rename = "skip")]
     Skip,
+}
+
+impl fmt::Display for SetupCheckStatus {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Pass => write!(formatter, "PASS"),
+            Self::Fail => write!(formatter, "FAIL"),
+            Self::Warn => write!(formatter, "WARN"),
+            Self::Skip => write!(formatter, "SKIP"),
+        }
+    }
+}
+
+impl SetupCheckStatus {
+    pub fn is_ok(&self) -> bool {
+        matches!(self, Self::Pass | Self::Skip)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -103,6 +129,20 @@ impl SetupFinding {
             detail: Some(detail.into()),
         }
     }
+
+    pub fn info(check_name: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::pass(check_name, message)
+    }
+
+    pub fn skip(check_name: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            check_name: check_name.into(),
+            status: SetupCheckStatus::Skip,
+            severity: SetupSeverity::Info,
+            message: reason.into(),
+            detail: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -136,6 +176,59 @@ impl SetupReport {
         } else {
             1
         }
+    }
+
+    pub fn total_failures(&self) -> usize {
+        self.findings
+            .iter()
+            .filter(|finding| finding.severity == SetupSeverity::Fail)
+            .count()
+    }
+
+    pub fn total_warnings(&self) -> usize {
+        self.findings
+            .iter()
+            .filter(|finding| finding.severity == SetupSeverity::Warn)
+            .count()
+    }
+
+    pub fn total_infos(&self) -> usize {
+        self.findings
+            .iter()
+            .filter(|finding| finding.severity == SetupSeverity::Info)
+            .count()
+    }
+
+    pub fn total_skipped(&self) -> usize {
+        self.findings
+            .iter()
+            .filter(|finding| finding.status == SetupCheckStatus::Skip)
+            .count()
+    }
+
+    pub fn total_passed_checks(&self) -> usize {
+        self.findings
+            .iter()
+            .filter(|finding| finding.status == SetupCheckStatus::Pass)
+            .count()
+    }
+
+    pub fn total_failed_checks(&self) -> usize {
+        self.findings
+            .iter()
+            .filter(|finding| finding.status == SetupCheckStatus::Fail)
+            .count()
+    }
+
+    pub fn total_warned_checks(&self) -> usize {
+        self.findings
+            .iter()
+            .filter(|finding| finding.status == SetupCheckStatus::Warn)
+            .count()
+    }
+
+    pub fn total(&self) -> usize {
+        self.findings.len()
     }
 }
 
@@ -202,7 +295,6 @@ pub struct PrivateApplyRequest<'a> {
     pub force: bool,
     pub include_optional_extensions: bool,
     pub register_claude: bool,
-    pub backup_stamp: u64,
 }
 
 /// Apply one already-authorized private-runtime setup transaction.
@@ -215,27 +307,14 @@ pub fn apply_private(request: PrivateApplyRequest<'_>) -> PrivateApplyResult {
     let mut report = crate::setup::SetupReport::new("private-install-apply");
 
     for file in &plan.files {
-        report.add(write_install_file(
-            file,
-            request.force,
-            request.backup_stamp,
-        ));
+        report.add(write_install_file(file, request.force));
     }
     for dir in &plan.cleanup_dirs {
-        report.add(cleanup_install_dir(
-            dir,
-            request.force,
-            request.backup_stamp,
-        ));
+        report.add(cleanup_install_dir(dir, request.force));
     }
     if request.register_claude {
         add_claude_registration_checks(&mut report, request.target);
-        memory::add_workspace_memory_capture(
-            &mut report,
-            request.home,
-            request.source_root,
-            request.backup_stamp,
-        );
+        memory::add_workspace_memory_capture(&mut report, request.home, request.source_root);
     }
     report.add(write_ags_global_entry(request.target));
     if report.passed() {
@@ -267,10 +346,6 @@ pub fn private_install_health_report(
     _include_optional_extensions: bool,
 ) -> crate::setup::SetupReport {
     verify::private_install_health_report(target, home)
-}
-
-pub fn private_rollback_plan(target: &Path, home: &Path) -> PrivateRollbackPresentation {
-    rollback::private_rollback_plan(target, home)
 }
 
 pub fn render_memory_capture_plan(

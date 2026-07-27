@@ -9,10 +9,9 @@
 #   suite_interfaces:  AGS self — host initialization adapter. NOT governed objects.
 #                      AGS is the governance authority; it is not in the mcps: list.
 #
-#   mcps:              Governed third-party MCP servers. Reviewed, registered,
-#                      and managed by AGS governance. Each entry has an adoption
-#                      record, trust level, risk assessment, and allowed/denied
-#                      authority rules.
+#   mcps:              Governed third-party MCP servers. Reviewed and registered
+#                      by AGS governance. Each entry has a current status, trust
+#                      level, risk assessment, and allowed/denied authority rules.
 
 schema_version: "1.0"
 registry:
@@ -43,7 +42,7 @@ suite_interfaces:
     package:
       manager: "cargo"
       name: "ags-mcp"
-      version: "0.3.3"
+      version: "0.3.4"
       repository: "this repository"
       license: "GPL-3.0-only"
     install:
@@ -95,7 +94,7 @@ suite_interfaces:
         preflight may establish a restricted bootstrap_required binding where
         only ags_onboarding_plan and ags_apply_action are allowed. All ordinary tools
         (ags_route_request, ags_apply_action, ags_task_validate,
-        ags_policy_resolve, ags_verify_local) require preflight to have completed
+        ags_policy_resolve) require preflight to have completed
         first. A new preflight invalidates every held DecisionLease.
         Hosts should reject calls to these tools before preflight.
     surfaces:
@@ -133,7 +132,7 @@ suite_interfaces:
 mcps:
   - name: "context7"
     profile: "optional"
-    status: "adopted"
+    status: "active"
     category: "documentation_context"
     trust_level: "reviewed_external"
     routing:
@@ -192,7 +191,6 @@ mcps:
         - "Pin exact package version; do not use @latest."
         - "Treat Context7 output as advisory documentation context, not protocol authority."
         - "Require manual review before version bumps or enabling additional clients."
-    adoption_entry: "context7-mcp-adopted-20260607-optional"
 
   - name: "codegraph"
     routing:
@@ -214,7 +212,7 @@ mcps:
           - "帮我修改这个函数"
           - "查一下 React 最新文档"
     profile: "required"
-    status: "adopted"
+    status: "active"
     category: "code_intelligence"
     trust_level: "reviewed_external"
     package:
@@ -268,8 +266,7 @@ mcps:
         - "Use only for local code intelligence; AGS remains the governance authority."
         - "Verify with `codegraph status .` before relying on index freshness."
         - "Require manual review before version bumps or enabling additional clients."
-        - "Record adoption and future updates in the MCP adoption log."
-    adoption_entry: "codegraph-mcp-adopted-20260613-required"
+        - "Review and pin every version update in this registry."
 
 route_targets:
   - name: "context7:get-library-docs"

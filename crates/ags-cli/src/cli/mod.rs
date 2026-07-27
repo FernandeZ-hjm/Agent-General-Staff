@@ -33,7 +33,7 @@ pub(crate) enum Commands {
         /// Write setup files. Without --yes, setup prints a plan only.
         #[arg(long)]
         yes: bool,
-        /// Overwrite differing files after writing .bak.<timestamp> backups.
+        /// Replace differing AGS-owned files atomically.
         #[arg(long)]
         force: bool,
         /// Register AGS MCP servers in Claude Code user config after setup.
@@ -70,13 +70,9 @@ pub(crate) enum Commands {
         #[arg(long)]
         dry_run: bool,
         /// Governance overlay mode: `local` (default) git-ignores AGS files via
-        /// `.git/info/exclude`; `shared`/`tracked` keep them committed.
-        #[arg(long, default_value = "local", value_parser = ["local", "shared", "tracked"])]
+        /// `.git/info/exclude`; `shared` keeps them committed.
+        #[arg(long, default_value = "local", value_parser = ["local", "shared"])]
         mode: String,
-        /// Untrack already-tracked AGS-owned overlay files via
-        /// `git rm --cached` (local mode only; keeps the working copy).
-        #[arg(long)]
-        migrate_tracked_overlay: bool,
         /// Output format: text (default) or json.
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
@@ -107,7 +103,7 @@ pub(crate) enum Commands {
         /// Required confirmation for write-mode install.
         #[arg(long)]
         yes: bool,
-        /// Overwrite differing files after writing .bak.<timestamp> backups.
+        /// Replace differing AGS-owned files atomically.
         #[arg(long)]
         force: bool,
         /// Register AGS MCP servers in Claude Code user config after apply.
@@ -149,9 +145,6 @@ pub(crate) enum Commands {
         /// Perform safe repair actions (default: read-only diagnosis only).
         #[arg(long)]
         fix: bool,
-        /// Backward-compatible alias for --fix.
-        #[arg(long, hide = true)]
-        repair: bool,
         /// Dry-run: show what would be repaired without executing.
         #[arg(long)]
         dry_run: bool,
@@ -222,11 +215,10 @@ pub(crate) enum Commands {
         action: AgentsAction,
     },
 
-    // ── Cross-Agent capability layer (+ hidden M5 registry compat) ────
+    // ── Cross-Agent capability layer ──────────────────────────────────
     /// 跨 Agent 能力可见性与入口同步底层/兼容层（前台主入口是 `ags skill`）.
     /// Cross-Agent capability layer: inventory / install / sync / verify host
     /// visibility and entry plans (over the shared skill-governance console).
-    /// Hidden `list`/`show` remain the M5 internal suite-capability registry.
     Capability {
         #[command(subcommand)]
         action: CapabilityAction,
@@ -255,18 +247,11 @@ pub(crate) enum Commands {
     },
 
     // ── Global skill governance (五段链路第 3 段) ─────────────────
-    /// 纳管本机技能本体（前台主入口）. Local skill-body governance home:
-    /// inventory / adopt / ignore / rollback / dedupe / update / sync / verify
-    /// (+ hidden compat scan / check / propose / upstream). Lifecycle changes
-    /// are dry-run by default and write only the machine-private overlay with
-    /// explicit --apply. `ags capability` is the underlying visibility layer.
+    /// Inspect the installed static skill catalog and refresh metadata explicitly.
     Skill {
         /// Output format: text (default) or json.
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
-        /// Show safe update guidance. Skill writes still require explicit user approval.
-        #[arg(long)]
-        fix: bool,
         #[command(subcommand)]
         action: Option<SkillAction>,
     },
@@ -280,20 +265,13 @@ pub(crate) enum Commands {
         action: UpdateAction,
     },
 
-    // ── Release / Rollback operations ──────────────────────────────
+    // ── Release operations ─────────────────────────────────────────
     /// Release verification and packaging — dry-run only
     #[command(hide = true)]
     Release {
         #[command(subcommand)]
         action: ReleaseAction,
     },
-    /// Rollback planning — dry-run only, no apply
-    #[command(hide = true)]
-    Rollback {
-        #[command(subcommand)]
-        action: RollbackAction,
-    },
-
     // ── MCP operations ─────────────────────────────────────────
     /// Start AGS MCP server — expose governance tools/resources/prompts
     /// to MCP hosts (Tencent Agent, Codex, OMP, Cursor, Claude Code). V1 supports
@@ -370,59 +348,6 @@ pub(crate) enum Commands {
         public_root: Option<PathBuf>,
         #[command(subcommand)]
         action: Option<VerifyAction>,
-    },
-
-    // ── M0 backward-compatible aliases (hidden from help) ──────────────
-    /// Validate one or more task cards (alias for `task validate`)
-    #[command(hide = true)]
-    TaskCardValidator {
-        /// Task card files to validate (use "-" for stdin)
-        paths: Vec<String>,
-    },
-    /// Resolve execution policy (alias for `policy resolve`)
-    #[command(hide = true)]
-    ResolvePolicy {
-        /// Task card file (use "-" for stdin)
-        path: String,
-        /// Output format: text or json
-        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
-        format: String,
-        /// Write-approval audit/hint signal; may act as the M9 generic-adapter
-        /// capability override.
-        #[arg(long, default_value_t = false)]
-        approve_writes: bool,
-        /// Structured current-task approval signal from the live request
-        /// (audit/hint only — task level does not downgrade the permission mode).
-        #[arg(long, default_value_t = false)]
-        current_task_approval: bool,
-    },
-    /// Multi-project protocol drift checker (alias for `sync check`)
-    #[command(hide = true)]
-    WorkflowSyncCheck {
-        #[arg(long, default_value = ".")]
-        source: PathBuf,
-        #[arg(long = "targets", value_name = "NAME=PATH", num_args = 1.., value_parser = parse_target)]
-        targets: Vec<(String, PathBuf)>,
-        #[arg(long = "target")]
-        target: Option<PathBuf>,
-        #[arg(long = "target-name", default_value = "target")]
-        target_name: String,
-        #[arg(long)]
-        allowlist: Option<PathBuf>,
-        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
-        format: String,
-    },
-    /// Suite health diagnostics (alias for `doctor`)
-    #[command(hide = true)]
-    SuiteDoctor {
-        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
-        format: String,
-    },
-    /// Bootstrap dry-run (alias for `bootstrap --dry-run`)
-    #[command(hide = true)]
-    BootstrapDryRun {
-        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
-        format: String,
     },
 }
 

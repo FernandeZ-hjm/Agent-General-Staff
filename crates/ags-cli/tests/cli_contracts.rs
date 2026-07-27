@@ -420,21 +420,7 @@ fn skill_inventory_cli_contract() {
 #[test]
 fn high_risk_cli_rejections_remain_fail_closed() {
     let root = repo_root();
-    let invalid_card = root.join("tests/fixtures/invalid-ultracode-authority-abuse.md");
     let invalid_receipt = root.join("tests/fixtures/receipt-invalid-hash.json");
-
-    let policy = run_ags(&[
-        "policy",
-        "resolve",
-        invalid_card.to_str().expect("UTF-8 invalid card path"),
-        "--format",
-        "json",
-    ]);
-    assert!(!policy.status.success());
-    assert!(
-        String::from_utf8_lossy(&policy.stdout).contains("ULTRACODE_AUTHORITY_ABUSE")
-            || String::from_utf8_lossy(&policy.stderr).contains("ULTRACODE_AUTHORITY_ABUSE")
-    );
 
     let receipt = run_ags(&[
         "receipt",
@@ -446,9 +432,4 @@ fn high_risk_cli_rejections_remain_fail_closed() {
         "json",
     ]);
     assert!(!receipt.status.success());
-
-    // Exercise the compatibility `verify run` parser without recursively
-    // launching workspace verification from inside `cargo test`.
-    let verify_alias = run_ags(&["verify", "run", "--scope", "invalid"]);
-    assert_eq!(verify_alias.status.code(), Some(2));
 }

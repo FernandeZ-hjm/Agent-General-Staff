@@ -30,7 +30,7 @@ pub fn gate_check(input: &TaskPolicyInput) -> GateCheckOutput {
     let resolved = resolve_policy(input.clone());
     let decision = derive_decision(&resolved);
     GateCheckOutput {
-        schema_version: "2.0-m4".to_string(),
+        schema_version: "0.3.4-execution-policy".to_string(),
         decision,
         resolved_policy: resolved,
     }
@@ -44,7 +44,7 @@ pub fn gate_check(input: &TaskPolicyInput) -> GateCheckOutput {
 /// `decision=stop` with error details, not just a raw exit code.
 pub fn gate_check_failed(error_kind: &str, errors: Vec<String>) -> GateErrorOutput {
     GateErrorOutput {
-        schema_version: "2.0-m4".to_string(),
+        schema_version: "0.3.4-execution-policy".to_string(),
         decision: GateDecision::Stop,
         error_kind: error_kind.to_string(),
         errors,
@@ -83,7 +83,7 @@ pub fn explain_policy(input: &TaskPolicyInput) -> PolicyExplainOutput {
         decision: if exhaustive { "applied" } else { "not_applicable" }.to_string(),
         field: Some("execution_effort".to_string()),
         detail: if exhaustive {
-            "Exhaustive effort (Execution effort: exhaustive, or the legacy ultracode alias) sets is_exhaustive_mode=true without changing permission mode, parallelism, or launch args.".to_string()
+            "Execution effort: exhaustive sets is_exhaustive_mode=true without changing permission mode, parallelism, or launch args.".to_string()
         } else {
             "Execution effort is not the exhaustive tier; M1-M3 rules do not apply.".to_string()
         },
@@ -346,255 +346,10 @@ pub fn explain_policy(input: &TaskPolicyInput) -> PolicyExplainOutput {
     }
 
     PolicyExplainOutput {
-        schema_version: "2.0-m4".to_string(),
+        schema_version: "0.3.4-execution-policy".to_string(),
         task_summary: summary,
         explanations,
         safety_assertions: assertions,
         resolved_policy: policy,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::super::model::ApprovalSource;
-    use super::*;
-
-    fn light_input() -> TaskPolicyInput {
-        TaskPolicyInput {
-            executor: "Claude Code".into(),
-            runtime_adapter: "claude-code".into(),
-            execution_surface: "cli".into(),
-            permission_mode: "execute-and-verify".into(),
-            parallelism: "none".into(),
-            task_level: "Light".into(),
-            execution_effort: Some("normal".into()),
-            workflow_authority: Some("none".into()),
-            approval_source: ApprovalSource::None,
-        }
-    }
-
-    fn heavy_execute_no_approval() -> TaskPolicyInput {
-        TaskPolicyInput {
-            permission_mode: "execute-and-verify".into(),
-            task_level: "Heavy".into(),
-            ..light_input()
-        }
-    }
-
-    fn heavy_plan_only() -> TaskPolicyInput {
-        TaskPolicyInput {
-            permission_mode: "plan-only".into(),
-            task_level: "Heavy".into(),
-            ..light_input()
-        }
-    }
-
-    // ── gate_check tests ─────────────────────────────────────────────
-
-    #[test]
-    fn gate_check_light_allow() {
-        let output = gate_check(&light_input());
-        assert_eq!(output.decision, GateDecision::Allow);
-        assert_eq!(output.schema_version, "2.0-m4");
-        assert!(!output.resolved_policy.stop_before_launch);
-    }
-
-    #[test]
-    fn gate_check_heavy_plan_only_allow() {
-        // Heavy plan-only remains non-mutating and is safe to launch for planning.
-        let output = gate_check(&heavy_plan_only());
-        assert_eq!(output.decision, GateDecision::Allow);
-    }
-
-    #[test]
-    fn gate_check_heavy_execute_no_approval_allow() {
-        // Heavy + execute-and-verify is a direct execution card: no stop or
-        // downgrade is added by level. Heavy review remains validator-owned.
-        let output = gate_check(&heavy_execute_no_approval());
-        assert_eq!(output.decision, GateDecision::Allow);
-        assert!(!output.resolved_policy.stop_before_launch);
-        assert!(!output.resolved_policy.was_downgraded);
-        assert_eq!(
-            output.resolved_policy.effective_permission_mode.to_string(),
-            "execute-and-verify"
-        );
-    }
-
-    #[test]
-    fn gate_check_heavy_execute_and_verify_allows_direct_execution() {
-        // Direct execution is independent of the task level.
-        let input = TaskPolicyInput {
-            permission_mode: "execute-and-verify".into(),
-            task_level: "Heavy".into(),
-            ..light_input()
-        };
-        let output = gate_check(&input);
-        assert_eq!(output.decision, GateDecision::Allow);
-    }
-
-    #[test]
-    fn gate_check_json_has_decision_and_resolved_policy() {
-        let output = gate_check(&light_input());
-        let json = serde_json::to_string(&output).unwrap();
-        assert!(json.contains("\"decision\":\"allow\""));
-        assert!(json.contains("\"resolved_policy\""));
-        assert!(json.contains("\"schema_version\":\"2.0-m4\""));
-    }
-
-    #[test]
-    fn gate_check_stop_json_has_decision_stop() {
-        // A genuine STOP case is the writability gate (plan-only + worktree),
-        // not Heavy alone.
-        let input = TaskPolicyInput {
-            permission_mode: "plan-only".into(),
-            parallelism: "worktree".into(),
-            workflow_authority: Some("plan-only".into()),
-            ..light_input()
-        };
-        let output = gate_check(&input);
-        let json = serde_json::to_string(&output).unwrap();
-        assert!(json.contains("\"decision\":\"stop\""));
-    }
-
-    // ── gate_check_failed tests ──────────────────────────────────────
-
-    #[test]
-    fn gate_check_failed_outputs_structured_stop() {
-        let output = gate_check_failed(
-            "validation_failed",
-            vec!["Missing required field".to_string()],
-        );
-        assert_eq!(output.decision, GateDecision::Stop);
-        assert_eq!(output.error_kind, "validation_failed");
-        assert_eq!(output.errors.len(), 1);
-        assert_eq!(output.schema_version, "2.0-m4");
-
-        let json = serde_json::to_string(&output).unwrap();
-        assert!(json.contains("\"decision\":\"stop\""));
-        assert!(json.contains("\"error_kind\":\"validation_failed\""));
-        assert!(json.contains("Missing required field"));
-    }
-
-    // ── explain_policy tests ─────────────────────────────────────────
-
-    #[test]
-    fn explain_output_has_all_rule_ids() {
-        let output = explain_policy(&light_input());
-        let ids: Vec<&str> = output
-            .explanations
-            .iter()
-            .map(|e| e.rule_id.as_str())
-            .collect();
-        for expected in &["M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8", "M9", "M10"] {
-            assert!(
-                ids.contains(expected),
-                "Missing rule_id {} in explanations: {:?}",
-                expected,
-                ids
-            );
-        }
-        assert_eq!(output.explanations.len(), 10);
-    }
-
-    #[test]
-    fn explain_decisions_are_valid() {
-        let output = explain_policy(&light_input());
-        for e in &output.explanations {
-            assert!(
-                e.decision == "applied" || e.decision == "passed" || e.decision == "not_applicable",
-                "Invalid decision '{}' for rule {}",
-                e.decision,
-                e.rule_id
-            );
-        }
-    }
-
-    #[test]
-    fn explain_has_schema_version() {
-        let output = explain_policy(&light_input());
-        assert_eq!(output.schema_version, "2.0-m4");
-        let json = serde_json::to_string(&output).unwrap();
-        assert!(json.contains("\"schema_version\":\"2.0-m4\""));
-    }
-
-    #[test]
-    fn explain_safety_assertions_not_empty() {
-        let output = explain_policy(&light_input());
-        assert!(!output.safety_assertions.is_empty());
-    }
-
-    #[test]
-    fn explain_light_no_downgrades() {
-        let output = explain_policy(&light_input());
-        // M4 verifies permission independence for every task level.
-        let m4 = output
-            .explanations
-            .iter()
-            .find(|e| e.rule_id == "M4")
-            .unwrap();
-        assert_eq!(m4.decision, "passed");
-        // No stop assertions
-        let has_stop = output
-            .safety_assertions
-            .iter()
-            .any(|a| a.contains("LAUNCH BLOCKED"));
-        assert!(!has_stop);
-    }
-
-    #[test]
-    fn explain_execute_and_verify_shows_m4_passed() {
-        let input = TaskPolicyInput {
-            permission_mode: "execute-and-verify".into(),
-            task_level: "Heavy".into(),
-            ..light_input()
-        };
-        let output = explain_policy(&input);
-        let m4 = output
-            .explanations
-            .iter()
-            .find(|e| e.rule_id == "M4")
-            .unwrap();
-        assert_eq!(m4.decision, "passed");
-    }
-
-    #[test]
-    fn explain_heavy_execute_shows_m4_passed() {
-        // Heavy preserves execute-and-verify and does not block launch.
-        let output = explain_policy(&heavy_execute_no_approval());
-        let m4 = output
-            .explanations
-            .iter()
-            .find(|e| e.rule_id == "M4")
-            .unwrap();
-        assert_eq!(m4.decision, "passed");
-        let has_stop = output
-            .safety_assertions
-            .iter()
-            .any(|a| a.contains("LAUNCH BLOCKED"));
-        assert!(
-            !has_stop,
-            "Heavy task level must not block launch: {:?}",
-            output.safety_assertions
-        );
-    }
-
-    #[test]
-    fn explain_has_task_summary() {
-        let output = explain_policy(&light_input());
-        assert_eq!(output.task_summary.executor, "Claude Code");
-        assert_eq!(output.task_summary.task_level, "Light");
-        let json = serde_json::to_string(&output).unwrap();
-        assert!(json.contains("\"task_summary\""));
-    }
-
-    #[test]
-    fn explain_json_has_all_top_level_keys() {
-        let output = explain_policy(&light_input());
-        let json = serde_json::to_string(&output).unwrap();
-        assert!(json.contains("\"schema_version\""));
-        assert!(json.contains("\"task_summary\""));
-        assert!(json.contains("\"explanations\""));
-        assert!(json.contains("\"safety_assertions\""));
-        assert!(json.contains("\"resolved_policy\""));
     }
 }

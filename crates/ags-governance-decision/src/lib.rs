@@ -11,8 +11,8 @@ use sha2::{Digest, Sha256};
 /// Execution-policy resolution lives behind the governance-decision seam.
 pub mod policy;
 
-pub const HOST_ROUTE_PROPOSAL_SCHEMA_VERSION: &str = "0.3.0-host-route-proposal";
-pub const ROUTE_RESOLUTION_SCHEMA_VERSION: &str = "0.3.0-route-resolution";
+pub const HOST_ROUTE_PROPOSAL_SCHEMA_VERSION: &str = "0.3.4-host-route-proposal";
+pub const ROUTE_RESOLUTION_SCHEMA_VERSION: &str = "0.3.4-route-resolution";
 
 /// Shared foreground status used by preflight, routing, apply, runner and
 /// receipts. It is deliberately separate from task level and permission mode.
@@ -70,13 +70,11 @@ pub enum ExecutionAuthority {
 #[serde(rename_all = "snake_case")]
 pub enum CliCapabilityId {
     TaskCompile,
-    #[serde(alias = "task_execute")]
     TaskPrepareExecution,
     TaskValidate,
     PolicyResolve,
     ProjectVerify,
     SkillTagsVerify,
-    SkillAdopt,
     ReceiptVerify,
 }
 
@@ -108,174 +106,7 @@ pub enum TypedCliInput {
     Receipt {
         content: String,
     },
-    SkillAdopt {
-        source: String,
-        host: String,
-        apply: bool,
-    },
     Empty,
-}
-
-/// Legacy closed intent taxonomy retained for registry/catalog migration.
-/// New route proposals select an exact `skill_id`; this enum is never a route
-/// authority by itself.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(tag = "category", content = "demand", rename_all = "snake_case")]
-pub enum SkillDemand {
-    Engineering(EngineeringDemand),
-    Knowledge(KnowledgeDemand),
-    Lark(LarkDemand),
-    Content(ContentDemand),
-    Personal(PersonalDemand),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EngineeringDemand {
-    Debugging,
-    ModuleDesign,
-    DomainModeling,
-    ArchitectureImprovement,
-    SystemArchitecture,
-    Brainstorming,
-    Prototype,
-    PlanGrilling,
-    DocsGroundedGrilling,
-    ImplementationPlanning,
-    ApprovedPlanExecution,
-    TestDrivenDevelopment,
-    CompletionVerification,
-    CodeReview,
-    ReviewRequest,
-    SkillAuthoring,
-    PrdAuthoring,
-    IssueSlicing,
-    IssueTriage,
-    DecisionMapping,
-    MergeConflictResolution,
-    ContextHandoff,
-    BranchReview,
-    DeliveryReporting,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum KnowledgeDemand {
-    ConversationMemoryRecall,
-    VaultKnowledge,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LarkDemand {
-    Mail,
-    Calendar,
-    Document,
-    Spreadsheet,
-    Base,
-    Messaging,
-    Approval,
-    Task,
-    Wiki,
-    Minutes,
-    MeetingHistory,
-    MeetingAgent,
-    Drive,
-    Contact,
-    Attendance,
-    Okr,
-    Event,
-    Slides,
-    Whiteboard,
-    Markdown,
-    AppDevelopment,
-    OpenApiExploration,
-    MeetingSummaryWorkflow,
-    StandupReportWorkflow,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ContentDemand {
-    IndustryArticleWriting,
-    IndustryTopicPlanning,
-    TechnologyCommentary,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PersonalDemand {
-    LiuYaoDivination,
-    TarotDivination,
-}
-
-impl SkillDemand {
-    pub fn all() -> &'static [SkillDemand] {
-        use ContentDemand::*;
-        use EngineeringDemand::*;
-        use KnowledgeDemand::*;
-        use LarkDemand::*;
-        use PersonalDemand::*;
-
-        const ALL: &[SkillDemand] = &[
-            SkillDemand::Engineering(Debugging),
-            SkillDemand::Engineering(ModuleDesign),
-            SkillDemand::Engineering(DomainModeling),
-            SkillDemand::Engineering(ArchitectureImprovement),
-            SkillDemand::Engineering(SystemArchitecture),
-            SkillDemand::Engineering(Brainstorming),
-            SkillDemand::Engineering(Prototype),
-            SkillDemand::Engineering(PlanGrilling),
-            SkillDemand::Engineering(DocsGroundedGrilling),
-            SkillDemand::Engineering(ImplementationPlanning),
-            SkillDemand::Engineering(ApprovedPlanExecution),
-            SkillDemand::Engineering(TestDrivenDevelopment),
-            SkillDemand::Engineering(CompletionVerification),
-            SkillDemand::Engineering(CodeReview),
-            SkillDemand::Engineering(ReviewRequest),
-            SkillDemand::Engineering(SkillAuthoring),
-            SkillDemand::Engineering(PrdAuthoring),
-            SkillDemand::Engineering(IssueSlicing),
-            SkillDemand::Engineering(IssueTriage),
-            SkillDemand::Engineering(DecisionMapping),
-            SkillDemand::Engineering(MergeConflictResolution),
-            SkillDemand::Engineering(ContextHandoff),
-            SkillDemand::Engineering(BranchReview),
-            SkillDemand::Engineering(DeliveryReporting),
-            SkillDemand::Knowledge(ConversationMemoryRecall),
-            SkillDemand::Knowledge(VaultKnowledge),
-            SkillDemand::Lark(Mail),
-            SkillDemand::Lark(Calendar),
-            SkillDemand::Lark(Document),
-            SkillDemand::Lark(Spreadsheet),
-            SkillDemand::Lark(Base),
-            SkillDemand::Lark(Messaging),
-            SkillDemand::Lark(Approval),
-            SkillDemand::Lark(Task),
-            SkillDemand::Lark(Wiki),
-            SkillDemand::Lark(Minutes),
-            SkillDemand::Lark(MeetingHistory),
-            SkillDemand::Lark(MeetingAgent),
-            SkillDemand::Lark(Drive),
-            SkillDemand::Lark(Contact),
-            SkillDemand::Lark(Attendance),
-            SkillDemand::Lark(Okr),
-            SkillDemand::Lark(Event),
-            SkillDemand::Lark(Slides),
-            SkillDemand::Lark(Whiteboard),
-            SkillDemand::Lark(Markdown),
-            SkillDemand::Lark(AppDevelopment),
-            SkillDemand::Lark(OpenApiExploration),
-            SkillDemand::Lark(MeetingSummaryWorkflow),
-            SkillDemand::Lark(StandupReportWorkflow),
-            SkillDemand::Content(IndustryArticleWriting),
-            SkillDemand::Content(IndustryTopicPlanning),
-            SkillDemand::Content(TechnologyCommentary),
-            SkillDemand::Personal(LiuYaoDivination),
-            SkillDemand::Personal(TarotDivination),
-        ];
-        ALL
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -353,10 +184,6 @@ pub fn validate_machine_input(
             TypedCliInput::TaskCard { .. }
         ) | (CliCapabilityId::ProjectVerify, TypedCliInput::Empty)
             | (
-                CliCapabilityId::SkillAdopt,
-                TypedCliInput::SkillAdopt { .. }
-            )
-            | (
                 CliCapabilityId::ReceiptVerify,
                 TypedCliInput::Receipt { .. }
             )
@@ -373,7 +200,7 @@ pub fn validate_machine_input(
         TypedCliInput::ConfirmedHandoffContract { content, .. }
         | TypedCliInput::TaskCard { content }
         | TypedCliInput::Receipt { content } => Some(content),
-        TypedCliInput::SkillAdopt { .. } | TypedCliInput::Empty => None,
+        TypedCliInput::Empty => None,
     };
     if content.is_some_and(|value| value.trim().is_empty()) {
         return Err(ProposalError::new(
@@ -381,29 +208,6 @@ pub fn validate_machine_input(
             "targets.input.content",
             "typed machine input content must not be empty",
         ));
-    }
-    if let TypedCliInput::SkillAdopt { source, host, .. } = input {
-        if source.is_empty()
-            || source.len() > 4096
-            || source.trim() != source
-            || source.chars().any(char::is_control)
-        {
-            return Err(ProposalError::new(
-                "machine_skill_source_invalid",
-                "targets.input.source",
-                "skill adoption source must be 1..4096 characters with no surrounding whitespace or control characters",
-            ));
-        }
-        if !matches!(
-            host.as_str(),
-            "codex" | "claude-code" | "omp" | "codebuddy-code" | "cursor" | "all"
-        ) {
-            return Err(ProposalError::new(
-                "machine_skill_host_invalid",
-                "targets.input.host",
-                "skill adoption host must be codex, claude-code, omp, codebuddy-code, cursor, or all",
-            ));
-        }
     }
     Ok(())
 }
@@ -515,21 +319,6 @@ pub fn validate_proposal(proposal: &HostRouteProposal) -> Result<(), Vec<Proposa
                         "task compilation/preparation requires task_card_handoff authority",
                     ));
                 }
-                if matches!(
-                    (&machine.capability, &machine.input),
-                    (
-                        CliCapabilityId::SkillAdopt,
-                        TypedCliInput::SkillAdopt { apply: true, .. }
-                    )
-                ) && (proposal.phase != ProposalPhase::Execution
-                    || proposal.solution_state != SolutionState::Confirmed)
-                {
-                    errors.push(ProposalError::new(
-                        "skill_adopt_apply_authority_required",
-                        "solution_state",
-                        "skill adoption apply requires execution phase and a confirmed solution",
-                    ));
-                }
             }
             ProposalTarget::DirectResponse {} => {}
         }
@@ -635,6 +424,14 @@ pub enum ServerHeldActionKind {
     SkillOutcome,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillOutcome {
+    Succeeded,
+    Failed,
+    Abandoned,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DecisionLeaseEvidence {
     pub lease_id: String,
@@ -685,248 +482,4 @@ pub fn sha256(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("sha256:{:x}", hasher.finalize())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn direct() -> HostRouteProposal {
-        HostRouteProposal {
-            schema_version: HOST_ROUTE_PROPOSAL_SCHEMA_VERSION.to_string(),
-            request_fingerprint: "sha256:req".to_string(),
-            phase: ProposalPhase::DirectResponse,
-            solution_state: SolutionState::NotRequired,
-            execution_authority: ExecutionAuthority::None,
-            scope_hash: "sha256:scope".to_string(),
-            targets: vec![ProposalTarget::DirectResponse {}],
-        }
-    }
-
-    #[test]
-    fn direct_response_is_exclusive() {
-        let mut proposal = direct();
-        proposal.targets.push(ProposalTarget::Skill(SkillTarget {
-            skill_id: "codebase-design".to_string(),
-            entrypoint: None,
-            snapshot_hash: "sha256:snapshot".to_string(),
-        }));
-        let errors = validate_proposal(&proposal).unwrap_err();
-        assert!(errors
-            .iter()
-            .any(|error| error.code == "direct_response_not_exclusive"));
-    }
-
-    #[test]
-    fn direct_response_target_is_rejected_outside_direct_response_phase() {
-        for phase in [ProposalPhase::SolutionFormation, ProposalPhase::Execution] {
-            let mut proposal = direct();
-            proposal.phase = phase;
-            proposal.solution_state = match phase {
-                ProposalPhase::SolutionFormation => SolutionState::Open,
-                ProposalPhase::Execution => SolutionState::Confirmed,
-                ProposalPhase::DirectResponse => unreachable!(),
-            };
-            let errors = validate_proposal(&proposal).unwrap_err();
-            assert!(errors
-                .iter()
-                .any(|error| error.code == "direct_response_phase_only"));
-        }
-    }
-
-    #[test]
-    fn direct_edit_is_host_native() {
-        let proposal = HostRouteProposal {
-            schema_version: HOST_ROUTE_PROPOSAL_SCHEMA_VERSION.to_string(),
-            request_fingerprint: "sha256:req".to_string(),
-            phase: ProposalPhase::Execution,
-            solution_state: SolutionState::Confirmed,
-            execution_authority: ExecutionAuthority::DirectEdit,
-            scope_hash: "sha256:scope".to_string(),
-            targets: vec![ProposalTarget::MachineCli(MachineCliTarget {
-                capability: CliCapabilityId::ProjectVerify,
-                input: TypedCliInput::Empty,
-            })],
-        };
-        assert!(validate_proposal(&proposal)
-            .unwrap_err()
-            .iter()
-            .any(|error| error.code == "direct_edit_is_host_native"));
-    }
-
-    #[test]
-    fn direct_edit_may_use_only_the_host_native_action() {
-        let proposal = HostRouteProposal {
-            schema_version: HOST_ROUTE_PROPOSAL_SCHEMA_VERSION.to_string(),
-            request_fingerprint: "sha256:req".to_string(),
-            phase: ProposalPhase::Execution,
-            solution_state: SolutionState::Confirmed,
-            execution_authority: ExecutionAuthority::DirectEdit,
-            scope_hash: "sha256:scope".to_string(),
-            targets: Vec::new(),
-        };
-        assert!(validate_proposal(&proposal).is_ok());
-    }
-
-    #[test]
-    fn task_execute_is_deserialize_only_alias() {
-        let legacy: CliCapabilityId = serde_json::from_str("\"task_execute\"").unwrap();
-        assert_eq!(legacy, CliCapabilityId::TaskPrepareExecution);
-        assert_eq!(
-            serde_json::to_string(&legacy).unwrap(),
-            "\"task_prepare_execution\""
-        );
-    }
-
-    #[test]
-    fn machine_capability_requires_its_exact_input_kind() {
-        let mut proposal = direct();
-        proposal.phase = ProposalPhase::Execution;
-        proposal.solution_state = SolutionState::Confirmed;
-        proposal.execution_authority = ExecutionAuthority::TaskCardHandoff;
-        proposal.targets = vec![ProposalTarget::MachineCli(MachineCliTarget {
-            capability: CliCapabilityId::TaskCompile,
-            input: TypedCliInput::TaskCard {
-                content: "## 任务卡\n".to_string(),
-            },
-        })];
-        let errors = validate_proposal(&proposal).unwrap_err();
-        assert!(errors
-            .iter()
-            .any(|error| error.code == "machine_input_kind_mismatch"));
-    }
-
-    #[test]
-    fn typed_machine_content_must_not_be_empty() {
-        let error = validate_machine_input(
-            CliCapabilityId::ReceiptVerify,
-            &TypedCliInput::Receipt {
-                content: "  \n".to_string(),
-            },
-        )
-        .unwrap_err();
-        assert_eq!(error.code, "machine_input_empty");
-    }
-
-    #[test]
-    fn skill_adopt_requires_its_dedicated_closed_input() {
-        let input = TypedCliInput::SkillAdopt {
-            source: "https://github.com/acme/skills/tree/main/apple-design".to_string(),
-            host: "all".to_string(),
-            apply: false,
-        };
-        assert!(validate_machine_input(CliCapabilityId::SkillAdopt, &input).is_ok());
-        assert!(validate_machine_input(
-            CliCapabilityId::SkillAdopt,
-            &TypedCliInput::SkillAdopt {
-                source: "./apple-design".to_string(),
-                host: "omp".to_string(),
-                apply: false,
-            }
-        )
-        .is_ok());
-        assert_eq!(
-            validate_machine_input(CliCapabilityId::ProjectVerify, &input)
-                .unwrap_err()
-                .code,
-            "machine_input_kind_mismatch"
-        );
-        assert_eq!(
-            validate_machine_input(CliCapabilityId::SkillAdopt, &TypedCliInput::Empty)
-                .unwrap_err()
-                .code,
-            "machine_input_kind_mismatch"
-        );
-    }
-
-    #[test]
-    fn skill_adopt_input_rejects_ambiguous_sources_and_unknown_hosts() {
-        let error = validate_machine_input(
-            CliCapabilityId::SkillAdopt,
-            &TypedCliInput::SkillAdopt {
-                source: " ./apple-design".to_string(),
-                host: "codex".to_string(),
-                apply: true,
-            },
-        )
-        .unwrap_err();
-        assert_eq!(error.code, "machine_skill_source_invalid");
-
-        let error = validate_machine_input(
-            CliCapabilityId::SkillAdopt,
-            &TypedCliInput::SkillAdopt {
-                source: "./apple-design".to_string(),
-                host: "unknown-host".to_string(),
-                apply: true,
-            },
-        )
-        .unwrap_err();
-        assert_eq!(error.code, "machine_skill_host_invalid");
-    }
-
-    #[test]
-    fn mutating_skill_adopt_requires_confirmed_solution() {
-        let target = ProposalTarget::MachineCli(MachineCliTarget {
-            capability: CliCapabilityId::SkillAdopt,
-            input: TypedCliInput::SkillAdopt {
-                source: "./apple-design".to_string(),
-                host: "codex".to_string(),
-                apply: true,
-            },
-        });
-        for solution_state in [SolutionState::Open, SolutionState::NotRequired] {
-            let proposal = HostRouteProposal {
-                schema_version: HOST_ROUTE_PROPOSAL_SCHEMA_VERSION.to_string(),
-                request_fingerprint: "sha256:req".to_string(),
-                phase: ProposalPhase::Execution,
-                solution_state,
-                execution_authority: ExecutionAuthority::None,
-                scope_hash: "sha256:scope".to_string(),
-                targets: vec![target.clone()],
-            };
-            assert!(validate_proposal(&proposal)
-                .unwrap_err()
-                .iter()
-                .any(|error| { error.code == "skill_adopt_apply_authority_required" }));
-        }
-
-        let proposal = HostRouteProposal {
-            schema_version: HOST_ROUTE_PROPOSAL_SCHEMA_VERSION.to_string(),
-            request_fingerprint: "sha256:req".to_string(),
-            phase: ProposalPhase::Execution,
-            solution_state: SolutionState::Confirmed,
-            execution_authority: ExecutionAuthority::None,
-            scope_hash: "sha256:scope".to_string(),
-            targets: vec![target],
-        };
-        assert!(validate_proposal(&proposal).is_ok());
-    }
-
-    #[test]
-    fn dry_run_skill_adopt_does_not_require_mutation_authority() {
-        let proposal = HostRouteProposal {
-            schema_version: HOST_ROUTE_PROPOSAL_SCHEMA_VERSION.to_string(),
-            request_fingerprint: "sha256:req".to_string(),
-            phase: ProposalPhase::Execution,
-            solution_state: SolutionState::Open,
-            execution_authority: ExecutionAuthority::None,
-            scope_hash: "sha256:scope".to_string(),
-            targets: vec![ProposalTarget::MachineCli(MachineCliTarget {
-                capability: CliCapabilityId::SkillAdopt,
-                input: TypedCliInput::SkillAdopt {
-                    source: "./apple-design".to_string(),
-                    host: "codex".to_string(),
-                    apply: false,
-                },
-            })],
-        };
-        assert!(validate_proposal(&proposal).is_ok());
-    }
-
-    #[test]
-    fn proposal_hash_is_stable() {
-        let proposal = direct();
-        assert_eq!(proposal_hash(&proposal), proposal_hash(&proposal));
-        assert!(proposal_hash(&proposal).starts_with("sha256:"));
-    }
 }

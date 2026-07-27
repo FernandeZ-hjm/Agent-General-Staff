@@ -1,7 +1,7 @@
 use crate::cli::SyncAction;
 use std::path::PathBuf;
 
-/// Shared dispatch: `sync check` / `workflow-sync-check`
+/// Dispatch the current `sync check` projection audit.
 pub(crate) fn cmd_sync_check(
     source: PathBuf,
     targets: Vec<(String, PathBuf)>,
@@ -12,7 +12,7 @@ pub(crate) fn cmd_sync_check(
 ) {
     let mut all_targets = targets;
 
-    // Backward compat: --target adds a single target
+    // `--target` adds a single target.
     if let Some(target_root) = target {
         all_targets.push((target_name, target_root));
     }

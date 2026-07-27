@@ -1,4 +1,4 @@
-//! Compile-time contract for the twelve authoritative module facades.
+//! Compile-time contract for authoritative module facades.
 //!
 //! This test intentionally imports only crate-root exports. Moving an
 //! authority behind a private implementation module must not force adapters
@@ -11,7 +11,6 @@ fn authoritative_crate_root_facades_compile() {
     let _: String = ags_platform::sha256_hex(b"facade-contract");
     let _: fn(&Path) -> ags_workspace_facts::ProjectIdentity = ags_workspace_facts::detect_project;
     let _: fn(&str) -> Option<&'static str> = ags_host_integration::recognized_host_display;
-    let _: fn(&str) -> ags_task_contract::ParsedIntent = ags_task_contract::parse_intent;
     let _: fn(
         &ags_governance_decision::HostRouteProposal,
     ) -> Result<(), Vec<ags_governance_decision::ProposalError>> =

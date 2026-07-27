@@ -9,7 +9,6 @@ use std::net::TcpStream;
 use std::path::Path;
 use std::sync::Arc;
 
-#[path = "workspace_service/capability_bundle.rs"]
 mod capability_snapshot;
 mod registry_ownership;
 mod transport_handshake;

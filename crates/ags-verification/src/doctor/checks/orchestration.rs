@@ -21,7 +21,7 @@ pub fn run_checks(report: &mut HealthReport, repo_root: &Path) {
         for finding in skill_resolution_coverage_check(repo_root) {
             report.add(finding);
         }
-        report.add(mcp_registry_codegraph_adopted(repo_root));
+        report.add(mcp_registry_codegraph_active(repo_root));
     }
 
     // ── AGS project-memory capture chain (advisory) ────────────────────
@@ -30,8 +30,7 @@ pub fn run_checks(report: &mut HealthReport, repo_root: &Path) {
         report.add(host_skill_body_singleton_check(repo_root));
     }
     // Host-specific start/close wiring is covered by the composite lifecycle
-    // check below. The legacy Claude-only checks remain callable for focused
-    // diagnostics but are not duplicated in the default report.
+    // check below; focused checks are not duplicated in the default report.
     report.add(raw_tool_call_stop_guard_present(repo_root));
     report.add(project_task_memory_status(repo_root));
     report.add(context_capsule_integrity(repo_root));

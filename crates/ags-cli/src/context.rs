@@ -93,7 +93,6 @@ pub(crate) fn ensure_bootstrap_source_repo(source_repo: &Path) {
         "protocol/runtime-adapters.md",
         "protocol/task-routing.md",
         "scripts/validate.sh",
-        "scripts/run-task-card.sh",
     ];
 
     let missing: Vec<&str> = required
@@ -124,7 +123,6 @@ fn is_complete_source_root(root: &Path) -> bool {
         "protocol/runtime-adapters.md",
         "protocol/task-routing.md",
         "scripts/validate.sh",
-        "scripts/run-task-card.sh",
         "crates/ags-cli/Cargo.toml",
     ];
     required.iter().all(|rel| root.join(rel).is_file())
@@ -230,7 +228,6 @@ mod source_root_tests {
             "protocol/runtime-adapters.md",
             "protocol/task-routing.md",
             "scripts/validate.sh",
-            "scripts/run-task-card.sh",
             "crates/ags-cli/Cargo.toml",
         ] {
             let path = root.join(rel);

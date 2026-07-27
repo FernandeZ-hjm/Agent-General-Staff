@@ -240,8 +240,8 @@ pub fn skill_resolution_coverage_check(repo_root: &Path) -> Vec<Finding> {
             }
         };
 
-    // Adopted skill names from suite.yaml (required + optional lists, personal map).
-    let mut adopted: Vec<String> = Vec::new();
+    // Suite skill names from suite.yaml (required + optional lists, personal map).
+    let mut suite_skills: Vec<String> = Vec::new();
     if let Ok(c) = std::fs::read_to_string(repo_root.join("manifests/suite.yaml")) {
         if let Ok(doc) = serde_yaml::from_str::<YamlValue>(&c) {
             let suite = doc.get("suite");
@@ -250,7 +250,7 @@ pub fn skill_resolution_coverage_check(repo_root: &Path) -> Vec<Finding> {
                     .and_then(|s| s.get(sect))
                     .and_then(|v| v.as_sequence())
                 {
-                    adopted.extend(
+                    suite_skills.extend(
                         seq.iter()
                             .filter_map(|it| it.get("name").and_then(|n| n.as_str()))
                             .map(String::from),
@@ -261,14 +261,14 @@ pub fn skill_resolution_coverage_check(repo_root: &Path) -> Vec<Finding> {
                 .and_then(|s| s.get("personal"))
                 .and_then(|v| v.as_mapping())
             {
-                adopted.extend(map.keys().filter_map(|k| k.as_str()).map(String::from));
+                suite_skills.extend(map.keys().filter_map(|k| k.as_str()).map(String::from));
             }
         }
     }
 
     let mut malformed: Vec<String> = Vec::new();
     let mut missing: Vec<String> = Vec::new();
-    for name in adopted {
+    for name in suite_skills {
         match skill_cov.get(&name) {
             Some(RouteCoverage::Covered) => {}
             Some(RouteCoverage::Malformed) => malformed.push(name),
@@ -278,7 +278,7 @@ pub fn skill_resolution_coverage_check(repo_root: &Path) -> Vec<Finding> {
     if malformed.is_empty() && missing.is_empty() {
         findings.push(Finding::pass(
             "skill-resolution-coverage",
-            "every adopted skill declares a valid, explicit routing.route_state (typed parse)",
+            "every suite skill declares a valid, explicit routing.route_state (typed parse)",
         ));
     } else {
         let mut detail = String::new();
@@ -296,7 +296,7 @@ pub fn skill_resolution_coverage_check(repo_root: &Path) -> Vec<Finding> {
         }
         findings.push(Finding::fail(
             "skill-resolution-coverage",
-            "adopted skills with invalid or missing routing.route_state",
+            "suite skills with invalid or missing routing.route_state",
             detail,
         ));
     }

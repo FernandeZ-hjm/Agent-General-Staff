@@ -8,7 +8,7 @@
 //!
 //! # Library usage
 //!
-//! ```ignore
+//! ```text
 //! use ags_verification::doctor::{
 //!     render_json, render_text, CheckStatus, Finding, HealthReport, Severity,
 //! };
@@ -79,7 +79,7 @@ pub fn third_party_capability_routing_finding(
             verify.host
         ),
         format!(
-            "Expected capability gaps: {}. Install or restore missing third-party bodies through their declared owner, run `ags skill sync --apply` for AGS-owned thin indexes, restart {}, then run `ags capability verify --host {} --strict`.",
+            "Expected capability gaps: {}. Install or restore missing third-party bodies through their declared owner, refresh the static snapshot for {}, restart that host, then run `ags capability verify --host {} --strict`.",
             if gaps.is_empty() {
                 verify.status.clone()
             } else {
@@ -89,15 +89,6 @@ pub fn third_party_capability_routing_finding(
             verify.host
         ),
     )
-}
-
-/// Stub entry point — kept for backward compatibility with existing
-/// callers that don't yet pass `--format`.
-///
-/// Prefer `run()` + `render_text()` / `render_json()` in new code.
-pub fn run_stub() {
-    let report = run(Path::new("."));
-    println!("{}", render_text(&report));
 }
 
 // ── M7 Doctor Repair ──────────────────────────────────────────────────────

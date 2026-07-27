@@ -5,14 +5,12 @@
 //! - `ags setup`   Global runtime setup so AGS is visible to host agents.
 //! - `ags init`    Project onboarding into AGS governance.
 //! - `ags doctor`  Health checks and safe repair suggestions.
-//! - `ags skill`   Third-party skill & MCP management console: unified
-//!   inventory, host visibility, and confirmation-protected propose/apply.
+//! - `ags skill`   Read-only skill inventory and host visibility verification.
 //! - `ags help`    Operator guidance.
 //!
 //! Kernel operations such as task validation, policy resolution, gates,
 //! receipts, compliance, preflight, and release checks remain available to
-//! AGS MCP, CI, and compatibility callers, but are hidden from the human CLI
-//! command surface.
+//! AGS MCP and CI, but are hidden from the human CLI command surface.
 //!
 //! `main.rs` is a thin entry point: it parses the CLI and routes each
 //! top-level `Commands` variant to its owning lifecycle/kernel module. All
@@ -23,7 +21,6 @@ use clap::Parser;
 mod cli;
 mod context;
 mod host_platforms;
-mod managed_projects;
 mod output;
 mod receipt_bridge;
 
@@ -75,16 +72,8 @@ fn run_cli() {
             slug,
             dry_run,
             mode,
-            migrate_tracked_overlay,
             format,
-        } => init::run(
-            &target,
-            slug,
-            dry_run,
-            &format,
-            &mode,
-            migrate_tracked_overlay,
-        ),
+        } => init::run(&target, slug, dry_run, &format, &mode),
         Commands::Plan {
             profile,
             target,
@@ -99,19 +88,14 @@ fn run_cli() {
             format,
         } => setup::cmd_private_apply(&profile, target, yes, force, &format, register_claude),
         Commands::Agents { action } => agents::run(action),
-        Commands::Skill {
-            action,
-            format,
-            fix,
-        } => skill::run(action, &format, fix),
+        Commands::Skill { action, format } => skill::run(action, &format),
         Commands::Update { action } => update::run(action),
         Commands::Doctor {
             format,
             fix,
-            repair,
             dry_run,
             target,
-        } => doctor::run(&format, repair || fix, dry_run, &target),
+        } => doctor::run(&format, fix, dry_run, &target),
         Commands::Capability { action } => capability::run(action),
 
         // ── Hidden kernel surface ──
@@ -132,18 +116,6 @@ fn run_cli() {
         Commands::Compliance { action } => kernel::compliance::run(action),
         Commands::Session { action } => kernel::awareness::run_session(action),
         Commands::Release { action } => kernel::release::run(action),
-        Commands::Rollback { action } => match action {
-            cli::RollbackAction::Plan {
-                profile,
-                target,
-                format,
-            } => match profile {
-                Some(profile) => {
-                    setup::rollback::cmd_private_rollback_plan(&profile, target, &format)
-                }
-                None => kernel::rollback::cmd_rollback_plan(&format),
-            },
-        },
         Commands::Mcp { action } => kernel::mcp::run(action),
         Commands::Hooks { action } => kernel::hooks::run(action),
         Commands::Run {
@@ -179,31 +151,5 @@ fn run_cli() {
             }
             kernel::verify::run(action, &scope, &format, &target, public_root.as_deref());
         }
-
-        // ── M0 backward-compatible aliases (hidden from help) ──
-        Commands::TaskCardValidator { paths } => kernel::task::cmd_task_validate(&paths),
-        Commands::ResolvePolicy {
-            path,
-            format,
-            approve_writes,
-            current_task_approval,
-        } => kernel::policy::cmd_policy_resolve(
-            &path,
-            &format,
-            approve_writes,
-            current_task_approval,
-        ),
-        Commands::WorkflowSyncCheck {
-            source,
-            targets,
-            target,
-            target_name,
-            allowlist,
-            format,
-        } => kernel::sync::cmd_sync_check(source, targets, target, target_name, allowlist, &format),
-        Commands::SuiteDoctor { format } => {
-            doctor::cmd_doctor(&format, false, false, std::path::Path::new("."))
-        }
-        Commands::BootstrapDryRun { format } => kernel::bootstrap::cmd_bootstrap_dry_run(&format),
     }
 }

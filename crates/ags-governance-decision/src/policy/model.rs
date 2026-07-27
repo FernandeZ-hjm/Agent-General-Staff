@@ -63,13 +63,10 @@ pub enum Parallelism {
 impl Parallelism {
     /// Parse from the canonical task-card string value.
     ///
-    /// Values `limited` and `parallel` (legacy validator tokens) are mapped
-    /// to `None` because they are not in the runtime-adapters parallelism
-    /// set and do not carry delegation semantics.
     #[allow(clippy::should_implement_trait)] // inherent infallible parser returning Self, not std::str::FromStr
     pub fn from_str(s: &str) -> Self {
         match s {
-            "none" | "limited" | "parallel" => Self::None,
+            "none" => Self::None,
             "subagent" => Self::Subagent,
             "worktree" => Self::Worktree,
             "multi-session" => Self::MultiSession,
@@ -407,7 +404,7 @@ pub struct ResolvedExecutionPolicy {
     pub allowed_launch_args: Vec<String>,
 
     /// If true, a LaunchPlan must not authorize host launch and must expose
-    /// `stop_reasons`. The field name is retained for schema compatibility.
+    /// `stop_reasons`. The field name is the current wire contract.
     pub stop_before_launch: bool,
 
     /// Why the launch was stopped (only meaningful if `stop_before_launch`).
@@ -424,7 +421,7 @@ pub struct ResolvedExecutionPolicy {
     pub execution_effort: String,
 
     /// If true, the executor should use exhaustive/deep reasoning.
-    /// Set only when `execution_effort == "ultracode"`.
+    /// Set only when `execution_effort == "exhaustive"`.
     pub is_exhaustive_mode: bool,
 
     /// Where explicit write approval came from (never from task card text).
@@ -434,7 +431,7 @@ pub struct ResolvedExecutionPolicy {
 impl Serialize for ResolvedExecutionPolicy {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut map = serializer.serialize_map(None)?;
-        map.serialize_entry("schema_version", "2.0-m4")?;
+        map.serialize_entry("schema_version", "0.3.4-execution-policy")?;
         map.serialize_entry("executor", &self.executor)?;
         map.serialize_entry("runtime_adapter", &self.runtime_adapter)?;
         map.serialize_entry("effective_permission_mode", &self.effective_permission_mode)?;

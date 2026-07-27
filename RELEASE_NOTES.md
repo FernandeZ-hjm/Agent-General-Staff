@@ -1,5 +1,39 @@
 # Agent Governance Suite Release Notes
 
+## Release 0.3.4
+
+0.3.4 removes runtime capability churn and retires compatibility surfaces that
+had no current caller or working implementation.
+
+- Each host has one sealed static capability snapshot. Setup creates the initial
+  snapshot; an explicit `ags capability snapshot --write --host <host>` refreshes
+  it during an upstream update. Normal preflight, resource reads, route, and
+  apply neither scan the machine nor compare live registries.
+- Workspace capability bundles, bundle epochs, user overlays, source registries,
+  adoption/ignore logs, usage ledgers, runtime sync/dedupe, persistent backups,
+  quarantine, and plan-only rollback data are removed.
+- `ags-setup`, `ags-init`, `ags-doctor`, and `ags-agents` remain direct host
+  command skills and cannot be submitted as MCP `SkillTarget`s. OMP remains a
+  first-class host and task-card executor.
+- The current CLI contract is authoritative. Retired aliases, dynamic skill
+  commands, the periodic network update notifier, the shell `run-task-card.sh`
+  wrapper, old task-card fixtures, and historical projection documents are
+  deleted instead of kept as hidden compatibility paths.
+- Action receipts record planned/applied writes and verification evidence only.
+  Multi-file initialization still restores earlier writes immediately if the
+  same apply fails, preventing a half-written project without creating backup
+  files or a later rollback interface.
+- The Rust implementation is reduced from 81,270 to about 49,600 lines and the
+  Rust test inventory from 1,058 to 313 focused tests. Duplicate permutations,
+  captured legacy CLI contracts, retired-feature tests, and self-referential
+  projection tests are removed; policy, lease isolation, static snapshot,
+  routing semantics, task validation, release boundaries, and host E2E remain.
+
+This is a current-contract release rather than a compatibility-preserving patch.
+Promotion still follows the private authority → stable → public order, with the
+v0.3.3 stable binary retained only as the read-only E2E/performance comparison
+baseline during release verification.
+
 ## Release 0.3.3
 
 0.3.3 is a compatibility-preserving patch release for deterministic capability

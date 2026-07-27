@@ -107,7 +107,7 @@ pub struct ReceiptPlan {
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
-pub const SCHEMA_VERSION: &str = "0.3.0-launch-plan";
+pub const SCHEMA_VERSION: &str = "0.3.4-launch-plan";
 
 // ── Main entry point ──────────────────────────────────────────────────────
 
@@ -312,8 +312,7 @@ pub fn run_task_card_inner(
     // the runtime gate (3): the live machine snapshot must judge each trailing
     // `[skill: …]` tag Available for the active host (enrolled + canonical
     // present + auth satisfied + host-visible + healthy). It runs automatically
-    // on every launch-plan path — this is the main task-card execution chain
-    // (`ags run` → `scripts/run-task-card.sh`), not a manual side command. A
+    // on every `ags run` launch-plan path, not a manual side command. A
     // rejected tag is a launch blocker: deterministic and fail-closed.
     let active_host = host_for_adapter(&policy.runtime_adapter);
     let skill_tags = crate::validator::extract_skill_tags(&content);

@@ -1,10 +1,8 @@
-use super::{sanitize_name, InitFile};
+use super::InitFile;
 use std::path::{Path, PathBuf};
 
 const OVERLAY_BLOCK_BEGIN: &str = "# >>> AGS local governance overlay (managed by `ags init`) >>>";
 const OVERLAY_BLOCK_END: &str = "# <<< AGS local governance overlay (managed by `ags init`) <<<";
-/// Shared, repo-owned append targets that AGS never auto-untracks.
-const OVERLAY_SHARED_TARGETS: [&str; 3] = ["/AGENTS.md", "/CLAUDE.md", "/.gitignore"];
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum OverlayMode {
     /// Default: AGS files are added to `.git/info/exclude` (local, uncommitted).
@@ -15,7 +13,7 @@ pub enum OverlayMode {
 impl OverlayMode {
     pub(crate) fn parse(value: &str) -> OverlayMode {
         match value {
-            "shared" | "tracked" => OverlayMode::Shared,
+            "shared" => OverlayMode::Shared,
             _ => OverlayMode::Local,
         }
     }
@@ -47,15 +45,6 @@ fn overlay_exclude_entries(target: &Path, files: &[InitFile]) -> Vec<String> {
     entries.sort();
     entries.dedup();
     entries
-}
-/// Overlay entries that AGS exclusively owns and may safely untrack. The shared
-/// append targets are never auto-untracked because the repository may own them.
-fn overlay_migratable_entries(entries: &[String]) -> Vec<String> {
-    entries
-        .iter()
-        .filter(|e| !OVERLAY_SHARED_TARGETS.contains(&e.as_str()))
-        .cloned()
-        .collect()
 }
 /// Result of merging the AGS-managed overlay block into a `.git/info/exclude`
 /// body.
@@ -218,50 +207,28 @@ fn git_tracked_set(target: &Path) -> std::collections::HashSet<String> {
     }
     set
 }
-fn git_rm_cached(target: &Path, rel: &str) -> Result<(), String> {
-    let out = git_command(target)
-        .args(["rm", "--cached", "--quiet", "--", rel])
-        .output()
-        .map_err(|e| e.to_string())?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
-    }
-}
 pub struct OverlayPlan {
-    target: PathBuf,
     mode: OverlayMode,
-    migrate: bool,
     is_git_repo: bool,
     exclude_path: Option<PathBuf>,
     entries: Vec<String>,
-    tracked_migratable: Vec<String>,
-    tracked_shared: Vec<String>,
+    tracked_entries: Vec<String>,
     warnings: Vec<String>,
 }
 /// Resolve the local overlay plan for the given target and AGS install files.
 /// Read-only: it queries git state but performs no writes.
-pub fn compute_overlay_plan(
-    target: &Path,
-    files: &[InitFile],
-    mode: OverlayMode,
-    migrate: bool,
-) -> OverlayPlan {
+pub fn compute_overlay_plan(target: &Path, files: &[InitFile], mode: OverlayMode) -> OverlayPlan {
     let entries = overlay_exclude_entries(target, files);
     let mut warnings = Vec::new();
     let is_git_repo = git_is_repo(target);
 
     if mode == OverlayMode::Shared {
         return OverlayPlan {
-            target: target.to_path_buf(),
             mode,
-            migrate,
             is_git_repo,
             exclude_path: None,
             entries,
-            tracked_migratable: Vec::new(),
-            tracked_shared: Vec::new(),
+            tracked_entries: Vec::new(),
             warnings,
         };
     }
@@ -272,61 +239,42 @@ pub fn compute_overlay_plan(
                 .to_string(),
         );
         return OverlayPlan {
-            target: target.to_path_buf(),
             mode,
-            migrate,
             is_git_repo,
             exclude_path: None,
             entries,
-            tracked_migratable: Vec::new(),
-            tracked_shared: Vec::new(),
+            tracked_entries: Vec::new(),
             warnings,
         };
     }
 
     let exclude_path = git_info_exclude_path(target);
     let tracked = git_tracked_set(target);
-    let tracked_migratable: Vec<String> = overlay_migratable_entries(&entries)
-        .into_iter()
-        .filter(|e| tracked.contains(e.trim_start_matches('/')))
-        .collect();
-    let tracked_shared: Vec<String> = entries
+    let tracked_entries: Vec<String> = entries
         .iter()
-        .filter(|e| {
-            OVERLAY_SHARED_TARGETS.contains(&e.as_str())
-                && tracked.contains(e.trim_start_matches('/'))
-        })
+        .filter(|e| tracked.contains(e.trim_start_matches('/')))
         .cloned()
         .collect();
 
-    if !migrate && !tracked_migratable.is_empty() {
+    if !tracked_entries.is_empty() {
         warnings.push(format!(
-            "{} AGS overlay file(s) are tracked by git and will stay visible until migrated. Re-run with `--migrate-tracked-overlay` to untrack them via `git rm --cached`.",
-            tracked_migratable.len()
-        ));
-    }
-    if !tracked_shared.is_empty() {
-        warnings.push(format!(
-            "{} shared file(s) ({}) are tracked; AGS appended its governance block and they will show as modifications. Local overlay never auto-untracks shared files.",
-            tracked_shared.len(),
-            tracked_shared.join(", ")
+            "{} overlay file(s) are already tracked by git; `.git/info/exclude` cannot hide tracked files: {}",
+            tracked_entries.len(),
+            tracked_entries.join(", ")
         ));
     }
 
     OverlayPlan {
-        target: target.to_path_buf(),
         mode,
-        migrate,
         is_git_repo,
         exclude_path,
         entries,
-        tracked_migratable,
-        tracked_shared,
+        tracked_entries,
         warnings,
     }
 }
-/// Apply the local overlay: migrate tracked AGS-owned files (when requested),
-/// then write the managed block into `.git/info/exclude`. Returns findings.
+/// Apply the local overlay by writing the managed block into
+/// `.git/info/exclude`. Returns findings.
 pub fn apply_overlay(plan: &OverlayPlan) -> Vec<super::InitFinding> {
     use super::InitFinding as Finding;
     let mut findings = Vec::new();
@@ -348,23 +296,6 @@ pub fn apply_overlay(plan: &OverlayPlan) -> Vec<super::InitFinding> {
             ));
         }
         return findings;
-    }
-
-    if plan.migrate {
-        for entry in &plan.tracked_migratable {
-            let rel = entry.trim_start_matches('/');
-            match git_rm_cached(&plan.target, rel) {
-                Ok(()) => findings.push(Finding::pass(
-                    format!("overlay-migrate-{}", sanitize_name(rel)),
-                    format!("untracked via git rm --cached (working copy kept): {rel}"),
-                )),
-                Err(e) => findings.push(Finding::fail(
-                    format!("overlay-migrate-{}", sanitize_name(rel)),
-                    format!("failed to untrack {rel}"),
-                    e,
-                )),
-            }
-        }
     }
 
     let Some(exclude_path) = &plan.exclude_path else {
@@ -444,15 +375,6 @@ pub fn render_overlay_text(plan: &OverlayPlan) -> String {
         for entry in &plan.entries {
             lines.push(format!("    - {entry}"));
         }
-        if plan.migrate && !plan.tracked_migratable.is_empty() {
-            lines.push(format!(
-                "  Migrate: {} tracked AGS file(s) via git rm --cached",
-                plan.tracked_migratable.len()
-            ));
-            for entry in &plan.tracked_migratable {
-                lines.push(format!("    - {entry}"));
-            }
-        }
     } else if plan.mode == OverlayMode::Shared {
         lines.push("  AGS governance files are tracked/committed (shared).".to_string());
     }
@@ -465,20 +387,17 @@ pub fn overlay_json(plan: &OverlayPlan) -> serde_json::Value {
     serde_json::json!({
         "mode": plan.mode.as_str(),
         "is_git_repo": plan.is_git_repo,
-        "migrate": plan.migrate,
         "exclude_path": plan.exclude_path.as_ref().map(|p| p.to_string_lossy()),
         "entries": plan.entries,
-        "tracked_migratable": plan.tracked_migratable,
-        "tracked_shared": plan.tracked_shared,
+        "tracked_entries": plan.tracked_entries,
         "warnings": plan.warnings,
     })
 }
 #[cfg(test)]
 mod overlay_tests {
     use super::{
-        apply_overlay, compute_overlay_plan, git_tracked_set, merge_overlay_exclude,
-        overlay_exclude_entries, overlay_migratable_entries, InitFile, OverlayMode,
-        OVERLAY_BLOCK_BEGIN, OVERLAY_BLOCK_END,
+        apply_overlay, compute_overlay_plan, merge_overlay_exclude, overlay_exclude_entries,
+        InitFile, OverlayMode, OVERLAY_BLOCK_BEGIN, OVERLAY_BLOCK_END,
     };
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -508,28 +427,6 @@ mod overlay_tests {
                 "/protocol/agent-task-protocol.md".to_string(),
             ]
         );
-    }
-
-    #[test]
-    fn migratable_excludes_shared_append_targets() {
-        let entries = vec![
-            "/.gitignore".to_string(),
-            "/AGENTS.md".to_string(),
-            "/CLAUDE.md".to_string(),
-            "/WORKSPACE.md".to_string(),
-            "/protocol/agent-task-protocol.md".to_string(),
-        ];
-        let migratable = overlay_migratable_entries(&entries);
-        assert_eq!(
-            migratable,
-            vec![
-                "/WORKSPACE.md".to_string(),
-                "/protocol/agent-task-protocol.md".to_string(),
-            ]
-        );
-        for shared in ["/AGENTS.md", "/CLAUDE.md", "/.gitignore"] {
-            assert!(!migratable.iter().any(|e| e == shared));
-        }
     }
 
     #[test]
@@ -671,7 +568,7 @@ mod overlay_tests {
             mk(target.join("AGENTS.md")),
         ];
 
-        let plan = compute_overlay_plan(&target, &files, OverlayMode::Local, false);
+        let plan = compute_overlay_plan(&target, &files, OverlayMode::Local);
         assert!(plan.is_git_repo);
         let _ = apply_overlay(&plan);
 
@@ -692,52 +589,10 @@ mod overlay_tests {
         );
 
         // Re-running must not change the exclude file.
-        let plan2 = compute_overlay_plan(&target, &files, OverlayMode::Local, false);
+        let plan2 = compute_overlay_plan(&target, &files, OverlayMode::Local);
         let _ = apply_overlay(&plan2);
         let body2 = std::fs::read_to_string(&exclude).unwrap();
         assert_eq!(body, body2, "second apply must be idempotent");
-
-        let _ = std::fs::remove_dir_all(&target);
-    }
-
-    #[test]
-    fn migrate_untracks_ags_files_but_keeps_shared_and_working_copy() {
-        let target = unique_repo("migrate");
-        std::fs::write(target.join("WORKSPACE.md"), "ags-owned").unwrap();
-        std::fs::write(target.join("AGENTS.md"), "repo-owned").unwrap();
-        let added = std::process::Command::new("git")
-            .current_dir(&target)
-            .args(["add", "WORKSPACE.md", "AGENTS.md"])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        assert!(added, "git add failed");
-
-        let files = vec![
-            mk(target.join("WORKSPACE.md")),
-            mk(target.join("AGENTS.md")),
-        ];
-        let plan = compute_overlay_plan(&target, &files, OverlayMode::Local, true);
-        assert!(plan.tracked_migratable.iter().any(|e| e == "/WORKSPACE.md"));
-        assert!(
-            !plan.tracked_migratable.iter().any(|e| e == "/AGENTS.md"),
-            "shared append target must never be migrated"
-        );
-        let _ = apply_overlay(&plan);
-
-        let tracked = git_tracked_set(&target);
-        assert!(
-            !tracked.contains("WORKSPACE.md"),
-            "AGS-owned file should be untracked after migrate"
-        );
-        assert!(
-            tracked.contains("AGENTS.md"),
-            "shared file must stay tracked (safety)"
-        );
-        assert!(
-            target.join("WORKSPACE.md").exists(),
-            "working copy must be preserved by git rm --cached"
-        );
 
         let _ = std::fs::remove_dir_all(&target);
     }

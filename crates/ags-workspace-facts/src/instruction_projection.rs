@@ -376,8 +376,6 @@ pub(super) fn generate_agent_instructions_from_facts(
         protected_paths: vec![
             "protocol/".to_string(),
             "crates/ags-task-contract/src/validator/".to_string(),
-            // Older managed projects can still expose the retired package path.
-            "crates/task-card-validator/".to_string(),
             "Cargo.toml".to_string(),
             "Cargo.lock".to_string(),
         ],

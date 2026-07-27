@@ -116,10 +116,7 @@ pub fn verify_receipt(receipt: &Receipt) -> VerifyResult {
     let mut checks: Vec<CheckItem> = Vec::new();
 
     // Check 1: schema version
-    if matches!(
-        receipt.schema_version.as_str(),
-        LEGACY_RECEIPT_SCHEMA_VERSION | RECEIPT_SCHEMA_VERSION
-    ) {
+    if receipt.schema_version == RECEIPT_SCHEMA_VERSION {
         checks.push(CheckItem {
             name: "schema_version".to_string(),
             passed: true,
@@ -130,8 +127,8 @@ pub fn verify_receipt(receipt: &Receipt) -> VerifyResult {
             name: "schema_version".to_string(),
             passed: false,
             detail: format!(
-                "expected schema_version 2.0-m6 or 2.1-m6, got {}",
-                receipt.schema_version
+                "expected schema_version {}, got {}",
+                RECEIPT_SCHEMA_VERSION, receipt.schema_version
             ),
         });
     }

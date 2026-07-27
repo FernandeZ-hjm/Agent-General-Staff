@@ -1,152 +1,15 @@
 //! Field definitions and task-card parsing.
 use super::*;
+use crate::fields::{TaskField, TASK_FIELDS};
 
 // ── Field definitions for parsing ──────────────────────────────────────
 
-pub(crate) struct FieldDef {
-    name: &'static str,
-    /// true = value on the same line after `:` or `：`.
-    is_inline: bool,
-}
-
-/// All known task-card field headers.  Must include every field that could
-/// appear so the parser can correctly delimit multi-line sections.  The
-/// lookup uses longest-prefix match, so order is irrelevant.
-pub(crate) const FIELD_DEFS: &[FieldDef] = &[
-    // ── inline fields ──
-    FieldDef {
-        name: "Runtime adapter:",
-        is_inline: true,
-    },
-    FieldDef {
-        name: "Execution surface:",
-        is_inline: true,
-    },
-    FieldDef {
-        name: "Permission mode:",
-        is_inline: true,
-    },
-    FieldDef {
-        name: "Parallelism:",
-        is_inline: true,
-    },
-    FieldDef {
-        name: "Executor:",
-        is_inline: true,
-    },
-    FieldDef {
-        name: "Contract ID:",
-        is_inline: true,
-    },
-    FieldDef {
-        name: "Handoff source:",
-        is_inline: true,
-    },
-    FieldDef {
-        name: "任务级别：",
-        is_inline: true,
-    },
-    FieldDef {
-        name: "Execution effort:",
-        is_inline: true,
-    },
-    FieldDef {
-        name: "Workflow authority:",
-        is_inline: true,
-    },
-    // ── multi-line fields ──
-    FieldDef {
-        name: "本次任务相关文件：",
-        is_inline: false,
-    },
-    FieldDef {
-        name: "Verification gate:",
-        is_inline: false,
-    },
-    FieldDef {
-        name: "读取并遵守：",
-        is_inline: false,
-    },
-    FieldDef {
-        name: "Review gate:",
-        is_inline: false,
-    },
-    FieldDef {
-        name: "记忆胶囊：",
-        is_inline: false,
-    },
-    FieldDef {
-        name: "停止条件：",
-        is_inline: false,
-    },
-    FieldDef {
-        name: "关键路径：",
-        is_inline: false,
-    },
-    FieldDef {
-        name: "项目画像：",
-        is_inline: false,
-    },
-    FieldDef {
-        name: "任务存档：",
-        is_inline: false,
-    },
-    FieldDef {
-        name: "目标文件夹路径：",
-        is_inline: false,
-    },
-    FieldDef {
-        name: "相关路径：",
-        is_inline: false,
-    },
-    FieldDef {
-        name: "非目标：",
-        is_inline: false,
-    },
-    FieldDef {
-        name: "子任务编排：",
-        is_inline: false,
-    },
-    FieldDef {
-        name: "路径：",
-        is_inline: false,
-    },
-    FieldDef {
-        name: "读取：",
-        is_inline: false,
-    },
-    FieldDef {
-        name: "任务：",
-        is_inline: false,
-    },
-    FieldDef {
-        name: "目标：",
-        is_inline: false,
-    },
-    FieldDef {
-        name: "验收标准：",
-        is_inline: false,
-    },
-    FieldDef {
-        name: "验证：",
-        is_inline: false,
-    },
-    FieldDef {
-        name: "交付：",
-        is_inline: false,
-    },
-    FieldDef {
-        name: "背景：",
-        is_inline: false,
-    },
-];
-
 /// Find the longest field-definition that is a prefix of `line`.
-pub(crate) fn find_field(line: &str) -> Option<(&'static FieldDef, &str)> {
-    FIELD_DEFS
+pub(crate) fn find_field(line: &str) -> Option<(&'static TaskField, &str)> {
+    TASK_FIELDS
         .iter()
-        .filter_map(|def| line.strip_prefix(def.name).map(|rest| (def, rest)))
-        .max_by_key(|(def, _)| def.name.len())
+        .filter_map(|field| line.strip_prefix(field.header).map(|rest| (field, rest)))
+        .max_by_key(|(field, _)| field.header.len())
 }
 
 // ── Card parsing ───────────────────────────────────────────────────────
@@ -172,12 +35,12 @@ pub(crate) fn parse_card(input: &str) -> HashMap<String, String> {
                 current_value = String::new();
             }
 
-            if def.is_inline {
+            if def.inline {
                 let value =
                     rest.trim_start_matches(|c: char| c == ':' || c == '：' || c.is_whitespace());
-                fields.insert(def.name.to_string(), value.to_string());
+                fields.insert(def.header.to_string(), value.to_string());
             } else {
-                current_field = Some(def.name);
+                current_field = Some(def.header);
                 let value_start =
                     rest.trim_start_matches(|c: char| c == ':' || c == '：' || c.is_whitespace());
                 current_value.push_str(value_start);
@@ -245,19 +108,6 @@ pub(crate) fn is_indexed_id(value: &str, prefix: &str) -> bool {
 /// Get a field value from the parsed card, or empty string if missing.
 pub(crate) fn field_val<'a>(fields: &'a HashMap<String, String>, key: &str) -> &'a str {
     fields.get(key).map(|s| s.as_str()).unwrap_or("")
-}
-
-/// Get Execution effort, defaulting to "unknown" when absent.
-///
-/// Execution effort describes thinking intensity only; it does NOT gate
-/// authority.  This function exists to document the default-semantics
-/// contract and is available for future policy checks.
-#[allow(dead_code)]
-pub(crate) fn get_execution_effort(fields: &HashMap<String, String>) -> &str {
-    fields
-        .get("Execution effort:")
-        .map(|s| s.as_str())
-        .unwrap_or("unknown")
 }
 
 /// Get Workflow authority, defaulting to "none" when absent.

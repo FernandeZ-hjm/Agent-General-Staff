@@ -196,14 +196,14 @@ pub(crate) fn project_init_plan_with_protocol(
 
     files.push(InitFile {
         path: canonical.join(".gitignore"),
-        description: "ignore AGS local runtime data".to_string(),
-        content: "# AGS local runtime data\n/capability-snapshot/\n/skill-registry/\n/skill-usage/\n/decision-leases/\n/auth-state/\n/receipts/\n/.ags/\n".to_string(),
+        description: "ignore AGS/GEP local runtime data".to_string(),
+        content: "# AGS/GEP local runtime data\nassets/gep/\n/capability-snapshot/\n/skill-registry/\n/decision-leases/\n/auth-state/\n/receipts/\n/.ags/\n".to_string(),
         mode: None,
     });
     append_files.push(InitFile {
         path: canonical.join(".gitignore"),
-        description: "append AGS local runtime ignore rules".to_string(),
-        content: "\n# AGS local runtime data\n/capability-snapshot/\n/skill-registry/\n/skill-usage/\n/decision-leases/\n/auth-state/\n/receipts/\n/.ags/\n".to_string(),
+        description: "append AGS/GEP local runtime ignore rules".to_string(),
+        content: "\n# AGS/GEP local runtime data\nassets/gep/\n/capability-snapshot/\n/skill-registry/\n/decision-leases/\n/auth-state/\n/receipts/\n/.ags/\n".to_string(),
         mode: None,
     });
 

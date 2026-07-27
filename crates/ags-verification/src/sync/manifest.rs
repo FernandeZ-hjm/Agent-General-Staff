@@ -29,8 +29,6 @@ pub const FULL_MANIFEST: SyncManifest = SyncManifest {
         "CLAUDE.md",
         "WORKSPACE.md",
         "AGENT_SUITE_PROTOCOL.md",
-        "protocol/2.0-baseline.md",
-        "protocol/2.0-roadmap.md",
         "protocol/README.md",
         "protocol/agent-task-protocol.md",
         "protocol/context-memory.md",
@@ -43,7 +41,6 @@ pub const FULL_MANIFEST: SyncManifest = SyncManifest {
         "protocol/task-routing.md",
         "protocol/skill-governance.md",
         "governance/skill-sync.md",
-        "governance/mcp-adoption-log.yaml",
         "manifests/mcp-registry.yaml",
         "templates/global-entry/ags-core.md",
         "templates/global-entry/ags-task-handoff.md",
@@ -90,8 +87,6 @@ pub const PUBLIC_MANIFEST: SyncManifest = SyncManifest {
         "protocol/context-memory.md",
         "protocol/cursor-skill-index.md",
         "protocol/project-profile.md",
-        "protocol/2.0-baseline.md",
-        "protocol/2.0-roadmap.md",
         "templates/task-card-template.md",
         "templates/memory/context-capsule.md",
         "templates/memory/task-memory.md",
@@ -103,7 +98,6 @@ pub const PUBLIC_MANIFEST: SyncManifest = SyncManifest {
         "scripts/install.sh",
         "scripts/update.sh",
         "scripts/validate.sh",
-        "scripts/run-task-card.sh",
         "scripts/verify.sh",
         "scripts/context-memory.sh",
         "scripts/context-memory-start.py",
@@ -115,11 +109,7 @@ pub const PUBLIC_MANIFEST: SyncManifest = SyncManifest {
         "manifests/onboarding-public.yaml",
         "manifests/public-release-payload.yaml",
         "manifests/third-party-capabilities.yaml",
-        "manifests/skill-recommendations.yaml",
         "governance/skill-sync.md",
-        "governance/skill-adoption-log.yaml",
-        "governance/skill-ignore-list.yaml",
-        "docs/skill-recommendations.md",
     ],
     protocol_dir: "protocol",
 };
@@ -195,12 +185,10 @@ const APPROVED_PUBLIC_REWRITE_PATHS: &[&str] = &[
     "README_EN.md",
     "WORKSPACE.md",
     "crates/ags-capability-governance/src/lib.rs",
-    "crates/ags-capability-governance/src/skill_body/console/sync.rs",
     "crates/ags-cli/src/cli/kernel_actions.rs",
     "crates/ags-cli/src/cli/mod.rs",
     "crates/ags-cli/src/init/mod.rs",
     "crates/ags-cli/src/kernel/mcp.rs",
-    "crates/ags-cli/src/setup/memory.rs",
     "crates/ags-cli/src/setup/mod.rs",
     "crates/ags-cli/src/skill/mod.rs",
     "crates/ags-cli/src/update/apply.rs",
@@ -208,12 +196,12 @@ const APPROVED_PUBLIC_REWRITE_PATHS: &[&str] = &[
     "crates/ags-cli/tests/public_api_facade_contract.rs",
     "crates/ags-lifecycle/src/init/managed_projects.rs",
     "crates/ags-lifecycle/src/init/plan.rs",
+    "crates/ags-lifecycle/src/update/apply.rs",
     "crates/ags-lifecycle/src/setup/apply.rs",
     "crates/ags-lifecycle/src/setup/memory/adapter.rs",
     "crates/ags-lifecycle/src/setup/memory/assets.rs",
     "crates/ags-lifecycle/src/setup/memory/merge.rs",
     "crates/ags-lifecycle/src/setup/memory/mod.rs",
-    "crates/ags-lifecycle/src/setup/memory/tests.rs",
     "crates/ags-lifecycle/src/setup/mod.rs",
     "crates/ags-lifecycle/src/setup/plan.rs",
     "crates/ags-lifecycle/src/setup/plan/tests.rs",
@@ -226,13 +214,11 @@ const APPROVED_PUBLIC_REWRITE_PATHS: &[&str] = &[
     "crates/ags-mcp/src/resources.rs",
     "crates/ags-mcp/src/resources/global_kernel.md",
     "crates/ags-mcp/src/tools/apply.rs",
-    "crates/ags-mcp/src/tools/tests.rs",
     "crates/ags-verification/src/bootstrap.rs",
     "crates/ags-verification/src/doctor/checks/host_memory.rs",
     "crates/ags-verification/src/doctor/checks/mod.rs",
     "crates/ags-verification/src/doctor/checks/orchestration.rs",
     "crates/ags-verification/src/doctor/checks/runtime.rs",
-    "crates/ags-verification/src/doctor/checks/tests.rs",
     "crates/ags-verification/src/sync/mod.rs",
     "docs/adr/0001-workspace-service-and-deep-modules.md",
     "docs/architecture.md",
@@ -240,7 +226,6 @@ const APPROVED_PUBLIC_REWRITE_PATHS: &[&str] = &[
     "manifests/mcp-registry.yaml",
     "manifests/skills-registry.yaml",
     "manifests/suite.yaml",
-    "protocol/2.0-baseline.md",
     "protocol/agent-task-protocol.md",
     "protocol/context-memory.md",
     "protocol/mcp-server.md",
@@ -283,10 +268,12 @@ const APPROVED_PUBLIC_OVERLAY_PATHS: &[&str] = &[
     "examples/receipts/sample-receipt.json",
     "examples/task-cards/light-demo-task.md",
     "examples/task-cards/medium-demo-task.md",
-    "governance/mcp-adoption-log.yaml",
-    "governance/skill-adoption-log.yaml",
-    "governance/skill-ignore-list.yaml",
     "governance/skills-inventory.md",
+    "templates/command-skills/ags-agents/SKILL.md",
+    "templates/command-skills/ags-doctor/SKILL.md",
+    "templates/command-skills/ags-init/SKILL.md",
+    "templates/command-skills/ags-setup/SKILL.md",
+    "templates/command-skills/ags-skill/SKILL.md",
     "templates/memory/archive-index.md",
     "templates/memory/context-capsule.md",
     "templates/memory/task-archive/README.md",
@@ -996,11 +983,6 @@ mod tests {
     }
 
     #[test]
-    fn full_manifest_has_23_files() {
-        assert_eq!(FULL_MANIFEST.required_files.len(), 23);
-    }
-
-    #[test]
     fn public_manifest_includes_public_core_protocol_and_scripts() {
         let public: BTreeSet<_> = PUBLIC_MANIFEST.required_files.iter().copied().collect();
         for path in [
@@ -1026,8 +1008,6 @@ mod tests {
             "scripts/ags-memory-lifecycle-omp.js",
             "scripts/raw-tool-call-stop-guard.js",
             "scripts/stop-archive-hook.sh",
-            "governance/skill-adoption-log.yaml",
-            "governance/skill-ignore-list.yaml",
             "manifests/onboarding-public.yaml",
             "manifests/third-party-capabilities.yaml",
             "packages/ags-mcp/package.json",
@@ -1049,12 +1029,6 @@ mod tests {
         assert!(public.contains("CLAUDE.md"));
         assert!(public.contains("WORKSPACE.md"));
         assert!(public.contains("AGENT_SUITE_PROTOCOL.md"));
-    }
-
-    #[test]
-    fn stable_uses_full_manifest() {
-        let m = manifest_for(&ProjectKind::Stable);
-        assert_eq!(m.required_files.len(), 23);
     }
 
     #[test]
@@ -1141,16 +1115,12 @@ mod tests {
             "templates/task-card-template.md",
             "project-integration/AGENTS.md.template",
             "scripts/verify.sh",
-            "scripts/validate-task-card.sh",
             "README.md",
             // Public targets may have their own governance/manifests and empty
             // audit skeletons. Non-empty private audit content is checked by
             // release sanitize, not path-level manifest filtering.
-            "governance/skill-adoption-log.yaml",
-            "governance/skill-ignore-list.yaml",
             "governance/sync-protocol.md",
             "governance/inventory-schema.md",
-            "governance/rollback.md",
             "manifests/capabilities.yaml",
             "manifests/skills-registry.yaml",
             "manifests/suite.core.yaml",
@@ -1163,9 +1133,13 @@ mod tests {
     }
 
     #[test]
-    fn custom_target_uses_full_manifest() {
-        let m = manifest_for(&ProjectKind::Custom("test".into()));
-        assert_eq!(m.required_files.len(), 23);
+    fn stable_and_custom_targets_use_the_full_manifest() {
+        for kind in [ProjectKind::Stable, ProjectKind::Custom("test".into())] {
+            assert_eq!(
+                manifest_for(&kind).required_files,
+                FULL_MANIFEST.required_files
+            );
+        }
     }
 
     // ── verify_release_manifest tests ─────────────────────────────────
@@ -1272,33 +1246,6 @@ mod tests {
             result.forbidden_found,
             vec!["target/release/ags".to_string()],
             "tracked forbidden payload must still fail release manifest"
-        );
-    }
-
-    #[test]
-    fn verify_release_manifest_allows_empty_governance_audit_skeletons() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join("governance")).unwrap();
-        std::fs::write(
-            dir.path()
-                .join("governance")
-                .join("skill-adoption-log.yaml"),
-            "schema_version: \"1.0\"\nentries: []\n",
-        )
-        .unwrap();
-        std::fs::write(
-            dir.path().join("governance").join("skill-ignore-list.yaml"),
-            "schema_version: \"1.0\"\nentries: []\n",
-        )
-        .unwrap();
-
-        let result = verify_release_manifest(dir.path());
-        assert!(
-            !result
-                .forbidden_found
-                .iter()
-                .any(|f| f.contains("skill-adoption-log.yaml")),
-            "empty public audit skeleton should be allowed"
         );
     }
 

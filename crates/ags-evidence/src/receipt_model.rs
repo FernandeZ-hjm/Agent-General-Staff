@@ -1,7 +1,6 @@
 use super::*;
 
-pub const RECEIPT_SCHEMA_VERSION: &str = "2.1-m6";
-pub const LEGACY_RECEIPT_SCHEMA_VERSION: &str = "2.0-m6";
+pub const RECEIPT_SCHEMA_VERSION: &str = "0.3.4-task-receipt";
 
 // ── Data model ──────────────────────────────────────────────────────────────
 
@@ -28,7 +27,7 @@ pub struct ReceiptSkillSelection {
     pub entrypoint: Option<String>,
 }
 
-/// Optional governance evidence added by the 2.1 writer. It deliberately
+/// Optional governance evidence added by the current writer. It deliberately
 /// contains only identifiers/hashes and never the raw request or credentials.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
@@ -49,8 +48,6 @@ pub struct GovernanceEvidence {
     pub policy_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skill_selection: Option<ReceiptSkillSelection>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub outcome_event_id: Option<String>,
 }
 
 /// A task run receipt.

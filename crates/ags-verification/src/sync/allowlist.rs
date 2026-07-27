@@ -78,8 +78,6 @@ pub fn default_public_allowlist() -> Allowlist {
             public_target_only_file("scripts/install.sh"),
             public_target_only_file("scripts/context-memory.sh"),
             public_target_only_file("scripts/stop-archive-hook.sh"),
-            public_target_only_file("docs/skill-recommendations.md"),
-            public_target_only_file("manifests/skill-recommendations.yaml"),
             public_target_only_file("manifests/third-party-capabilities.yaml"),
             FileAllowlistEntry {
                 file: "protocol/runtime-adapters.md".to_string(),

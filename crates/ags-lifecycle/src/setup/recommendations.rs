@@ -1,8 +1,8 @@
 //! `ags setup` — third-party core capability recommendation block.
 //!
 //! READ-ONLY display sourced from the unified third-party capability manifest.
-//! Installation is never silent: confirmed per-item changes are delegated to
-//! the audited onboarding/skill-adoption lifecycle.
+//! Installation is never silent: explicit install/update owns any source
+//! change and refreshes the static host snapshot once after verification.
 
 use ags_capability_governance::skill_body::recommendations::{
     read_recommendations, recommendation_status,
@@ -39,8 +39,8 @@ pub(in crate::setup) fn third_party_recommendations_json(
     serde_json::json!({
         "schema_version": doc.schema_version,
         "principle": doc.principle,
-        "boundary": "No silent installation. Setup is read-only; explicit per-item onboarding apply delegates to audited skill adoption.",
-        "write_mode": "setup read-only; onboarding apply is confirmation-protected",
+        "boundary": "No silent installation. Setup is read-only; explicit install/update owns source changes and one static snapshot refresh.",
+        "write_mode": "setup read-only; install/update is confirmation-protected",
         "items": items,
     })
 }
@@ -91,7 +91,7 @@ pub(in crate::setup) fn render_third_party_recommendations_text(
         }
     }
     lines.push(
-        "  Boundary: setup never installs; explicit per-item onboarding apply uses audited adoption."
+        "  Boundary: setup never installs; explicit install/update owns source changes and refreshes the static snapshot once."
             .to_string(),
     );
     lines.push(

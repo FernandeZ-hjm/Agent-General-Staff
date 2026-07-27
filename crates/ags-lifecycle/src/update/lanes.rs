@@ -128,7 +128,7 @@ fn build_update_lane_plan(
                 None,
                 vec![
                     "ags onboarding plan".to_string(),
-                    "ags skill sync --apply".to_string(),
+                    "ags capability snapshot --write --host <host>".to_string(),
                 ],
             )
         }

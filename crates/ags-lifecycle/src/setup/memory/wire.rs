@@ -4,13 +4,12 @@ use super::{assets::*, merge::*};
 /// Wire the project-memory-capture step into a workspace `settings.json`.
 ///
 /// Reads, merges (preserving existing hooks), backs up the prior file to
-/// `.bak.<stamp>` on change, and writes pretty JSON. Returns a diagnostic
-/// `Finding`. Never deletes user hooks, and never clobbers the file on
+/// Writes pretty JSON atomically. Returns a diagnostic `Finding`.
+/// Never deletes user hooks, and never clobbers the file on
 /// unreadable / invalid JSON.
 pub(in crate::setup) fn wire_workspace_memory_capture(
     settings_path: &Path,
     command: &str,
-    backup_stamp: u64,
 ) -> crate::setup::SetupFinding {
     let check = "setup-memory-capture-hook";
     let mut value: serde_json::Value = if settings_path.exists() {
@@ -61,19 +60,9 @@ pub(in crate::setup) fn wire_workspace_memory_capture(
             );
         }
     }
-    if settings_path.exists() {
-        let backup = settings_path.with_extension(format!("json.bak.{backup_stamp}"));
-        if let Err(e) = std::fs::copy(settings_path, &backup) {
-            return crate::setup::SetupFinding::fail(
-                check,
-                format!("backup failed for {}", settings_path.display()),
-                e.to_string(),
-            );
-        }
-    }
     let mut serialized = serde_json::to_string_pretty(&value).unwrap_or_default();
     serialized.push('\n');
-    if let Err(e) = std::fs::write(settings_path, serialized) {
+    if let Err(e) = ags_platform::atomic_write(settings_path, serialized.as_bytes()) {
         return crate::setup::SetupFinding::fail(
             check,
             format!("write failed: {}", settings_path.display()),
@@ -96,7 +85,6 @@ pub(in crate::setup) fn wire_workspace_memory_capture(
 pub(in crate::setup) fn wire_workspace_memory_start(
     settings_path: &Path,
     command: &str,
-    backup_stamp: u64,
 ) -> crate::setup::SetupFinding {
     let check = "setup-memory-start-hook";
     let mut value: serde_json::Value = if settings_path.exists() {
@@ -146,19 +134,9 @@ pub(in crate::setup) fn wire_workspace_memory_start(
             );
         }
     }
-    if settings_path.exists() {
-        let backup = settings_path.with_extension(format!("json.bak.{backup_stamp}"));
-        if let Err(e) = std::fs::copy(settings_path, &backup) {
-            return crate::setup::SetupFinding::fail(
-                check,
-                format!("backup failed for {}", settings_path.display()),
-                e.to_string(),
-            );
-        }
-    }
     let mut serialized = serde_json::to_string_pretty(&value).unwrap_or_default();
     serialized.push('\n');
-    if let Err(e) = std::fs::write(settings_path, serialized) {
+    if let Err(e) = ags_platform::atomic_write(settings_path, serialized.as_bytes()) {
         return crate::setup::SetupFinding::fail(
             check,
             format!("write failed: {}", settings_path.display()),
@@ -177,10 +155,7 @@ pub(in crate::setup) fn wire_workspace_memory_start(
 /// Wire the machine-level Codex SessionStart/SessionEnd lifecycle in one
 /// structure-preserving write. Existing hooks and unknown top-level keys are
 /// preserved; malformed JSON fails closed.
-pub(crate) fn wire_codex_memory_lifecycle(
-    hooks_path: &Path,
-    backup_stamp: u64,
-) -> crate::setup::SetupFinding {
+pub(crate) fn wire_codex_memory_lifecycle(hooks_path: &Path) -> crate::setup::SetupFinding {
     let check = "agents-codex-memory-lifecycle";
     let mut value: serde_json::Value = if hooks_path.exists() {
         match std::fs::read_to_string(hooks_path)
@@ -226,19 +201,9 @@ pub(crate) fn wire_codex_memory_lifecycle(
             );
         }
     }
-    if hooks_path.exists() {
-        let backup = hooks_path.with_extension(format!("json.bak.{backup_stamp}"));
-        if let Err(error) = std::fs::copy(hooks_path, backup) {
-            return crate::setup::SetupFinding::fail(
-                check,
-                format!("backup failed for {}", hooks_path.display()),
-                error.to_string(),
-            );
-        }
-    }
     let mut body = serde_json::to_string_pretty(&value).unwrap_or_default();
     body.push('\n');
-    match std::fs::write(hooks_path, body) {
+    match ags_platform::atomic_write(hooks_path, body.as_bytes()) {
         Ok(()) => crate::setup::SetupFinding::pass(
             check,
             format!(
@@ -254,10 +219,7 @@ pub(crate) fn wire_codex_memory_lifecycle(
     }
 }
 
-pub(super) fn ensure_omp_memory_extension(
-    home: &Path,
-    backup_stamp: u64,
-) -> crate::setup::SetupFinding {
+pub(super) fn ensure_omp_memory_extension(home: &Path) -> crate::setup::SetupFinding {
     let check = "agents-omp-memory-lifecycle";
     let path = omp_memory_lifecycle_path(home);
     if std::fs::read_to_string(&path).ok().as_deref() == Some(OMP_MEMORY_LIFECYCLE_JS) {
@@ -275,17 +237,7 @@ pub(super) fn ensure_omp_memory_extension(
             );
         }
     }
-    if path.exists() {
-        let backup = path.with_extension(format!("js.bak.{backup_stamp}"));
-        if let Err(error) = std::fs::copy(&path, backup) {
-            return crate::setup::SetupFinding::fail(
-                check,
-                format!("backup failed for {}", path.display()),
-                error.to_string(),
-            );
-        }
-    }
-    match std::fs::write(&path, OMP_MEMORY_LIFECYCLE_JS) {
+    match ags_platform::atomic_write(&path, OMP_MEMORY_LIFECYCLE_JS.as_bytes()) {
         Ok(()) => crate::setup::SetupFinding::pass(
             check,
             format!(

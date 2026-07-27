@@ -10,9 +10,9 @@ use ags_platform::sha256;
 /// global singleton and therefore cannot leak leases across clients.
 #[derive(Debug)]
 pub struct SessionActionStore<T> {
-    pub connection_nonce: String,
-    pub generation: u64,
-    pub actions: HashMap<String, T>,
+    connection_nonce: String,
+    generation: u64,
+    actions: HashMap<String, T>,
 }
 
 impl<T> Default for SessionActionStore<T> {
@@ -46,6 +46,41 @@ impl<T> SessionActionStore<T> {
         self.generation = self.generation.saturating_add(1);
         self.actions.clear();
     }
+
+    pub fn stable_id(&self, prefix: &str, basis: &str) -> String {
+        let digest =
+            sha256(format!("{}\n{}\n{basis}", self.connection_nonce, self.generation).as_bytes());
+        format!(
+            "{prefix}-{}",
+            digest
+                .trim_start_matches("sha256:")
+                .get(..20)
+                .unwrap_or("invalid")
+        )
+    }
+
+    pub fn insert(&mut self, action_id: String, action: T) -> &T {
+        self.actions.insert(action_id.clone(), action);
+        self.actions
+            .get(&action_id)
+            .expect("inserted session action")
+    }
+
+    pub fn get(&self, action_id: &str) -> Option<&T> {
+        self.actions.get(action_id)
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &T> {
+        self.actions.values()
+    }
+
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut T> {
+        self.actions.values_mut()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.actions.is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -56,15 +91,19 @@ mod tests {
     fn session_ids_isolate_action_namespaces() {
         let first = SessionActionStore::<()>::for_session("first");
         let second = SessionActionStore::<()>::for_session("second");
-        assert_ne!(first.connection_nonce, second.connection_nonce);
+        assert_ne!(
+            first.stable_id("action", "same"),
+            second.stable_id("action", "same")
+        );
     }
 
     #[test]
-    fn invalidation_advances_generation_and_drops_actions() {
+    fn invalidation_expires_held_actions_and_changes_the_namespace() {
         let mut session = SessionActionStore::for_session("session");
-        session.actions.insert("action".to_string(), ());
+        let before = session.stable_id("action", "same");
+        session.insert("action".to_string(), ());
         session.invalidate();
-        assert_eq!(session.generation, 1);
-        assert!(session.actions.is_empty());
+        assert!(session.get("action").is_none());
+        assert_ne!(session.stable_id("action", "same"), before);
     }
 }

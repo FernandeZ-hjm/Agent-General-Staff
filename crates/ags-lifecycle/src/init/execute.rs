@@ -1,6 +1,7 @@
 //! Project initialization request orchestration.
 
 use super::apply::write_project_init_file;
+use super::managed_projects::{register_managed_project, ManagedProjectRegistration};
 use super::model::{InitFinding, InitReport, PROJECT_INIT_SCHEMA};
 use super::overlay::{
     apply_overlay, compute_overlay_plan, overlay_json, render_overlay_text, OverlayMode,
@@ -8,15 +9,16 @@ use super::overlay::{
 };
 use super::plan::{project_init_plan, sanitize_name, ProjectInitPlan};
 use super::render::{render_init_report_text, render_project_init_json, render_project_init_text};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub struct InitRequest {
     pub target: PathBuf,
+    pub runtime_home: PathBuf,
+    pub now: u64,
     pub slug: Option<String>,
     pub dry_run: bool,
     pub mode: String,
-    pub migrate_tracked_overlay: bool,
 }
 
 pub enum InitOutput {
@@ -29,6 +31,7 @@ pub enum InitOutput {
         overlay: OverlayPlan,
         report: InitReport,
         preflight: Box<ags_workspace_facts::SessionPreflight>,
+        managed_project_registration: Option<ManagedProjectRegistration>,
         managed_project_receipt: Option<PathBuf>,
     },
 }
@@ -73,6 +76,7 @@ impl InitOutput {
                 report,
                 preflight,
                 managed_project_receipt,
+                ..
             } => serde_json::json!({
                 "schema_version": PROJECT_INIT_SCHEMA,
                 "plan": serde_json::from_str::<serde_json::Value>(&render_project_init_json(plan, false)).unwrap_or_default(),
@@ -93,19 +97,30 @@ impl InitOutput {
             } => report.passed() && preflight.exit_code == 0,
         }
     }
+
+    pub fn managed_project_registration(&self) -> Option<&ManagedProjectRegistration> {
+        match self {
+            Self::Applied {
+                managed_project_registration,
+                ..
+            } => managed_project_registration.as_ref(),
+            Self::DryRun { .. } => None,
+        }
+    }
+
+    pub fn set_managed_project_receipt(&mut self, receipt: Option<PathBuf>) {
+        if let Self::Applied {
+            managed_project_receipt,
+            ..
+        } = self
+        {
+            *managed_project_receipt = receipt;
+        }
+    }
 }
 
-pub fn execute(
-    request: InitRequest,
-    mut register_project: impl FnMut(&Path, &str, &mut InitReport) -> Option<PathBuf>,
-) -> Result<InitOutput, String> {
+pub fn execute(request: InitRequest) -> Result<InitOutput, String> {
     let overlay_mode = OverlayMode::parse(&request.mode);
-    if request.migrate_tracked_overlay && overlay_mode == OverlayMode::Shared {
-        return Err(
-            "ags init: --migrate-tracked-overlay requires --mode local (shared/tracked overlays stay committed)"
-                .to_string(),
-        );
-    }
     if !request.target.exists() {
         return Err(format!(
             "ags init: target does not exist — {}",
@@ -113,12 +128,7 @@ pub fn execute(
         ));
     }
     let plan = project_init_plan(&request.target, request.slug);
-    let overlay = compute_overlay_plan(
-        &plan.target,
-        &plan.files,
-        overlay_mode,
-        request.migrate_tracked_overlay,
-    );
+    let overlay = compute_overlay_plan(&plan.target, &plan.files, overlay_mode);
     if request.dry_run {
         return Ok(InitOutput::DryRun { plan, overlay });
     }
@@ -160,16 +170,25 @@ pub fn execute(
         &plan.target,
         &ags_workspace_facts::AgentType::Codex,
     );
-    let managed_project_receipt = if should_register_project(report.passed(), preflight.exit_code) {
-        register_project(&plan.target, &plan.slug, &mut report)
-    } else {
-        None
-    };
+    let managed_project_registration =
+        if should_register_project(report.passed(), preflight.exit_code) {
+            register_managed_project(
+                &request.runtime_home,
+                &plan.target,
+                &plan.slug,
+                request.now,
+                &mut report,
+            )
+        } else {
+            None
+        };
+    let managed_project_receipt = None;
     Ok(InitOutput::Applied {
         plan,
         overlay,
         report,
         preflight: Box::new(preflight),
+        managed_project_registration,
         managed_project_receipt,
     })
 }

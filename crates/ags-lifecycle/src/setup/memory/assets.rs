@@ -59,7 +59,7 @@ pub(in crate::setup) fn raw_guard_command() -> String {
 
 /// Install-file entries for the capture scripts. Added to the base install plan
 /// so they appear in `ags setup` dry-run output and are written by the standard
-/// install loop (which backs up changed files before overwriting).
+/// atomic install loop.
 pub(in crate::setup) fn memory_script_install_files(home: &Path) -> Vec<InstallFile> {
     vec![
         InstallFile {

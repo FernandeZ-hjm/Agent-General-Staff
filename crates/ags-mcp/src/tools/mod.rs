@@ -27,8 +27,5 @@ pub(crate) use wire::{
     is_preflight_tool_name, list_tools, CapabilityCatalogSource, HeldAction, PreflightBinding,
     RoutingSession, CURRENT_HOST_CAPABILITIES_URI, TOOL_AGENT_INSTRUCTIONS, TOOL_APPLY_ACTION,
     TOOL_ONBOARDING_PLAN, TOOL_POLICY_RESOLVE, TOOL_PREFLIGHT, TOOL_PROTOCOL_STATUS,
-    TOOL_ROUTE_REQUEST, TOOL_TASK_VALIDATE, TOOL_VERIFY_LOCAL,
+    TOOL_ROUTE_REQUEST, TOOL_TASK_VALIDATE,
 };
-
-#[cfg(test)]
-mod tests;

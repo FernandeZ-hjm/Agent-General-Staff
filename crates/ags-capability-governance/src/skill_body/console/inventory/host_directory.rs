@@ -157,11 +157,7 @@ pub(in crate::skill_body::console) fn classify_host_dir_entry(
     name: &str,
     is_system: bool,
 ) -> Option<HostDirCandidate> {
-    if name.is_empty()
-        || name.starts_with('.')
-        || name.contains(".bak")
-        || name.starts_with(".ags-")
-    {
+    if name.is_empty() || name.starts_with('.') || name.starts_with(".ags-") {
         return None;
     }
     let link_meta = std::fs::symlink_metadata(entry).ok()?;
@@ -319,9 +315,10 @@ pub(in crate::skill_body::console) fn discover_host_dir_capabilities(
         }
     }
 
-    // Project-scoped skill roots are candidates even before a host thin index
-    // points at them. They remain read-only and fail closed until overlay
-    // adoption; the suite never copies or rewrites their bodies.
+    // Project-scoped skill roots are visible inventory candidates even before a
+    // host thin index points at them. They remain read-only and fail closed
+    // until a reviewed registry release includes them; the suite never copies
+    // or rewrites their bodies during discovery.
     for root in [
         ctx.repo_root.join(".agents/skills"),
         ctx.repo_root.join(".codex/skills"),
@@ -346,7 +343,7 @@ pub(in crate::skill_body::console) fn discover_host_dir_capabilities(
                     managed_status: ManagedStatus::ProjectLocal,
                     canonical_present: true,
                     risk_notes: vec![
-                        "Project-local skill — recognized read-only and unavailable for routing until explicitly adopted in the machine overlay."
+                        "Project-local skill — recognized read-only and unavailable for routing until included in a reviewed registry release and static snapshot."
                             .to_string(),
                     ],
                 },
@@ -371,7 +368,6 @@ pub(in crate::skill_body::console) fn discover_host_dir_capabilities(
             expected_hosts: Vec::new(),
             host_visibility,
             health_status: HealthStatus::Unknown,
-            actions: Vec::new(),
             risk_notes: cand.risk_notes,
             routing: None,
         });

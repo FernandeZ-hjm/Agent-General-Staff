@@ -1,6 +1,6 @@
 use super::*;
 #[allow(unused_imports)]
-use super::{actions::*, inventory::*, model::*};
+use super::{inventory::*, model::*};
 // ── Rendering ────────────────────────────────────────────────────────────────
 
 pub fn render_inventory_json(result: &ManagedInventoryResult) -> String {
@@ -44,9 +44,6 @@ pub fn render_inventory_text(result: &ManagedInventoryResult) -> String {
             c.health_status,
             hosts,
         ));
-        if !c.actions.is_empty() {
-            lines.push(format!("      actions: {}", c.actions.join(", ")));
-        }
         for r in &c.risk_notes {
             lines.push(format!("      ⚠ {r}"));
         }
@@ -91,8 +88,8 @@ pub fn render_verify_text(result: &HostVerifyResult) -> String {
         ] {
             if let Some(drift) = drift {
                 lines.push(format!(
-                    "  {label} thin-index drift: dir={}, broken={}, bak={}, has_drift={}",
-                    drift.skills_dir, drift.broken_symlinks, drift.bak_leftovers, drift.has_drift
+                    "  {label} thin-index drift: dir={}, broken={}, has_drift={}",
+                    drift.skills_dir, drift.broken_symlinks, drift.has_drift
                 ));
                 for sample in &drift.drift_samples {
                     lines.push(format!("      {sample}"));
@@ -101,86 +98,6 @@ pub fn render_verify_text(result: &HostVerifyResult) -> String {
         }
     }
     lines.push(String::new());
-    lines.push(format!("NOTE: {}", result.note));
-    lines.join("\n")
-}
-
-pub fn render_proposal_json(result: &ConsoleProposalResult) -> String {
-    serde_json::to_string_pretty(result)
-        .unwrap_or_else(|e| format!(r#"{{"error":"JSON serialization failed: {e}"}}"#))
-}
-
-pub fn render_proposal_text(result: &ConsoleProposalResult) -> String {
-    let mut lines = Vec::new();
-    lines.push("Skill & MCP Console — Proposal".to_string());
-    lines.push("==============================".to_string());
-    lines.push(format!("Action:         {}", result.action));
-    lines.push(format!("Capability:     {}", result.capability));
-    lines.push(format!("Found:          {}", result.found));
-    lines.push(format!("Apply requested:{}", result.apply_requested));
-    lines.push(format!("Applied:        {}", result.applied));
-    lines.push(format!("Apply status:   {}", result.apply_status));
-    lines.push(String::new());
-
-    lines.push("─ Planned writes ─".to_string());
-    if result.planned_writes.is_empty() {
-        lines.push("  (none — AGS owns no file for this action)".to_string());
-    } else {
-        for w in &result.planned_writes {
-            lines.push(format!(
-                "  {} {}{}",
-                w.op,
-                w.path,
-                w.from
-                    .as_ref()
-                    .map(|f| format!(" (from {f})"))
-                    .unwrap_or_default()
-            ));
-        }
-    }
-    lines.push(String::new());
-
-    if !result.applied_writes.is_empty() {
-        lines.push("─ Applied writes ─".to_string());
-        for a in &result.applied_writes {
-            lines.push(format!("  ✓ {a}"));
-        }
-        lines.push(String::new());
-    }
-
-    if !result.apply_errors.is_empty() {
-        lines.push("─ Apply errors (apply did NOT fully succeed) ─".to_string());
-        for e in &result.apply_errors {
-            lines.push(format!("  ✗ {e}"));
-        }
-        lines.push(String::new());
-    }
-
-    if !result.advised_commands.is_empty() {
-        lines.push("─ Advised commands (AGS will NOT run these) ─".to_string());
-        for c in &result.advised_commands {
-            lines.push(format!("  $ {}", c.command));
-            lines.push(format!("    reason: {}", c.reason));
-        }
-        lines.push(String::new());
-    }
-
-    if !result.blocked_reasons.is_empty() {
-        lines.push("─ Blocked ─".to_string());
-        for b in &result.blocked_reasons {
-            lines.push(format!("  ✗ {b}"));
-        }
-        lines.push(String::new());
-    }
-
-    if !result.risk_notes.is_empty() {
-        lines.push("─ Risk notes ─".to_string());
-        for r in &result.risk_notes {
-            lines.push(format!("  ⚠ {r}"));
-        }
-        lines.push(String::new());
-    }
-
     lines.push(format!("NOTE: {}", result.note));
     lines.join("\n")
 }

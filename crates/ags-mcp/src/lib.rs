@@ -49,13 +49,7 @@ impl ags_session::WorkspaceSessionHandler for McpSessionHandler {
         workspace: Arc<ags_session::WorkspaceState>,
         session_id: String,
     ) {
-        server::run_mcp_session(
-            reader,
-            writer,
-            workspace,
-            session_id,
-            server::RuntimeProcessIdentity::capture(),
-        );
+        server::run_mcp_session(reader, writer, workspace, session_id);
     }
 }
 

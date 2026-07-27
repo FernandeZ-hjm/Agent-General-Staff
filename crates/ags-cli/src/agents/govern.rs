@@ -1,6 +1,6 @@
-use crate::agents::host_specs::{agents_governance_chain, ags_mcp_tool_surface};
 use crate::context::home_dir;
 use crate::host_platforms::{cross_platform_init_plan, AgentPlatformStatus};
+use ags_host_integration::{agents_governance_chain, ags_mcp_tool_surface};
 
 /// `ags agents govern` — plan AGS MCP onboarding and, only with `--apply`,
 /// install the selected host's AGS-owned native memory lifecycle adapter.
@@ -22,15 +22,13 @@ pub(in crate::agents) fn cmd_agents_govern(agent: Option<&str>, apply: bool, for
     let supported_memory_hosts = ["claude-code", "codex", "omp"];
     if apply {
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let stamp = crate::context::unix_timestamp();
         for target in &targets {
             if supported_memory_hosts.contains(&target.id.as_str()) {
-                crate::setup::memory::apply_host_memory_adapter(
+                ags_lifecycle::setup::apply_host_memory_adapter(
                     &mut apply_report,
                     &home,
                     &cwd,
                     &target.id,
-                    stamp,
                 );
             } else if agent.is_some() {
                 apply_report.add(ags_verification::doctor::Finding::fail(
@@ -81,7 +79,6 @@ pub(in crate::agents) fn cmd_agents_govern(agent: Option<&str>, apply: bool, for
                     ags_verification::doctor::render_text(&apply_report).as_bytes(),
                 ),
             }],
-            ags_evidence::RollbackPlan::manual_confirm(vec![]),
             if passed { "applied" } else { "failed" },
             passed,
         );

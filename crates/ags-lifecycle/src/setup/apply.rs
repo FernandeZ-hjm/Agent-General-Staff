@@ -31,7 +31,6 @@ pub(in crate::setup) fn codex_skill_thin_index_ancestor(path: &Path) -> Option<P
 pub(in crate::setup) fn write_install_file(
     file: &InstallFile,
     force: bool,
-    backup_stamp: u64,
 ) -> crate::setup::SetupFinding {
     if let Some(link) = codex_skill_thin_index_ancestor(&file.path) {
         return crate::setup::SetupFinding::pass(
@@ -68,26 +67,11 @@ pub(in crate::setup) fn write_install_file(
                 "Review `ags setup`, then rerun setup with --force --yes if replacement is intended.",
             );
         }
-        Ok(_) => {
-            let backup = file.path.with_extension(format!(
-                "{}.bak.{backup_stamp}",
-                file.path
-                    .extension()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("file")
-            ));
-            if let Err(e) = std::fs::copy(&file.path, &backup) {
-                return crate::setup::SetupFinding::fail(
-                    format!("install-{}", sanitize_name(&file.path.to_string_lossy())),
-                    format!("backup failed for {}", file.path.display()),
-                    e.to_string(),
-                );
-            }
-        }
+        Ok(_) => {}
         Err(_) => {}
     }
 
-    if let Err(e) = std::fs::write(&file.path, &file.content) {
+    if let Err(e) = ags_platform::atomic_write(&file.path, file.content.as_bytes()) {
         return crate::setup::SetupFinding::fail(
             format!("install-{}", sanitize_name(&file.path.to_string_lossy())),
             format!("write failed: {}", file.path.display()),
@@ -253,10 +237,9 @@ mod tests {
         std::os::unix::fs::symlink(src, dst).unwrap();
     }
 
-    /// Regression: once `ags capability sync --apply` has made
-    /// `~/.codex/skills/<name>` a thin-index symlink to the canonical repo skill,
-    /// setup must not write `SKILL.md` through that symlink and mutate the
-    /// canonical body.
+    /// Regression: once installation has made `~/.codex/skills/<name>` a
+    /// thin-index symlink to the canonical repo skill, setup must not write
+    /// `SKILL.md` through that symlink and mutate the canonical body.
     #[cfg(unix)]
     #[test]
     fn setup_skips_codex_skill_files_under_symlink_thin_index() {
@@ -269,7 +252,7 @@ mod tests {
         symlink_dir(&canonical, &host.join("ags-setup"));
 
         let file = install_file(host.join("ags-setup/SKILL.md"), "generated\n");
-        let finding = write_install_file(&file, true, 123);
+        let finding = write_install_file(&file, true);
 
         assert_eq!(finding.status, crate::setup::SetupCheckStatus::Pass);
         assert!(finding.message.contains("skipped thin-index symlink"));
@@ -277,7 +260,6 @@ mod tests {
             std::fs::read_to_string(canonical.join("SKILL.md")).unwrap(),
             "canonical\n"
         );
-        assert!(!canonical.join("SKILL.md.bak.123").exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -296,7 +278,7 @@ mod tests {
             host.join("ags-setup/agents/openai.yaml"),
             "generated-meta\n",
         );
-        let finding = write_install_file(&file, true, 123);
+        let finding = write_install_file(&file, true);
 
         assert_eq!(finding.status, crate::setup::SetupCheckStatus::Pass);
         assert!(finding.message.contains("skipped thin-index symlink"));

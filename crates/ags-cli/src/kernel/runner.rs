@@ -1,5 +1,5 @@
 /// Shared dispatch: `run`
-fn cmd_run(
+pub(crate) fn run(
     path: &str,
     check_only: bool,
     dry_run: bool,
@@ -25,24 +25,4 @@ fn cmd_run(
     if should_exit_1 {
         std::process::exit(1);
     }
-}
-
-// ── Verify dispatch ────────────────────────────────────────────────────────
-
-pub(crate) fn run(
-    path: &str,
-    check_only: bool,
-    dry_run: bool,
-    approve_writes: bool,
-    current_task_approval: bool,
-    format: &str,
-) {
-    cmd_run(
-        path,
-        check_only,
-        dry_run,
-        approve_writes,
-        current_task_approval,
-        format,
-    )
 }

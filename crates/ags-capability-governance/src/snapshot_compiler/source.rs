@@ -60,36 +60,6 @@ pub fn hash_skill_source(path: &Path) -> Result<String, String> {
     }
 }
 
-pub(super) fn user_source_host_visible(
-    host_home: &Path,
-    active_host: &str,
-    source: &UserSourceEntry,
-) -> bool {
-    let host_specific = match active_host {
-        "codex" => Some(host_home.join(".codex/skills").join(&source.skill_id)),
-        "claude-code" => Some(host_home.join(".claude/skills").join(&source.skill_id)),
-        "omp" => Some(host_home.join(".omp/agent/skills").join(&source.skill_id)),
-        "cursor" => Some(host_home.join(".cursor/skills").join(&source.skill_id)),
-        "codebuddy-code" => Some(host_home.join(".codebuddy/skills").join(&source.skill_id)),
-        _ => None,
-    };
-    let shared = matches!(active_host, "codex" | "omp" | "cursor")
-        .then(|| host_home.join(".agents/skills").join(&source.skill_id));
-    let existing = [host_specific, shared]
-        .into_iter()
-        .flatten()
-        .filter(|entry| entry.exists() || std::fs::symlink_metadata(entry).is_ok())
-        .collect::<Vec<_>>();
-    existing.len() == 1
-        && existing.iter().all(|entry| {
-            std::fs::canonicalize(entry)
-                .ok()
-                .zip(std::fs::canonicalize(&source.canonical_path).ok())
-                .is_some_and(|(actual, expected)| actual == expected)
-                && entry.join("SKILL.md").is_file()
-        })
-}
-
 /// Hash the complete skill body without timestamps or absolute paths. This
 /// catches changes in referenced scripts/assets as well as `SKILL.md`. Symlinks
 /// are represented by their link target and are never followed, avoiding
@@ -149,17 +119,4 @@ pub(super) fn append_source_node(root: &Path, path: &Path, canonical: &mut Vec<u
     } else {
         false
     }
-}
-
-pub(super) fn legacy_demand_tag(demand: SkillDemand) -> String {
-    serde_json::to_value(demand)
-        .ok()
-        .and_then(|value| {
-            Some(format!(
-                "legacy:{}:{}",
-                value.get("category")?.as_str()?,
-                value.get("demand")?.as_str()?
-            ))
-        })
-        .unwrap_or_else(|| "legacy:unknown".to_string())
 }

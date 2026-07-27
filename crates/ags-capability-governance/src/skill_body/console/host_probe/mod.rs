@@ -4,9 +4,9 @@
 //! manifest/config reads, external CLI parsing, and host visibility
 //! classification.
 
-use super::*;
 #[allow(unused_imports)]
-use super::{actions::*, model::*};
+use super::model::*;
+use super::*;
 
 mod cli_probe;
 mod config;

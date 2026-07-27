@@ -1,6 +1,6 @@
-use crate::agents::host_specs::{agents_scan_rows, default_agents_probe};
 use crate::context::home_dir;
 use crate::host_platforms::cross_platform_init_plan;
+use ags_host_integration::{agents_scan_rows, default_agents_probe};
 
 /// `ags agents scan` — read-only inventory of local Agent hosts + AGS MCP.
 pub(in crate::agents) fn cmd_agents_scan(format: &str) {

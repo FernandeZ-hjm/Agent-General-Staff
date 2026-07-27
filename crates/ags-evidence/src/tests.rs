@@ -120,7 +120,6 @@ fn writer_adds_typed_governance_evidence_without_raw_request() {
                 skill_id: "codebase-design".to_string(),
                 entrypoint: Some("module-design".to_string()),
             }),
-            outcome_event_id: Some("outcome-1".to_string()),
         },
     )
     .unwrap();
@@ -142,23 +141,6 @@ fn writer_adds_typed_governance_evidence_without_raw_request() {
 }
 
 #[test]
-fn legacy_2_0_receipt_remains_readable_and_valid() {
-    let receipt: Receipt = serde_json::from_str(
-        r#"{
-                "schema_version":"2.0-m6",
-                "receipt_id":"receipt-legacy",
-                "timestamp":"unix-0",
-                "task_card_hash":"abc123",
-                "gate_result":{"decision":"allow"},
-                "verification_results":[]
-            }"#,
-    )
-    .unwrap();
-    assert!(receipt.governance_evidence.is_none());
-    assert!(verify_receipt(&receipt).valid);
-}
-
-#[test]
 fn generate_receipt_error_on_missing_task_card() {
     let result = generate_receipt(Path::new("/no/such/task.md"), "allow", None, vec![], None);
     assert!(result.is_err());
@@ -172,7 +154,7 @@ fn verify_valid_receipt_passes_all_checks() {
     let task_hash = sha256_hex(task_content.as_bytes());
 
     let receipt = Receipt {
-        schema_version: "2.0-m6".to_string(),
+        schema_version: "0.3.4-task-receipt".to_string(),
         receipt_id: format!("receipt-{}", &task_hash[..12]),
         timestamp: "unix-0".to_string(),
         task_card_hash: task_hash,
@@ -218,7 +200,7 @@ fn verify_detects_hash_mismatch() {
     let task_card = write_temp_file(&dir, "task.md", "original content\n");
 
     let receipt = Receipt {
-        schema_version: "2.0-m6".to_string(),
+        schema_version: "0.3.4-task-receipt".to_string(),
         receipt_id: "receipt-abc123".to_string(),
         timestamp: "unix-0".to_string(),
         task_card_hash: "00deadbeef000000000000000000000000000000000000000000000000000000"
@@ -279,7 +261,7 @@ fn verify_handles_missing_schema_version() {
 #[test]
 fn compliance_check_allows_valid_receipt() {
     let receipt = Receipt {
-        schema_version: "2.0-m6".to_string(),
+        schema_version: "0.3.4-task-receipt".to_string(),
         receipt_id: "receipt-abc123".to_string(),
         timestamp: "unix-0".to_string(),
         task_card_hash: "abc123".to_string(),
@@ -327,7 +309,7 @@ fn compliance_check_allows_valid_receipt() {
 #[test]
 fn compliance_check_rejects_stop_decision() {
     let receipt = Receipt {
-        schema_version: "2.0-m6".to_string(),
+        schema_version: "0.3.4-task-receipt".to_string(),
         receipt_id: "receipt-stop1".to_string(),
         timestamp: "unix-0".to_string(),
         task_card_hash: "abc123".to_string(),
@@ -361,7 +343,7 @@ fn compliance_check_rejects_stop_decision() {
 #[test]
 fn compliance_check_rejects_failed_verification() {
     let receipt = Receipt {
-        schema_version: "2.0-m6".to_string(),
+        schema_version: "0.3.4-task-receipt".to_string(),
         receipt_id: "receipt-fail1".to_string(),
         timestamp: "unix-0".to_string(),
         task_card_hash: "abc123".to_string(),
@@ -399,7 +381,7 @@ fn compliance_check_rejects_failed_verification() {
 fn compliance_check_includes_verify_checks() {
     // Even when verify passes, compliance should include all verify checks
     let receipt = Receipt {
-        schema_version: "2.0-m6".to_string(),
+        schema_version: "0.3.4-task-receipt".to_string(),
         receipt_id: "receipt-combo1".to_string(),
         timestamp: "unix-0".to_string(),
         task_card_hash: "abc123".to_string(),
@@ -434,7 +416,7 @@ fn compliance_check_includes_verify_checks() {
 #[test]
 fn render_receipt_json_is_valid() {
     let receipt = Receipt {
-        schema_version: "2.0-m6".to_string(),
+        schema_version: "0.3.4-task-receipt".to_string(),
         receipt_id: "receipt-test1".to_string(),
         timestamp: "unix-0".to_string(),
         task_card_hash: sha256_hex(b"test"),
@@ -452,21 +434,21 @@ fn render_receipt_json_is_valid() {
 
     let json = render_receipt_json(&receipt);
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed["schema_version"], "2.0-m6");
+    assert_eq!(parsed["schema_version"], "0.3.4-task-receipt");
     assert_eq!(parsed["receipt_id"], "receipt-test1");
 }
 
 #[test]
 fn verify_result_json_includes_failed_checks() {
     let result = VerifyResult {
-        schema_version: "2.0-m6".to_string(),
+        schema_version: "0.3.4-task-receipt".to_string(),
         receipt_id: "receipt-bad".to_string(),
         valid: false,
         checks: vec![
             CheckItem {
                 name: "schema_version".to_string(),
                 passed: false,
-                detail: "expected 2.0-m6, got 1.0".to_string(),
+                detail: "expected 0.3.4-task-receipt, got 1.0".to_string(),
             },
             CheckItem {
                 name: "task_card_hash".to_string(),
@@ -490,7 +472,7 @@ fn verify_result_json_includes_failed_checks() {
 #[test]
 fn compliance_result_json_includes_specific_failures() {
     let result = ComplianceResult {
-        schema_version: "2.0-m6".to_string(),
+        schema_version: "0.3.4-task-receipt".to_string(),
         receipt_id: "receipt-fail".to_string(),
         compliant: false,
         checks: vec![CheckItem {
@@ -513,7 +495,6 @@ fn sample_write() -> ReceiptWrite {
         op: "create".to_string(),
         path: "/tmp/ags/x".to_string(),
         from: None,
-        backup: None,
         detail: "created".to_string(),
     }
 }
@@ -532,7 +513,6 @@ fn emit_action_receipt_writes_file_and_returns_path() {
         vec![sample_write()],
         vec![],
         vec![],
-        RollbackPlan::backup_restore(vec![]),
         "applied",
         true,
     );
@@ -547,8 +527,7 @@ fn emit_action_receipt_writes_file_and_returns_path() {
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(back.action, "setup-apply");
     assert_eq!(back.apply_status, "applied");
-    assert_eq!(back.rollback.strategy, "backup-restore");
-    assert_eq!(back.schema_version, "2.0-action-receipt");
+    assert_eq!(back.schema_version, "0.3.4-action-receipt");
 }
 
 #[test]
@@ -564,12 +543,11 @@ fn build_action_receipt_derives_stable_prefix() {
         vec![],
         vec![],
         vec![],
-        RollbackPlan::none(),
         "advised-only",
         false,
     );
     assert!(r.receipt_id.starts_with("ar-skill-apply-"));
-    assert_eq!(r.schema_version, "2.0-action-receipt");
+    assert_eq!(r.schema_version, "0.3.4-action-receipt");
     assert!(!r.applied);
 }
 
@@ -589,24 +567,10 @@ fn emit_refuses_secret_in_receipt() {
         vec![w],
         vec![],
         vec![],
-        RollbackPlan::none(),
         "applied",
         true,
     );
     assert!(emit_action_receipt(dir.path(), &r).is_err());
-}
-
-#[test]
-fn rollback_plan_constructors_have_stable_strategy() {
-    assert_eq!(RollbackPlan::none().strategy, "none");
-    assert_eq!(
-        RollbackPlan::backup_restore(vec![]).strategy,
-        "backup-restore"
-    );
-    assert_eq!(
-        RollbackPlan::thin_index_relink(vec![]).strategy,
-        "thin-index-relink"
-    );
 }
 
 #[test]
@@ -625,7 +589,6 @@ fn emit_action_receipt_never_overwrites_on_id_collision() {
         vec![],
         vec![],
         vec![],
-        RollbackPlan::none(),
         "advised-only",
         false,
     );

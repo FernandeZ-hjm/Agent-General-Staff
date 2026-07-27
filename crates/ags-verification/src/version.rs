@@ -333,7 +333,6 @@ pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
     if repo_root.join("global-skills").is_dir() {
         for relative in [
             "global-skills/ags-agents/SKILL.md",
-            "global-skills/ags-capability/SKILL.md",
             "global-skills/ags-doctor/SKILL.md",
             "global-skills/ags-init/SKILL.md",
             "global-skills/ags-setup/SKILL.md",
@@ -369,93 +368,95 @@ pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
         errors.push("npm launcher GPL LICENSE is missing".to_string());
     }
 
-    // Wire/schema versions are compatibility identities, not the product
-    // release number. Keeping these explicit prevents an unsafe global version
-    // replacement from breaking v0.3.0 clients during a v0.3.x product update.
+    // The current release owns one current schema set. Removed compatibility
+    // protocols are not retained as hidden interfaces.
     for (relative, marker) in [
         (
             "crates/ags-governance-decision/src/lib.rs",
-            "0.3.0-host-route-proposal",
+            "0.3.4-host-route-proposal",
         ),
         (
             "crates/ags-governance-decision/src/lib.rs",
-            "0.3.0-route-resolution",
+            "0.3.4-route-resolution",
         ),
         (
             "crates/ags-task-contract/src/intent.rs",
-            "0.3.0-handoff-contract",
+            "0.3.4-handoff-contract",
+        ),
+        (
+            "crates/ags-task-contract/src/intent.rs",
+            "0.3.4-task-contract",
         ),
         (
             "crates/ags-task-contract/src/runner.rs",
-            "0.3.0-launch-plan",
+            "0.3.4-launch-plan",
         ),
         (
             "crates/ags-lifecycle/src/onboarding/mod.rs",
-            "0.3.0-onboarding-plan",
+            "0.3.4-onboarding-plan",
+        ),
+        (
+            "crates/ags-lifecycle/src/init/model.rs",
+            "0.3.4-project-init",
+        ),
+        (
+            "crates/ags-lifecycle/src/setup/mod.rs",
+            "0.3.4-private-install",
         ),
         (
             "crates/ags-capability-governance/src/authority.rs",
-            "0.3.1-host-capability-snapshot",
-        ),
-        (
-            "crates/ags-capability-governance/src/authority.rs",
-            "0.3.0-user-skill-overlay",
-        ),
-        (
-            "crates/ags-capability-governance/src/authority.rs",
-            "0.3.0-user-skill-sources",
-        ),
-        (
-            "crates/ags-capability-governance/src/authority.rs",
-            "0.3.0-overlay-mutation-receipt",
-        ),
-        (
-            "crates/ags-capability-governance/src/authority.rs",
-            "0.3.0-skill-usage-event",
-        ),
-        (
-            "crates/ags-session/src/workspace_service/registry_ownership.rs",
-            "0.3.0-workspace-service",
+            "0.3.4-host-capability-snapshot",
         ),
         (
             "crates/ags-capability-governance/src/skill_body/console/model.rs",
-            "0.3.0-skill-console",
+            "0.3.4-skill-console",
         ),
+        (
+            "crates/ags-capability-governance/src/skill_body/model.rs",
+            "0.3.4-skill-inventory",
+        ),
+        (
+            "crates/ags-governance-decision/src/policy/model.rs",
+            "0.3.4-execution-policy",
+        ),
+        (
+            "crates/ags-verification/src/orchestrator.rs",
+            "0.3.4-verification-report",
+        ),
+        (
+            "crates/ags-verification/src/bootstrap.rs",
+            "0.3.4-bootstrap-plan",
+        ),
+        (
+            "crates/ags-verification/src/release_package.rs",
+            "0.3.4-release-plan",
+        ),
+        (
+            "crates/ags-evidence/src/receipt_model.rs",
+            "0.3.4-task-receipt",
+        ),
+        (
+            "crates/ags-evidence/src/delivery_report.rs",
+            "0.3.4-delivery-closure",
+        ),
+        ("crates/ags-evidence/src/action.rs", "0.3.4-action-receipt"),
     ] {
         match std::fs::read_to_string(repo_root.join(relative)) {
             Ok(content) if content.contains(marker) => {}
             Ok(_) => errors.push(format!(
-                "{relative} must retain compatibility schema marker {marker}"
+                "{relative} is missing current schema marker {marker}"
             )),
             Err(_) => errors.push(format!("{relative} is missing or unreadable")),
         }
     }
 
-    // Source adoption is a private/stable capability and is deliberately
-    // absent from the public release tree. If a release source includes that
-    // module, its compatibility identity is still mandatory.
-    let adoption_model = "crates/ags-capability-governance/src/adoption/model.rs";
-    let adoption_path = repo_root.join(adoption_model);
-    if adoption_path.is_file() {
-        let marker = "0.3.0-skill-adoption-plan";
-        match std::fs::read_to_string(&adoption_path) {
-            Ok(content) if content.contains(marker) => {}
-            Ok(_) => errors.push(format!(
-                "{adoption_model} must retain compatibility schema marker {marker}"
-            )),
-            Err(_) => errors.push(format!("{adoption_model} is unreadable")),
-        }
-    }
-
-    match std::fs::read_to_string(repo_root.join("RELEASE_NOTES.md")) {
-        Ok(content)
-            if ["## Release 0.3.0", "## Release 0.3.1"]
-                .iter()
-                .all(|marker| content.contains(marker)) => {}
-        Ok(_) => errors.push(
-            "RELEASE_NOTES.md must retain the v0.3.0 and v0.3.1 history sections".to_string(),
-        ),
-        Err(_) => {}
+    let registry_source = "crates/ags-session/src/workspace_service/registry_ownership.rs";
+    match std::fs::read_to_string(repo_root.join(registry_source)) {
+        Ok(content) if content.contains("ags-workspace-registry/1") => {}
+        Ok(_) => errors.push(format!(
+            "{registry_source} is missing stable protocol marker ags-workspace-registry/1"
+        )),
+        Err(_) => errors.push(format!("{registry_source} is missing or unreadable")),
     }
 
     if errors.is_empty() {
@@ -469,7 +470,7 @@ pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
             "release-version-surfaces",
             "release",
             &errors.join("; "),
-            "Align product/version/license surfaces while preserving historical release headings and compatibility wire/schema IDs.",
+            "Align product, license, documentation, and current schema surfaces.",
         )
     }
 }
