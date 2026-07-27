@@ -320,9 +320,11 @@ pub(crate) fn skill_card(
         requires_auth: routing.is_some_and(|routing| routing.requires_auth)
             || file_metadata.requires_auth,
         auth_state,
-        version: (!file_metadata.version.trim().is_empty())
-            .then(|| file_metadata.version.trim().to_string())
-            .unwrap_or_else(|| "registry".to_string()),
+        version: if !file_metadata.version.trim().is_empty() {
+            file_metadata.version.trim().to_string()
+        } else {
+            "registry".to_string()
+        },
         source_hash: source_hash(manifest_root, capability),
     }
 }
