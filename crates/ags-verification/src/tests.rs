@@ -146,6 +146,9 @@ fn release_version_surfaces_accept_the_real_workspace_tree() {
 #[test]
 fn command_runner_uses_the_requested_repository_root() {
     let dir = tempfile::tempdir().unwrap();
+    #[cfg(windows)]
+    let (code, stdout, stderr) = run_command(dir.path(), "cmd", &["/C", "cd"], &[]);
+    #[cfg(not(windows))]
     let (code, stdout, stderr) = run_command(dir.path(), "pwd", &[], &[]);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(
