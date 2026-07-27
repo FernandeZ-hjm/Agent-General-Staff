@@ -222,9 +222,9 @@ public_rewrites:
   - path: crates/ags-cli/tests/public_api_facade_contract.rs
     target_sha256: "sha256:9b153091427d5d7a6faf9afd7781403dba4c511d99ff8ccdef9143f6f0a9aff0"
   - path: crates/ags-lifecycle/src/init/managed_projects.rs
-    target_sha256: "sha256:b24cffc9c7e13349c36875b70d3fc27846d6bf55489841390f42992b3708fe72"
+    target_sha256: "sha256:b711b43aa3ea1b10a35fc9a1558d25114c6e31bc8c22e5c118ec34edb0ce1c41"
   - path: crates/ags-lifecycle/src/init/plan.rs
-    target_sha256: "sha256:7ea919475df5d0a9f425375994379a4cde7314e0f1049182c33087d7b54dc8d1"
+    target_sha256: "sha256:86f3fa561cdf126c7b910501281556fc3503382ea9cfaf8e998f2e1497d31d60"
   - path: crates/ags-lifecycle/src/update/apply.rs
     target_sha256: "sha256:bcef95e9c7cb1761ee3dd27eb2b97cc70408782d7a07eb6aa3d3e54e6ccd040d"
   - path: crates/ags-lifecycle/src/setup/apply.rs

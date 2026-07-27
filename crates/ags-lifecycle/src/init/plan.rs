@@ -391,6 +391,26 @@ user_preferences:
 pub(crate) fn project_init_plan(target: &Path, slug: Option<String>) -> ProjectInitPlan {
     project_init_plan_with_protocol(target, slug, project_template_protocol_dir())
 }
+
+pub(crate) fn append_content_present(path: &Path, existing: &str, append: &str) -> bool {
+    if existing.contains(append.trim()) {
+        return true;
+    }
+    if path.file_name().and_then(|name| name.to_str()) != Some(".gitignore") {
+        return false;
+    }
+    let existing_rules = existing
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect::<std::collections::BTreeSet<_>>();
+    append
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .all(|rule| existing_rules.contains(rule))
+}
+
 pub(crate) fn project_file_status(file: &InitFile, append_candidates: &[InitFile]) -> &'static str {
     if !file.path.exists() {
         return "would-create";
@@ -401,7 +421,8 @@ pub(crate) fn project_file_status(file: &InitFile, append_candidates: &[InitFile
     {
         if let Ok(existing) = std::fs::read_to_string(&file.path) {
             if append_candidates.iter().any(|candidate| {
-                candidate.path == file.path && existing.contains(candidate.content.trim())
+                candidate.path == file.path
+                    && append_content_present(&file.path, &existing, &candidate.content)
             }) || existing.contains("Agent Governance Suite")
                 || existing.contains(&format!("AGS {AGS_VERSION}"))
             {

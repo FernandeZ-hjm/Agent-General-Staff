@@ -204,7 +204,7 @@ pub(crate) fn desired_project_file_content(
             } else {
                 merge_managed_project_block(text, &append.content)?
             }
-        } else if text.contains(append.content.trim()) {
+        } else if super::plan::append_content_present(&file.path, text, &append.content) {
             text.to_string()
         } else {
             format!("{}{}", text, append.content)

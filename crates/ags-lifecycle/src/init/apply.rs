@@ -1,7 +1,7 @@
 //! Project initialization file-write transaction.
 
 use super::model::{InitFile, InitFinding, AGS_VERSION};
-use super::plan::sanitize_name;
+use super::plan::{append_content_present, sanitize_name};
 
 pub(crate) fn write_project_init_file(
     file: &InitFile,
@@ -26,7 +26,7 @@ pub(crate) fn write_project_init_file(
             .find(|candidate| candidate.path == file.path)
         {
             match std::fs::read_to_string(&file.path) {
-                Ok(existing) if existing.contains(append.content.trim()) => {
+                Ok(existing) if append_content_present(&file.path, &existing, &append.content) => {
                     return InitFinding::pass(
                         format!(
                             "project-init-{}",
