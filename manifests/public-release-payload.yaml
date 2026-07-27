@@ -268,15 +268,15 @@ public_rewrites:
   - path: crates/ags-mcp/src/prompts/delivery_report.txt
     target_sha256: "sha256:d8ec2a5968b3925402e10f6eb4c7c4f926d066f6b2f67657e799b7b504c93761"
   - path: crates/ags-mcp/src/prompts/global_kernel.txt
-    target_sha256: "sha256:bcc55afd276b7d6f6cbd64727a0988f09f7b4a50b55768f68b7418b16b227e6b"
+    target_sha256: "sha256:a94aa52708e10bf06e50d312848f00d65330f27793e6a83c5ce2943d2909a91e"
   - path: crates/ags-mcp/src/resources.rs
-    target_sha256: "sha256:addfeedd9a729b376c2da798c6867274fb21165defd7a62621078bf07949b6e7"
+    target_sha256: "sha256:0f5196892a8af7be42a64623e9b980607431a976a501e48cdeb7269fa9bf20b0"
   - path: crates/ags-mcp/src/resources/global_kernel.md
     target_sha256: "sha256:c8a0425c3914f3219f09738736bf3fa8ec2f32c5103051d40d4c51f01e707ea3"
   - path: crates/ags-mcp/src/tools/apply.rs
-    target_sha256: "sha256:b715edc0d5cc1192b6459dcf382fd3bd3ad2c534311f6a07d4aa953d09933d01"
+    target_sha256: "sha256:3d1683198b8ab372d46c88632a46d11d9ccc50ef6502214d1c3636066ffe8723"
   - path: crates/ags-mcp/src/tools/tests.rs
-    target_sha256: "sha256:04bf2f3d176ac31f81766c91d1349ce573fb656f5136f18995fca3ebeae2ec40"
+    target_sha256: "sha256:84f0bef34aea2a280b0ab41acc7798e8013fb2274b44b6e34a880ae6dc5b509c"
   - path: crates/ags-verification/src/bootstrap.rs
     target_sha256: "sha256:423534b437e64206e176288dbb953402f0963eda241139eb9f50063b52c4e852"
   - path: crates/ags-verification/src/doctor/checks/host_memory.rs
@@ -300,7 +300,7 @@ public_rewrites:
   - path: manifests/mcp-registry.yaml
     target_sha256: "sha256:fab27416391f6439ba2d8050b945f3c10626b188626a108db8c607be0949baf9"
   - path: manifests/skills-registry.yaml
-    target_sha256: "sha256:1f574f793c4396dbf7807edff437d1ac0d3ad3a87bf7b58c6853cc38ea9771ba"
+    target_sha256: "sha256:82fa31cbb9882424dc35451b7049ee1399e2434132b92a1db7c76d03f1a9d165"
   - path: manifests/suite.yaml
     target_sha256: "sha256:b7e5b9ba747f081e21ced8f37e7e1edd827e5a69b1135d2e335d31180f46b682"
   - path: protocol/2.0-baseline.md
@@ -310,11 +310,11 @@ public_rewrites:
   - path: protocol/context-memory.md
     target_sha256: "sha256:ae8b00af607221a2b57e3b0263fa10e587a9e8616767391e77c0865ab03af1b6"
   - path: protocol/mcp-server.md
-    target_sha256: "sha256:bac70dc64dbdf51656926c9f825d45ebd8433cbe05950687f2ccf3cc35682017"
+    target_sha256: "sha256:fa94456ef70c09f28006754fba69de97c0d68fec27073891aab3b7d8423510d9"
   - path: protocol/runtime-adapters.md
     target_sha256: "sha256:97e9c14ac2f68dbb1117ade63dd28e379b2a0504b9fe1730cad280e8225d04c6"
   - path: protocol/skill-governance.md
-    target_sha256: "sha256:d5acb3b9433fceb0ff08af64324f3b7d8bb78421da8b1efbd745ef4bd72be560"
+    target_sha256: "sha256:ac717e6f736301d9521734e594900205796211f8f393ea9b6abcfddee32cdc35"
 
 # Binary release assets contain only this runtime support subset. The workflow
 # obtains this list from `ags release package`; it must not repeat the paths.

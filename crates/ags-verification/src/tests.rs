@@ -276,7 +276,7 @@ fn write_release_version_fixture(root: &Path) {
         (
             "crates/ags-capability-governance/src/authority.rs",
             concat!(
-                "0.3.0-host-capability-snapshot\n",
+                "0.3.1-host-capability-snapshot\n",
                 "0.3.0-user-skill-overlay\n",
                 "0.3.0-user-skill-sources\n",
                 "0.3.0-overlay-mutation-receipt\n",

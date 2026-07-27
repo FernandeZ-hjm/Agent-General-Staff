@@ -82,6 +82,8 @@ fn architecture_card() -> SkillCard {
         positive_examples: vec!["设计一个跨模块架构".to_string()],
         negative_examples: vec!["解释现有模块".to_string()],
         entrypoints: vec!["brainstorming".to_string()],
+        routing_surface: ags_capability_governance::SkillRoutingSurface::SkillTarget,
+        routing_hint: None,
         source_kind: SkillSourceKind::Suite,
         governance: GovernanceState::Active,
         availability: AvailabilityState::Ready,

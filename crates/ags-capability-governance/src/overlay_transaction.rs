@@ -562,6 +562,8 @@ pub(super) fn external_candidate_card(
             positive_examples: Vec::new(),
             negative_examples: Vec::new(),
             entrypoints: source.entrypoints,
+            routing_surface: SkillRoutingSurface::SkillTarget,
+            routing_hint: None,
             source_kind: SkillSourceKind::External,
             governance: GovernanceState::Candidate,
             availability: AvailabilityState::Unavailable {

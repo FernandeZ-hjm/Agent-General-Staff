@@ -1023,8 +1023,14 @@ skills:
     local_path: global-skills/ags-agents
     routing:
       route_state: not-routable
+      routing_surface: host_command
+      invoke_hint: "ags agents scan"
+      intent_tags: [ags-host-management, ags-agent-scan]
       capability_group: [ags-governance-ops]
       upstream_group: "suite-local"
+      examples:
+        positive: ["检查本机 Agent 宿主和 AGS MCP 注册状态"]
+        negative: ["让其他 Agent 并行执行代码任务"]
   # ags-capability retired from the front-stage command-skill set (0.2.7): the
   # `ags capability ...` CLI and cross-Agent sync engine remain; the command
   # skill is no longer suite-required. The registry row is KEPT with
@@ -1041,22 +1047,40 @@ skills:
     local_path: global-skills/ags-doctor
     routing:
       route_state: not-routable
+      routing_surface: host_command
+      invoke_hint: "ags doctor --target ."
+      intent_tags: [ags-doctor, ags-health-check]
       capability_group: [ags-governance-ops]
       upstream_group: "suite-local"
+      examples:
+        positive: ["检查当前项目的 AGS 健康状态"]
+        negative: ["诊断项目代码里的业务 bug"]
   - name: ags-init
     profile: required
     local_path: global-skills/ags-init
     routing:
       route_state: not-routable
+      routing_surface: host_command
+      invoke_hint: "ags init --target ."
+      intent_tags: [ags-project-init, ags-project-onboarding]
       capability_group: [ags-governance-ops]
       upstream_group: "suite-local"
+      examples:
+        positive: ["把当前项目初始化为 AGS 纳管项目"]
+        negative: ["初始化本机 AGS runtime"]
   - name: ags-setup
     profile: required
     local_path: global-skills/ags-setup
     routing:
       route_state: not-routable
+      routing_surface: host_command
+      invoke_hint: "ags setup --yes --force"
+      intent_tags: [ags-machine-setup, ags-runtime-upgrade]
       capability_group: [ags-governance-ops]
       upstream_group: "suite-local"
+      examples:
+        positive: ["初始化或升级本机 AGS runtime"]
+        negative: ["初始化当前项目的 AGS 协议文件"]
   - name: ags-skill
     profile: required
     local_path: global-skills/ags-skill

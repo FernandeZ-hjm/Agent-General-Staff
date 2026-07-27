@@ -26,7 +26,19 @@
 
 ## SkillCard 与 ActiveSkill
 
-薄 `SkillCard` 至少包含：`skill_id`、展示名、summary、`intent_tags`、entrypoints、source kind、governance、availability/reason codes、requires_auth/AuthState、version/source hash 和 activity。
+薄 `SkillCard` 至少包含：`skill_id`、展示名、summary、`intent_tags`、entrypoints、
+`routing_surface`、可选 `routing_hint`、source kind、governance、
+availability/reason codes、requires_auth/AuthState、version/source hash 和 activity。
+
+`routing_surface` 是闭集：
+
+- `skill_target`：只有这类条目可以进入 `ActiveSkillTable` 并提交为 `SkillTarget`；
+- `host_command`：宿主前台命令技能，只能按静态 `routing_hint` 直接调用 CLI；
+- `not_routable`：支持文件、共享父技能、personal/retired 等非路由条目。
+
+安装与宿主可见不等于 `skill_target`。把 `host_command`（例如 `ags-setup`）
+提交为 `SkillTarget` 必须返回 `skill_target_kind_mismatch` 和静态命令提示，
+不得降格成含糊的 `skill_not_active`，也不得刷新快照尝试“修复”。
 
 `ActiveSkill` 以 `skill_id + allowed entrypoints + invoke_hint` 精确索引。Resolver 只接受精确 `SkillTarget`，不读取自然语言、不做关键词/相似度/fallback。旧 `SkillDemand` 与 `demand_routes` 只保留为 intent metadata 与旧序列化兼容输入。
 

@@ -26,6 +26,8 @@ fn card() -> SkillCard {
         positive_examples: vec!["设计这个模块接口".to_string()],
         negative_examples: vec!["解释这个模块".to_string()],
         entrypoints: vec!["module-design".to_string()],
+        routing_surface: SkillRoutingSurface::SkillTarget,
+        routing_hint: None,
         source_kind: SkillSourceKind::Suite,
         governance: GovernanceState::Active,
         availability: AvailabilityState::Ready,

@@ -395,7 +395,7 @@ pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
         ),
         (
             "crates/ags-capability-governance/src/authority.rs",
-            "0.3.0-host-capability-snapshot",
+            "0.3.1-host-capability-snapshot",
         ),
         (
             "crates/ags-capability-governance/src/authority.rs",

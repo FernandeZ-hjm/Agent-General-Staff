@@ -62,6 +62,20 @@ pub enum SkillSourceKind {
     External,
 }
 
+/// The only host-facing route surface accepted for one catalog row.
+///
+/// A host command may be installed as a foreground skill for discoverability,
+/// but it is never an AGS `SkillTarget`. Keeping the distinction in the sealed
+/// snapshot prevents hosts from inferring routability from installation alone.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillRoutingSurface {
+    SkillTarget,
+    HostCommand,
+    #[default]
+    NotRoutable,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SkillCard {
@@ -78,6 +92,10 @@ pub struct SkillCard {
     pub negative_examples: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub entrypoints: Vec<String>,
+    #[serde(default)]
+    pub routing_surface: SkillRoutingSurface,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub routing_hint: Option<String>,
     pub source_kind: SkillSourceKind,
     pub governance: GovernanceState,
     pub availability: AvailabilityState,

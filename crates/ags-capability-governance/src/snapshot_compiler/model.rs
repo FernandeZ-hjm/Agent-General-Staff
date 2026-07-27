@@ -31,6 +31,8 @@ pub(super) struct RegistryRouting {
     #[serde(default)]
     pub(super) route_state: RouteState,
     #[serde(default)]
+    pub(super) routing_surface: Option<SkillRoutingSurface>,
+    #[serde(default)]
     pub(super) examples: RouteExamples,
 }
 

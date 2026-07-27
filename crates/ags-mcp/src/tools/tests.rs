@@ -351,6 +351,142 @@ fn route_action(output: &str) -> (String, String) {
 }
 
 #[cfg(unix)]
+#[test]
+fn static_snapshot_lease_ignores_live_registry_edits_after_route() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let (base, binding, runtime, executable, spy) = machine_fixture("static-registry-after-route");
+    let old_bin = std::env::var_os("AGS_CLI_BIN");
+    let old_spy = std::env::var_os("AGS_PROCESS_SPY");
+    std::env::set_var("AGS_CLI_BIN", &executable);
+    std::env::set_var("AGS_PROCESS_SPY", &spy);
+
+    let registry_path = binding.target.join("manifests/skills-registry.yaml");
+    std::fs::remove_file(&registry_path).unwrap();
+    let mut session = RoutingSession::default();
+    let route = tool_route_request(
+        &serde_json::json!({"proposal": machine_proposal()}),
+        &binding,
+        &mut session,
+        &runtime,
+    )
+    .unwrap();
+    let (lease_id, action_id) = route_action(&route);
+    std::fs::write(
+        registry_path,
+        "skills: []\ndemand_routes: []\n# changed after route\n",
+    )
+    .unwrap();
+
+    let applied = tool_apply_action(
+        &serde_json::json!({"lease_id": lease_id, "action_id": action_id}),
+        &binding,
+        &mut session,
+        &runtime,
+    )
+    .unwrap();
+    let applied: serde_json::Value = serde_json::from_str(&applied).unwrap();
+    assert_eq!(applied["governance_status"], "HOST_EXECUTION_REQUIRED");
+    assert!(spy.exists(), "apply must reach the fixed effect boundary");
+
+    match old_bin {
+        Some(value) => std::env::set_var("AGS_CLI_BIN", value),
+        None => std::env::remove_var("AGS_CLI_BIN"),
+    }
+    match old_spy {
+        Some(value) => std::env::set_var("AGS_PROCESS_SPY", value),
+        None => std::env::remove_var("AGS_PROCESS_SPY"),
+    }
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
+fn command_skill_submitted_as_skill_target_reports_the_correct_surface() {
+    let fixture = tempfile::tempdir().unwrap();
+    let source_root = binding().target;
+    let root = fixture.path().join("suite");
+    let runtime = fixture.path().join("runtime");
+    let home = fixture.path().join("home");
+    std::fs::create_dir_all(root.join("manifests")).unwrap();
+    std::fs::create_dir_all(root.join("global-skills/ags-setup")).unwrap();
+    std::fs::copy(
+        source_root.join("manifests/skills-registry.yaml"),
+        root.join("manifests/skills-registry.yaml"),
+    )
+    .unwrap();
+    std::fs::copy(
+        source_root.join("manifests/mcp-registry.yaml"),
+        root.join("manifests/mcp-registry.yaml"),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("global-skills/ags-setup/SKILL.md"),
+        "---\nname: ags-setup\ndescription: Public-safe host command routing fixture.\n---\n\n# AGS Setup\n",
+    )
+    .unwrap();
+    for host in ["codex", "omp"] {
+        let snapshot = ags_capability_governance::write_capability_snapshot_with_roots(
+            &root, host, &runtime, &home,
+        )
+        .unwrap();
+        let command = snapshot
+            .catalog
+            .iter()
+            .find(|card| card.skill_id == "ags-setup")
+            .expect("ags-setup command card");
+        assert_eq!(
+            command.routing_surface,
+            ags_capability_governance::SkillRoutingSurface::HostCommand
+        );
+        assert_eq!(
+            command.routing_hint.as_deref(),
+            Some("ags setup --yes --force")
+        );
+        assert!(!command
+            .reason_codes
+            .iter()
+            .any(|reason| reason == "registry_not_routable"));
+        assert!(snapshot
+            .active_skills
+            .iter()
+            .all(|skill| skill.skill_id != "ags-setup"));
+
+        let proposal = serde_json::json!({
+            "schema_version": HOST_ROUTE_PROPOSAL_SCHEMA_VERSION,
+            "request_fingerprint": format!("sha256:ags-setup-command-surface-{host}"),
+            "phase": "execution",
+            "solution_state": "confirmed",
+            "execution_authority": "none",
+            "scope_hash": "sha256:scope",
+            "targets": [{
+                "kind": "skill",
+                "skill_id": "ags-setup",
+                "snapshot_hash": snapshot.snapshot_hash
+            }]
+        });
+        let mut session = RoutingSession::default();
+        let output = tool_route_request(
+            &serde_json::json!({"proposal": proposal}),
+            &PreflightBinding {
+                host: host.to_string(),
+                target: root.clone(),
+                host_home: home.clone(),
+                capability: None,
+            },
+            &mut session,
+            &runtime,
+        )
+        .unwrap();
+        let output: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(output["governance_status"], "BLOCKED_BY_POLICY");
+        assert_eq!(output["errors"][0]["code"], "skill_target_kind_mismatch");
+        assert!(output["errors"][0]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("ags setup --yes --force")));
+        assert!(session.actions.is_empty());
+    }
+}
+
+#[cfg(unix)]
 fn tree_digest(root: &Path) -> String {
     fn visit(root: &Path, path: &Path, rows: &mut Vec<Vec<u8>>) {
         let Ok(entries) = std::fs::read_dir(path) else {
@@ -1091,9 +1227,12 @@ fn every_pre_effect_failure_keeps_the_lease_retryable() {
     )
     .unwrap();
     let (lease_id, action_id) = route_action(&route);
-    let registry_path = binding.target.join("manifests/skills-registry.yaml");
-    let original = std::fs::read(&registry_path).unwrap();
-    std::fs::write(&registry_path, "skills: []\ndemand_routes: []\n# changed\n").unwrap();
+    session
+        .actions
+        .get_mut(&action_id)
+        .unwrap()
+        .evidence
+        .registry_hash = "sha256:tampered".to_string();
     assert_eq!(
         tool_apply_action(
             &serde_json::json!({"lease_id": lease_id, "action_id": action_id}),
@@ -1106,9 +1245,8 @@ fn every_pre_effect_failure_keeps_the_lease_retryable() {
     );
     assert!(
         !session.actions.get(&action_id).unwrap().consumed,
-        "registry failure happens before the effect seam"
+        "sealed registry evidence failure happens before the effect seam"
     );
-    std::fs::write(&registry_path, original).unwrap();
 
     let route = tool_route_request(
         &serde_json::json!({"proposal": machine_proposal()}),

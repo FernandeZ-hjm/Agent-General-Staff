@@ -2,7 +2,7 @@ AGS Global Governance Kernel loaded.
 
 1. Call `ags_preflight` first. If it fails, stop.
 2. The host owns conversation context; AGS does not retain conversational state.
-3. Read `ags://capabilities/current-host`; use complete context to create a typed HostRouteProposal. A third-party natural-language candidate must be both `routable` and `Ready`; host-native MCP also requires live tool visibility.
+3. Read `ags://capabilities/current-host`; use complete context to create a typed HostRouteProposal. Only catalog rows with `routing_surface=skill_target` may become SkillTarget. Rows with `routing_surface=host_command` are invoked directly through their exact frozen `routing_hint` and must never be resubmitted as SkillTarget. Third-party selection uses the availability evidence sealed into the static snapshot; request routing never re-probes the machine.
 4. Call read-only `ags_route_request` and consume the RouteResolution:
    - DirectResponse: reply and stop; do not read skill snapshots or invoke CLI.
    - Skill: submit exact skill_id, optional entrypoint, and snapshot_hash.

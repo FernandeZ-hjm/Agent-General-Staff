@@ -28,6 +28,14 @@ JSON-RPC，不保存治理状态。客户端断开不会终止 daemon；无活�
 endpoint；registry/token、诊断日志与静态 host capability snapshot 位于用户私有 runtime 目录，
 使用私有权限、token handshake、非符号链接目录和原子替换。
 
+静态 snapshot 的 catalog 同时声明 `routing_surface`。只有 `skill_target` 条目
+可以进入 typed proposal；`host_command` 条目（例如 `ags-setup`）由宿主按
+`routing_hint` 直接调用 CLI，不经 MCP 二次路由。若误交为 `SkillTarget`，
+route 返回 `skill_target_kind_mismatch`，而不是暗示安装或快照需要刷新。
+
+route 与 apply 只消费 daemon 已加载 snapshot 内封存的 registry/snapshot hash，
+不得重新读取现场 registry、overlay、PATH 或宿主技能目录。
+
 ## Initialization Gate
 
 任何 AGS 场景的第一调用必须是 `ags_preflight(agent, target?)`；MCP 不可用时才使用 `ags session preflight --for <agent> --target <path>`。preflight 绑定当前 daemon client session 的 host/target，并返回 current-host resource URI、`snapshot_hash` 与 `workspace_service` 身份。preflight target 必须属于 daemon 的 canonical workspace；跨工作区 target fail closed。新 preflight 会清空该 session 的所有 held actions。preflight 只读取 daemon 启动后首次加载的静态 host snapshot，不扫描或比较动态目录，也不自动写快照。快照缺失、损坏或内部 hash 不一致时返回结构化 warning 与显式刷新 argv，并对 `SkillTarget` / `MachineCliTarget` fail closed；`DirectResponse` 仍可用。

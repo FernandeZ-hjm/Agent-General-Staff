@@ -1,6 +1,6 @@
 use super::*;
 
-pub const HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION: &str = "0.3.0-host-capability-snapshot";
+pub const HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION: &str = "0.3.1-host-capability-snapshot";
 pub const CAPABILITY_SNAPSHOT_SCHEMA_VERSION: &str = HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION;
 pub const USER_OVERLAY_SCHEMA_VERSION: &str = "0.3.0-user-skill-overlay";
 pub const USER_SOURCE_REGISTRY_SCHEMA_VERSION: &str = "0.3.0-user-skill-sources";

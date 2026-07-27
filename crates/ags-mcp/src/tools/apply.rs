@@ -72,17 +72,6 @@ pub(super) fn tool_apply_action_with_source(
                     return Err(error.into_legacy_error());
                 }
             }
-            let authority_root = ags_capability_governance::resolve_capability_authority_root(
-                &binding.target,
-                runtime_home,
-                std::env::var_os("AGS_SOURCE_ROOT").map(PathBuf::from),
-            )
-            .map_err(|error| error.to_string())?;
-            let registry = std::fs::read(authority_root.join("manifests/skills-registry.yaml"))
-                .map_err(|error| error.to_string())?;
-            if ags_capability_governance::sha256(&registry) != action.evidence.registry_hash {
-                return Err("decision_lease_registry_hash_mismatch".to_string());
-            }
             let catalog = capability_source
                 .map_or_else(
                     || {
@@ -100,6 +89,9 @@ pub(super) fn tool_apply_action_with_source(
                     != Some(&catalog.binding)
             {
                 return Err("decision_lease_preflight_capability_binding_stale".to_string());
+            }
+            if catalog.snapshot.registry_hash != action.evidence.registry_hash {
+                return Err("decision_lease_registry_hash_mismatch".to_string());
             }
             if catalog.snapshot.snapshot_hash != action.evidence.snapshot_hash {
                 return Err("decision_lease_snapshot_hash_mismatch".to_string());

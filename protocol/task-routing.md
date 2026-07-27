@@ -36,6 +36,11 @@ AGS 0.3.2 没有原始文本关键词路由。`ags_route_request` 不接受 `{re
 
 `SkillTarget` 只含 `skill_id`、可选 `entrypoint` 与 `snapshot_hash`。`MachineCliTarget` 只含闭集 `CliCapabilityId` 与 `TypedCliInput`。两者都不接受自然语言。
 
+`HostCapabilitySnapshot.catalog` 还会列出 `routing_surface=host_command` 的宿主
+前台命令技能。这些条目用于让宿主直接调用静态 `routing_hint`，不属于 proposal
+target。安装、可见或被宿主选中都不会把它们转换成 `SkillTarget`；误提交时
+route 返回 `skill_target_kind_mismatch`。
+
 ## 阶段与授权
 
 - `direct_response`：`solution_state=not_required`、`execution_authority=none`，直接交付并停止。
@@ -60,7 +65,11 @@ skill_id + entrypoint + snapshot_hash → ActiveSkill
 
 机器动作内容保存在当前 MCP 连接中。`ags_route_request` 只返回 `action_id` 与绑定证据；调用方只能提交 `lease_id`、`action_id` 和可选 outcome，不能重传 capability、input、argv 或路径。
 
-租约绑定 host、target、proposal、scope、registry、snapshot 与 policy hash。新 preflight、新 route、连接重置、任一绑定变化，或一次成功/失败消费都会使旧租约失效。租约没有 TTL；重放、跨连接、篡改和 host/target 冲突一律 fail closed。
+租约绑定 host、target、proposal、scope、静态 snapshot 内封存的 registry hash、
+snapshot hash 与 policy hash。route/apply 不读取现场 registry、overlay、PATH 或
+宿主目录。新 preflight、新 route、连接重置、显式快照替换后的 daemon 重启，或
+一次成功/失败消费都会使旧租约失效。租约没有 TTL；重放、跨连接、篡改和
+host/target 冲突一律 fail closed。
 
 不与 MachineCli 共存的精确 SkillTarget 同时得到一个受控 outcome action。宿主只能通过 apply 写入 `succeeded|failed|abandoned`；若用户纠正了技能选择，先把旧 decision 记为 `abandoned`，再提交同一 `request_fingerprint` 的新 proposal。该关联只进入离线质量评估，不触发在线改路由。
 

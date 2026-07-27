@@ -100,13 +100,13 @@ pub(super) fn tool_route_request_with_source(
         });
     }
 
-    let needs_capability_authority = proposal.targets.iter().any(|target| {
+    let needs_capability_catalog = proposal.targets.iter().any(|target| {
         matches!(
             target,
             ProposalTarget::Skill(_) | ProposalTarget::MachineCli(_)
         )
     });
-    if needs_capability_authority && capability_source.is_some() {
+    if needs_capability_catalog && capability_source.is_some() {
         let failure = binding
             .capability
             .as_ref()
@@ -126,46 +126,6 @@ pub(super) fn tool_route_request_with_source(
             );
         }
     }
-    let (authority_root, registry_hash) = if needs_capability_authority {
-        let root = match ags_capability_governance::resolve_capability_authority_root(
-            &binding.target,
-            runtime_home,
-            std::env::var_os("AGS_SOURCE_ROOT").map(PathBuf::from),
-        ) {
-            Ok(root) => root,
-            Err(error) => {
-                return blocked_route(
-                    binding,
-                    decision_id,
-                    proposal_id,
-                    ProposalError::new(
-                        "capability_authority_unresolved",
-                        "targets",
-                        error.to_string(),
-                    ),
-                );
-            }
-        };
-        let registry_bytes = match std::fs::read(root.join("manifests/skills-registry.yaml")) {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                return blocked_route(
-                    binding,
-                    decision_id,
-                    proposal_id,
-                    ProposalError::new(
-                        "capability_registry_unavailable",
-                        "targets",
-                        format!("capability registry read failed: {error}"),
-                    ),
-                );
-            }
-        };
-        let registry_hash = ags_capability_governance::sha256(&registry_bytes);
-        (Some(root), registry_hash)
-    } else {
-        (None, "sha256:not-applicable".to_string())
-    };
 
     // Resolve every read-only dependency before creating any held action. This
     // prevents target ordering from leaving an action behind when a later
@@ -174,7 +134,7 @@ pub(super) fn tool_route_request_with_source(
         ProposalTarget::Skill(skill) => Some(skill),
         _ => None,
     });
-    let current_snapshot = if authority_root.is_some() {
+    let current_snapshot = if needs_capability_catalog {
         let loaded = capability_source.map_or_else(
             || {
                 ags_session::LocalCapabilityCatalogSource::new(runtime_home.to_path_buf())
@@ -200,7 +160,6 @@ pub(super) fn tool_route_request_with_source(
             proposal,
             decision_id,
             proposal_id,
-            registry_hash,
         );
     };
     if capability_source.is_some()
@@ -223,6 +182,7 @@ pub(super) fn tool_route_request_with_source(
     }
     let snapshot = current_snapshot.snapshot;
     let table = current_snapshot.table;
+    let registry_hash = snapshot.registry_hash.clone();
     let (selected_skill, snapshot_hash) = if let Some(skill) = skill_target {
         if skill.snapshot_hash != snapshot.snapshot_hash {
             return blocked_route(
@@ -235,6 +195,31 @@ pub(super) fn tool_route_request_with_source(
                     "the proposal snapshot_hash does not match the current host snapshot",
                 ),
             );
+        }
+        if let Some(card) = snapshot
+            .catalog
+            .iter()
+            .find(|card| card.skill_id == skill.skill_id)
+        {
+            if card.routing_surface == ags_capability_governance::SkillRoutingSurface::HostCommand {
+                let hint = card
+                    .routing_hint
+                    .as_deref()
+                    .unwrap_or("invoke the installed host command directly");
+                return blocked_route(
+                    binding,
+                    decision_id,
+                    proposal_id,
+                    ProposalError::new(
+                        "skill_target_kind_mismatch",
+                        "targets.kind",
+                        format!(
+                            "{} is installed as a host command, not a routable SkillTarget; invoke `{hint}` directly",
+                            skill.skill_id
+                        ),
+                    ),
+                );
+            }
         }
         let selection = match ags_capability_governance::resolve_skill(
             &skill.skill_id,
@@ -405,7 +390,6 @@ pub(super) fn finish_route_without_governed_targets(
     proposal: HostRouteProposal,
     decision_id: String,
     proposal_id: String,
-    _registry_hash: String,
 ) -> Result<String, String> {
     let mut resolved_targets = proposal
         .targets

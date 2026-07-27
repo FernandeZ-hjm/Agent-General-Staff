@@ -193,8 +193,20 @@ pub(crate) fn skill_card(
     let retired = routing.is_some_and(|routing| routing.route_state == RouteState::Retired);
     let ignored = overlay.is_some_and(|entry| entry.state == OverlayEntryState::Ignored)
         || capability.managed_status == ManagedStatus::Ignored;
-    let routable = routing.is_some_and(|routing| routing.route_state == RouteState::Routable)
-        || overlay.is_some_and(|entry| entry.state == OverlayEntryState::Active);
+    let routing_surface = routing
+        .and_then(|routing| routing.routing_surface)
+        .unwrap_or_else(|| {
+            if routing.is_some_and(|routing| routing.route_state == RouteState::Routable)
+                || overlay.is_some_and(|entry| entry.state == OverlayEntryState::Active)
+            {
+                SkillRoutingSurface::SkillTarget
+            } else {
+                SkillRoutingSurface::NotRoutable
+            }
+        });
+    let routable = routing_surface == SkillRoutingSurface::SkillTarget
+        && (routing.is_some_and(|routing| routing.route_state == RouteState::Routable)
+            || overlay.is_some_and(|entry| entry.state == OverlayEntryState::Active));
     let registered = capability.registry_status == RegistryStatus::Registered;
     let governance = if retired {
         GovernanceState::Retired
@@ -214,7 +226,9 @@ pub(crate) fn skill_card(
     if governance == GovernanceState::Candidate || governance == GovernanceState::Discovered {
         reasons.push("candidate_requires_adoption".to_string());
     }
-    if governance == GovernanceState::ManagedInactive {
+    if governance == GovernanceState::ManagedInactive
+        && routing_surface == SkillRoutingSurface::NotRoutable
+    {
         reasons.push("registry_not_routable".to_string());
     }
     if retired {
@@ -286,9 +300,12 @@ pub(crate) fn skill_card(
         routing.route_state != RouteState::Routable
             || (!routing.examples.positive.is_empty() && !routing.examples.negative.is_empty())
     });
+    let host_command_hint_missing = routing_surface == SkillRoutingSurface::HostCommand
+        && routing.is_none_or(|routing| routing.invoke_hint.trim().is_empty());
     if declared_summary.is_none()
         || intent_tags.is_empty()
         || (routable && (!invoke_hint_present || !semantic_examples_complete))
+        || host_command_hint_missing
     {
         reasons.push("metadata_incomplete".to_string());
     }
@@ -299,9 +316,13 @@ pub(crate) fn skill_card(
         .map(|routing| routing.examples.negative.clone())
         .unwrap_or_default();
 
-    let availability = if governance == GovernanceState::Active && reasons.is_empty() {
+    let availability = if (governance == GovernanceState::Active
+        || routing_surface == SkillRoutingSurface::HostCommand)
+        && reasons.is_empty()
+    {
         AvailabilityState::Ready
-    } else if governance == GovernanceState::Active
+    } else if (governance == GovernanceState::Active
+        || routing_surface == SkillRoutingSurface::HostCommand)
         && reasons.iter().all(|reason| reason == "health_degraded")
     {
         AvailabilityState::Degraded {
@@ -331,6 +352,11 @@ pub(crate) fn skill_card(
         positive_examples,
         negative_examples,
         entrypoints,
+        routing_surface,
+        routing_hint: (routing_surface == SkillRoutingSurface::HostCommand)
+            .then(|| routing.map(|routing| routing.invoke_hint.trim().to_string()))
+            .flatten()
+            .filter(|hint| !hint.is_empty()),
         source_kind: source_kind(capability),
         governance,
         availability,

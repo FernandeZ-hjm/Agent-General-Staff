@@ -16,7 +16,7 @@ pub fn list_resources() -> ResourceListResult {
                 uri: crate::tools::CURRENT_HOST_CAPABILITIES_URI.to_string(),
                 name: "Current Host Capability Catalog".to_string(),
                 description: Some(
-                    "Preflight-bound, read-only HostCapabilitySnapshot. Hosts cache this thin catalog by snapshot_hash and submit exact skill identifiers."
+                    "Preflight-bound, read-only HostCapabilitySnapshot. Hosts cache this thin catalog by snapshot_hash, submit only routing_surface=skill_target rows as exact SkillTarget values, and invoke routing_surface=host_command rows directly through their frozen routing_hint."
                         .to_string(),
                 ),
                 mimeType: Some("application/json".to_string()),
