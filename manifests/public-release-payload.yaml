@@ -89,7 +89,7 @@ public_overlay_files:
   - path: .github/PULL_REQUEST_TEMPLATE.md
     target_sha256: "sha256:db405a38cf8f3eee040641ff912159568d74340d1f1cbc663c31c888d2a97f85"
   - path: .github/workflows/ci.yml
-    target_sha256: "sha256:d75fe3b9cde4d78d55a63ad1534efc05a430ee003702f0a0abd5e456518a55db"
+    target_sha256: "sha256:8e558d0729e0b7cd51ab6ce4827ca62c4ec121b836256e01d9d10af1caf15bd6"
   - path: .github/workflows/npm-publish.yml
     target_sha256: "sha256:5d9cd2e78d33747000b90853e77c16650f5a7bcc08de8966b7aa30543954aae5"
   - path: .github/workflows/release.yml

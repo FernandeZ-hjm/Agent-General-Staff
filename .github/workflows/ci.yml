@@ -63,7 +63,8 @@ jobs:
       - name: Verify (Rust-native local)
         run: ./target/release/ags verify --scope local --format text
 
-      # Supply-chain gate (repo-local deny.toml) + full Bash verify — Ubuntu only.
+      # Supply-chain gate (repo-local deny.toml) — Ubuntu only. The following
+      # Rust-native release gate owns the complete product verification.
       - name: Install cargo-deny
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -73,9 +74,9 @@ jobs:
             cargo install cargo-deny --locked
           fi
 
-      - name: Supply-chain + full verify (Bash)
+      - name: Supply-chain audit
         if: matrix.os == 'ubuntu-latest'
-        run: bash scripts/verify.sh
+        run: cargo deny check
 
       - name: Verify public release boundary
         if: matrix.os == 'ubuntu-latest'
