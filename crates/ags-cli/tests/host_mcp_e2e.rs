@@ -429,6 +429,35 @@ fn mcp_status_and_restart_control_the_workspace_daemon_through_the_cli_seam() {
     assert_eq!(second["state"], "running");
     assert_eq!(second["current_binary"], true);
     assert_ne!(second["pid"].as_u64().unwrap(), first_pid);
+
+    let status_output = environment
+        .command()
+        .args(["mcp", "status", "--target"])
+        .arg(&environment.project_a)
+        .output()
+        .unwrap();
+    assert!(
+        status_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&status_output.stderr)
+    );
+    let status: Value = serde_json::from_slice(&status_output.stdout).unwrap();
+    assert_eq!(status["state"], "running");
+    assert_eq!(status["current_binary"], true);
+    assert_eq!(status["pid"], second["pid"]);
+
+    #[cfg(unix)]
+    {
+        let daemon_pid = i32::try_from(second["pid"].as_u64().unwrap()).unwrap();
+        let daemon_session = unsafe { libc::getsid(daemon_pid) };
+        let caller_session = unsafe { libc::getsid(0) };
+        assert_ne!(daemon_session, -1);
+        assert_ne!(caller_session, -1);
+        assert_ne!(
+            daemon_session, caller_session,
+            "restart must detach the workspace daemon from the caller session"
+        );
+    }
 }
 
 #[test]

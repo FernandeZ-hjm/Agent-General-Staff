@@ -1,6 +1,10 @@
 use std::fs::OpenOptions;
 use std::io::{BufReader, Write};
 use std::net::{TcpListener, TcpStream};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -229,17 +233,20 @@ pub(super) fn connect_or_start(workspace: &Path) -> Result<(TcpStream, Workspace
         .open(&paths.diagnostics)
         .map_err(|error| format!("workspace daemon log open failed: {error}"))?;
     set_private_file(&paths.diagnostics);
-    let mut daemon = Command::new(
+    let mut daemon_command = Command::new(
         std::env::current_exe()
             .map_err(|error| format!("cannot resolve current executable: {error}"))?,
-    )
-    .args(["mcp", "workspace-daemon", "--workspace"])
-    .arg(workspace)
-    .stdin(Stdio::null())
-    .stdout(Stdio::null())
-    .stderr(Stdio::from(daemon_log))
-    .spawn()
-    .map_err(|error| format!("workspace daemon spawn failed: {error}"))?;
+    );
+    daemon_command
+        .args(["mcp", "workspace-daemon", "--workspace"])
+        .arg(workspace)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(daemon_log));
+    detach_daemon_process(&mut daemon_command);
+    let mut daemon = daemon_command
+        .spawn()
+        .map_err(|error| format!("workspace daemon spawn failed: {error}"))?;
     let _daemon_reaper = std::thread::spawn(move || {
         let _ = daemon.wait();
     });
@@ -256,6 +263,25 @@ pub(super) fn connect_or_start(workspace: &Path) -> Result<(TcpStream, Workspace
     };
     drop(lock);
     Ok(started)
+}
+
+fn detach_daemon_process(command: &mut Command) {
+    #[cfg(unix)]
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                Err(std::io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        });
+    }
+    #[cfg(windows)]
+    {
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    }
 }
 
 fn connect_current(

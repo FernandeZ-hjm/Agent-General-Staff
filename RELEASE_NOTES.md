@@ -1,5 +1,16 @@
 # Agent Governance Suite Release Notes
 
+## Release 0.3.7
+
+0.3.7 is a process-lifecycle hotfix for the `ags mcp restart` command introduced
+in 0.3.6. It does not change the 0.3.6 governance or wire schemas.
+
+- Workspace daemons now detach from the CLI caller session on Unix and from the
+  caller process group on Windows. Short-lived shells and host command runners
+  can exit without terminating the newly restarted daemon.
+- The MCP CLI E2E contract now verifies `restart -> status`, current-binary
+  identity, PID continuity, and Unix session isolation.
+
 ## Release 0.3.6
 
 0.3.6 is a direct protocol migration to one Rust governance kernel. It does not
