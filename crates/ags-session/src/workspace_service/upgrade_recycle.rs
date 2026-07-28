@@ -244,8 +244,7 @@ pub(super) fn connect_or_start(workspace: &Path) -> Result<(TcpStream, Workspace
         .stdout(Stdio::null())
         .stderr(Stdio::from(daemon_log));
     detach_daemon_process(&mut daemon_command);
-    let mut daemon = daemon_command
-        .spawn()
+    let mut daemon = spawn_daemon(&mut daemon_command)
         .map_err(|error| format!("workspace daemon spawn failed: {error}"))?;
     let _daemon_reaper = std::thread::spawn(move || {
         let _ = daemon.wait();
@@ -281,6 +280,64 @@ fn detach_daemon_process(command: &mut Command) {
         const DETACHED_PROCESS: u32 = 0x0000_0008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
         command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    }
+}
+
+fn spawn_daemon(command: &mut Command) -> std::io::Result<std::process::Child> {
+    #[cfg(windows)]
+    let _stdio_guard = WindowsStdioInheritanceGuard::clear()?;
+    command.spawn()
+}
+
+#[cfg(windows)]
+struct WindowsStdioInheritanceGuard {
+    handles: Vec<windows_sys::Win32::Foundation::HANDLE>,
+}
+
+#[cfg(windows)]
+impl WindowsStdioInheritanceGuard {
+    fn clear() -> std::io::Result<Self> {
+        use windows_sys::Win32::Foundation::{
+            GetHandleInformation, SetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+        };
+        use windows_sys::Win32::System::Console::{
+            GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+        };
+
+        let mut guard = Self {
+            handles: Vec::new(),
+        };
+        for standard_handle in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+            let handle = unsafe { GetStdHandle(standard_handle) };
+            if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+                continue;
+            }
+            let mut flags = 0;
+            if unsafe { GetHandleInformation(handle, &mut flags) } == 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if flags & HANDLE_FLAG_INHERIT == 0 {
+                continue;
+            }
+            if unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) } == 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            guard.handles.push(handle);
+        }
+        Ok(guard)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for WindowsStdioInheritanceGuard {
+    fn drop(&mut self) {
+        use windows_sys::Win32::Foundation::{SetHandleInformation, HANDLE_FLAG_INHERIT};
+
+        for handle in &self.handles {
+            unsafe {
+                SetHandleInformation(*handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+            }
+        }
     }
 }
 

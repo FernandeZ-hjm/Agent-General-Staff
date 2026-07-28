@@ -400,7 +400,6 @@ fn mcp_status_and_restart_control_the_workspace_daemon_through_the_cli_seam() {
 
     let first_output = environment
         .command()
-        .env("AGS_WORKSPACE_IDLE_MS", "30000")
         .args(["mcp", "restart", "--target"])
         .arg(&environment.project_a)
         .output()
@@ -417,7 +416,6 @@ fn mcp_status_and_restart_control_the_workspace_daemon_through_the_cli_seam() {
 
     let second_output = environment
         .command()
-        .env("AGS_WORKSPACE_IDLE_MS", "30000")
         .args(["mcp", "restart", "--target"])
         .arg(&environment.project_a)
         .output()
@@ -460,20 +458,6 @@ fn mcp_status_and_restart_control_the_workspace_daemon_through_the_cli_seam() {
             "restart must detach the workspace daemon from the caller session"
         );
     }
-
-    let cleanup_output = environment
-        .command()
-        .env("AGS_WORKSPACE_IDLE_MS", "100")
-        .args(["mcp", "restart", "--target"])
-        .arg(&environment.project_a)
-        .output()
-        .unwrap();
-    assert!(
-        cleanup_output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&cleanup_output.stderr)
-    );
-    std::thread::sleep(Duration::from_millis(250));
 }
 
 #[test]
