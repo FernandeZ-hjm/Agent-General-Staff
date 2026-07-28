@@ -18,11 +18,30 @@ from pathlib import Path
 # scheduler jitter into a release verdict. Twenty-one remains a small fixed
 # sample while making p95 independent of one isolated outlier.
 SAMPLES = 21
+MEDIAN_RATIO = 1.05
+P95_RATIO = 1.10
+RSS_RATIO = 1.10
+# A ratio-only threshold turns scheduler and timer jitter into a release
+# verdict: 0.01 ms already exceeds 5% for the in-process route path, while
+# spawning a stdio adapter moves by about 1 ms across same-binary runs. Keep the
+# ratio gate and also require a path-specific material absolute delta.
+MEDIAN_FLOOR_MS = {
+    "preflight_ms": 0.5,
+    "snapshot_refresh_ms": 2.0,
+    "daemon_reconnect_ms": 2.0,
+    "route_request_ms": 0.1,
+}
 
 
 def percentile(values: list[float], fraction: float) -> float:
     ordered = sorted(values)
     return ordered[min(len(ordered) - 1, math.ceil(len(ordered) * fraction) - 1)]
+
+
+def median_regressed(name: str, baseline: float, candidate: float) -> bool:
+    ratio_exceeded = candidate > baseline * MEDIAN_RATIO
+    floor = MEDIAN_FLOOR_MS[name]
+    return ratio_exceeded and candidate > baseline + floor
 
 
 class Bench:
@@ -313,18 +332,27 @@ def main() -> None:
         "daemon_reconnect_ms",
         "route_request_ms",
     ):
-        if candidate_result[name]["median"] > baseline_result[name]["median"] * 1.05:
+        if median_regressed(
+            name,
+            baseline_result[name]["median"],
+            candidate_result[name]["median"],
+        ):
             failures.append(f"{name} median exceeds 105%")
-        if candidate_result[name]["p95"] > baseline_result[name]["p95"] * 1.10:
+        if candidate_result[name]["p95"] > baseline_result[name]["p95"] * P95_RATIO:
             failures.append(f"{name} p95 exceeds 110%")
-    if candidate_result["peak_rss_kib"] > baseline_result["peak_rss_kib"] * 1.10:
+    if candidate_result["peak_rss_kib"] > baseline_result["peak_rss_kib"] * RSS_RATIO:
         failures.append("peak RSS exceeds 110%")
 
     report = {
         "schema_version": "ags-workspace-performance/1",
         "samples": SAMPLES,
         "rss_scope": "live_stdio_adapter_plus_workspace_daemon_unique_pids",
-        "thresholds": {"median_ratio": 1.05, "p95_ratio": 1.10, "rss_ratio": 1.10},
+        "thresholds": {
+            "median_ratio": MEDIAN_RATIO,
+            "median_floor_ms": MEDIAN_FLOOR_MS,
+            "p95_ratio": P95_RATIO,
+            "rss_ratio": RSS_RATIO,
+        },
         "baseline": baseline_result,
         "candidate": candidate_result,
         "failures": failures,

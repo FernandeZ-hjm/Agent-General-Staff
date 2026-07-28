@@ -38,6 +38,10 @@ high-value proof without restoring retired runtime complexity.
 - CLI commands now share one closed `text | json` output seam. Domain text
   renderers remain separate, while JSON serialization failures are reported
   consistently instead of silently becoming empty output.
+- The fixed-sample performance gate keeps its 5% median and 10% p95/RSS
+  thresholds. Each timed path also declares a small absolute materiality floor,
+  preventing microsecond timer noise and macOS process-scheduler jitter from
+  producing contradictory pass/fail results.
 
 Promotion remains private authority → stable → public. Public `main` and
 exact-commit CI must pass before the annotated `v0.3.5` tag, release assets,

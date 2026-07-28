@@ -14,6 +14,13 @@ SPEC.loader.exec_module(benchmark)
 
 
 class WorkspaceServiceRssTest(unittest.TestCase):
+    def test_median_requires_relative_and_material_absolute_regression(self) -> None:
+        self.assertFalse(benchmark.median_regressed("daemon_reconnect_ms", 13.0, 14.5))
+        self.assertTrue(benchmark.median_regressed("daemon_reconnect_ms", 13.0, 15.1))
+        self.assertFalse(benchmark.median_regressed("route_request_ms", 0.2, 0.22))
+        self.assertTrue(benchmark.median_regressed("route_request_ms", 0.2, 0.31))
+        self.assertTrue(benchmark.median_regressed("preflight_ms", 10.0, 10.6))
+
     def test_session_rss_sums_live_adapter_and_daemon(self) -> None:
         bench = object.__new__(benchmark.Bench)
         with mock.patch.object(
