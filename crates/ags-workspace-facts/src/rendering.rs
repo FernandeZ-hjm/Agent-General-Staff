@@ -303,14 +303,15 @@ pub fn render_session_preflight_text(preflight: &SessionPreflight) -> String {
     }
     let ml = &preflight.memory_lifecycle;
     lines.push(format!(
-        "Lifecycle:       {} host={} adapter={} (read={}, write={}, archive={}, scripts={})",
+        "Lifecycle:       {} host={} adapter={} (read={}, write={}, stop-guard={}, archive={}, kernel-backed={})",
         ml.status,
         ml.host,
         ml.adapter,
         ml.read_wired,
         ml.write_wired,
+        ml.stop_guard_wired,
         ml.archive_ready,
-        ml.scripts_present
+        ml.kernel_backed
     ));
     lines.push(format!("  {}", ml.summary));
     lines.push(String::new());

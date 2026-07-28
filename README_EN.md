@@ -12,9 +12,9 @@ verification, receipts, and memory closure. It does not schedule Agent teams
 and is not a task queue, parallel executor, or multi-Agent negotiation runtime.
 
 This repository is the public AGS distribution, licensed **GPL-3.0-only**. The
-current product version and latest release are **v0.3.5**.
+current product version and latest release are **v0.3.6**.
 
-## v0.3.5 governance flow
+## v0.3.6 governance flow
 
 ```text
 human request
@@ -66,7 +66,7 @@ ags mcp serve --transport stdio
 
 ## Twelve major modules
 
-The v0.3.5 runtime workspace exposes exactly twelve authoritative Cargo
+The v0.3.6 runtime workspace exposes exactly twelve authoritative Cargo
 packages:
 
 | Module | Responsibility |
@@ -87,7 +87,7 @@ packages:
 The former `bootstrap-dry-run`, `capability-registry`,
 `delivery-report-validator`, `execution-policy`, `runner`, `skill-governance`,
 `suite-doctor`, `task-card-validator`, and `workflow-sync-check`
-implementations have moved under their authoritative modules. v0.3.5 retains
+implementations have moved under their authoritative modules. v0.3.6 retains
 only commands, wire/schema types, and re-exports with current callers, not old
 aliases or a second package authority. See [WORKSPACE.md](WORKSPACE.md) and
 [docs/architecture.md](docs/architecture.md).
@@ -99,15 +99,17 @@ aliases or a second package authority. See [WORKSPACE.md](WORKSPACE.md) and
 | Codex | supported | global/project skills | SessionStart / SessionEnd adapter | native MCP registration probe + MCP process E2E |
 | Claude Code | supported | `/ags` and skills | SessionStart / Stop adapter | native MCP connection probe + MCP process E2E |
 | OMP | supported; may reuse Codex config | native/shared skills | OMP lifecycle extension | native RPC discoverability probe + MCP process E2E |
-| Cursor | supported | host/project skill projection | no complete native memory-closure claim | MCP process E2E; the v0.3.5 native CLI probe was explicitly waived because the local keychain was locked |
+| Cursor | supported | host/project skill projection | native sessionStart / sessionEnd / stop hooks | native `cursor-agent mcp list` read-only probe + lifecycle/MCP process E2E |
 | CodeBuddy-Code / WorkBuddy | MCP onboarding | setup-generated configuration snippets | no complete native memory-closure claim | initialization and static/visibility verification |
 
 The E2E suite launches the real `ags` stdio adapter and workspace daemon. It
 covers same-workspace sharing, cross-project isolation, reconnects, foreign
 lease rejection, snapshot rebind, idle recycling, and upgrades. It is not GUI
 automation for each host product.
-This waiver removes a release blocker; it does not turn the Cursor native probe
-into a pass, and the failed evidence remains disclosed.
+Cursor memory closure and external MCP registration are independent facts. AGS
+can install and verify native lifecycle hooks and inspect registration through
+`cursor-agent mcp list`; writing Cursor MCP configuration remains
+operator-controlled.
 
 ## Current limitations
 
@@ -119,8 +121,8 @@ into a pass, and the failed evidence remains disclosed.
   negotiation runtime.
 - External MCP/CLI registration is usually advice-only. AGS does not run
   third-party installers for the user.
-- Cursor, CodeBuddy-Code, and WorkBuddy do not yet have native memory-close
-  evidence equivalent to Codex, Claude Code, and OMP.
+- Codex, Claude Code, Cursor, and OMP share one Rust lifecycle contract; host
+  files only map native events.
 - The public edition does not carry private skill bodies, real
   memory/receipt/archive data, or machine-private runtime state.
 
@@ -139,8 +141,6 @@ OS/architecture, verifies `SHA256SUMS`, caches the verified binary, and starts
 To install from source:
 
 ```bash
-bash scripts/install.sh
-# or
 cargo install --path crates/ags-cli --locked --force
 ags setup --yes --force
 ```
@@ -159,7 +159,7 @@ and apply never refresh it over the network.
 
 ## Stable command surface
 
-v0.3.5 supports only the current command surface below. Removed legacy
+v0.3.6 supports only the current command surface below. Removed legacy
 commands, aliases, and plan-only fake actions are not compatibility contracts.
 
 ```bash
@@ -171,6 +171,10 @@ ags agents --help
 ags capability --help
 ags skill --help
 ags update --help
+ags mcp --help
+ags memory --help
+ags host lifecycle --help
+ags task close --help
 ```
 
 Mutating actions still require explicit `--apply` or `--yes` and remain subject
@@ -178,9 +182,9 @@ to existing confirmation, policy, and lease gates.
 
 ## Host-internal contracts and execution boundary
 
-`task`, `policy`, `project`, `session`, `verify`, and `run` are hidden Machine
-CLI contracts used by AGS hosts and MCP. They are not part of the human command
-surface and users are not expected to invoke them directly.
+`policy`, `project`, `session`, and `run` primarily serve host/MCP Machine CLI
+contracts. `task validate/close`, `memory`, `mcp`, and `verify` are also
+explicit operator interfaces.
 
 Without an explicit handoff instruction or confirmed handoff contract, the
 compiler may return diagnostics but cannot emit an executable card. `ags run`
@@ -191,11 +195,10 @@ policy, evaluates the gate, and returns a structured
 ## Verification
 
 ```bash
-bash scripts/verify.sh
-
 cargo fmt --check
 RUSTFLAGS="-D warnings" cargo test
 cargo build --release
+ags verify --scope release
 git diff --check
 ```
 
@@ -207,19 +210,19 @@ assets, and remote CI for the exact public commit.
 ## License and release
 
 - License: **GPL-3.0-only**
-- Latest: **v0.3.5**
-- Current contract: v0.3.5 human/Machine CLI
+- Latest: **v0.3.6**
+- Current contract: v0.3.6 human/Machine CLI
 - History: v0.3.1 release notes remain historical, not current
 
 Release ordering is fixed:
 
 1. Push the public-safe source to GitHub `main` and wait for exact-commit CI.
-2. Align Cargo, npm, manifests, docs, and release notes to `0.3.5`.
-3. The maintainer explicitly pushes the annotated `v0.3.5` tag.
+2. Align Cargo, npm, manifests, docs, and release notes to `0.3.6`.
+3. The maintainer explicitly pushes the annotated `v0.3.6` tag.
 4. The tag workflow builds five platform assets, `SHA256SUMS`, and provenance.
 5. After the Release assets are complete, manually dispatch the npm OIDC
    trusted-publisher workflow and publish
-   `@agent-governance-suite/mcp@0.3.5` as latest.
+   `@agent-governance-suite/mcp@0.3.6` as latest.
 
 Daily CI, the synchronization guard, and the npm workflow never create tags.
 

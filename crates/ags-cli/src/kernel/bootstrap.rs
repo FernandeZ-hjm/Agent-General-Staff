@@ -18,7 +18,13 @@ fn cmd_bootstrap_apply(target: &Path, format: &str) {
     let source_repo = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     ensure_bootstrap_source_repo(&source_repo);
 
-    let plan = ags_verification::bootstrap::plan(&source_repo, target);
+    let plan = ags_verification::bootstrap::plan(&source_repo, target).unwrap_or_else(|errors| {
+        eprintln!("ags bootstrap: canonical payload authority is invalid:");
+        for error in errors {
+            eprintln!("  - {error}");
+        }
+        std::process::exit(1);
+    });
 
     // Execute plan
     let report = ags_verification::bootstrap::apply(&source_repo, &plan);

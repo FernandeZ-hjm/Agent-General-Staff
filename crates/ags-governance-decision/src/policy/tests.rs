@@ -5,11 +5,11 @@ fn input() -> TaskPolicyInput {
         executor: "Claude Code".into(),
         runtime_adapter: "claude-code".into(),
         execution_surface: "cli".into(),
-        permission_mode: "execute-and-verify".into(),
-        parallelism: "none".into(),
+        execution_mode: "single-writer".into(),
+        execution_topology: "single".into(),
         task_level: "Medium".into(),
         execution_effort: Some("normal".into()),
-        workflow_authority: Some("none".into()),
+        delegation_planning: Some("no".into()),
         approval_source: ApprovalSource::None,
     }
 }
@@ -22,8 +22,8 @@ fn task_level_does_not_grant_or_remove_execution_authority() {
             ..input()
         });
         assert_eq!(
-            policy.effective_permission_mode,
-            PermissionMode::ExecuteAndVerify,
+            policy.effective_execution_mode,
+            ExecutionMode::SingleWriter,
             "{level}"
         );
         assert!(!policy.was_downgraded, "{level}");
@@ -36,9 +36,9 @@ fn declared_plan_only_never_emits_write_or_parallel_flags() {
     for adapter in ["claude-code", "codex-local", "cursor", "omp", "generic"] {
         let policy = resolve_policy(TaskPolicyInput {
             runtime_adapter: adapter.into(),
-            permission_mode: "plan-only".into(),
-            parallelism: "worktree".into(),
-            workflow_authority: Some("allowed".into()),
+            execution_mode: "plan-only".into(),
+            execution_topology: "worktree".into(),
+            delegation_planning: Some("no".into()),
             ..input()
         });
         let args = policy.allowed_launch_args.join(" ");
@@ -55,29 +55,52 @@ fn declared_plan_only_never_emits_write_or_parallel_flags() {
 }
 
 #[test]
-fn parallelism_requires_declared_workflow_authority() {
-    for (authority, expected) in [
-        ("none", Parallelism::None),
-        ("allowed", Parallelism::Worktree),
-    ] {
+fn launch_arg_generator_blocks_plan_only_write_flags() {
+    let policy_input = TaskPolicyInput {
+        execution_mode: "plan-only".into(),
+        execution_topology: "worktree".into(),
+        ..input()
+    };
+    let mut policy = resolve_policy(policy_input.clone());
+    policy.allowed_launch_args.clear();
+    policy.effective_execution_topology = ExecutionTopology::Worktree;
+    rules::generate_launch_args(&policy_input, &mut policy);
+    assert!(
+        !policy
+            .allowed_launch_args
+            .iter()
+            .any(|arg| matches!(arg.as_str(), "--parallel" | "--worktree" | "--headless")),
+        "{:?}",
+        policy.allowed_launch_args
+    );
+}
+
+#[test]
+fn delegation_planning_does_not_grant_writer_scope_or_topology() {
+    for planning in ["no", "yes"] {
         let policy = resolve_policy(TaskPolicyInput {
-            parallelism: "worktree".into(),
-            workflow_authority: Some(authority.into()),
+            execution_topology: "worktree".into(),
+            delegation_planning: Some(planning.into()),
             ..input()
         });
-        assert_eq!(policy.effective_parallelism, expected, "{authority}");
+        assert_eq!(policy.effective_execution_mode, ExecutionMode::SingleWriter);
+        assert_eq!(
+            policy.effective_execution_topology,
+            ExecutionTopology::Worktree
+        );
+        assert_eq!(policy.delegation_planning, planning == "yes");
     }
 }
 
 #[test]
 fn generic_adapter_requires_structured_write_approval() {
     for (approval, expected) in [
-        (ApprovalSource::None, PermissionMode::PlanOnly),
+        (ApprovalSource::None, ExecutionMode::PlanOnly),
         (
             ApprovalSource::CurrentTaskInstruction,
-            PermissionMode::ExecuteAndVerify,
+            ExecutionMode::SingleWriter,
         ),
-        (ApprovalSource::CliFlag, PermissionMode::ExecuteAndVerify),
+        (ApprovalSource::CliFlag, ExecutionMode::SingleWriter),
     ] {
         let policy = resolve_policy(TaskPolicyInput {
             executor: "Other".into(),
@@ -85,7 +108,7 @@ fn generic_adapter_requires_structured_write_approval() {
             approval_source: approval.clone(),
             ..input()
         });
-        assert_eq!(policy.effective_permission_mode, expected, "{approval:?}");
+        assert_eq!(policy.effective_execution_mode, expected, "{approval:?}");
     }
 }
 
@@ -98,12 +121,12 @@ fn exhaustive_effort_changes_only_thinking_intensity() {
     });
     assert!(exhaustive.is_exhaustive_mode);
     assert_eq!(
-        exhaustive.effective_permission_mode,
-        normal.effective_permission_mode
+        exhaustive.effective_execution_mode,
+        normal.effective_execution_mode
     );
     assert_eq!(
-        exhaustive.effective_parallelism,
-        normal.effective_parallelism
+        exhaustive.effective_execution_topology,
+        normal.effective_execution_topology
     );
     assert_eq!(exhaustive.allowed_launch_args, normal.allowed_launch_args);
 }
@@ -114,9 +137,9 @@ fn gate_decision_is_derived_from_stop_before_launch() {
         (input(), GateDecision::Allow),
         (
             TaskPolicyInput {
-                permission_mode: "plan-only".into(),
-                parallelism: "worktree".into(),
-                workflow_authority: Some("allowed".into()),
+                execution_mode: "plan-only".into(),
+                execution_topology: "worktree".into(),
+                delegation_planning: Some("no".into()),
                 ..input()
             },
             GateDecision::Stop,
@@ -134,9 +157,9 @@ fn gate_decision_is_derived_from_stop_before_launch() {
 #[test]
 fn stopped_policy_exposes_no_launch_arguments() {
     let policy = resolve_policy(TaskPolicyInput {
-        permission_mode: "plan-only".into(),
-        parallelism: "worktree".into(),
-        workflow_authority: Some("allowed".into()),
+        execution_mode: "plan-only".into(),
+        execution_topology: "worktree".into(),
+        delegation_planning: Some("no".into()),
         ..input()
     });
     assert!(policy.stop_before_launch);
@@ -148,10 +171,7 @@ fn approval_mapping_uses_only_structured_signals() {
     let fields = std::collections::HashMap::from([
         ("Executor:".to_string(), "Other".to_string()),
         ("Runtime adapter:".to_string(), "generic".to_string()),
-        (
-            "Permission mode:".to_string(),
-            "execute-and-verify".to_string(),
-        ),
+        ("Execution mode:".to_string(), "single-writer".to_string()),
     ]);
     assert_eq!(
         TaskPolicyInput::from_fields(&fields).approval_source,
@@ -175,7 +195,7 @@ fn structured_failure_and_explain_outputs_keep_their_contract() {
 
     let explanation = explain_policy(&input());
     let json = serde_json::to_value(explanation).unwrap();
-    assert_eq!(json["schema_version"], "0.3.5-execution-policy");
+    assert_eq!(json["schema_version"], "0.3.6-execution-policy");
     assert!(json.get("task_summary").is_some());
     assert!(json.get("resolved_policy").is_some());
 }
@@ -183,7 +203,7 @@ fn structured_failure_and_explain_outputs_keep_their_contract() {
 #[test]
 fn resolved_policy_json_has_one_stable_schema() {
     let value = serde_json::to_value(resolve_policy(input())).unwrap();
-    assert_eq!(value["schema_version"], "0.3.5-execution-policy");
-    assert!(value.get("effective_permission_mode").is_some());
+    assert_eq!(value["schema_version"], "0.3.6-execution-policy");
+    assert!(value.get("effective_execution_mode").is_some());
     assert!(value.get("allowed_launch_args").is_some());
 }

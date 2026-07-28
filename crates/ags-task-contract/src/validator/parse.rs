@@ -110,12 +110,12 @@ pub(crate) fn field_val<'a>(fields: &'a HashMap<String, String>, key: &str) -> &
     fields.get(key).map(|s| s.as_str()).unwrap_or("")
 }
 
-/// Get Workflow authority, defaulting to "none" when absent.
-pub(crate) fn get_workflow_authority(fields: &HashMap<String, String>) -> &str {
+/// Get Delegation planning, defaulting to "no" when absent.
+pub(crate) fn get_delegation_planning(fields: &HashMap<String, String>) -> &str {
     fields
-        .get("Workflow authority:")
+        .get("Delegation planning:")
         .map(|s| s.as_str())
-        .unwrap_or("none")
+        .unwrap_or("no")
 }
 
 /// Get the `子任务编排` (subtask orchestration) mode from the slot block.

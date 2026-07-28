@@ -1,5 +1,5 @@
 use super::*;
-use ags_governance_decision::policy::{ApprovalSource, Parallelism, PermissionMode};
+use ags_governance_decision::policy::{ApprovalSource, ExecutionMode, ExecutionTopology};
 use std::path::PathBuf;
 
 const VALID_CARD: &str = include_str!("../../../../tests/fixtures/valid-full.md");
@@ -22,9 +22,10 @@ fn omp_resolves_to_native_host_handoff() {
     let policy = ResolvedExecutionPolicy {
         executor: "OMP".into(),
         runtime_adapter: "omp".into(),
-        effective_permission_mode: PermissionMode::ExecuteAndVerify,
-        effective_parallelism: Parallelism::None,
+        effective_execution_mode: ExecutionMode::SingleWriter,
+        effective_execution_topology: ExecutionTopology::Single,
         effective_execution_surface: "cli".into(),
+        delegation_planning: false,
         allowed_launch_args: vec![],
         stop_before_launch: false,
         stop_reasons: vec![],
@@ -86,6 +87,14 @@ fn card_without_skill_tags_prepares_host_execution() {
         GovernanceStatus::HostExecutionRequired
     );
     assert!(plan.host_execution_required);
+    assert_eq!(plan.schema_version, "0.3.6-launch-plan");
+    assert!(!plan.task_card_hash.is_empty());
+    assert!(!plan.launch_plan_hash.is_empty());
+    let value = serde_json::to_value(&plan).unwrap();
+    assert_eq!(
+        canonical_launch_plan_hash(&value).unwrap(),
+        plan.launch_plan_hash
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

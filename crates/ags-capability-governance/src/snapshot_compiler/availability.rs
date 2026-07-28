@@ -156,7 +156,7 @@ pub(super) fn third_party_availability(
 pub(crate) struct NoProcessDiscovery;
 
 impl CommandRunner for NoProcessDiscovery {
-    fn run(&self, _program: &str, _args: &[&str]) -> CommandOutcome {
+    fn run(&self, _spec: &ags_host_integration::McpProbeSpec) -> CommandOutcome {
         CommandOutcome::Unavailable
     }
 }

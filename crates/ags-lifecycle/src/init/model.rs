@@ -5,7 +5,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 pub(crate) const AGS_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub(crate) const PROJECT_INIT_SCHEMA: &str = "0.3.5-project-init";
+pub(crate) const PROJECT_INIT_SCHEMA: &str = "0.3.6-project-init";
 #[derive(Debug, Clone)]
 pub struct InitFile {
     pub path: PathBuf,

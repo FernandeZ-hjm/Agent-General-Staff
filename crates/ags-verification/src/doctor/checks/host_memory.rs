@@ -11,7 +11,7 @@ use super::*;
 // advisory (Warn/Skip) so a
 // not-yet-bootstrapped machine reports the gap without blocking the gate.
 
-const RAW_GUARD_MARKER: &str = "raw-tool-call-stop-guard";
+const RAW_GUARD_MARKER: &str = "host lifecycle --event stop-guard";
 
 /// Project slug from `config/agent-project-profile.yaml` `project.slug`,
 /// falling back to the repository directory name.
@@ -83,52 +83,29 @@ pub(super) fn newest_subdir_mtime(dir: &Path) -> Option<std::time::SystemTime> {
     newest
 }
 
-/// Check that the AGS context-memory capture scripts are installed on the host
-/// (`$HOME/.agents/scripts/`). Advisory: missing scripts warn, never fail.
-pub fn memory_capture_scripts_present() -> Finding {
+/// Check the only non-Rust lifecycle asset: OMP's required thin JS extension.
+pub fn omp_lifecycle_extension_present() -> Finding {
     match ags_platform::home_dir() {
-        Some(h) => memory_capture_scripts_present_at(&h),
+        Some(h) => omp_lifecycle_extension_present_at(&h),
         None => Finding::skip(
-            "memory_capture_scripts_present",
-            "home directory not set — cannot locate ~/.agents/scripts",
+            "omp_lifecycle_extension_present",
+            "home directory not set — cannot locate the OMP extension",
         ),
     }
 }
 
-pub(super) fn memory_capture_scripts_present_at(home: &Path) -> Finding {
-    let check = "memory_capture_scripts_present";
-    let scripts = home.join(".agents/scripts");
-    let raw = scripts.join("raw-tool-call-stop-guard.js");
-    let ctx = scripts.join("context-memory.sh");
-    let start = scripts.join("context-memory-start.py");
-    let cap = scripts.join("claude-stop-memory-capture.py");
+pub(super) fn omp_lifecycle_extension_present_at(home: &Path) -> Finding {
+    let check = "omp_lifecycle_extension_present";
     let omp = home.join(".omp/agent/extensions/ags-memory-lifecycle.js");
-    let missing: Vec<&str> = [
-        ("raw-tool-call-stop-guard.js", &raw),
-        ("context-memory.sh", &ctx),
-        ("context-memory-start.py", &start),
-        ("claude-stop-memory-capture.py", &cap),
-        (".omp/agent/extensions/ags-memory-lifecycle.js", &omp),
-    ]
-    .into_iter()
-    .filter(|(_, p)| !p.is_file())
-    .map(|(n, _)| n)
-    .collect();
-    if missing.is_empty() {
+    if omp.is_file() {
         Finding::pass(
             check,
-            format!(
-                "memory lifecycle scripts and OMP extension present under {}",
-                scripts.display()
-            ),
+            format!("OMP thin lifecycle extension present at {}", omp.display()),
         )
     } else {
         Finding::warn(
             check,
-            format!(
-                "memory start/capture scripts missing: {}",
-                missing.join(", ")
-            ),
+            "OMP thin lifecycle extension is missing",
             "Run `ags setup --yes`, then `ags agents govern --apply` to install AGS-owned host memory adapters.",
         )
     }
@@ -295,7 +272,7 @@ pub(super) fn host_skill_body_singleton_check_at(repo_root: &Path, home: &Path) 
     )
 }
 
-/// Check that the raw-tool-call Stop guard is preserved in the Stop pipeline.
+/// Check that the Rust raw-tool-call Stop guard is preserved in the Stop pipeline.
 pub fn raw_tool_call_stop_guard_present(repo_root: &Path) -> Finding {
     let check = "raw_tool_call_stop_guard_present";
     if is_public_edition(repo_root) {
@@ -307,17 +284,17 @@ pub fn raw_tool_call_stop_guard_present(repo_root: &Path) -> Finding {
     match stop_hook_commands(&repo_root.join(".claude/settings.json")) {
         Some(cmds) if cmds.iter().any(|c| c.contains(RAW_GUARD_MARKER)) => Finding::pass(
             check,
-            "raw-tool-call-stop-guard.js present in Stop pipeline",
+            "Rust host lifecycle stop-guard present in Stop pipeline",
         ),
         Some(_) => Finding::warn(
             check,
-            "raw-tool-call-stop-guard.js missing from Stop pipeline",
-            "The raw guard must run first; restore it before the project memory capture step.",
+            "Rust host lifecycle stop-guard missing from Stop pipeline",
+            "Restore `ags host lifecycle --event stop-guard` as the first Stop hook.",
         ),
         None => Finding::warn(
             check,
             "no readable Stop pipeline in .claude/settings.json",
-            "Restore .claude/settings.json with the raw guard as the first Stop hook.",
+            "Restore .claude/settings.json with the Rust lifecycle guard as the first Stop hook.",
         ),
     }
 }
@@ -362,7 +339,7 @@ pub(super) fn project_task_memory_status_at(repo_root: &Path, home: &Path) -> Fi
         (Some(tm), Some(arch)) if arch > tm => Finding::warn(
             check,
             "task-memory.md is stale (newer task archives exist)",
-            "Re-run the Stop capture chain or `context-memory.sh capture` to refresh it.",
+            "Run `ags memory archive <receipt>` or SessionEnd after a verified `ags task close`.",
         ),
         _ => Finding::pass(
             check,
@@ -500,7 +477,6 @@ pub(super) fn lifecycle_to_finding(
             "Run `ags init --target <project>` to recreate the project memory store, then `ags agents govern --agent <host> --apply` to install that host's AGS-owned native adapter.",
         ),
         "absent" => Finding::skip(check, &ml.summary),
-        "unbacked" => Finding::warn(check, "memory hooks unbacked", &ml.summary),
         "read-only" => Finding::warn(check, "memory lifecycle read-only", &ml.summary),
         "write-only" => Finding::warn(check, "memory lifecycle write-only", &ml.summary),
         "files-only" => Finding::warn(check, "memory lifecycle files-only", &ml.summary),

@@ -1,5 +1,54 @@
 # Agent Governance Suite Release Notes
 
+## Release 0.3.6
+
+0.3.6 is a direct protocol migration to one Rust governance kernel. It does not
+retain legacy authority fields, closure schemas, Python implementations, or
+hidden compatibility entrypoints.
+
+- Task authority is now the explicit tuple `Execution mode`, `Execution
+  topology`, and `Delegation planning`. The retired `Permission mode`,
+  `Parallelism`, `Workflow authority`, `limited`, and `execute-and-verify`
+  values are rejected rather than translated.
+- `0.3.6-launch-plan` deterministically binds the task-card hash, effective
+  authority, resolved launch arguments, downgrade reasons, and its own
+  content-derived hash.
+- Closure schema 1.1 reports actual mode, topology, and delegation use.
+  `ags task close <card> <plan> <report> --receipt-out <receipt>` verifies the
+  complete chain, enforces downscope-only execution, emits a
+  `0.3.6-task-receipt`, and atomically writes the lifecycle closure pointer.
+- Memory archives only verified receipts and their three hash-bound source
+  artifacts. SessionEnd no longer searches transcripts or messages for task
+  cards; a missing closure pointer produces a safe skipped close receipt.
+- Codex, Claude Code, Cursor, and OMP share one Rust Host Adapter contract.
+  Cursor uses its native lowercase `sessionStart` / `sessionEnd` / `stop`
+  command hooks and native `additional_context` / `followup_message` response
+  fields; `cursor-agent mcp list` supplies its read-only registration probe
+  without depending on the locked macOS login keychain. OMP itself is unchanged;
+  its required JavaScript extension now only registers events, invokes
+  `ags host lifecycle`, and maps the returned envelope.
+- First-party validation, mutation testing, release staging, performance
+  measurement, lifecycle, stop guarding, and archive logic are Rust-owned.
+  Retired Python and shell implementations are absent from the release payload.
+- `ags mcp status` and `ags mcp restart` place process ownership at the
+  CLI/lifecycle boundary. The MCP server does not restart itself.
+- MCP request-time self-integrity is restored using a complete executable
+  content hash for every governed request. Versions 0.3.4 and 0.3.5 intentionally
+  lacked this check after the unreliable metadata shortcut was removed.
+- The Rust mutation gate requires all nine authority and binding mutations
+  (A1-A3, P1, X1-X2, R1-R3) to compile and then be killed by exact semantic
+  tests. Compilation or lint failure is not counted as a killed mutation.
+- Release runtime staging now fails closed on authority-plan mismatch, path
+  traversal, symlinks, and non-empty targets. Rust performance evidence compares
+  the candidate with the 0.3.5 stable binary.
+- Agent rules explicitly require first-principles reasoning for debugging,
+  architecture, and modification decisions. Skills and MCP provide evidence and
+  capability but cannot replace host judgment or bypass authorization.
+
+Promotion remains private authority → stable → public. Release is allowed only
+after the full Rust gate, zero skipped release checks, native lifecycle E2E,
+platform assets, exact-commit CI, and npm package verification.
+
 ## Release 0.3.5
 
 0.3.5 is a corrective release for the 0.3.4 slimming pass. It restores
@@ -31,10 +80,14 @@ high-value proof without restoring retired runtime complexity.
   removed. Promotion now has one authoritative boundary: the exact, pinned
   public release manifest. Private-to-stable equivalence is established by
   fast-forward commit/tree identity instead of a second Markdown diff system.
-- Host integration facts are declared once: native/shared skill roots, Codex
-  plugin visibility, MCP probe format and evidence source, registrar, and
-  memory adapter. This removes divergent host string tables and keeps OMP's
-  inherited Codex registration distinct from live OMP evidence.
+- Host integration now has one adapter engine over declared host protocols.
+  Codex and Claude Code use their direct CLI protocols; OMP uses native JSONL
+  RPC `/mcp list`. Skill verification, agent scan, onboarding, and memory
+  lifecycle consume the same platform facts instead of maintaining host string
+  branches or borrowing Codex evidence for OMP.
+- The shared Agent rules put first-principles reasoning ahead of skill/MCP
+  advice during diagnosis, architecture, and modification decisions, while
+  preserving authorization boundaries and fail-closed execution gates.
 - CLI commands now share one closed `text | json` output seam. Domain text
   renderers remain separate, while JSON serialization failures are reported
   consistently instead of silently becoming empty output.

@@ -3,10 +3,10 @@
 //! Restores the project-memory injection/capture chain as a first-class product:
 //!   - installs the canonical start/guard/capture scripts to the host script dir,
 //!   - installs the OMP native lifecycle extension,
-//!   - structurally merges Claude Code SessionStart/Stop and Codex
-//!     SessionStart/SessionEnd command hooks without replacing unrelated hooks,
+//!   - structurally merges Claude Code, Codex, and Cursor command hooks without
+//!     replacing unrelated hooks,
 //!   - bootstraps the current workspace's memory capsule via the installed
-//!     `context-memory.sh` (create-if-missing; never overwrites the capsule).
+//!     the Rust memory initializer (create-if-missing; never overwrites the capsule).
 //!
 //! Command boundary: this lives in `ags setup` (host/workspace bootstrap).
 //! `ags init` only creates per-project memory files and never installs a host

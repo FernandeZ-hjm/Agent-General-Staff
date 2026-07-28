@@ -8,10 +8,10 @@ Handoff source: existing-card\n\
 Executor: Codex\n\
 Runtime adapter: codex-local\n\
 Execution surface: cli\n\
-Permission mode: execute-and-verify\n\
-Parallelism: none\n\
+Execution mode: single-writer\n\
+Execution topology: single\n\
 Execution effort: normal\n\
-Workflow authority: none\n\
+Delegation planning: no\n\
 任务级别：Medium\n\
 Review gate:\n- 按协议执行当前任务级别\n\
 任务：验证任务卡合同\n\
@@ -92,10 +92,7 @@ semantic_contract!(
     plan_only_protected_write_has_stable_code,
     PROTECTED_PATH_VIOLATION,
     valid_card()
-        .replace(
-            "Permission mode: execute-and-verify",
-            "Permission mode: plan-only"
-        )
+        .replace("Execution mode: single-writer", "Execution mode: plan-only")
         .replace("任务：验证任务卡合同", "任务：修改 AGENTS.md")
         .replace("非目标：不修改受保护路径", "非目标：不处理其他文件")
 );
@@ -110,10 +107,7 @@ semantic_contract!(
     plan_only_modification_has_stable_code,
     CONTRADICTORY_REQUIREMENT,
     valid_card()
-        .replace(
-            "Permission mode: execute-and-verify",
-            "Permission mode: plan-only"
-        )
+        .replace("Execution mode: single-writer", "Execution mode: plan-only")
         .replace("任务：验证任务卡合同", "任务：修改核心逻辑")
         .replace("非目标：不修改受保护路径", "非目标：不处理其他文件")
 );
@@ -131,27 +125,25 @@ semantic_contract!(
 
 semantic_contract!(
     workflow_request_without_authority_has_stable_code,
-    WORKFLOW_AUTHORITY_REQUIRED,
+    EXECUTION_MODE_AUTHORITY_VIOLATION,
     valid_card().replace("任务：验证任务卡合同", "任务：使用 subagent 完成验证")
 );
 
 semantic_contract!(
-    workflow_authority_scope_violation_has_stable_code,
-    WORKFLOW_AUTHORITY_VIOLATION,
+    delegation_planning_scope_violation_has_stable_code,
+    EXECUTION_MODE_AUTHORITY_VIOLATION,
     valid_card()
         .replace("任务级别：Medium", "任务级别：Light")
-        .replace("Workflow authority: none", "Workflow authority: allowed")
+        .replace(
+            "Execution mode: single-writer",
+            "Execution mode: fanout-cross-card"
+        )
 );
 
 semantic_contract!(
-    parallelism_body_mismatch_has_stable_code,
-    PARALLELISM_POLICY_VIOLATION,
-    valid_card()
-        .replace(
-            "Workflow authority: none",
-            "Workflow authority: within-card"
-        )
-        .replace("任务：验证任务卡合同", "任务：使用 subagent 完成验证")
+    execution_topology_body_mismatch_has_stable_code,
+    EXECUTION_TOPOLOGY_POLICY_VIOLATION,
+    valid_card().replace("任务：验证任务卡合同", "任务：使用 subagent 完成验证")
 );
 
 semantic_contract!(
@@ -168,10 +160,7 @@ semantic_contract!(
     PLAN_ONLY_DELIVERY_VIOLATION,
     valid_card()
         .replace("任务级别：Medium", "任务级别：Heavy")
-        .replace(
-            "Permission mode: execute-and-verify",
-            "Permission mode: plan-only"
-        )
+        .replace("Execution mode: single-writer", "Execution mode: plan-only")
         .replace("任务：验证任务卡合同", "任务：设计实施方案")
         .replace("返回验证结果", "修改完成并提交")
 );
@@ -181,10 +170,7 @@ semantic_contract!(
     HEAVY_PLAN_ONLY_MISSING_REVIEW_HANDOFF,
     valid_card()
         .replace("任务级别：Medium", "任务级别：Heavy")
-        .replace(
-            "Permission mode: execute-and-verify",
-            "Permission mode: plan-only"
-        )
+        .replace("Execution mode: single-writer", "Execution mode: plan-only")
         .replace("任务：验证任务卡合同", "任务：设计实施方案")
         .replace("返回验证结果", "输出实施方案")
 );
@@ -253,12 +239,15 @@ fn closed_field_vocabulary_rejects_invalid_values() {
         ("Executor: Codex", "Executor: Unknown"),
         ("Runtime adapter: codex-local", "Runtime adapter: shell"),
         (
-            "Permission mode: execute-and-verify",
-            "Permission mode: unrestricted",
+            "Execution mode: single-writer",
+            "Execution mode: unrestricted",
         ),
-        ("Parallelism: none", "Parallelism: unlimited"),
+        (
+            "Execution topology: single",
+            "Execution topology: unlimited",
+        ),
         ("Execution effort: normal", "Execution effort: infinite"),
-        ("Workflow authority: none", "Workflow authority: root"),
+        ("Delegation planning: no", "Delegation planning: root"),
         ("任务级别：Medium", "任务级别：Critical"),
     ] {
         let candidate = valid_card().replace(from, to);
@@ -301,7 +290,7 @@ fn required_fields_fail_closed_as_one_contract() {
         "Handoff source:",
         "Executor:",
         "Runtime adapter:",
-        "Permission mode:",
+        "Execution mode:",
         "任务：",
         "目标：",
         "验收标准：",
@@ -321,6 +310,34 @@ fn removed_or_ambiguous_shapes_are_rejected() {
     for candidate in [compact.to_string(), path_second.to_string(), text_fence] {
         assert!(!validate(&candidate).is_empty());
     }
+}
+
+#[test]
+fn legacy_authority_fields_and_values_are_rejected() {
+    for candidate in [
+        valid_card().replace("Execution mode: single-writer", "Execution mode: limited"),
+        valid_card() + "\nPermission mode: execute-and-verify\n",
+        valid_card() + "\nParallelism: parallel\n",
+        valid_card() + "\nWorkflow authority: allowed\n",
+    ] {
+        assert!(!validate(&candidate).is_empty(), "{candidate}");
+    }
+}
+
+#[test]
+fn plan_only_parallel_topology_is_rejected() {
+    let candidate = valid_card()
+        .replace("Execution mode: single-writer", "Execution mode: plan-only")
+        .replace("Execution topology: single", "Execution topology: parallel");
+    assert_has_code(&candidate, error_code::EXECUTION_TOPOLOGY_POLICY_VIOLATION);
+}
+
+#[test]
+fn plan_only_delegation_planning_is_rejected() {
+    let candidate = valid_card()
+        .replace("Execution mode: single-writer", "Execution mode: plan-only")
+        .replace("Delegation planning: no", "Delegation planning: yes");
+    assert_has_code(&candidate, error_code::EXECUTION_MODE_AUTHORITY_VIOLATION);
 }
 
 #[test]
@@ -390,38 +407,26 @@ fn heavy_executable_work_requires_an_independent_review_gate() {
 }
 
 #[test]
-fn workflow_authority_cannot_exceed_task_or_permission_scope() {
+fn writer_scope_and_delegation_planning_fail_closed() {
     for candidate in [
         valid_card()
             .replace("任务级别：Medium", "任务级别：Light")
-            .replace("Workflow authority: none", "Workflow authority: allowed"),
-        valid_card()
             .replace(
-                "Permission mode: execute-and-verify",
-                "Permission mode: plan-only",
-            )
-            .replace("Workflow authority: none", "Workflow authority: allowed"),
-        valid_card()
-            .replace(
-                "Permission mode: execute-and-verify",
-                "Permission mode: plan-only",
-            )
-            .replace(
-                "Workflow authority: none",
-                "Workflow authority: within-card",
+                "Execution mode: single-writer",
+                "Execution mode: fanout-cross-card",
             ),
+        valid_card()
+            .replace("Execution mode: single-writer", "Execution mode: plan-only")
+            .replace("Delegation planning: no", "Delegation planning: yes"),
     ] {
-        assert_has_code(&candidate, error_code::WORKFLOW_AUTHORITY_VIOLATION);
+        assert_has_code(&candidate, error_code::EXECUTION_MODE_AUTHORITY_VIOLATION);
     }
 }
 
 #[test]
 fn plan_only_negated_modification_is_not_an_execution_request() {
     let candidate = valid_card()
-        .replace(
-            "Permission mode: execute-and-verify",
-            "Permission mode: plan-only",
-        )
+        .replace("Execution mode: single-writer", "Execution mode: plan-only")
         .replace(
             "Review gate:\n- 按协议执行当前任务级别",
             "Review gate:\n- 返回用户审阅",
@@ -467,10 +472,7 @@ fn protected_path_read_only_boundary_is_allowed() {
 fn heavy_plan_only_with_explicit_review_handoff_is_allowed() {
     let candidate = valid_card()
         .replace("任务级别：Medium", "任务级别：Heavy")
-        .replace(
-            "Permission mode: execute-and-verify",
-            "Permission mode: plan-only",
-        )
+        .replace("Execution mode: single-writer", "Execution mode: plan-only")
         .replace(
             "Review gate:\n- 按协议执行当前任务级别",
             "Review gate:\n- 返回用户审阅",
@@ -488,11 +490,11 @@ fn heavy_plan_only_with_explicit_review_handoff_is_allowed() {
 #[test]
 fn declared_subtask_orchestration_with_matching_authority_is_allowed() {
     let candidate = valid_card()
-        .replace("Parallelism: none", "Parallelism: subagent")
         .replace(
-            "Workflow authority: none",
-            "Workflow authority: within-card",
+            "Execution mode: single-writer",
+            "Execution mode: fanout-in-card",
         )
+        .replace("Execution topology: single", "Execution topology: parallel")
         .replace("任务：验证任务卡合同", "任务：使用 subagent 完成验证")
         .replace(
             "非目标：不修改受保护路径",

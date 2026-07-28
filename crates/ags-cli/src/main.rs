@@ -112,6 +112,8 @@ fn run_cli() {
         Commands::Protocol { action } => kernel::awareness::run_protocol(action),
         Commands::Agent { action } => kernel::awareness::run_agent(action),
         Commands::Receipt { action } => kernel::receipt::run(action),
+        Commands::Memory { action } => kernel::memory::run(action),
+        Commands::Host { action } => kernel::host::run(action),
         Commands::Compliance { action } => kernel::compliance::run(action),
         Commands::Session { action } => kernel::awareness::run_session(action),
         Commands::Release { action } => kernel::release::run(action),

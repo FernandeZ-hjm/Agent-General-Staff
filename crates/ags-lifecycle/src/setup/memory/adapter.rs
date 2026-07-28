@@ -10,87 +10,75 @@ pub fn apply_host_memory_adapter(
     workspace_root: &Path,
     host: &str,
 ) {
-    let supported = match host {
-        "claude-code" => {
+    let protocol = ags_host_integration::platform_spec(host).and_then(|spec| spec.memory_protocol);
+    let supported = match protocol {
+        Some(ags_host_integration::MemoryProtocol::ClaudeCommandHooks) => {
             let settings = home.join(".claude/settings.json");
             report.add(wire_workspace_memory_start(
                 &settings,
-                &memory_start_command(),
+                &memory_start_command("claude-code"),
             ));
             report.add(wire_workspace_memory_capture(
                 &settings,
-                &memory_capture_command(),
+                &memory_capture_command("claude-code"),
+                &raw_guard_command("claude-code"),
             ));
             true
         }
-        "codex" => {
+        Some(ags_host_integration::MemoryProtocol::CodexCommandHooks) => {
             report.add(wire_codex_memory_lifecycle(&home.join(".codex/hooks.json")));
             true
         }
-        "omp" => {
+        Some(ags_host_integration::MemoryProtocol::CursorCommandHooks) => {
+            report.add(wire_cursor_memory_lifecycle(
+                &home.join(".cursor/hooks.json"),
+            ));
+            true
+        }
+        Some(ags_host_integration::MemoryProtocol::OmpExtension) => {
             report.add(ensure_omp_memory_extension(home));
             true
         }
-        other => {
+        None => {
             report.add(crate::setup::SetupFinding::fail(
                 "agents-memory-lifecycle-unsupported",
-                format!("no AGS native memory lifecycle adapter for `{other}`"),
-                "Supported adapters: claude-code, codex, omp.",
+                format!("no AGS native memory lifecycle adapter for `{host}`"),
+                "Supported adapters: claude-code, codex, cursor, omp.",
             ));
             false
         }
     };
     if supported {
-        report.add(bootstrap_workspace_memory_with(
-            &context_memory_script_path(home),
-            workspace_root,
-            None,
-        ));
+        report.add(bootstrap_workspace_memory_with(workspace_root, home, None));
     }
 }
 
 /// Bootstrap the current workspace's memory capsule by invoking the installed
-/// `context-memory.sh init`. Create-if-missing; the script never overwrites the
+/// `ags memory init`. Create-if-missing; the Rust kernel never overwrites the
 /// capsule. Fail-closed on the `--register-claude` apply path: a missing script
 /// or shell failure is a blocking `fail` (the operator asked to wire the chain),
 /// not an advisory warn. `memory_root` overrides the default store (tests only).
 pub(in crate::setup) fn bootstrap_workspace_memory_with(
-    script_path: &Path,
     workspace_root: &Path,
+    home: &Path,
     memory_root: Option<&Path>,
 ) -> crate::setup::SetupFinding {
     let check = "setup-memory-capsule-bootstrap";
-    if !script_path.is_file() {
-        return crate::setup::SetupFinding::fail(
-            check,
-            "context-memory.sh not installed — capsule bootstrap skipped",
-            format!("expected installed script at {}", script_path.display()),
-        );
-    }
-    let mut cmd = std::process::Command::new("bash");
-    cmd.arg(script_path)
-        .arg("init")
-        .arg("--repo")
-        .arg(workspace_root);
-    if let Some(root) = memory_root {
-        cmd.env("MEMORY_ROOT", root);
-    }
-    match cmd.output() {
-        Ok(out) if out.status.success() => crate::setup::SetupFinding::pass(
+    let memory_dir = memory_root.map_or_else(
+        || ags_host_integration::project_memory_dir_at(workspace_root, home),
+        |root| root.join(ags_host_integration::resolve_project_slug(workspace_root)),
+    );
+    match ags_evidence::memory::init(&memory_dir) {
+        Ok(_) => crate::setup::SetupFinding::pass(
             check,
             format!(
                 "workspace memory capsule ready for {} (capsule never overwritten)",
                 workspace_root.display()
             ),
         ),
-        Ok(out) => crate::setup::SetupFinding::fail(
-            check,
-            "context-memory.sh init reported a problem",
-            String::from_utf8_lossy(&out.stderr).trim().to_string(),
-        ),
         Err(e) => crate::setup::SetupFinding::fail(
             check,
-            "could not run context-memory.sh init",
+            "could not initialize Rust memory store",
             e.to_string(),
         ),
     }
@@ -117,16 +105,16 @@ pub(super) fn add_workspace_memory_capture_inner(
     let settings_path = workspace_root.join(".claude").join("settings.json");
     report.add(wire_workspace_memory_start(
         &settings_path,
-        &memory_start_command(),
+        &memory_start_command("claude-code"),
     ));
     report.add(wire_workspace_memory_capture(
         &settings_path,
-        &memory_capture_command(),
+        &memory_capture_command("claude-code"),
+        &raw_guard_command("claude-code"),
     ));
-    let script_path = context_memory_script_path(home);
     report.add(bootstrap_workspace_memory_with(
-        &script_path,
         workspace_root,
+        home,
         memory_root,
     ));
 }
@@ -167,11 +155,7 @@ pub(in crate::setup) fn render_memory_capture_plan(
 
     let mut lines = vec!["Memory capture chain (project memory):".to_string()];
     lines.push(format!(
-        "  - Shared scripts: {} , {} , {} , {}",
-        raw_tool_call_stop_guard_path(home).display(),
-        context_memory_script_path(home).display(),
-        context_memory_start_path(home).display(),
-        claude_stop_memory_capture_path(home).display()
+        "  - Rust lifecycle command: ags host lifecycle (SessionStart / SessionEnd / Stop guard)"
     ));
     lines.push(format!(
         "  - OMP native extension: {}",
@@ -210,14 +194,121 @@ pub(in crate::setup) fn render_memory_capture_plan(
             );
         }
         lines.push(
-            "  - Capsule: bootstrapped via context-memory.sh init (create-if-missing; never overwrites context-capsule.md)."
+            "  - Capsule: bootstrapped by the Rust memory kernel (create-if-missing; never overwrites context-capsule.md)."
                 .to_string(),
         );
     } else {
         lines.push(
-            "  - Action: setup refreshes shared scripts + OMP extension. Use `ags agents govern --agent <claude-code|codex|omp> --apply` for explicit native host wiring; use --register-claude only for explicit Claude MCP/workspace registration."
+            "  - Action: setup refreshes the OMP extension. Use `ags agents govern --agent <claude-code|codex|cursor|omp> --apply` for explicit native host wiring; use --register-claude only for explicit Claude MCP/workspace registration."
                 .to_string(),
         );
     }
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_roots(tag: &str) -> (PathBuf, PathBuf) {
+        let root =
+            std::env::temp_dir().join(format!("ags-host-adapter-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let home = root.join("home");
+        let target = root.join("project");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        (home, target)
+    }
+
+    fn read_json(path: &Path) -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn all_four_host_adapters_write_exact_rust_commands_and_preserve_assets() {
+        let (home, target) = test_roots("all-hosts");
+        std::fs::create_dir_all(home.join(".codex")).unwrap();
+        std::fs::write(
+            home.join(".codex/hooks.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "hooks": {
+                    "Stop": [{"command": "node .codex/hooks/evolver-session-end.js"}]
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::create_dir_all(home.join(".cursor")).unwrap();
+        std::fs::write(
+            home.join(".cursor/hooks.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "version": 1,
+                "project_owned": {"keep": true},
+                "hooks": {"sessionStart": [{"command": "echo keep-cursor"}]}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let memory = ags_host_integration::project_memory_dir_at(&target, &home);
+        std::fs::create_dir_all(&memory).unwrap();
+        std::fs::write(memory.join("context-capsule.md"), "protected capsule").unwrap();
+
+        for host in ["claude-code", "codex", "cursor", "omp"] {
+            let mut report = crate::setup::SetupReport::new(host);
+            apply_host_memory_adapter(&mut report, &home, &target, host);
+            assert!(report.passed(), "{host}: {:?}", report.findings);
+            let agent = ags_host_integration::AgentType::from_str(host).unwrap();
+            let lifecycle =
+                ags_host_integration::compute_memory_lifecycle_at_for_host(&target, &home, &agent);
+            assert_eq!(lifecycle.status, "full", "{host}: {lifecycle:?}");
+        }
+
+        let codex = read_json(&home.join(".codex/hooks.json"));
+        assert!(codex
+            .to_string()
+            .contains("host lifecycle --event session-start --host codex"));
+        assert!(codex
+            .to_string()
+            .contains("host lifecycle --event session-end --host codex"));
+        assert!(codex
+            .to_string()
+            .contains("host lifecycle --event stop-guard --host codex"));
+        assert!(codex.to_string().contains("evolver-session-end"));
+        assert!(!codex
+            .to_string()
+            .contains("session-start --host claude-code"));
+
+        let cursor = read_json(&home.join(".cursor/hooks.json"));
+        assert_eq!(cursor["project_owned"]["keep"], true);
+        assert!(cursor.to_string().contains("echo keep-cursor"));
+        for event in ["session-start", "session-end", "stop-guard"] {
+            assert!(cursor
+                .to_string()
+                .contains(&format!("host lifecycle --event {event} --host cursor")));
+        }
+
+        let claude = read_json(&home.join(".claude/settings.json"));
+        for event in ["session-start", "session-end", "stop-guard"] {
+            assert!(claude.to_string().contains(&format!(
+                "host lifecycle --event {event} --host claude-code"
+            )));
+        }
+
+        let omp = std::fs::read_to_string(omp_memory_lifecycle_path(&home)).unwrap();
+        for event in ["session-start", "session-end", "stop-guard"] {
+            assert!(omp.contains(event));
+        }
+        assert_eq!(
+            std::fs::read_to_string(memory.join("context-capsule.md")).unwrap(),
+            "protected capsule"
+        );
+
+        for host in ["claude-code", "codex", "cursor", "omp"] {
+            let mut report = crate::setup::SetupReport::new(host);
+            apply_host_memory_adapter(&mut report, &home, &target, host);
+            assert!(report.passed(), "{host}: {:?}", report.findings);
+        }
+    }
 }

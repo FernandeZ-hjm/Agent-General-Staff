@@ -3,24 +3,12 @@ use super::*;
 //
 // A project is "onboarded with a full memory closure" only when the REQUESTED
 // host can READ on session start, WRITE/close on the host's terminal lifecycle
-// event, ARCHIVE into task-archive, and execute the installed bridge scripts.
-// The host is part of this interface: Claude evidence must never satisfy Codex
-// or OMP. `ags init` owns the project store; `ags agents govern --apply` owns
+// event, ARCHIVE into task-archive, and invoke the Rust lifecycle kernel.
+// The host is part of this interface: one host's evidence must never satisfy
+// Codex, Claude Code, Cursor, or OMP. `ags init` owns the project store;
+// `ags agents govern --apply` owns
 // native host adapters; doctor and preflight consume this same computation.
 
-pub(super) const MEMORY_START_MARKER: &str = "context-memory-start";
-pub(super) const MEMORY_CAPTURE_MARKER: &str = "claude-stop-memory-capture";
-pub(super) const COMMON_MEMORY_SCRIPTS: &[&str] = &[
-    "context-memory.sh",
-    "context-memory-start.py",
-    "claude-stop-memory-capture.py",
-];
-pub(super) const CLAUDE_MEMORY_SCRIPTS: &[&str] = &[
-    "context-memory.sh",
-    "context-memory-start.py",
-    "claude-stop-memory-capture.py",
-    "raw-tool-call-stop-guard.js",
-];
 pub(super) const OMP_MEMORY_EXTENSION: &str = "ags-memory-lifecycle.js";
 
 /// Read / write / archive / verify closure state for a project's memory store.
@@ -28,13 +16,11 @@ pub(super) const OMP_MEMORY_EXTENSION: &str = "ags-memory-lifecycle.js";
 /// `status` is a coarse one-word verdict; the booleans expose the underlying
 /// signals so callers can explain exactly which leg of the closure is missing:
 ///
-/// - `full`       — files present, read + write hooks wired, backing scripts installed.
+/// - `full`       — files present and read + write hooks invoke the Rust kernel.
 /// - `read-only`  — start injection wired but Stop capture missing.
 /// - `write-only` — Stop capture wired but start injection missing.
 /// - `files-only` — memory files exist but no hooks are wired (the silent gap
 ///   `ags init` historically left: onboarded yet unable to read/write memory).
-/// - `unbacked`   — a hook is wired but the host capture scripts it invokes are
-///   not installed, so the chain is a half-wired no-op (run `ags setup`).
 /// - `absent`     — no memory store and no hooks (project not onboarded).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MemoryLifecycle {
@@ -49,13 +35,14 @@ pub struct MemoryLifecycle {
     pub files_present: bool,
     /// `task-archive/` directory exists (capture target).
     pub archive_ready: bool,
-    /// SessionStart pipeline wires `context-memory-start` (can READ on start).
+    /// SessionStart pipeline invokes the Rust lifecycle kernel (can READ on start).
     pub read_wired: bool,
-    /// Native host close pipeline wires the compatibility-named
-    /// `claude-stop-memory-capture` bridge (can WRITE on close).
+    /// Native host close pipeline invokes the Rust lifecycle kernel (can WRITE on close).
     pub write_wired: bool,
-    /// Host capture scripts installed under `~/.agents/scripts` (hooks are backed).
-    pub scripts_present: bool,
+    /// Native stop/settled event invokes the Rust raw-tool-call guard.
+    pub stop_guard_wired: bool,
+    /// Every configured hook/extension delegates to the `ags host lifecycle` Rust kernel.
+    pub kernel_backed: bool,
     /// Human one-line summary of the closure state.
     pub summary: String,
 }
@@ -67,17 +54,20 @@ pub(super) fn derive_memory_status(
     archive_ready: bool,
     read_wired: bool,
     write_wired: bool,
-    scripts_present: bool,
+    stop_guard_wired: bool,
+    kernel_backed: bool,
 ) -> &'static str {
     if !adapter_supported {
         "unsupported"
     } else if !files_present && !read_wired && !write_wired {
         "absent"
-    } else if (read_wired || write_wired) && !scripts_present {
-        // A hook is wired but the scripts it shells out to are missing: the
-        // chain runs nothing. Surface this as broken, not as a partial success.
-        "unbacked"
-    } else if files_present && archive_ready && read_wired && write_wired && scripts_present {
+    } else if files_present
+        && archive_ready
+        && read_wired
+        && write_wired
+        && stop_guard_wired
+        && kernel_backed
+    {
         "full"
     } else if read_wired && !write_wired {
         "read-only"
@@ -93,11 +83,16 @@ pub(super) fn derive_memory_status(
 /// Resolve a project's memory slug from its profile, falling back to the
 /// directory name (mirrors `detect_project`'s slug resolution, standalone so the
 /// lifecycle computation does not require a full project detection pass).
-pub(super) fn resolve_project_slug(target: &Path) -> String {
+pub fn resolve_project_slug(target: &Path) -> String {
     if let Some(slug) = extract_profile_slug(target) {
         return slug;
     }
     slug_from_path(target)
+}
+
+pub fn project_memory_dir_at(target: &Path, home: &Path) -> PathBuf {
+    home.join(".agents/memory/projects")
+        .join(resolve_project_slug(target))
 }
 
 /// Extract `project.slug` from `config/agent-project-profile.yaml`.
@@ -166,11 +161,6 @@ pub(super) fn settings_event_commands(settings_path: &Path, event: &str) -> Vec<
     cmds
 }
 
-pub(super) fn capture_scripts_present(home: &Path, required: &[&str]) -> bool {
-    let dir = home.join(".agents/scripts");
-    required.iter().all(|n| dir.join(n).is_file())
-}
-
 /// Compute the closure for the exact host requested by preflight.
 pub fn compute_memory_lifecycle_for_host(target: &Path, agent_type: &AgentType) -> MemoryLifecycle {
     let home = ags_platform::home_dir_or_temp();
@@ -184,6 +174,10 @@ pub(super) fn host_hook_commands(paths: &[PathBuf], event: &str) -> Vec<String> 
         .collect()
 }
 
+fn command_matches(command: &str, event: &str, host: &str) -> bool {
+    command.contains(&format!("host lifecycle --event {event} --host {host}"))
+}
+
 pub(super) fn omp_extension_wired(paths: &[PathBuf]) -> bool {
     paths.iter().any(|path| {
         std::fs::read_to_string(path).is_ok_and(|body| {
@@ -191,8 +185,12 @@ pub(super) fn omp_extension_wired(paths: &[PathBuf]) -> bool {
                 && body.contains("systemPromptAppend")
                 && body.contains("agent_settled")
                 && body.contains("session_shutdown")
-                && body.contains(MEMORY_START_MARKER)
-                && body.contains(MEMORY_CAPTURE_MARKER)
+                && body.contains("spawnSync")
+                && body.contains("\"host\"")
+                && body.contains("\"lifecycle\"")
+                && body.contains("\"session-start\"")
+                && body.contains("\"session-end\"")
+                && body.contains("\"stop-guard\"")
         })
     })
 }
@@ -204,8 +202,7 @@ pub fn compute_memory_lifecycle_at_for_host(
     home: &Path,
     agent_type: &AgentType,
 ) -> MemoryLifecycle {
-    let slug = resolve_project_slug(target);
-    let mem_dir = home.join(".agents/memory/projects").join(&slug);
+    let mem_dir = project_memory_dir_at(target, home);
     let files_present =
         mem_dir.join("context-capsule.md").is_file() && mem_dir.join("task-memory.md").is_file();
     let archive_ready = mem_dir.join("task-archive").is_dir();
@@ -214,61 +211,87 @@ pub fn compute_memory_lifecycle_at_for_host(
         "oh-my-pi" => "omp",
         other => other,
     };
-    let (adapter, adapter_supported, read_wired, write_wired, scripts_present) =
-        match normalized_host {
-            "claude-code" => {
+    let protocol = platform_spec(normalized_host).and_then(|spec| spec.memory_protocol);
+    let (adapter, adapter_supported, read_wired, write_wired, stop_guard_wired, kernel_backed) =
+        match protocol {
+            Some(MemoryProtocol::ClaudeCommandHooks) => {
                 let paths = [
                     home.join(".claude/settings.json"),
                     target.join(".claude/settings.json"),
                 ];
                 let read = host_hook_commands(&paths, "SessionStart")
                     .iter()
-                    .any(|c| c.contains(MEMORY_START_MARKER));
+                    .any(|command| command_matches(command, "session-start", normalized_host));
                 let write = host_hook_commands(&paths, "Stop")
                     .iter()
-                    .any(|c| c.contains(MEMORY_CAPTURE_MARKER));
+                    .any(|command| command_matches(command, "session-end", normalized_host));
+                let guard = host_hook_commands(&paths, "Stop")
+                    .iter()
+                    .any(|command| command_matches(command, "stop-guard", normalized_host));
                 (
                     "claude-command-hooks",
                     true,
                     read,
                     write,
-                    capture_scripts_present(home, CLAUDE_MEMORY_SCRIPTS),
+                    guard,
+                    read || write || guard,
                 )
             }
-            "codex" => {
+            Some(MemoryProtocol::CodexCommandHooks) => {
                 let paths = [
                     home.join(".codex/hooks.json"),
                     target.join(".codex/hooks.json"),
                 ];
                 let read = host_hook_commands(&paths, "SessionStart")
                     .iter()
-                    .any(|c| c.contains(MEMORY_START_MARKER));
+                    .any(|command| command_matches(command, "session-start", normalized_host));
                 let write = host_hook_commands(&paths, "SessionEnd")
                     .iter()
-                    .any(|c| c.contains(MEMORY_CAPTURE_MARKER));
+                    .any(|command| command_matches(command, "session-end", normalized_host));
+                let guard = host_hook_commands(&paths, "Stop")
+                    .iter()
+                    .any(|command| command_matches(command, "stop-guard", normalized_host));
                 (
                     "codex-command-hooks",
                     true,
                     read,
                     write,
-                    capture_scripts_present(home, COMMON_MEMORY_SCRIPTS),
+                    guard,
+                    read || write || guard,
                 )
             }
-            "omp" => {
+            Some(MemoryProtocol::CursorCommandHooks) => {
+                let paths = [
+                    home.join(".cursor/hooks.json"),
+                    target.join(".cursor/hooks.json"),
+                ];
+                let read = host_hook_commands(&paths, "sessionStart")
+                    .iter()
+                    .any(|command| command_matches(command, "session-start", normalized_host));
+                let write = host_hook_commands(&paths, "sessionEnd")
+                    .iter()
+                    .any(|command| command_matches(command, "session-end", normalized_host));
+                let guard = host_hook_commands(&paths, "stop")
+                    .iter()
+                    .any(|command| command_matches(command, "stop-guard", normalized_host));
+                (
+                    "cursor-command-hooks",
+                    true,
+                    read,
+                    write,
+                    guard,
+                    read || write || guard,
+                )
+            }
+            Some(MemoryProtocol::OmpExtension) => {
                 let global = home
                     .join(".omp/agent/extensions")
                     .join(OMP_MEMORY_EXTENSION);
                 let project = target.join(".omp/extensions").join(OMP_MEMORY_EXTENSION);
                 let wired = omp_extension_wired(&[global, project]);
-                (
-                    "omp-extension",
-                    true,
-                    wired,
-                    wired,
-                    capture_scripts_present(home, COMMON_MEMORY_SCRIPTS) && wired,
-                )
+                ("omp-extension", true, wired, wired, wired, wired)
             }
-            _ => ("unsupported", false, false, false, false),
+            None => ("unsupported", false, false, false, false, false),
         };
 
     let status = derive_memory_status(
@@ -277,14 +300,14 @@ pub fn compute_memory_lifecycle_at_for_host(
         archive_ready,
         read_wired,
         write_wired,
-        scripts_present,
+        stop_guard_wired,
+        kernel_backed,
     );
     let summary = match status {
         "full" => format!("{normalized_host} memory closure complete: native start + close lifecycle wired and backed; files + archive present"),
         "read-only" => format!("{normalized_host} can read project memory on start, but its native close capture is not wired"),
         "write-only" => format!("{normalized_host} closes/captures memory, but its native start injection is not wired"),
         "files-only" => format!("project memory files exist, but {normalized_host} native read/write hooks are not wired — run `ags agents govern --agent {normalized_host} --apply`"),
-        "unbacked" => format!("{normalized_host} lifecycle is wired but AGS bridge scripts are missing — run `ags setup --yes --force`, then govern the host"),
         "unsupported" => format!("AGS has no native memory lifecycle adapter for host `{normalized_host}`; closure cannot be claimed"),
         _ => format!("no project memory store or {normalized_host} native lifecycle wiring"),
     };
@@ -298,7 +321,109 @@ pub fn compute_memory_lifecycle_at_for_host(
         archive_ready,
         read_wired,
         write_wired,
-        scripts_present,
+        stop_guard_wired,
+        kernel_backed,
         summary,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_roots(tag: &str) -> (PathBuf, PathBuf) {
+        let root =
+            std::env::temp_dir().join(format!("ags-memory-lifecycle-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let home = root.join("home");
+        let target = root.join("project");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        let memory = project_memory_dir_at(&target, &home);
+        std::fs::create_dir_all(memory.join("task-archive")).unwrap();
+        std::fs::write(memory.join("context-capsule.md"), "capsule").unwrap();
+        std::fs::write(memory.join("task-memory.md"), "memory").unwrap();
+        (home, target)
+    }
+
+    fn write_json(path: &Path, value: serde_json::Value) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn codex_rejects_a_claude_host_command_and_requires_stop_guard() {
+        let (home, target) = test_roots("codex-host");
+        write_json(
+            &home.join(".codex/hooks.json"),
+            serde_json::json!({
+                "hooks": {
+                    "SessionStart": [{
+                        "command": "ags host lifecycle --event session-start --host claude-code --target ."
+                    }],
+                    "SessionEnd": [{
+                        "command": "ags host lifecycle --event session-end --host codex --target ."
+                    }],
+                    "Stop": [{
+                        "command": "ags host lifecycle --event stop-guard --host codex --target ."
+                    }]
+                }
+            }),
+        );
+        let wrong = compute_memory_lifecycle_at_for_host(&target, &home, &AgentType::Codex);
+        assert_eq!(wrong.status, "write-only");
+        assert!(!wrong.read_wired);
+
+        write_json(
+            &home.join(".codex/hooks.json"),
+            serde_json::json!({
+                "hooks": {
+                    "SessionStart": [{
+                        "command": "ags host lifecycle --event session-start --host codex --target ."
+                    }],
+                    "SessionEnd": [{
+                        "command": "ags host lifecycle --event session-end --host codex --target ."
+                    }],
+                    "Stop": [{
+                        "command": "ags host lifecycle --event stop-guard --host codex --target ."
+                    }]
+                }
+            }),
+        );
+        let ready = compute_memory_lifecycle_at_for_host(&target, &home, &AgentType::Codex);
+        assert_eq!(ready.status, "full");
+        assert!(ready.stop_guard_wired);
+    }
+
+    #[test]
+    fn cursor_native_lowercase_hooks_form_a_full_closure() {
+        let (home, target) = test_roots("cursor");
+        write_json(
+            &home.join(".cursor/hooks.json"),
+            serde_json::json!({
+                "version": 1,
+                "hooks": {
+                    "sessionStart": [{
+                        "type": "command",
+                        "command": "ags host lifecycle --event session-start --host cursor --target ."
+                    }],
+                    "sessionEnd": [{
+                        "type": "command",
+                        "command": "ags host lifecycle --event session-end --host cursor --target ."
+                    }],
+                    "stop": [{
+                        "type": "command",
+                        "command": "ags host lifecycle --event stop-guard --host cursor --target ."
+                    }]
+                }
+            }),
+        );
+
+        let lifecycle = compute_memory_lifecycle_at_for_host(&target, &home, &AgentType::Cursor);
+        assert_eq!(lifecycle.adapter, "cursor-command-hooks");
+        assert_eq!(lifecycle.status, "full");
+        assert!(lifecycle.read_wired);
+        assert!(lifecycle.write_wired);
+        assert!(lifecycle.stop_guard_wired);
     }
 }

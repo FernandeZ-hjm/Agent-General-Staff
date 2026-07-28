@@ -18,7 +18,7 @@ use super::model::ApprovalSource;
 /// | Field | When absent / empty |
 /// |---|---|
 /// | `execution_effort` | `"unknown"` |
-/// | `workflow_authority` | `"none"` |
+/// | `delegation_planning` | `"no"` |
 /// | `approval_source` | `ApprovalSource::None` |
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskPolicyInput {
@@ -32,11 +32,12 @@ pub struct TaskPolicyInput {
     ///   | "remote-control" | "background-agent"
     pub execution_surface: String,
 
-    /// Permission mode: "plan-only" | "execute-and-verify"
-    pub permission_mode: String,
+    /// Execution mode: "plan-only" | "single-writer" | "fanout-in-card"
+    ///   | "fanout-cross-card"
+    pub execution_mode: String,
 
-    /// Parallelism: "none" | "subagent" | "worktree" | "multi-session" | "agent-team"
-    pub parallelism: String,
+    /// Execution topology: "single" | "parallel" | "worktree"
+    pub execution_topology: String,
 
     /// Task level: "Light" | "Medium" | "Heavy"
     pub task_level: String,
@@ -45,8 +46,8 @@ pub struct TaskPolicyInput {
     /// (absent → "unknown").
     pub execution_effort: Option<String>,
 
-    /// Workflow authority: "none" | "within-card" | "plan-only" | "allowed" (absent → "none")
-    pub workflow_authority: Option<String>,
+    /// Delegation planning: "no" | "yes" (absent → "no")
+    pub delegation_planning: Option<String>,
 
     /// Structured write-approval **audit / hint** signal source.
     ///
@@ -70,7 +71,7 @@ impl TaskPolicyInput {
     ///
     /// Fields that are absent in the map get default values:
     /// - `execution_effort` → `None` (resolves to `"unknown"`)
-    /// - `workflow_authority` → `None` (resolves to `"none"`)
+    /// - `delegation_planning` → `None` (resolves to `"none"`)
     /// - `approval_source` → `ApprovalSource::None` (task card text is never approval)
     pub fn from_fields(fields: &HashMap<String, String>) -> Self {
         Self {
@@ -80,11 +81,14 @@ impl TaskPolicyInput {
                 .get("Execution surface:")
                 .cloned()
                 .unwrap_or_default(),
-            permission_mode: fields.get("Permission mode:").cloned().unwrap_or_default(),
-            parallelism: fields.get("Parallelism:").cloned().unwrap_or_default(),
+            execution_mode: fields.get("Execution mode:").cloned().unwrap_or_default(),
+            execution_topology: fields
+                .get("Execution topology:")
+                .cloned()
+                .unwrap_or_default(),
             task_level: fields.get("任务级别：").cloned().unwrap_or_default(),
             execution_effort: fields.get("Execution effort:").cloned(),
-            workflow_authority: fields.get("Workflow authority:").cloned(),
+            delegation_planning: fields.get("Delegation planning:").cloned(),
             approval_source: ApprovalSource::None, // never from task card text
         }
     }
@@ -98,7 +102,7 @@ impl TaskPolicyInput {
     ///
     /// These are audit/hint signals, NOT a Heavy execution unlock: the resolver
     /// no longer downgrades a card by task level, so a Heavy card is executable
-    /// from its declared permission mode alone (with the Review gate as its
+    /// from its declared execution mode alone (with the Review gate as its
     /// guardrail). `approve_writes` may still act as the M9 generic-adapter capability
     /// override. The stronger source wins when both are set. This is the single
     /// canonical mapping shared by the CLI gate and the AGS MCP
@@ -127,9 +131,10 @@ impl TaskPolicyInput {
         self.effort() == "exhaustive"
     }
 
-    /// Return the effective workflow authority, defaulting to `"none"`.
-    pub fn authority(&self) -> &str {
-        self.workflow_authority.as_deref().unwrap_or("none")
+    /// Whether the task card permits planning delegation. This flag never
+    /// grants execution authority.
+    pub fn delegation_planning_enabled(&self) -> bool {
+        self.delegation_planning.as_deref() == Some("yes")
     }
 
     /// Build a TaskPolicyInput with defaults for every field.
@@ -139,11 +144,11 @@ impl TaskPolicyInput {
             executor: String::new(),
             runtime_adapter: String::new(),
             execution_surface: String::new(),
-            permission_mode: String::new(),
-            parallelism: String::new(),
+            execution_mode: String::new(),
+            execution_topology: String::new(),
             task_level: String::new(),
             execution_effort: None,
-            workflow_authority: None,
+            delegation_planning: None,
             approval_source: ApprovalSource::None,
         }
     }

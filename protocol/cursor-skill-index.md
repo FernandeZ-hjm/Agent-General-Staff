@@ -88,8 +88,8 @@ Use this when Cursor needs to hand work to Claude Code CLI, another agent, or a 
 - 不读取或打印密钥
 - 保持现有架构约定
 - 按 light / medium / heavy 分级执行
-- 按任务卡 Permission mode 执行：`plan-only` 只诊断和出计划，
-  `execute-and-verify` 直接执行并验证；Heavy 不另行强制计划
+- 按任务卡 Execution mode 执行：`plan-only` 只诊断和出计划，
+  显式可写 execution mode 直接执行并验证；Heavy 不另行强制计划
 - 完成后运行相关验证
 - 接续后由宿主用完整上下文与 current-host catalog 生成 typed proposal，再调用只读
   `ags_route_request`；验证是协议 gate，仅当 Skill Resolver / 原任务卡精确选择 `superpowers` 时才读取其

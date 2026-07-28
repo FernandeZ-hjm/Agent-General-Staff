@@ -36,17 +36,17 @@ Runtime adapter: codex-local / claude-code / cursor / omp / generic
 
 Execution surface: local-workspace / cli / ide / web / remote-control / background-agent
 
-Permission mode: plan-only / execute-and-verify
+Execution mode: plan-only / single-writer / fanout-in-card / fanout-cross-card
 
-Parallelism: none / subagent / worktree / multi-session / agent-team
+Execution topology: single / parallel / worktree
 
 Execution effort: low / normal / high / exhaustive
 
-Workflow authority: none / within-card / plan-only / allowed
+Delegation planning: no / yes
 
 任务级别：Light / Medium / Heavy
 
-Heavy 的 review gate 规则按 protocol/agent-task-protocol.md 执行；任务级别不改写 Permission mode（未声明时 compiler 默认 plan-only，显式 execute-and-verify 直接执行并验证）。“继续”、上下文压缩恢复或 task-notification 接续不会改写任务卡权限。
+Heavy 的 review gate 规则按 protocol/agent-task-protocol.md 执行；任务级别不改写三个权限字段。“继续”、上下文压缩恢复或 task-notification 接续不会改写任务卡权限。
 
 Review gate:
 - 按 protocol/agent-task-protocol.md 的 Review Gate 规则执行当前任务级别。
@@ -131,7 +131,8 @@ Verification gate:
 交付：
 - 按 protocol/agent-task-protocol.md 输出 delivery report。
 - 报告必须回填本卡 `Contract ID`、LaunchPlan `task_card_hash`，并逐项闭环全部 `G-*`、`AC-*`、`V-*`；`partial` / `blocked` 的未闭环 ID 集合必须与非闭环状态完全相等（含待审 `review-gate`），不得缺失、夹带或隐藏。
-- 报告落盘后运行 `ags task close <task-card> <delivery-report>`；闭环校验通过后再生成或归档 receipt。
+- 报告使用 Closure schema 1.1，回填 `task-card-hash`、`launch-plan-hash`、`execution-mode-used`、`execution-topology-used` 与 `delegation-used`。
+- 报告落盘后运行 `ags task close <task-card> <launch-plan> <delivery-report> --receipt-out <receipt.json>`；该命令验证并原子生成 receipt 与 session closure pointer。
 ~~~~
 
 ---
@@ -139,7 +140,7 @@ Verification gate:
 ## 使用说明
 
 - **Cursor / Codex**：先完成 ambient preflight，读取 `ags://capabilities/current-host`，再由宿主根据完整对话生成 typed `HostRouteProposal`；MCP `ags_route_request` 只做只读治理校验。`DirectResponse` 直接交付；已有批准 contract 且收到明确同会话修改授权时走宿主原生 direct-edit；仅在关键决策仍未解决时进入 solution phase。显式任务卡/跨 Agent 交接使用 `ags task compile --task-card-requested --confirmed-handoff-contract`。宿主 Plan mode 的最后一步直接使用 `ags task compile --host-plan-mode-final --confirmed-handoff-contract` 生成本 canonical 任务卡，不再先生成另一份“最终执行计划”，也不追加一次“是否生成任务卡”的询问。
-- **宿主 Plan mode 适配**：Plan mode 内只能只读探索与关闭决策；最终产物是唯一一张 decision-complete `## 任务卡`。若宿主 UI 要求 `<proposed_plan>`，该标签只是渲染 envelope，内部第一条非空行仍必须是 `## 任务卡`。用户选择 Execute 后，宿主先切换到可执行/Default mode，再把原任务卡正文与 `task_card_hash` 原样交给执行 Agent；不得重新生成、摘要或改写任务卡。宿主 Plan mode 与任务卡 `Permission mode` 是两个独立状态。
+- **宿主 Plan mode 适配**：Plan mode 内只能只读探索与关闭决策；最终产物是唯一一张 decision-complete `## 任务卡`。若宿主 UI 要求 `<proposed_plan>`，该标签只是渲染 envelope，内部第一条非空行仍必须是 `## 任务卡`。用户选择 Execute 后，宿主先切换到可执行/Default mode，再把原任务卡正文与 `task_card_hash` 原样交给执行 Agent；不得重新生成、摘要或改写任务卡。宿主 Plan mode 与任务卡 `Execution mode` 是两个独立状态。
 - **Executor**：读取任务卡 + 引用的协议文件，执行并交付。
 - 固定规则（安全、分级、runtime adapter、Review gate、验证、交付格式）在协议文件中，任务卡不再重复。
 - 为了保持执行稳定性和缓存友好性，任务卡必须使用固定骨架：标题、字段顺序、基础措辞保持不变；只在固定槽位填写动态任务内容。
@@ -169,13 +170,15 @@ Verification gate:
   - non_goal_1
   - non_goal_2
   ```
-- 如果输入材料以 `Executor:`、`Runtime adapter:`、`Permission mode:` 或 `Task level:` 开头，那只是 runtime 字段草稿，不是任务卡。生成器必须把它作为原始任务意图重新填入本 canonical 任务卡骨架；不得原样交付给 Claude Code。
+- 如果输入材料以 `Executor:`、`Runtime adapter:`、`Execution mode:` 或 `Task level:` 开头，那只是 runtime 字段草稿，不是任务卡。生成器必须把它作为原始任务意图重新填入本 canonical 任务卡骨架；不得原样交付给 Claude Code。
 - 如果输入材料以 `目标：`、`背景：`、`硬性要求：`、`建议验证命令：`、`停止条件：` 或 `交付格式：` 开头，且包含 `[skill: ...]` 或明显是要粘贴给 Claude Code/Cursor/Codex 的执行简报，那也只是原始任务意图，不是任务卡。生成器必须把它编译进本 canonical 任务卡骨架；不得保留源 section 顺序后原样交付。
 - `[skill: xxx]` 是任务卡元数据，只能出现在规范任务卡末尾；不得附在自由文本 prompt 或 `text` fence 后面。
-- `Permission mode` 只允许 `plan-only` 和 `execute-and-verify`；生成器不得输出第三种过渡、确认或自治模式。
+- `Execution mode` 只允许 `plan-only`、`single-writer`、`fanout-in-card`、`fanout-cross-card`。
+- `Execution topology` 只允许 `single`、`parallel`、`worktree`。
+- `Delegation planning` 只允许 `no`、`yes`，只授权制定委派方案，不授予多写者权限。
 - 任务卡字段使用 `任务级别：`。`Task level:` 只能出现在用户原始材料或外部笔记中，不能作为最终任务卡字段。
 - 如果用户明确要求单个 literal copy block 或文件 artifact，且任务卡正文包含内嵌代码块时，外层必须使用 `~~~~markdown` / `~~~~`，不得使用三反引号 ` ```markdown `；本模板包含 `.claude/review_targets.json` 的 ` ```json ` 示例，使用三反引号外层会被内部代码块提前截断。
-- 实际任务卡进入 runner 前必须通过 Rust validator 只读校验（`cargo run -p ags-cli -- task validate <task-card>` 或 `bash scripts/validate.sh <task-card>`）；对话输出可通过 `bash scripts/validate.sh -` 从 stdin 校验；校验失败时停止，不进入执行或收据流程。
+- 实际任务卡进入 runner 前必须通过 Rust validator 只读校验（`ags task validate <task-card>`；stdin 使用 `ags task validate -`）；校验失败时停止，不进入执行或收据流程。
 - 首个非空行已经是 `## 任务卡` 的输入是已有任务卡：合法卡跳过生成，直接进入 policy / runner；非法卡停止，不得回落为原始意图重新生成。
 - 远程控制、SSH、挂载目录、跨仓库任务中，`cwd` 不一定等于实际修改仓库。任务卡必须显式要求 Executor 为本次任务重写 `.claude/review_targets.json`，让显式 review 的审查范围对准实际目标仓库。
 - Executor 启动后按固定顺序读取：
@@ -186,10 +189,10 @@ Verification gate:
 - 跨仓库、外部 agent、或 Executor 无法访问本项目文件时，使用同一 canonical 骨架的自包含形态（内联所需固定规则），不另立 fallback 任务卡格式。
 - 任务级别按 `protocol/task-routing.md` 定义。
 - **Task-card handoff gate**：显式交接需要 `--task-card-requested` 与 `--confirmed-handoff-contract`；宿主 Plan mode 最终产物以 `--host-plan-mode-final` 替代 `--task-card-requested`，仍必须同时提供 `--confirmed-handoff-contract`。两条路径都只生成交接 artifact，不授权 mutation；输入重开 solution work 时以 `solution_formation_required` 拒绝。此规则不限制已授权的同会话 `direct-edit`。参见 `protocol/agent-task-protocol.md` 生命周期阶段 3.5。
-- Executor、Runtime adapter、Execution surface、Permission mode、Parallelism、Verification gate 按 `protocol/runtime-adapters.md` 定义；Review gate 的唯一规则表在 `protocol/agent-task-protocol.md`。
+- Executor、Runtime adapter、Execution surface、Execution mode、Execution topology、Verification gate 按 `protocol/runtime-adapters.md` 定义；Review gate 的唯一规则表在 `protocol/agent-task-protocol.md`。
 - `Execution effort` 使用中性执行强度语义（`low` / `normal` / `high` / `exhaustive`），默认 `normal`；它只表示思考强度，绝不映射为权限、并行或 review 豁免。其他旧值一律拒绝。
-- `Workflow authority` 声明是否允许 subagent / workflow（`none` / `within-card` / `plan-only` / `allowed`），默认 `none`；它只声明授权，不直接点火。
-- `子任务编排` 是可选槽位，`mode` 取 `none` / `optional` / `required`，默认 `none`（省略即 `none`）。`mode != none` 时 validator 要求 `Workflow authority` 非 none 且 `Parallelism` 为 subagent/worktree/multi-session/agent-team；该槽位只声明可拆分结构、子任务边界与回收要求，`ags run` 只把 resolved policy 放入 LaunchPlan，真正 subagent / workflow 点火由宿主决定，不由任务卡正文或 Runner 触发。子任务只能装可并行工作（只读审计 / 实现 / 文档同步 / 测试补充）；最终验证、交付报告、commit、push、release gate 必须由主 executor 独做，子任务结果合并为单一 diff 后由主 executor 统一验证与交付（见 `protocol/runtime-adapters.md` §Subtask Scope Rules）。
+- `Delegation planning` 声明是否允许 subagent / workflow（`none` / `within-card` / `plan-only` / `allowed`），默认 `none`；它只声明授权，不直接点火。
+- `子任务编排` 是可选槽位，`mode` 取 `none` / `optional` / `required`，默认 `none`（省略即 `none`）。`mode != none` 时 validator 要求 `Delegation planning` 非 none 且 `Execution topology` 为 subagent/worktree/multi-session/agent-team；该槽位只声明可拆分结构、子任务边界与回收要求，`ags run` 只把 resolved policy 放入 LaunchPlan，真正 subagent / workflow 点火由宿主决定，不由任务卡正文或 Runner 触发。子任务只能装可并行工作（只读审计 / 实现 / 文档同步 / 测试补充）；最终验证、交付报告、commit、push、release gate 必须由主 executor 独做，子任务结果合并为单一 diff 后由主 executor 统一验证与交付（见 `protocol/runtime-adapters.md` §Subtask Scope Rules）。
 - `ags run` 是唯一 LaunchPlan 准备入口。允许时返回 `HOST_EXECUTION_REQUIRED`；它不启动宿主、不执行任务、不验证结果、不写最终收据。`--check-only` 只做 gate 预览，`--dry-run` 输出相同结构化计划。
 - 涉及本地 Agent 技能目录时，必须引用项目内对应治理文档；如无项目治理文档，只使用 `ags skill inventory` / `ags skill verify` 和 `ags capability snapshot`。不存在运行时 adopt、ignore、dedupe 或 sync 命令。最终输出仍使用本文件的固定任务卡骨架。
 
@@ -215,19 +218,19 @@ Verification gate:
 - `本次任务相关文件`：列出本次涉及的 skill 源目录和 registry 文件。
 - `项目画像`：如存在，填写 `config/agent-project-profile.yaml`；不要复制无关画像内容。
 - `记忆胶囊`：如存在，填写 `$HOME/.agents/memory/projects/<project-slug>/context-capsule.md`；不要复制长记忆。AGS start hook 已注入时以注入上下文为准；hook 不可用时，开始执行前同步读取同目录 `task-memory.md`。
-- `任务存档`：如存在，填写 `$HOME/.agents/memory/projects/<project-slug>/task-memory.md`；没有任务记忆时填 `无`。任务开始由宿主原生 start adapter 通过 `context-memory-start.py` 只读注入 capsule / `task-memory.md`；会话或任务结束由宿主原生 close adapter 调用兼容名 `claude-stop-memory-capture.py`，只有合法交付闭环才经 `context-memory.sh capture` 归档并刷新本机 `task-memory.md`，普通对话只写 `skipped` close receipt。Claude Code 使用 SessionStart/Stop，Codex 使用 SessionStart/SessionEnd，OMP 使用原生 extension。共享脚本由 `ags setup --yes --force` 安装，宿主 wiring 由 `ags agents govern --agent <host> --apply` 显式纳管；`context-capsule.md` 绝不被自动覆盖。
+- `任务存档`：如存在，填写 `$HOME/.agents/memory/projects/<project-slug>/task-memory.md`；没有任务记忆时填 `无`。所有宿主只调用 `ags host lifecycle`；SessionEnd 仅归档成功 `ags task close` 留下的 closure pointer，无 pointer 时安全跳过且不得猜测 transcript。
 - `适用治理文档`：填写项目内治理文档；如无项目治理文档，填写 `AGENT_SUITE_PROTOCOL.md`。
 - `非目标`：明确不得写 `$HOME/.agents/skills`、`$HOME/.codex/skills`、`$HOME/.codex/plugins/cache`，不得运行 `lark-cli update`、`npx skills add/remove/update`，不得接管外部官方 CLI 或项目自管输出层技能，不得自动应用 patch。
 - `实施要求`：说明来源变更只发生在明确安装/升级中；验证后每个宿主只刷新一次静态 snapshot。
 - `边界声明`：如任务涉及 `notebooklm`、Hermes 输出层技能、TempoFlow 输出层业务契约、`notebooklm_task_card`、`local_context_pack` 或 `fairness_check_questions`，必须写明它们只可被引用，不能被开发套件接管、更新或打包。
-- `Verification gate`：优先使用 `ags skill inventory`（前台技能治理控制台的只读盘点）、`bash -n` 脚本语法检查和 `bash scripts/verify.sh`。`scripts/govern-new-skills.sh scan` 为 Phase 2 规划项、尚未实现，不得作为 Verification gate 步骤引用。
+- `Verification gate`：优先使用 `ags skill inventory`、`ags skill verify --strict` 与 `ags verify`。
 - `交付`：必须说明是否触碰本地 skill 目录、是否刷新静态 snapshot，以及仍需人工确认的事项。
 
 ## Heavy 任务补充
 
-Heavy 任务只能追加与当前 `Permission mode` 匹配的分支，不得把两个分支同时写进任务卡。
+Heavy 任务只能追加与当前 `Execution mode` 匹配的分支，不得把两个分支同时写进任务卡。
 
-`Permission mode: plan-only`：
+`Execution mode: plan-only`：
 
 ```markdown
 实施流程：
@@ -243,7 +246,7 @@ Resume / 压缩恢复保护：
 - 不修改、删除、覆盖（列出受保护数据/目录）
 ```
 
-`Permission mode: execute-and-verify`：
+`Execution mode: single-writer`（fanout 模式按同一闭环增加明确多写者边界）：
 
 ```markdown
 实施流程：
@@ -253,7 +256,7 @@ Resume / 压缩恢复保护：
 
 Resume / 压缩恢复保护：
 - 遇到“继续”、上下文压缩恢复或 task-notification 接续时，重新读取任务卡、运行 `git status --short`，并重新确认 `review_targets`。
-- 保持 `execute-and-verify`，继续执行并验证；Heavy 只追加独立 review gate。
+- 保持任务卡声明的 execution mode/topology，继续执行并验证；Heavy 只追加独立 review gate。
 
 基线保护：
 - 不修改、删除、覆盖（列出受保护数据/目录）

@@ -1,6 +1,6 @@
 # Agent Task Routing
 
-> AGS 0.3.5 的需求治理协议。自然语言语义判断属于宿主；AGS 只校验 typed proposal 和确定性准入。
+> AGS 0.3.6 的需求治理协议。自然语言语义判断属于宿主；AGS 只校验 typed proposal 和确定性准入。
 
 ## 唯一链路
 
@@ -15,7 +15,7 @@ preflight
 → 若且仅若存在 ServerHeldAction：ags_apply_action(lease_id, action_id)
 ```
 
-AGS 0.3.5 没有原始文本关键词路由。`ags_route_request` 不接受 `{request: ...}`，不启动进程、不写文件，也不在失败时回退到 substring、BM25、embedding、`SkillDemand` 或第二套路由器。
+AGS 0.3.6 没有原始文本关键词路由。`ags_route_request` 不接受 `{request: ...}`，不启动进程、不写文件，也不在失败时回退到 substring、BM25、embedding、`SkillDemand` 或第二套路由器。
 
 ## HostRouteProposal
 
@@ -81,11 +81,12 @@ host/target 冲突一律 fail closed。
 
 需求路由不从原始文本直接推断 Light / Medium / Heavy。先确定或复用方案，再由结构化任务卡的显式字段进入 Policy/Gate：
 
-- Light：默认 `execute-and-verify`；
-- Medium：默认 `execute-and-verify`；
-- Heavy：未声明时默认 `plan-only`；显式 `execute-and-verify` 可直接执行，但必须有独立 Heavy review。
+- Light：边界小，执行权限仍取自显式 authority tuple；
+- Medium：跨文件或集成验证，执行权限仍取自显式 authority tuple；
+- Heavy：要求独立 review，不能覆盖或推断执行权限。
 
-技能不能改变 task level、permission mode、review gate、verification gate 或安全 stop condition。
+技能不能改变 task level、execution mode/topology/delegation、review gate、
+verification gate 或安全 stop condition。
 
 ## Handoff Compiler
 

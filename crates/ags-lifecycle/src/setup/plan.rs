@@ -1,13 +1,13 @@
 use super::apply::codex_skill_thin_index_ancestor;
+use super::project_protocol_files;
 use super::templates::{
     claude_ags_command_content, codex_ags_command_skill_agent_metadata_content,
     codex_ags_command_skill_content, codex_ags_command_skill_specs, host_entry_policy_content,
 };
 use super::{
     claude_ags_command_path, codex_ags_named_skill_agent_metadata_path, codex_ags_named_skill_path,
-    retired_codex_ags_skill_dirs, PRIVATE_INSTALL_SCHEMA,
+    retired_ags_memory_script_paths, retired_codex_ags_skill_dirs, PRIVATE_INSTALL_SCHEMA,
 };
-use super::{portable_validate_script, project_protocol_files};
 use super::{sanitize_name, shell_quote, InstallFile};
 use std::path::{Path, PathBuf};
 
@@ -17,7 +17,7 @@ pub(in crate::setup) struct PrivateInstallPlan {
     pub(crate) source_root: PathBuf,
     pub(crate) target: PathBuf,
     pub(crate) files: Vec<InstallFile>,
-    pub(crate) cleanup_dirs: Vec<PathBuf>,
+    pub(crate) cleanup_paths: Vec<PathBuf>,
 }
 pub(in crate::setup) fn private_install_plan(
     source_root: &Path,
@@ -236,7 +236,7 @@ Each command skill routes through AGS preflight before acting.\n",
         },
         InstallFile {
             path: target.join("hosts/claude-code.mcp.snippet.json"),
-            description: "Claude Code MCP and Stop hook snippet".to_string(),
+            description: "Claude Code MCP and EvoMap Stop hook snippet".to_string(),
             content: claude_snippet,
             mode: None,
         },
@@ -272,7 +272,7 @@ Each command skill routes through AGS preflight before acting.\n",
         },
         InstallFile {
             path: target.join("hooks/claude-code-executor-stop.js"),
-            description: "Claude Code executor Stop hook".to_string(),
+            description: "Claude Code EvoMap method-capture Stop hook".to_string(),
             content: claude_hook,
             mode: Some(0o755),
         },
@@ -293,12 +293,6 @@ Each command skill routes through AGS preflight before acting.\n",
             description: "Claude Code user slash command for AGS governance".to_string(),
             content: claude_ags_command_content(),
             mode: None,
-        },
-        InstallFile {
-            path: target.join("project-templates/scripts/validate.sh"),
-            description: "portable project task-card validator wrapper".to_string(),
-            content: portable_validate_script(),
-            mode: Some(0o755),
         },
     ];
     files.extend(super::memory::memory_script_install_files(home));
@@ -366,7 +360,10 @@ Each command skill routes through AGS preflight before acting.\n",
         source_root: source_root.to_path_buf(),
         target: target.to_path_buf(),
         files,
-        cleanup_dirs: retired_codex_ags_skill_dirs(home),
+        cleanup_paths: retired_codex_ags_skill_dirs(home)
+            .into_iter()
+            .chain(retired_ags_memory_script_paths(home))
+            .collect(),
     }
 }
 
@@ -393,8 +390,8 @@ pub(in crate::setup) fn render_private_plan_json(plan: &PrivateInstallPlan) -> S
             })
         })
         .collect();
-    let cleanup_dirs: Vec<_> = plan
-        .cleanup_dirs
+    let cleanup_paths: Vec<_> = plan
+        .cleanup_paths
         .iter()
         .map(|path| {
             serde_json::json!({
@@ -411,7 +408,7 @@ pub(in crate::setup) fn render_private_plan_json(plan: &PrivateInstallPlan) -> S
         "target": plan.target.to_string_lossy(),
         "write_mode": "plan-only",
         "files": files,
-        "cleanup_dirs": cleanup_dirs,
+        "cleanup_paths": cleanup_paths,
         "host_config_policy": "MCP snippets are generated only; Claude Code /ags command and Codex AGS command skills are installed on apply",
     });
     serde_json::to_string_pretty(&output).unwrap_or_default()
@@ -443,16 +440,16 @@ pub(in crate::setup) fn render_private_plan_text(plan: &PrivateInstallPlan) -> S
             file.description
         ));
     }
-    if !plan.cleanup_dirs.is_empty() {
+    if !plan.cleanup_paths.is_empty() {
         lines.push(String::new());
         lines.push("Cleanup:".to_string());
-        for (i, dir) in plan.cleanup_dirs.iter().enumerate() {
-            let status = if dir.exists() {
+        for (i, path) in plan.cleanup_paths.iter().enumerate() {
+            let status = if path.exists() {
                 "would-remove"
             } else {
                 "absent"
             };
-            lines.push(format!("  {}. [{}] {}", i + 1, status, dir.display()));
+            lines.push(format!("  {}. [{}] {}", i + 1, status, path.display()));
         }
     }
     lines.push(String::new());

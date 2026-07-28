@@ -14,77 +14,48 @@ pub fn hash_file(path: &Path) -> Result<String, String> {
 
 // ── Receipt generation ─────────────────────────────────────────────────────
 
-/// Generate a receipt from explicit input parameters.
-///
-/// - `task_card_path`: path to the task card file (used to compute hash)
-/// - `gate_decision`: gate check decision (allow / stop)
-/// - `gate_reason`: optional reason for gate decision
-/// - `verification_results`: list of verification command results
-/// - `delivery_report_path`: optional path to delivery report (used to compute hash)
-pub fn generate_receipt(
-    task_card_path: &Path,
-    gate_decision: &str,
-    gate_reason: Option<&str>,
-    verification_results: Vec<VerificationResult>,
-    delivery_report_path: Option<&Path>,
-) -> Result<Receipt, String> {
-    let task_card_hash = hash_file(task_card_path)?;
-    let delivery_report_hash = match delivery_report_path {
-        Some(p) => Some(hash_file(p)?),
-        None => None,
-    };
-
-    // Derive receipt_id from first 12 chars of task card hash
-    let receipt_id = format!(
-        "receipt-{}",
-        &task_card_hash[..12.min(task_card_hash.len())]
-    );
-
-    // Timestamp — ISO 8601 via std only, no chrono dep
-    let timestamp = iso8601_now();
-
-    Ok(Receipt {
-        schema_version: RECEIPT_SCHEMA_VERSION.to_string(),
-        receipt_id,
-        timestamp,
-        task_card_hash,
-        task_card_path: Some(task_card_path.display().to_string()),
-        gate_result: GateResult {
-            decision: gate_decision.to_string(),
-            reason: gate_reason.map(|s| s.to_string()),
-        },
-        verification_results,
-        delivery_report_hash,
-        exit_code: None,
-        governance_status: Some(if gate_decision == "stop" {
-            ags_governance_decision::GovernanceStatus::BlockedByPolicy
-        } else {
-            ags_governance_decision::GovernanceStatus::DoneWithReceipt
-        }),
-        governance_evidence: None,
-    })
+/// Derive the receipt identity from both immutable authority artifacts.
+pub fn receipt_id(task_card_hash: &str, launch_plan_hash: &str) -> String {
+    let material = format!("{task_card_hash}\n{launch_plan_hash}");
+    let digest = sha256_hex(material.as_bytes());
+    format!("receipt-{}", &digest[..12])
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn generate_receipt_with_governance(
+/// Build the only first-party receipt: one produced by a successful task
+/// closure. Callers cannot generate an unbound task-card-only receipt.
+pub fn generate_closed_receipt(
     task_card_path: &Path,
-    gate_decision: &str,
-    gate_reason: Option<&str>,
+    launch_plan_path: &Path,
+    delivery_report_path: &Path,
+    closure: &delivery_report::DeliveryClosureResult,
     verification_results: Vec<VerificationResult>,
-    delivery_report_path: Option<&Path>,
-    governance_status: ags_governance_decision::GovernanceStatus,
-    governance_evidence: GovernanceEvidence,
-) -> Result<Receipt, String> {
-    let mut receipt = generate_receipt(
-        task_card_path,
-        gate_decision,
-        gate_reason,
+    governance_evidence: Option<GovernanceEvidence>,
+) -> Receipt {
+    Receipt {
+        schema_version: RECEIPT_SCHEMA_VERSION.to_string(),
+        receipt_id: closure.receipt_id.clone(),
+        timestamp: iso8601_now(),
+        task_card_hash: closure.task_card_hash.clone(),
+        launch_plan_hash: closure.launch_plan_hash.clone(),
+        task_card_path: Some(task_card_path.display().to_string()),
+        launch_plan_path: launch_plan_path.display().to_string(),
+        delivery_report_path: delivery_report_path.display().to_string(),
+        gate_result: GateResult {
+            decision: "allow".to_string(),
+            reason: None,
+        },
         verification_results,
-        delivery_report_path,
-    )?;
-    receipt.governance_status = Some(governance_status);
-    receipt.governance_evidence = Some(governance_evidence);
-    Ok(receipt)
+        delivery_report_hash: closure.delivery_report_hash.clone(),
+        execution_footprint: ExecutionFootprint {
+            execution_mode_used: closure.execution_mode_used.clone(),
+            execution_topology_used: closure.execution_topology_used.clone(),
+            delegation_used: closure.delegation_used.clone(),
+        },
+        closure_status: closure.task_status.clone(),
+        exit_code: Some(0),
+        governance_status: Some(ags_governance_decision::GovernanceStatus::DoneWithReceipt),
+        governance_evidence,
+    }
 }
 
 /// Generate an ISO 8601 timestamp using std only.
@@ -109,7 +80,7 @@ fn iso8601_now() -> String {
 ///
 /// Checks:
 /// 1. Schema version is present and recognized
-/// 2. Required fields are present (receipt_id, task_card_hash, gate_result, verification_results)
+/// 2. Required fields and the receipt identity binding are valid
 /// 3. Task card hash matches source file (if task_card_path is present and file exists)
 /// 4. Verification output hashes match (if source command outputs are available)
 pub fn verify_receipt(receipt: &Receipt) -> VerifyResult {
@@ -141,9 +112,25 @@ pub fn verify_receipt(receipt: &Receipt) -> VerifyResult {
     if receipt.task_card_hash.is_empty() {
         missing.push("task_card_hash");
     }
+    if receipt.launch_plan_hash.is_empty() {
+        missing.push("launch_plan_hash");
+    }
+    if receipt.delivery_report_hash.is_empty() {
+        missing.push("delivery_report_hash");
+    }
     if receipt.gate_result.decision.is_empty() {
         missing.push("gate_result.decision");
     }
+
+    let expected_receipt_id = receipt_id(&receipt.task_card_hash, &receipt.launch_plan_hash);
+    checks.push(CheckItem {
+        name: "receipt_id_binding".to_string(),
+        passed: receipt.receipt_id == expected_receipt_id,
+        detail: format!(
+            "expected `{expected_receipt_id}`, actual `{}`",
+            receipt.receipt_id
+        ),
+    });
     if missing.is_empty() {
         checks.push(CheckItem {
             name: "required_fields".to_string(),
@@ -194,10 +181,7 @@ pub fn verify_receipt(receipt: &Receipt) -> VerifyResult {
                 checks.push(CheckItem {
                     name: "task_card_hash".to_string(),
                     passed: true,
-                    detail: format!(
-                        "source file {} not available — skipping hash check",
-                        path_str
-                    ),
+                    detail: format!("source file {path_str} unavailable; structural checks only"),
                 });
             }
         }
@@ -205,28 +189,32 @@ pub fn verify_receipt(receipt: &Receipt) -> VerifyResult {
             checks.push(CheckItem {
                 name: "task_card_hash".to_string(),
                 passed: true,
-                detail: "no task_card_path — hash consistency check skipped".to_string(),
+                detail: "no task_card_path; structural checks only".to_string(),
             });
         }
     }
 
-    // Check 4: delivery report hash consistency (if present)
-    match &receipt.delivery_report_hash {
-        Some(reported_hash) => {
-            checks.push(CheckItem {
-                name: "delivery_report_hash_present".to_string(),
-                passed: true,
-                detail: format!("delivery report hash recorded: {}", reported_hash),
-            });
-        }
-        None => {
-            checks.push(CheckItem {
-                name: "delivery_report_hash_present".to_string(),
-                passed: true,
-                detail: "no delivery report hash — skipped".to_string(),
-            });
-        }
-    }
+    checks.push(launch_plan_hash_check(receipt));
+    checks.push(path_hash_check(
+        "delivery_report_hash",
+        &receipt.delivery_report_path,
+        &receipt.delivery_report_hash,
+    ));
+
+    checks.push(CheckItem {
+        name: "artifact_hashes".to_string(),
+        passed: [
+            &receipt.task_card_hash,
+            &receipt.launch_plan_hash,
+            &receipt.delivery_report_hash,
+        ]
+        .iter()
+        .all(|hash| {
+            hash.len() == 64 && hash.chars().all(|character| character.is_ascii_hexdigit())
+        }),
+        detail: "task card, launch plan, and delivery report hashes must be SHA-256 hex"
+            .to_string(),
+    });
 
     let valid = checks.iter().all(|c| c.passed);
 
@@ -236,6 +224,93 @@ pub fn verify_receipt(receipt: &Receipt) -> VerifyResult {
         valid,
         checks,
     }
+}
+
+fn path_hash_check(name: &str, path: &str, expected: &str) -> CheckItem {
+    match hash_file(Path::new(path)) {
+        Ok(actual) => CheckItem {
+            name: name.to_string(),
+            passed: actual == expected,
+            detail: format!("source `{path}` expected `{expected}`, actual `{actual}`"),
+        },
+        Err(error) => CheckItem {
+            name: name.to_string(),
+            passed: true,
+            detail: format!("{error}; structural checks only"),
+        },
+    }
+}
+
+fn launch_plan_hash_check(receipt: &Receipt) -> CheckItem {
+    let path = &receipt.launch_plan_path;
+    let result = std::fs::read(path)
+        .map_err(|error| format!("cannot read `{path}`: {error}"))
+        .and_then(|bytes| {
+            let value: serde_json::Value = serde_json::from_slice(&bytes)
+                .map_err(|error| format!("invalid LaunchPlan JSON: {error}"))?;
+            ags_task_contract::runner::canonical_launch_plan_hash(&value)
+        });
+    match result {
+        Ok(actual) => CheckItem {
+            name: "launch_plan_hash".to_string(),
+            passed: actual == receipt.launch_plan_hash,
+            detail: format!(
+                "source `{path}` expected `{}`, actual `{actual}`",
+                receipt.launch_plan_hash
+            ),
+        },
+        Err(error) => CheckItem {
+            name: "launch_plan_hash".to_string(),
+            passed: true,
+            detail: format!("{error}; structural checks only"),
+        },
+    }
+}
+
+/// Strict artifact verification used by memory archival. Unlike portable
+/// receipt inspection, every referenced source must exist and match.
+pub fn verify_receipt_artifacts(receipt: &Receipt) -> Result<(), String> {
+    let structural = verify_receipt(receipt);
+    if !structural.valid {
+        return Err(structural
+            .checks
+            .into_iter()
+            .filter(|check| !check.passed)
+            .map(|check| format!("{}: {}", check.name, check.detail))
+            .collect::<Vec<_>>()
+            .join("; "));
+    }
+    let task_path = receipt
+        .task_card_path
+        .as_deref()
+        .ok_or_else(|| "receipt has no task_card_path".to_string())?;
+    for (label, path, expected) in [
+        ("task card", task_path, receipt.task_card_hash.as_str()),
+        (
+            "delivery report",
+            receipt.delivery_report_path.as_str(),
+            receipt.delivery_report_hash.as_str(),
+        ),
+    ] {
+        let actual = hash_file(Path::new(path))?;
+        if actual != expected {
+            return Err(format!(
+                "{label} hash mismatch: expected `{expected}`, actual `{actual}`"
+            ));
+        }
+    }
+    let plan_bytes = std::fs::read(&receipt.launch_plan_path)
+        .map_err(|error| format!("cannot read `{}`: {error}", receipt.launch_plan_path))?;
+    let plan: serde_json::Value = serde_json::from_slice(&plan_bytes)
+        .map_err(|error| format!("invalid LaunchPlan JSON: {error}"))?;
+    let actual_plan_hash = ags_task_contract::runner::canonical_launch_plan_hash(&plan)?;
+    if actual_plan_hash != receipt.launch_plan_hash {
+        return Err(format!(
+            "launch plan hash mismatch: expected `{}`, actual `{actual_plan_hash}`",
+            receipt.launch_plan_hash
+        ));
+    }
+    Ok(())
 }
 
 // ── Compliance checking ─────────────────────────────────────────────────────

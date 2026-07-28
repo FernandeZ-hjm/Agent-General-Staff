@@ -137,9 +137,10 @@ pub(in super::super) fn host_visibility(
                 canonical_source,
                 external_shared,
             ),
-            ManagedKind::Mcp | ManagedKind::CliBacked | ManagedKind::SuiteInterface => {
+            ManagedKind::Mcp | ManagedKind::SuiteInterface => {
                 host_mcp_visibility(host, cap_name, probe)
             }
+            ManagedKind::CliBacked => host_cli_visibility(host, cap_name),
         };
     }
 
@@ -686,36 +687,44 @@ pub(in super::super) fn host_mcp_visibility(
             )],
         );
     };
-    if !probe.available {
+    if probe.status != ags_host_integration::HostProbeStatus::Ready {
         return v(
             HostVisibilityStatus::Degraded,
             vec![format!(
-                "{} unavailable — cannot verify MCP registration for '{host}' (degraded, not a failure).",
-                probe.evidence_source
-            )],
-        );
-    }
-    if !probe.live_runtime_probe {
-        return v(
-            HostVisibilityStatus::Degraded,
-            vec![format!(
-                "{} is configuration-source evidence only; live '{host}' runtime probe was not run",
-                probe.evidence_source
+                "{} reported {:?}: {}",
+                probe.evidence_source, probe.status, probe.evidence
             )],
         );
     }
     match probe.find(name) {
-        Some(connected) => v(
+        Some(entry) => v(
             HostVisibilityStatus::Visible,
             vec![format!(
-                "registered in {} (enabled/connected: {connected})",
-                probe.evidence_source
+                "reported by {} (enabled/connected: {})",
+                probe.evidence_source, entry.active
             )],
         ),
         None => v(
             HostVisibilityStatus::NotVisible,
             vec![format!("'{name}' not found in {}", probe.evidence_source)],
         ),
+    }
+}
+
+pub(in super::super) fn host_cli_visibility(host: &str, name: &str) -> HostVisibility {
+    match ags_platform::find_in_path(name) {
+        Some(path) => HostVisibility {
+            host: host.to_string(),
+            supported: true,
+            status: HostVisibilityStatus::Visible,
+            evidence: vec![format!("external CLI is executable at {}", path.display())],
+        },
+        None => HostVisibility {
+            host: host.to_string(),
+            supported: true,
+            status: HostVisibilityStatus::NotVisible,
+            evidence: vec![format!("external CLI '{name}' was not found in PATH")],
+        },
     }
 }
 
@@ -752,12 +761,12 @@ pub(in super::super) fn derive_health(
             let mut any_connected = false;
             let mut any_present = false;
             for (_, p) in probes {
-                if !p.live_runtime_probe {
+                if p.status != ags_host_integration::HostProbeStatus::Ready {
                     continue;
                 }
-                if let Some(connected) = p.find(name) {
+                if let Some(entry) = p.find(name) {
                     any_present = true;
-                    any_connected |= connected;
+                    any_connected |= entry.active;
                 }
             }
             if any_connected {

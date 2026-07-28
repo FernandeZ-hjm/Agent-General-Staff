@@ -10,16 +10,49 @@ use std::path::{Path, PathBuf};
 pub enum McpListFormat {
     Claude,
     Codex,
+    Omp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpProbeProtocol {
+    DirectCommand,
+    JsonlRpcCommand { command: &'static str },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryProtocol {
+    ClaudeCommandHooks,
+    CodexCommandHooks,
+    CursorCommandHooks,
+    OmpExtension,
+}
+
+impl MemoryProtocol {
+    pub fn adapter_id(self) -> &'static str {
+        match self {
+            Self::ClaudeCommandHooks => "claude-command-hooks",
+            Self::CodexCommandHooks => "codex-command-hooks",
+            Self::CursorCommandHooks => "cursor-command-hooks",
+            Self::OmpExtension => "omp-extension",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LifecycleOutputProtocol {
+    ClaudeCompatible,
+    Cursor,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct McpProbeSpec {
+    pub protocol: McpProbeProtocol,
     pub program: &'static str,
     pub args: &'static [&'static str],
+    pub env: &'static [(&'static str, &'static str)],
     pub format: McpListFormat,
     pub evidence_source: &'static str,
-    /// False when the command only proves an inherited configuration source.
-    pub live_runtime_probe: bool,
+    pub timeout_ms: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -35,7 +68,8 @@ pub struct AgentPlatformSpec {
     pub loads_codex_plugin_skills: bool,
     pub mcp_probe: Option<McpProbeSpec>,
     pub mcp_registrar: Option<&'static str>,
-    pub native_memory_adapter: Option<&'static str>,
+    pub memory_protocol: Option<MemoryProtocol>,
+    pub lifecycle_output: Option<LifecycleOutputProtocol>,
     pub verify_supported: bool,
 }
 
@@ -51,14 +85,17 @@ pub const AGENT_PLATFORM_SPECS: &[AgentPlatformSpec] = &[
         loads_shared_agent_skills: false,
         loads_codex_plugin_skills: false,
         mcp_probe: Some(McpProbeSpec {
+            protocol: McpProbeProtocol::DirectCommand,
             program: "claude",
             args: &["mcp", "list"],
+            env: &[],
             format: McpListFormat::Claude,
             evidence_source: "`claude mcp list`",
-            live_runtime_probe: true,
+            timeout_ms: 10_000,
         }),
         mcp_registrar: Some("claude"),
-        native_memory_adapter: Some("claude-command-hooks"),
+        memory_protocol: Some(MemoryProtocol::ClaudeCommandHooks),
+        lifecycle_output: Some(LifecycleOutputProtocol::ClaudeCompatible),
         verify_supported: true,
     },
     AgentPlatformSpec {
@@ -72,14 +109,17 @@ pub const AGENT_PLATFORM_SPECS: &[AgentPlatformSpec] = &[
         loads_shared_agent_skills: true,
         loads_codex_plugin_skills: true,
         mcp_probe: Some(McpProbeSpec {
+            protocol: McpProbeProtocol::DirectCommand,
             program: "codex",
             args: &["mcp", "list"],
+            env: &[],
             format: McpListFormat::Codex,
             evidence_source: "`codex mcp list`",
-            live_runtime_probe: true,
+            timeout_ms: 10_000,
         }),
         mcp_registrar: Some("codex"),
-        native_memory_adapter: Some("codex-command-hooks"),
+        memory_protocol: Some(MemoryProtocol::CodexCommandHooks),
+        lifecycle_output: Some(LifecycleOutputProtocol::ClaudeCompatible),
         verify_supported: true,
     },
     AgentPlatformSpec {
@@ -88,35 +128,49 @@ pub const AGENT_PLATFORM_SPECS: &[AgentPlatformSpec] = &[
         cli_names: &["omp"],
         config_subdirs: &[".omp", ".omp/agent"],
         app_bundles: &[],
-        mcp_host_command: "no duplicate registration required: OMP discovers MCP servers from existing host configs including Codex; use project `.mcp.json` only for OMP-specific additions",
+        mcp_host_command: "configure AGS in OMP MCP settings; verify through OMP's native JSONL RPC `/mcp list` protocol",
         native_skill_subdir: Some(".omp/agent/skills"),
         loads_shared_agent_skills: true,
         loads_codex_plugin_skills: false,
         mcp_probe: Some(McpProbeSpec {
-            program: "codex",
-            args: &["mcp", "list"],
-            format: McpListFormat::Codex,
-            evidence_source: "inherited Codex registration source (`codex mcp list`); live OMP runtime probe NOT_RUN",
-            live_runtime_probe: false,
+            protocol: McpProbeProtocol::JsonlRpcCommand {
+                command: "/mcp list",
+            },
+            program: "omp",
+            args: &["--mode", "rpc", "--no-session"],
+            env: &[],
+            format: McpListFormat::Omp,
+            evidence_source: "OMP native JSONL RPC `/mcp list`",
+            timeout_ms: 10_000,
         }),
         mcp_registrar: None,
-        native_memory_adapter: Some("omp-extension"),
+        memory_protocol: Some(MemoryProtocol::OmpExtension),
+        lifecycle_output: Some(LifecycleOutputProtocol::ClaudeCompatible),
         verify_supported: true,
     },
     AgentPlatformSpec {
         id: "cursor",
         display: "Cursor",
-        cli_names: &["cursor"],
+        cli_names: &["cursor-agent", "cursor"],
         config_subdirs: &[".cursor"],
         app_bundles: &["Cursor.app"],
-        mcp_host_command: "configure AGS MCP in Cursor settings (reserved)",
+        mcp_host_command: "configure AGS in .cursor/mcp.json or ~/.cursor/mcp.json; verify with `cursor-agent mcp list`",
         native_skill_subdir: Some(".cursor/skills"),
         loads_shared_agent_skills: true,
         loads_codex_plugin_skills: false,
-        mcp_probe: None,
+        mcp_probe: Some(McpProbeSpec {
+            protocol: McpProbeProtocol::DirectCommand,
+            program: "cursor-agent",
+            args: &["mcp", "list"],
+            env: &[("AGENT_CLI_CREDENTIAL_STORE", "file")],
+            format: McpListFormat::Claude,
+            evidence_source: "`cursor-agent mcp list`",
+            timeout_ms: 10_000,
+        }),
         mcp_registrar: None,
-        native_memory_adapter: None,
-        verify_supported: false,
+        memory_protocol: Some(MemoryProtocol::CursorCommandHooks),
+        lifecycle_output: Some(LifecycleOutputProtocol::Cursor),
+        verify_supported: true,
     },
     AgentPlatformSpec {
         id: "workbuddy",
@@ -130,7 +184,8 @@ pub const AGENT_PLATFORM_SPECS: &[AgentPlatformSpec] = &[
         loads_codex_plugin_skills: false,
         mcp_probe: None,
         mcp_registrar: None,
-        native_memory_adapter: None,
+        memory_protocol: None,
+        lifecycle_output: None,
         verify_supported: false,
     },
     AgentPlatformSpec {
@@ -145,7 +200,8 @@ pub const AGENT_PLATFORM_SPECS: &[AgentPlatformSpec] = &[
         loads_codex_plugin_skills: false,
         mcp_probe: None,
         mcp_registrar: None,
-        native_memory_adapter: None,
+        memory_protocol: None,
+        lifecycle_output: None,
         verify_supported: false,
     },
 ];
@@ -300,13 +356,18 @@ mod tests {
     }
 
     #[test]
-    fn host_runtime_facts_keep_omp_inherited_probe_distinct_from_live_evidence() {
+    fn omp_uses_its_own_live_runtime_protocol() {
         let omp = platform_spec("omp").unwrap();
         let probe = omp.mcp_probe.unwrap();
-        assert_eq!(probe.program, "codex");
-        assert!(!probe.live_runtime_probe);
+        assert_eq!(probe.program, "omp");
+        assert_eq!(
+            probe.protocol,
+            McpProbeProtocol::JsonlRpcCommand {
+                command: "/mcp list"
+            }
+        );
         assert!(omp.mcp_registrar.is_none());
-        assert_eq!(omp.native_memory_adapter, Some("omp-extension"));
+        assert_eq!(omp.memory_protocol, Some(MemoryProtocol::OmpExtension));
     }
 
     #[test]
@@ -323,6 +384,24 @@ mod tests {
             assert!(!platform_spec(host).unwrap().loads_codex_plugin_skills);
         }
         assert!(platform_spec("codex").unwrap().loads_codex_plugin_skills);
+    }
+
+    #[test]
+    fn cursor_uses_native_command_hooks_and_cursor_output_protocol() {
+        let cursor = platform_spec("cursor").unwrap();
+        assert_eq!(
+            cursor.memory_protocol,
+            Some(MemoryProtocol::CursorCommandHooks)
+        );
+        assert_eq!(
+            cursor.lifecycle_output,
+            Some(LifecycleOutputProtocol::Cursor)
+        );
+        assert!(cursor.verify_supported);
+        let probe = cursor.mcp_probe.unwrap();
+        assert_eq!(probe.program, "cursor-agent");
+        assert_eq!(probe.args, ["mcp", "list"]);
+        assert_eq!(probe.env, [("AGENT_CLI_CREDENTIAL_STORE", "file")]);
     }
 
     #[test]

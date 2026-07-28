@@ -4,7 +4,8 @@ use super::super::templates::{
 };
 use super::super::AGS_VERSION;
 use super::super::{
-    claude_ags_command_path, codex_ags_named_skill_path, retired_codex_ags_skill_dirs,
+    claude_ags_command_path, codex_ags_named_skill_path, retired_ags_memory_script_paths,
+    retired_codex_ags_skill_dirs,
 };
 use super::*;
 use std::path::{Path, PathBuf};
@@ -58,6 +59,13 @@ fn private_install_plan_excludes_evomap_by_default() {
             "global rule module must be installed: {name}"
         );
     }
+    let core_rules = plan
+        .files
+        .iter()
+        .find(|file| file.path.ends_with("ags-core.md"))
+        .expect("AGS core rules must be installed");
+    assert!(core_rules.content.contains("决策优先级：第一性原理"));
+    assert!(core_rules.content.contains("技能和 MCP 只提供"));
     for (name, _, _, _, _) in codex_ags_command_skill_specs() {
         assert!(plan
             .files
@@ -65,7 +73,13 @@ fn private_install_plan_excludes_evomap_by_default() {
             .any(|file| file.path == codex_ags_named_skill_path(&home, name)));
     }
     for retired_dir in retired_codex_ags_skill_dirs(&home) {
-        assert!(plan.cleanup_dirs.iter().any(|dir| dir == &retired_dir));
+        assert!(plan.cleanup_paths.iter().any(|path| path == &retired_dir));
+    }
+    for retired_script in retired_ags_memory_script_paths(&home) {
+        assert!(plan
+            .cleanup_paths
+            .iter()
+            .any(|path| path == &retired_script));
     }
 }
 

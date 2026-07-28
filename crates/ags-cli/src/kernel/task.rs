@@ -14,7 +14,13 @@ pub(crate) fn cmd_task_validate(paths: &[String]) {
     }
 }
 
-fn cmd_task_close(task_card: &str, delivery_report: &str, format: &str) {
+fn cmd_task_close(
+    task_card: &str,
+    launch_plan: &str,
+    delivery_report: &str,
+    receipt_out: &std::path::Path,
+    format: &str,
+) {
     let card = std::fs::read_to_string(task_card).unwrap_or_else(|error| {
         eprintln!("task close: cannot read task card `{task_card}` — {error}");
         std::process::exit(1);
@@ -23,7 +29,51 @@ fn cmd_task_close(task_card: &str, delivery_report: &str, format: &str) {
         eprintln!("task close: cannot read delivery report `{delivery_report}` — {error}");
         std::process::exit(1);
     });
-    let result = ags_evidence::delivery_report::validate(&card, &report);
+    let plan = std::fs::read_to_string(launch_plan).unwrap_or_else(|error| {
+        eprintln!("task close: cannot read launch plan `{launch_plan}` — {error}");
+        std::process::exit(1);
+    });
+    let result = ags_evidence::delivery_report::validate(&card, &plan, &report);
+    if result.valid {
+        let receipt = ags_evidence::generate_closed_receipt(
+            std::path::Path::new(task_card),
+            std::path::Path::new(launch_plan),
+            std::path::Path::new(delivery_report),
+            &result,
+            Vec::new(),
+            None,
+        );
+        let receipt_json = ags_evidence::render_receipt_json(&receipt);
+        ags_platform::atomic_write(receipt_out, receipt_json.as_bytes()).unwrap_or_else(|error| {
+            eprintln!(
+                "task close: cannot atomically write receipt `{}` — {error}",
+                receipt_out.display()
+            );
+            std::process::exit(1);
+        });
+        let closure_pointer = serde_json::json!({
+            "schema_version": "0.3.6-closure-pointer",
+            "receipt_id": receipt.receipt_id,
+            "receipt_path": receipt_out,
+            "task_card_hash": receipt.task_card_hash,
+            "launch_plan_hash": receipt.launch_plan_hash,
+            "delivery_report_hash": receipt.delivery_report_hash,
+        });
+        let pointer_path = std::env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+            .join(".ags")
+            .join("state")
+            .join("closure-pointer.json");
+        let pointer_bytes = serde_json::to_vec_pretty(&closure_pointer)
+            .expect("closure pointer serialization is infallible");
+        ags_platform::atomic_write(&pointer_path, &pointer_bytes).unwrap_or_else(|error| {
+            eprintln!(
+                "task close: cannot atomically write closure pointer `{}` — {error}",
+                pointer_path.display()
+            );
+            std::process::exit(1);
+        });
+    }
     crate::output::emit_rendered(
         format,
         || ags_evidence::delivery_report::render_json(&result),
@@ -236,9 +286,17 @@ pub(crate) fn run(action: TaskAction) {
         TaskAction::Validate { paths } => cmd_task_validate(&paths),
         TaskAction::Close {
             task_card,
+            launch_plan,
             delivery_report,
+            receipt_out,
             format,
-        } => cmd_task_close(&task_card, &delivery_report, &format),
+        } => cmd_task_close(
+            &task_card,
+            &launch_plan,
+            &delivery_report,
+            &receipt_out,
+            &format,
+        ),
         TaskAction::Compile {
             path,
             format,

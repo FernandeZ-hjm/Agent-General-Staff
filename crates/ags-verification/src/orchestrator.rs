@@ -63,7 +63,7 @@ pub fn run_verify_with_options(
         .count();
 
     VerificationReport {
-        schema_version: "0.3.5-verification-report".to_string(),
+        schema_version: "0.3.6-verification-report".to_string(),
         scope,
         repo_root: repo_root.to_string_lossy().to_string(),
         items,

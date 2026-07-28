@@ -4,7 +4,7 @@
 use serde::Serialize;
 use std::collections::BTreeSet;
 
-pub const SCHEMA_VERSION: &str = "0.3.5-delivery-closure";
+pub const SCHEMA_VERSION: &str = "0.3.6-delivery-closure";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ClosureCheck {
@@ -19,10 +19,16 @@ pub struct DeliveryClosureResult {
     pub valid: bool,
     pub contract_id: String,
     pub task_card_hash: String,
+    pub launch_plan_hash: String,
     pub delivery_report_hash: String,
     pub receipt_id: String,
     pub task_status: String,
     pub review_gate: String,
+    pub effective_execution_mode: String,
+    pub effective_execution_topology: String,
+    pub execution_mode_used: String,
+    pub execution_topology_used: String,
+    pub delegation_used: String,
     pub checks: Vec<ClosureCheck>,
 }
 
@@ -33,10 +39,9 @@ struct ClosureRow {
     detail: String,
 }
 
-pub fn validate(task_card: &str, report: &str) -> DeliveryClosureResult {
+pub fn validate(task_card: &str, launch_plan: &str, report: &str) -> DeliveryClosureResult {
     let task_card_hash = crate::sha256_hex(task_card.as_bytes());
     let delivery_report_hash = crate::sha256_hex(report.as_bytes());
-    let receipt_id = format!("receipt-{}", &task_card_hash[..12]);
     let mut checks = Vec::new();
 
     let card = match ags_task_contract::validator::parse_validated(task_card) {
@@ -51,8 +56,13 @@ pub fn validate(task_card: &str, report: &str) -> DeliveryClosureResult {
                 checks,
                 String::new(),
                 task_card_hash,
+                String::new(),
                 delivery_report_hash,
-                receipt_id,
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
                 String::new(),
                 String::new(),
             );
@@ -64,11 +74,63 @@ pub fn validate(task_card: &str, report: &str) -> DeliveryClosureResult {
     ));
     let contract = ags_task_contract::validator::closure_contract(&card);
 
+    let plan: serde_json::Value = match serde_json::from_str(launch_plan) {
+        Ok(plan) => plan,
+        Err(error) => {
+            checks.push(ClosureCheck {
+                name: "launch-plan-json".to_string(),
+                passed: false,
+                detail: error.to_string(),
+            });
+            return finish(
+                checks,
+                contract.contract_id,
+                task_card_hash,
+                String::new(),
+                delivery_report_hash,
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+            );
+        }
+    };
+    checks.push(pass("launch-plan-json", "launch plan is valid JSON"));
+    let plan_schema = json_string(&plan, "schema_version");
+    checks.push(equals_check(
+        "launch-plan-schema",
+        &plan_schema,
+        ags_task_contract::runner::SCHEMA_VERSION,
+        "launch plan schema",
+    ));
+    let plan_task_hash = json_string(&plan, "task_card_hash");
+    checks.push(equals_check(
+        "launch-plan-task-card-binding",
+        &plan_task_hash,
+        &task_card_hash,
+        "launch plan task-card-hash",
+    ));
+    let launch_plan_hash = json_string(&plan, "launch_plan_hash");
+    let recomputed_plan_hash =
+        ags_task_contract::runner::canonical_launch_plan_hash(&plan).unwrap_or_default();
+    checks.push(equals_check(
+        "launch-plan-hash-binding",
+        &launch_plan_hash,
+        &recomputed_plan_hash,
+        "launch plan hash",
+    ));
+    let effective_execution_mode = json_string(&plan, "effective_execution_mode");
+    let effective_execution_topology = json_string(&plan, "effective_execution_topology");
+    let receipt_id = crate::receipt_id(&task_card_hash, &launch_plan_hash);
+
     let schema = inline_value(report, "Closure schema:");
     checks.push(equals_check(
         "closure-schema",
         &schema,
-        "1.0",
+        "1.1",
         "delivery report closure schema",
     ));
     let report_contract_id = inline_value(report, "Contract ID:");
@@ -85,6 +147,13 @@ pub fn validate(task_card: &str, report: &str) -> DeliveryClosureResult {
         &task_card_hash,
         "delivery report task-card-hash",
     ));
+    let report_launch_plan_hash = inline_value(report, "launch-plan-hash:");
+    checks.push(equals_check(
+        "report-launch-plan-hash-binding",
+        &report_launch_plan_hash,
+        &launch_plan_hash,
+        "delivery report launch-plan-hash",
+    ));
     let report_receipt_id = inline_value(report, "receipt-id:");
     checks.push(equals_check(
         "receipt-id-binding",
@@ -95,6 +164,9 @@ pub fn validate(task_card: &str, report: &str) -> DeliveryClosureResult {
 
     let task_status = inline_value(report, "状态:");
     let review_gate = inline_value(report, "review-gate:");
+    let execution_mode_used = inline_value(report, "execution-mode-used:");
+    let execution_topology_used = inline_value(report, "execution-topology-used:");
+    let delegation_used = inline_value(report, "delegation-used:");
     checks.push(member_check(
         "task-status",
         &task_status,
@@ -104,6 +176,33 @@ pub fn validate(task_card: &str, report: &str) -> DeliveryClosureResult {
         "review-gate",
         &review_gate,
         &["pending-review", "passed", "n/a"],
+    ));
+    checks.push(member_check(
+        "execution-mode-used",
+        &execution_mode_used,
+        &[
+            "plan-only",
+            "single-writer",
+            "fanout-in-card",
+            "fanout-cross-card",
+        ],
+    ));
+    checks.push(member_check(
+        "execution-topology-used",
+        &execution_topology_used,
+        &["single", "parallel", "worktree"],
+    ));
+    checks.push(member_check(
+        "delegation-used",
+        &delegation_used,
+        &["none", "in-card", "cross-card"],
+    ));
+    checks.push(authority_check(
+        &effective_execution_mode,
+        &effective_execution_topology,
+        &execution_mode_used,
+        &execution_topology_used,
+        &delegation_used,
     ));
 
     let goal_rows = section_rows(report, "## 目标闭环", "G-");
@@ -193,10 +292,15 @@ pub fn validate(task_card: &str, report: &str) -> DeliveryClosureResult {
         checks,
         contract.contract_id,
         task_card_hash,
+        launch_plan_hash,
         delivery_report_hash,
-        receipt_id,
         task_status,
         review_gate,
+        effective_execution_mode,
+        effective_execution_topology,
+        execution_mode_used,
+        execution_topology_used,
+        delegation_used,
     )
 }
 
@@ -204,21 +308,96 @@ fn finish(
     checks: Vec<ClosureCheck>,
     contract_id: String,
     task_card_hash: String,
+    launch_plan_hash: String,
     delivery_report_hash: String,
-    receipt_id: String,
     task_status: String,
     review_gate: String,
+    effective_execution_mode: String,
+    effective_execution_topology: String,
+    execution_mode_used: String,
+    execution_topology_used: String,
+    delegation_used: String,
 ) -> DeliveryClosureResult {
+    let receipt_id = crate::receipt_id(&task_card_hash, &launch_plan_hash);
     DeliveryClosureResult {
         schema_version: SCHEMA_VERSION.to_string(),
         valid: checks.iter().all(|check| check.passed),
         contract_id,
         task_card_hash,
+        launch_plan_hash,
         delivery_report_hash,
         receipt_id,
         task_status,
         review_gate,
+        effective_execution_mode,
+        effective_execution_topology,
+        execution_mode_used,
+        execution_topology_used,
+        delegation_used,
         checks,
+    }
+}
+
+fn json_string(value: &serde_json::Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .to_string()
+}
+
+fn authority_check(
+    effective_mode: &str,
+    effective_topology: &str,
+    used_mode: &str,
+    used_topology: &str,
+    delegation_used: &str,
+) -> ClosureCheck {
+    let mode_rank = |value: &str| match value {
+        "plan-only" => Some(0),
+        "single-writer" => Some(1),
+        "fanout-in-card" => Some(2),
+        "fanout-cross-card" => Some(3),
+        _ => None,
+    };
+    let topology_rank = |value: &str| match value {
+        "single" => Some(0),
+        "parallel" => Some(1),
+        "worktree" => Some(2),
+        _ => None,
+    };
+    let delegation_rank = |value: &str| match value {
+        "none" => Some(0),
+        "in-card" => Some(1),
+        "cross-card" => Some(2),
+        _ => None,
+    };
+    let max_delegation = match effective_mode {
+        "fanout-in-card" => Some(1),
+        "fanout-cross-card" => Some(2),
+        "plan-only" | "single-writer" => Some(0),
+        _ => None,
+    };
+    let mode_ok = matches!(
+        (mode_rank(used_mode), mode_rank(effective_mode)),
+        (Some(used), Some(effective)) if used <= effective
+    );
+    let topology_ok = matches!(
+        (topology_rank(used_topology), topology_rank(effective_topology)),
+        (Some(used), Some(effective)) if used <= effective
+    );
+    let delegation_ok = matches!(
+        (delegation_rank(delegation_used), max_delegation),
+        (Some(used), Some(maximum)) if used <= maximum
+    );
+    ClosureCheck {
+        name: "execution-authority-contraction".to_string(),
+        passed: mode_ok && topology_ok && delegation_ok,
+        detail: format!(
+            "mode={used_mode}<={effective_mode}:{mode_ok}, \
+             topology={used_topology}<={effective_topology}:{topology_ok}, \
+             delegation={delegation_used} within mode:{delegation_ok}"
+        ),
     }
 }
 
@@ -368,6 +547,7 @@ pub fn render_text(result: &DeliveryClosureResult) -> String {
         format!("valid: {}", result.valid),
         format!("contract_id: {}", result.contract_id),
         format!("task_card_hash: {}", result.task_card_hash),
+        format!("launch_plan_hash: {}", result.launch_plan_hash),
         format!("delivery_report_hash: {}", result.delivery_report_hash),
         format!("receipt_id: {}", result.receipt_id),
     ];
@@ -399,10 +579,10 @@ Handoff source: host-plan-mode\n\
 Executor: Claude Code\n\
 Runtime adapter: claude-code\n\
 Execution surface: cli\n\
-Permission mode: execute-and-verify\n\
-Parallelism: none\n\
+Execution mode: single-writer\n\
+Execution topology: single\n\
 Execution effort: normal\n\
-Workflow authority: none\n\
+Delegation planning: no\n\
 任务级别：Medium\n\
 Review gate:\n- 按协议执行\n\
 任务：实现并验证闭环\n\
@@ -422,14 +602,36 @@ Verification gate:\n- commands:\n  - V-01 -> AC-01: cargo test\n- expected evide
             .to_string()
     }
 
-    fn report(card: &str) -> String {
+    fn launch_plan(card: &str) -> String {
+        let mut value = serde_json::json!({
+            "schema_version": "0.3.6-launch-plan",
+            "task_card_hash": crate::sha256_hex(card.as_bytes()),
+            "launch_plan_hash": "",
+            "effective_execution_mode": "single-writer",
+            "effective_execution_topology": "single",
+            "delegation_planning": false
+        });
+        value["launch_plan_hash"] = serde_json::Value::String(
+            ags_task_contract::runner::canonical_launch_plan_hash(&value).unwrap(),
+        );
+        serde_json::to_string_pretty(&value).unwrap()
+    }
+
+    fn report(card: &str, plan: &str) -> String {
         let hash = crate::sha256_hex(card.as_bytes());
+        let plan: serde_json::Value = serde_json::from_str(plan).unwrap();
+        let plan_hash = plan["launch_plan_hash"].as_str().unwrap();
+        let receipt_id = crate::receipt_id(&hash, plan_hash);
         format!(
             "# 任务交付报告\n\
-Closure schema: 1.0\n\
+Closure schema: 1.1\n\
 Contract ID: tc-0123456789abcdef\n\
 task-card-hash: {hash}\n\
-receipt-id: receipt-{}\n\
+launch-plan-hash: {plan_hash}\n\
+execution-mode-used: single-writer\n\
+execution-topology-used: single\n\
+delegation-used: none\n\
+receipt-id: {receipt_id}\n\
 状态: completed\n\
 review-gate: passed\n\
 ## 目标闭环\n- G-01: done — 已完成\n\
@@ -437,22 +639,76 @@ review-gate: passed\n\
 ## 验证闭环\n- V-01: pass — cargo test exit 0\n\
 ## 改动与边界\n- changed: test\n\
 ## 未闭环项\n- none\n",
-            &hash[..12]
         )
     }
 
     #[test]
     fn validates_complete_report() {
         let card = task_card();
-        let result = validate(&card, &report(&card));
+        let plan = launch_plan(&card);
+        let result = validate(&card, &plan, &report(&card, &plan));
         assert!(result.valid, "{:#?}", result.checks);
+    }
+
+    #[test]
+    fn rejects_launch_plan_task_card_hash_tampering() {
+        let card = task_card();
+        let plan = launch_plan(&card);
+        let mut value: serde_json::Value = serde_json::from_str(&plan).unwrap();
+        value["task_card_hash"] = serde_json::Value::String("sha256:wrong-card".to_string());
+        value["launch_plan_hash"] = serde_json::Value::String(
+            ags_task_contract::runner::canonical_launch_plan_hash(&value).unwrap(),
+        );
+        let tampered_plan = serde_json::to_string_pretty(&value).unwrap();
+        let result = validate(&card, &tampered_plan, &report(&card, &tampered_plan));
+        assert!(!result.valid);
+        assert!(result
+            .checks
+            .iter()
+            .any(|check| { check.name == "launch-plan-task-card-binding" && !check.passed }));
+    }
+
+    #[test]
+    fn rejects_report_task_card_hash_tampering() {
+        let card = task_card();
+        let plan = launch_plan(&card);
+        let bad = report(&card, &plan).replace(
+            &format!("task-card-hash: {}", crate::sha256_hex(card.as_bytes())),
+            "task-card-hash: sha256:wrong-card",
+        );
+        let result = validate(&card, &plan, &bad);
+        assert!(!result.valid);
+        assert!(result
+            .checks
+            .iter()
+            .any(|check| check.name == "task-card-hash-binding" && !check.passed));
+    }
+
+    #[test]
+    fn rejects_report_launch_plan_hash_tampering() {
+        let card = task_card();
+        let plan = launch_plan(&card);
+        let plan_value: serde_json::Value = serde_json::from_str(&plan).unwrap();
+        let plan_hash = plan_value["launch_plan_hash"].as_str().unwrap();
+        let bad = report(&card, &plan).replace(
+            &format!("launch-plan-hash: {plan_hash}"),
+            "launch-plan-hash: sha256:wrong-plan",
+        );
+        let result = validate(&card, &plan, &bad);
+        assert!(!result.valid);
+        assert!(result
+            .checks
+            .iter()
+            .any(|check| { check.name == "report-launch-plan-hash-binding" && !check.passed }));
     }
 
     #[test]
     fn rejects_missing_acceptance_row() {
         let card = task_card();
-        let bad = report(&card).replace("- AC-01: pass — evidence: closure validator passed\n", "");
-        let result = validate(&card, &bad);
+        let plan = launch_plan(&card);
+        let bad = report(&card, &plan)
+            .replace("- AC-01: pass — evidence: closure validator passed\n", "");
+        let result = validate(&card, &plan, &bad);
         assert!(!result.valid);
         assert!(result
             .checks
@@ -463,8 +719,9 @@ review-gate: passed\n\
     #[test]
     fn completed_cannot_hide_failed_verification() {
         let card = task_card();
-        let bad = report(&card).replace("V-01: pass", "V-01: fail");
-        let result = validate(&card, &bad);
+        let plan = launch_plan(&card);
+        let bad = report(&card, &plan).replace("V-01: pass", "V-01: fail");
+        let result = validate(&card, &plan, &bad);
         assert!(!result.valid);
         assert!(result
             .checks
@@ -475,11 +732,12 @@ review-gate: passed\n\
     #[test]
     fn partial_rejects_arbitrary_unresolved_text() {
         let card = task_card();
-        let bad = report(&card)
+        let plan = launch_plan(&card);
+        let bad = report(&card, &plan)
             .replace("状态: completed", "状态: partial")
             .replace("V-01: pass", "V-01: fail")
             .replace("- none", "- something remains");
-        let result = validate(&card, &bad);
+        let result = validate(&card, &plan, &bad);
         assert!(!result.valid);
         assert!(result
             .checks
@@ -490,12 +748,13 @@ review-gate: passed\n\
     #[test]
     fn partial_requires_exact_unresolved_id_set() {
         let card = task_card();
-        let bad = report(&card)
+        let plan = launch_plan(&card);
+        let bad = report(&card, &plan)
             .replace("状态: completed", "状态: partial")
             .replace("AC-01: pass", "AC-01: fail")
             .replace("V-01: pass", "V-01: fail")
             .replace("- none", "- V-01: command failed");
-        let result = validate(&card, &bad);
+        let result = validate(&card, &plan, &bad);
         assert!(!result.valid);
         assert!(result.checks.iter().any(|check| {
             check.name == "open-state-consistency"
@@ -507,7 +766,8 @@ review-gate: passed\n\
     #[test]
     fn partial_accepts_exact_unresolved_id_set() {
         let card = task_card();
-        let partial = report(&card)
+        let plan = launch_plan(&card);
+        let partial = report(&card, &plan)
             .replace("状态: completed", "状态: partial")
             .replace("AC-01: pass", "AC-01: fail")
             .replace("V-01: pass", "V-01: fail")
@@ -515,7 +775,7 @@ review-gate: passed\n\
                 "- none",
                 "- AC-01: acceptance evidence failed\n- V-01: command failed",
             );
-        let result = validate(&card, &partial);
+        let result = validate(&card, &plan, &partial);
         assert!(result.valid, "{:#?}", result.checks);
     }
 }

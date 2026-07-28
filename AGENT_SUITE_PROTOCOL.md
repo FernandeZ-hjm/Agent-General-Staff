@@ -3,7 +3,7 @@
 本文件是 Agent General Staff 公开版治理控制面协议概述。Canonical 协议文件位于本仓库
 `protocol/` 目录下，自包含，不依赖私有基础设施或私有仓库。
 
-Current product version: **0.3.5**.
+Current product version: **0.3.6**.
 
 这是 Agent General Staff Public Edition 的当前 latest 产品版本。AGS 负责准入、
 授权、策略、验证、回执、能力快照和记忆闭环，不提供任务队列、Agent 调度器、
@@ -23,6 +23,8 @@ Current product version: **0.3.5**.
 - `ags setup` — 写入公开安全的本机 AGS runtime、MCP 片段、Claude `/ags` 入口和 Codex AGS 命令技能
 - `ags init` — 对用户项目执行 AGS managed-block 接入
 - `ags mcp serve --transport stdio` — 启动公开版 AGS MCP 服务
+- `ags mcp status` / `ags mcp restart` — 查询或重启当前工作区服务
+- `ags host lifecycle` / `ags memory` — 统一四宿主的 Rust 记忆闭环
 - `ags bootstrap --dry-run` — 引导干运行模拟
 - `ags project detect` / `ags protocol status` / `ags agent instructions` — M2 Agent 感知能力（只读）
 - `ags project integrate --dry-run|--confirm` — 增量融合 AGS 托管入口块到用户项目入口文件，不覆盖用户自有内容
@@ -57,10 +59,10 @@ canonical 任务卡；用户批准后退出 Plan mode 并派发同一张卡，�
 
 首个非空行已经是 `## 任务卡` 的输入属于 existing task card。入口必须先校验：
 合法卡直接进入 policy / gate / LaunchPlan，非法卡 fail closed；两者都不得回落到新任务卡生成。Runner 返回 `HOST_EXECUTION_REQUIRED`，不声称已经执行或验证。
-任务卡 Permission mode 只有 `plan-only` 和 `execute-and-verify`。Light / Medium
-默认直接执行；Heavy 未声明时默认 `plan-only`，显式
-`execute-and-verify` 时直接执行并验证。Heavy 只追加独立 review gate，
-不追加计划轮次；破坏性/外部写入/发布等仍走各自独立 stop 条件。
+任务卡权限由 `Execution mode`、`Execution topology` 和
+`Delegation planning` 三个显式字段共同决定。权限只允许在 LaunchPlan 和
+Delivery Report 中向下收缩；Heavy 只追加独立 review gate，不重写权限。
+破坏性、外部写入和发布仍走各自独立 stop 条件。
 
 ## 协议入口
 
@@ -80,16 +82,9 @@ Canonical 协议文件位于本仓库：
 - `manifests/skills-registry.yaml` — governed skill registry + routing metadata
 - `manifests/mcp-registry.yaml` — governed MCP registry
 
-关键脚本入口：
-
-- `scripts/verify.sh` — full verification wrapper
-- `scripts/validate.sh` — canonical task-card validator wrapper
-- `scripts/lane-decision.sh` — change-lane / verification profile helper
-- `scripts/raw-tool-call-stop-guard.js` — Claude Stop hook raw tool-call guard
-- `scripts/context-memory.sh` — context capsule / task memory helper
-- `scripts/claude-stop-memory-capture.py` — Claude Stop hook memory capture bridge
-- `scripts/install.sh` — installer
-- `scripts/update.sh` — self-update helper
+第一方治理、验证、发布和生命周期逻辑全部由 Rust `ags` 内核提供。
+`scripts/` 只保留 OMP 必须加载的薄 JS 事件适配器；它不解析任务卡、不计算
+权限、不校验 hash，也不生成 receipt。
 
 ## Task Card Validation
 
@@ -100,7 +95,7 @@ Execution Authority Gate。
 ## Execution-Policy Resolver
 
 `crates/ags-governance-decision` 是 runner 前的策略解析层。它消费 validator 输出的结构化字段，
-产出 `ResolvedExecutionPolicy` — 包含实际应使用的 permission mode、parallelism、
+产出 `ResolvedExecutionPolicy` — 包含实际应使用的 execution mode、topology、
 启动参数、降级原因和停止条件。resolver 只读，不启动 runner；`ags policy resolve`
 提供唯一 CLI 入口，不保留隐藏兼容别名。
 解析规则（M1–M10）写入 `protocol/runtime-adapters.md`。
@@ -175,11 +170,10 @@ validator、policy 和 release gates 强制执行以下关键协议安全断言�
 始终为 FAIL，公开目标也不能用 rewrite/overlay 掩盖：
 
 1. **ultracode thinking-only**: `Execution effort: ultracode` 只是 thinking intensity，
-   不改变 permission mode、不启用 parallelism、不添加 launch args。
-2. **Heavy 级别不降级 permission**: 任务级别是风险/审查等级，不是执行授权；任务级别保留
-   卡声明的 Permission mode、永不降级（未声明 Permission mode 时 Heavy 默认
-   `plan-only`）。权限值只有 `plan-only` 和 `execute-and-verify`；后者直接执行并验证，
-   任务级别不追加计划轮次。
+   不改变 execution authority、不启用 parallel topology、不添加 launch args。
+2. **Heavy 级别不重写权限**: 任务级别是风险/审查等级，不是执行授权；权限仅来自
+   `Execution mode`、`Execution topology` 与 `Delegation planning`，Heavy 只增加
+   独立 review。
 3. **plan-only no-write**: plan-only 不得产生 write-type launch args，
    active parallelism 和 headless/background-agent 必须被 strip 或 stop。
 4. **runner resolver-first**: runner 必须消费 `ags policy resolve --format json` 输出的

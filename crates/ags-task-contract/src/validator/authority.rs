@@ -3,25 +3,25 @@ use super::*;
 
 // ── Phase 7: Execution Authority Gate ──────────────────────────────────
 
-/// Check that Execution effort (thinking intensity) and Workflow authority
-/// (delegation/parallelism permission) are used correctly.
+/// Check that execution mode, topology, and delegation planning stay
+/// independent and fail closed when the body contradicts them.
 ///
 /// Core principles:
 /// - Execution power is never authority.  Higher reasoning may improve
 ///   planning, but it does not upgrade permission.
 /// - Dynamic workflow / subagent / delegation requires explicit task-card
-///   Workflow authority.
+///   Delegation planning.
 /// - Matching is case-insensitive and scans ALL action-bearing sections
 ///   (not just 任务：+ 目标：), closing the narrow-scope bypass.
-/// - Parallelism field value is cross-checked against Workflow authority
+/// - ExecutionTopology field value is cross-checked against Delegation planning
 ///   to prevent field-combination bypasses.
 pub(crate) fn check_execution_authority_gate(
     fields: &HashMap<String, String>,
     errors: &mut Vec<String>,
 ) {
-    let authority = get_workflow_authority(fields);
-    let parallelism = field_val(fields, "Parallelism:");
-    let permission = field_val(fields, "Permission mode:");
+    let delegation_planning = get_delegation_planning(fields);
+    let execution_topology = field_val(fields, "Execution topology:");
+    let execution_mode = field_val(fields, "Execution mode:");
 
     // Build the full action-request text from ALL action-bearing sections
     // and lowercase once for case-insensitive matching.
@@ -46,113 +46,69 @@ pub(crate) fn check_execution_authority_gate(
         }
     }
 
-    // ── Workflow authority: none + task asks for workflow → fail ──
-    if authority == "none" {
-        let asks_workflow = has_workflow_request_intent(&workflow_lower);
-        if asks_workflow {
-            errors.push(format!(
-                "[{}] Workflow authority 为 none，但任务行动区域要求 workflow/subagent/multi-session/agent-team/delegation",
-                error_code::WORKFLOW_AUTHORITY_REQUIRED
-            ));
-        }
-    }
+    let asks_fanout = has_workflow_request_intent(&workflow_lower);
+    let permits_fanout = matches!(execution_mode, "fanout-in-card" | "fanout-cross-card");
 
-    // ── Workflow authority: plan-only + task requires direct modification → fail ──
-    if authority == "plan-only" && has_modification_intent(&action_text) {
+    if asks_fanout && !permits_fanout {
         errors.push(format!(
-            "[{}] Workflow authority 为 plan-only，但任务行动区域要求直接修改代码",
-            error_code::WORKFLOW_AUTHORITY_VIOLATION
+            "[{}] Execution mode 为 {}，但任务行动区域要求多写者委派或跨 Agent 执行",
+            error_code::EXECUTION_MODE_AUTHORITY_VIOLATION,
+            execution_mode
         ));
     }
 
-    // ── Workflow authority: within-card — validate scope containment ──
-    // within-card allows fan-out but must stay inside the card's own
-    // scope (paths, goals, non-goals, permission mode).  This is a
-    // structural check; deep semantic verification would require the
-    // task to be executed.
-    if authority == "within-card" {
-        // within-card requires explicit permission mode that allows execution
-        if permission == "plan-only" {
-            errors.push(format!(
-                "[{}] Workflow authority 为 within-card，但 Permission mode 为 {}（需要 execute-and-verify）",
-                error_code::WORKFLOW_AUTHORITY_VIOLATION,
-                permission
-            ));
-        }
+    if execution_topology == "single" && asks_fanout {
+        errors.push(format!(
+            "[{}] Execution topology 为 single，但任务行动区域要求并行或 worktree 执行",
+            error_code::EXECUTION_TOPOLOGY_POLICY_VIOLATION
+        ));
     }
 
-    // ── Parallelism field ↔ Workflow authority field combination checks ──
-    // These close the bypass where Parallelism: subagent + Workflow authority: none
-    // passes because the body text doesn't explicitly mention subagent.
-    match parallelism {
-        "subagent" | "multi-session" | "agent-team" => {
-            if authority != "within-card" && authority != "allowed" {
-                errors.push(format!(
-                    "[{}] Parallelism 为 {}，要求 Workflow authority 为 within-card 或 allowed，当前为 {}",
-                    error_code::WORKFLOW_AUTHORITY_REQUIRED,
-                    parallelism,
-                    authority
-                ));
-            }
-        }
-        "worktree" => {
-            if authority == "none" {
-                errors.push(format!(
-                    "[{}] Parallelism 为 worktree，Workflow authority 不能为 none（需要 within-card、plan-only 或 allowed）",
-                    error_code::WORKFLOW_AUTHORITY_REQUIRED
-                ));
-            }
-        }
-        "none" => {
-            // These parallelism values are compatible with any Workflow
-            // authority at the field level.  BUT: if the action body text
-            // still asks for subagent/multi-session/agent-team, we must
-            // intercept on content grounds.
-        }
-        _ => {} // invalid Parallelism values are caught by check_field_values
+    if execution_mode == "plan-only" && execution_topology != "single" {
+        errors.push(format!(
+            "[{}] plan-only 不能请求 {} 拓扑；只读计划必须使用 single",
+            error_code::EXECUTION_TOPOLOGY_POLICY_VIOLATION,
+            execution_topology
+        ));
     }
 
-    // ── Parallelism body-text contradiction checks ──
-    // When Parallelism is none but the task body asks for
-    // delegation patterns, fail.  This catches the case where the field
-    // says "none" but the task text says "用 subagent 处理".
-    if parallelism == "none" {
-        let asks_delegation = PARALLELISM_BODY_KEYWORDS
-            .iter()
-            .any(|kw| action_lower.contains(&kw.to_lowercase()));
-        if asks_delegation {
-            errors.push(format!(
-                "[{}] Parallelism 为 {}，但任务行动区域要求 subagent/multi-session/agent-team/dynamic workflow",
-                error_code::PARALLELISM_POLICY_VIOLATION,
-                parallelism
-            ));
-        }
+    let asks_to_plan_delegation = [
+        "delegation plan",
+        "plan delegation",
+        "制定委派",
+        "设计委派",
+        "规划子任务",
+    ]
+    .iter()
+    .any(|keyword| workflow_lower.contains(keyword));
+    if delegation_planning == "no" && asks_to_plan_delegation {
+        errors.push(format!(
+            "[{}] Delegation planning 为 no，但任务要求现场制定委派方案",
+            error_code::DELEGATION_PLANNING_REQUIRED
+        ));
     }
 
-    // ── 子任务编排 (subtask orchestration) ↔ Workflow authority / Parallelism ──
+    // ── 子任务编排 (subtask orchestration) ↔ Delegation planning / ExecutionTopology ──
     // A non-`none` mode declares splittable subtask structure. It must be backed
-    // by BOTH a non-`none` Workflow authority AND a delegation-capable
-    // Parallelism — the slot only DECLARES structure; actual subagent / workflow
+    // by a fanout execution mode and a multi-worker topology. The slot only
+    // DECLARES structure; actual subagent / workflow
     // ignition is translated by the claude-code adapter / runner from the
     // resolved policy, never fired by the task-card body itself.
     let subtask_mode = get_subtask_orchestration_mode(fields);
     if subtask_mode != "none" {
-        if authority == "none" {
+        if !permits_fanout {
             errors.push(format!(
-                "[{}] 子任务编排 mode 为 {}，要求 Workflow authority 非 none（不允许 mode != none 但 authority=none）",
+                "[{}] 子任务编排 mode 为 {}，要求 Execution mode 为 fanout-in-card 或 fanout-cross-card",
                 error_code::SUBTASK_ORCHESTRATION_VIOLATION,
                 subtask_mode
             ));
         }
-        if !matches!(
-            parallelism,
-            "subagent" | "worktree" | "multi-session" | "agent-team"
-        ) {
+        if !matches!(execution_topology, "parallel" | "worktree") {
             errors.push(format!(
-                "[{}] 子任务编排 mode 为 {}，要求 Parallelism 为 subagent/worktree/multi-session/agent-team，当前为 `{}`",
+                "[{}] 子任务编排 mode 为 {}，要求 Execution topology 为 parallel 或 worktree，当前为 `{}`",
                 error_code::SUBTASK_ORCHESTRATION_VIOLATION,
                 subtask_mode,
-                parallelism
+                execution_topology
             ));
         }
     }

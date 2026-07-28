@@ -15,8 +15,13 @@ pub(crate) enum TaskAction {
     Close {
         /// Canonical task-card file
         task_card: String,
+        /// Sealed LaunchPlan JSON produced by `ags runner`
+        launch_plan: String,
         /// Delivery-report file
         delivery_report: String,
+        /// Destination for the verified receipt
+        #[arg(long = "receipt-out")]
+        receipt_out: PathBuf,
         /// Output format
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
@@ -97,7 +102,7 @@ pub(crate) enum PolicyAction {
         #[arg(long, default_value_t = false)]
         approve_writes: bool,
         /// Structured current-task approval signal from the live request
-        /// (audit/hint only — task level does not downgrade the permission mode).
+        /// (audit/hint only — task level does not downgrade the execution mode).
         #[arg(long, default_value_t = false)]
         current_task_approval: bool,
     },
@@ -114,7 +119,7 @@ pub(crate) enum PolicyAction {
         #[arg(long, default_value_t = false)]
         approve_writes: bool,
         /// Structured current-task approval signal from the live request
-        /// (audit/hint only — task level does not downgrade the permission mode).
+        /// (audit/hint only — task level does not downgrade the execution mode).
         #[arg(long, default_value_t = false)]
         current_task_approval: bool,
     },
@@ -131,7 +136,7 @@ pub(crate) enum PolicyAction {
         #[arg(long, default_value_t = false)]
         approve_writes: bool,
         /// Structured current-task approval signal from the live request
-        /// (audit/hint only — task level does not downgrade the permission mode).
+        /// (audit/hint only — task level does not downgrade the execution mode).
         #[arg(long, default_value_t = false)]
         current_task_approval: bool,
     },
@@ -156,7 +161,7 @@ pub(crate) enum GateAction {
         approve_writes: bool,
         /// Structured current-task approval: the host detected an explicit user
         /// execution instruction ("实现 / 修复 / 做完") on the live request.
-        /// Audit/hint only — task level does not downgrade the permission mode.
+        /// Audit/hint only — task level does not downgrade the execution mode.
         /// Never derived from task-card text.
         #[arg(long, default_value_t = false)]
         current_task_approval: bool,
@@ -205,27 +210,6 @@ pub(crate) enum GateAction {
 /// Receipt operations (M6).
 #[derive(Subcommand)]
 pub(crate) enum ReceiptAction {
-    /// Generate a receipt from a task card.
-    Generate {
-        /// Task card file (use "-" for stdin)
-        #[arg(long = "task-card")]
-        task_card: String,
-        /// Gate decision: allow or stop
-        #[arg(long, default_value = "allow", value_parser = ["allow", "stop"])]
-        gate_result: String,
-        /// Optional gate reason
-        #[arg(long)]
-        gate_reason: Option<String>,
-        /// Verification results in "command:exit_code" format (repeatable)
-        #[arg(long = "verification", value_name = "CMD:EXIT_CODE")]
-        verifications: Vec<String>,
-        /// Delivery report file path (optional)
-        #[arg(long)]
-        delivery_report: Option<String>,
-        /// Output format: text (default) or json
-        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
-        format: String,
-    },
     /// Verify a receipt's integrity.
     Verify {
         /// Receipt file path
@@ -233,6 +217,42 @@ pub(crate) enum ReceiptAction {
         /// Output format: text (default) or json
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum MemoryAction {
+    /// Inspect the receipt-backed project memory store.
+    Status {
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+    },
+    /// Initialize the project memory store without overwriting user content.
+    Init {
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+    },
+    /// Archive one verified receipt and its three bound source artifacts.
+    Archive {
+        receipt: PathBuf,
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum HostAction {
+    /// Run the same Rust lifecycle contract for every supported host.
+    Lifecycle {
+        #[arg(long, value_parser = ["session-start", "session-end", "stop-guard"])]
+        event: String,
+        #[arg(long, value_parser = ["codex", "claude-code", "cursor", "omp"])]
+        host: String,
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+        /// Hook JSON input path, or `-` for stdin.
+        #[arg(long, default_value = "-")]
+        input: String,
     },
 }
 /// Compliance check operations (M6).
@@ -363,6 +383,16 @@ pub(crate) enum VerifyAction {
 /// Third-party MCP servers remain host-owned and are never proxied by AGS.
 #[derive(Subcommand)]
 pub(crate) enum McpAction {
+    /// Inspect the workspace MCP daemon without starting it.
+    Status {
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+    },
+    /// Authenticated graceful restart of the workspace MCP daemon.
+    Restart {
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+    },
     /// Start the thin AGS MCP adapter on stdio.
     ///
     /// Reads line-delimited JSON-RPC 2.0 messages from stdin and writes
@@ -415,6 +445,21 @@ pub(crate) enum ReleaseAction {
         #[arg(long, default_value_t = false)]
         dry_run: bool,
         /// Output format: text (default) or json
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Stage only the runtime assets authorized by a public-full release plan.
+    StageRuntime {
+        /// Canonical release plan JSON.
+        #[arg(long)]
+        plan: PathBuf,
+        /// Source repository root.
+        #[arg(long, default_value = ".")]
+        source: PathBuf,
+        /// Empty target directory to populate.
+        #[arg(long)]
+        target: PathBuf,
+        /// Output format: text (default) or json.
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
     },

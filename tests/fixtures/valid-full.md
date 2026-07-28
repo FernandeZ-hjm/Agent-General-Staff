@@ -13,13 +13,13 @@ Runtime adapter: codex-local
 
 Execution surface: local-workspace
 
-Permission mode: execute-and-verify
+Execution mode: single-writer
 
-Parallelism: none
+Execution topology: single
 
 Execution effort: normal
 
-Workflow authority: none
+Delegation planning: no
 
 任务级别：Light
 

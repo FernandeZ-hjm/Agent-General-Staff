@@ -249,15 +249,6 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
                 .cloned()
                 .collect()
         };
-        // OMP imports Codex MCP configuration. A registry entry declared
-        // installed for Codex is therefore expected in OMP as inherited
-        // source configuration too; no duplicate OMP registrar is required.
-        if !e_is_route_target
-            && e.installed_clients.iter().any(|client| client == "codex")
-            && !expected_hosts.iter().any(|client| client == "omp")
-        {
-            expected_hosts.push("omp".to_string());
-        }
         expected_hosts.sort();
         expected_hosts.dedup();
         caps.push(ManagedCapability {

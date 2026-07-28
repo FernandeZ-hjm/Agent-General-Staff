@@ -13,7 +13,8 @@ use std::path::PathBuf;
 pub use action_store::SessionActionStore;
 pub use client_session::WorkspaceClientSession;
 pub use workspace_service::{
-    run_stdio_adapter, run_workspace_daemon, WorkspaceSessionHandler, WorkspaceState,
+    restart_workspace_service, run_stdio_adapter, run_workspace_daemon, workspace_service_status,
+    WorkspaceServiceStatus, WorkspaceSessionHandler, WorkspaceState,
 };
 
 /// Host and target accepted by a successful preflight.

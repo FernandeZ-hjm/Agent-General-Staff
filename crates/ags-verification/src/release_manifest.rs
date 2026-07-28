@@ -64,19 +64,14 @@ pub const PUBLIC_MANIFEST: ReleaseManifest = ReleaseManifest {
         "templates/global-entry/ags-core.md",
         "templates/global-entry/ags-task-handoff.md",
         "templates/global-entry/host-operations.md",
-        "scripts/install.sh",
-        "scripts/update.sh",
-        "scripts/validate.sh",
-        "scripts/verify.sh",
-        "scripts/context-memory.sh",
-        "scripts/context-memory-start.py",
-        "scripts/claude-stop-memory-capture.py",
         "scripts/ags-memory-lifecycle-omp.js",
-        "scripts/raw-tool-call-stop-guard.js",
-        "scripts/stop-archive-hook.sh",
         "manifests/suite.yaml",
         "manifests/onboarding-public.yaml",
         "manifests/public-release-payload.yaml",
+        "manifests/templates/README.md",
+        "manifests/templates/hooks/claude-code-executor-stop.template.js",
+        "manifests/templates/hooks/codex-planner-recall.template.json",
+        "manifests/templates/runtime-profiles.template.yaml",
         "manifests/third-party-capabilities.yaml",
         "governance/skill-sync.md",
     ],
@@ -108,7 +103,6 @@ pub const PUBLIC_FORBIDDEN_PAYLOAD: &[&str] = &[
     "hosts/claude-code.evomap-mcp.snippet.json",
     "bin/evolver-proxy-mcp",
     "manifests/runtime-profiles.yaml",
-    "manifests/templates/",
     "crates/ags-mcp/src/resources/evolver_boundary.md",
     "protocol/evolution-memory.md",
     "memory/",
@@ -557,6 +551,15 @@ fn source_projected_files(root: &Path, authority: &PublicPayloadAuthority) -> BT
     files
 }
 
+/// Expand the A-owned source side of the canonical public payload.
+///
+/// Public-only overlays and rewrites are deliberately excluded because they
+/// are owned by the downstream public projection, not by workspace A.
+pub fn public_source_payload_files(root: &Path) -> Result<BTreeSet<String>, Vec<String>> {
+    let authority = load_public_payload_authority(root)?;
+    Ok(source_projected_files(root, &authority))
+}
+
 pub fn public_runtime_asset_files(root: &Path) -> Result<Vec<String>, Vec<String>> {
     let authority = load_public_payload_authority(root)?;
     let expected = expand_public_payload_files(root, &authority);
@@ -950,12 +953,7 @@ mod tests {
             "templates/global-entry/ags-core.md",
             "templates/global-entry/ags-task-handoff.md",
             "templates/global-entry/host-operations.md",
-            "scripts/context-memory.sh",
-            "scripts/context-memory-start.py",
-            "scripts/claude-stop-memory-capture.py",
             "scripts/ags-memory-lifecycle-omp.js",
-            "scripts/raw-tool-call-stop-guard.js",
-            "scripts/stop-archive-hook.sh",
             "manifests/onboarding-public.yaml",
             "manifests/third-party-capabilities.yaml",
             "packages/ags-mcp/package.json",
@@ -964,7 +962,6 @@ mod tests {
             ".github/workflows/ci.yml",
             ".github/workflows/release.yml",
             ".github/workflows/npm-publish.yml",
-            "scripts/update.sh",
         ] {
             assert!(public.contains(path), "public manifest missing {path}");
         }
@@ -1031,8 +1028,11 @@ mod tests {
             "hosts/claude-code.evomap-mcp.snippet.json"
         ));
         assert!(is_public_forbidden_payload("bin/evolver-proxy-mcp"));
-        assert!(is_public_forbidden_payload(
+        assert!(!is_public_forbidden_payload(
             "manifests/templates/runtime-profiles.template.yaml"
+        ));
+        assert!(is_public_forbidden_payload(
+            "manifests/runtime-profiles.yaml"
         ));
         assert!(is_public_forbidden_payload("protocol/evolution-memory.md"));
         assert!(is_public_forbidden_payload(
@@ -1061,7 +1061,7 @@ mod tests {
             "protocol/task-card-template.md",
             "templates/task-card-template.md",
             "project-integration/AGENTS.md.template",
-            "scripts/verify.sh",
+            "scripts/ags-memory-lifecycle-omp.js",
             "README.md",
             // Public targets may have their own governance/manifests and empty
             // audit skeletons. Non-empty private audit content is checked by
@@ -1486,7 +1486,8 @@ mod tests {
         let workflow =
             std::fs::read_to_string(workspace.join(".github/workflows/release.yml")).unwrap();
         assert!(workflow.contains("release package"));
-        assert!(workflow.contains("scripts/stage-release-runtime.py"));
+        assert!(workflow.contains("release stage-runtime"));
+        assert!(!workflow.contains("python"));
         assert!(!workflow.contains("cp manifests/{"));
         assert!(!workflow.contains("Copy-Item manifests/skills-registry.yaml"));
     }

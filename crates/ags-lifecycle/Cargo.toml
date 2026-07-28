@@ -10,6 +10,7 @@ ags-capability-governance = { path = "../ags-capability-governance" }
 ags-host-integration = { path = "../ags-host-integration" }
 ags-platform = { path = "../ags-platform" }
 ags-workspace-facts = { path = "../ags-workspace-facts" }
+ags-evidence = { path = "../ags-evidence" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"

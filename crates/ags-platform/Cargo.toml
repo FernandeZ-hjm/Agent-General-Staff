@@ -6,5 +6,6 @@ license.workspace = true
 description = "Cross-platform paths, atomic files, process lookup, and hashing for AGS"
 
 [dependencies]
+blake3 = "1"
 sha2 = "0.10"
 tempfile = "3"

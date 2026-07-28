@@ -1,4 +1,4 @@
-# AGS v0.3.5 Architecture
+# AGS v0.3.6 Architecture
 
 AGS is a multi-Agent development governance control plane. It admits typed
 requests, binds authority and policy, validates evidence, and preserves
@@ -85,7 +85,7 @@ workflows, and absence of private runtime or third-party skill bodies.
 
 ## Current surface boundary
 
-The current 0.3.5 CLI, MCP schema and typed contracts are authoritative.
+The current 0.3.6 CLI, MCP schema and typed contracts are authoritative.
 Removed aliases, dynamic capability lifecycle commands and historical
 behavior fixtures are not hidden compatibility interfaces. Product version,
 wire/schema version and historical release notes remain separate version

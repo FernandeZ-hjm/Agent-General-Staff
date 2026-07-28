@@ -66,7 +66,8 @@ pub struct ProtocolStatus {
 
 /// Detect available verification commands for a target directory.
 ///
-/// Scans for project-specific tooling (Cargo, scripts/verify.sh, etc.)
+/// Scans for project-specific tooling and returns Rust-kernel verification
+/// commands. First-party shell verifier implementations are not supported.
 /// and returns the list of verification commands that apply to the target.
 /// If no project-specific tooling is found, returns guidance rather than
 /// false commands.
@@ -80,17 +81,12 @@ pub(super) fn detect_verification_commands(target: &Path) -> Vec<String> {
         commands.push("cargo build --release".to_string());
     }
 
-    // Check for verify.sh
-    if target.join("scripts").join("verify.sh").exists() {
-        commands.push("bash scripts/verify.sh".to_string());
-    }
+    commands.push("ags verify --scope local".to_string());
 
     // If no project tooling found, give guidance
     if commands.is_empty() {
-        commands.push("No project-specific verification commands detected.".to_string());
         commands
-            .push("Install AGS verification scripts or define verification commands".to_string());
-        commands.push("in config/agent-project-profile.yaml.".to_string());
+            .push("Define verification commands in config/agent-project-profile.yaml.".to_string());
     }
 
     commands
@@ -147,31 +143,20 @@ pub fn check_protocol_status(target: &Path) -> ProtocolStatus {
         false
     };
 
-    let validate_script = canonical.join("scripts").join("validate.sh");
-    let has_validate_script = validate_script.exists();
-
-    let (validator_entry, alternate_entry, validator_available) = if has_rust_validator {
+    let (validator_entry, alternate_entry) = if has_rust_validator {
         (
+            "ags task validate <task-card>".to_string(),
             "cargo run -p ags-cli -- task validate <task-card>".to_string(),
-            "bash scripts/validate.sh <task-card>".to_string(),
-            true,
-        )
-    } else if has_validate_script {
-        (
-            "bash scripts/validate.sh <task-card>".to_string(),
-            "N/A (no Rust validator in this repo)".to_string(),
-            true,
         )
     } else {
         (
-            "N/A (no validator found in this repo)".to_string(),
-            "N/A".to_string(),
-            false,
+            "ags task validate <task-card>".to_string(),
+            "N/A (use the installed AGS Rust kernel)".to_string(),
         )
     };
 
     let task_card_validator = ValidatorInfo {
-        available: validator_available,
+        available: true,
         entry: validator_entry,
         description: "The Rust validator owned by ags-task-contract is the canonical task-card format gate. It provides structural format checks, field-value validation, field-combination checks, Execution Authority Gate, protected-path analysis, contradiction detection, and content-quality checks.".to_string(),
         alternate_entry,
@@ -184,7 +169,7 @@ pub fn check_protocol_status(target: &Path) -> ProtocolStatus {
             "crates/ags-task-contract/src/validator/".to_string(),
             "Cargo.toml".to_string(),
             "Cargo.lock".to_string(),
-            "scripts/verify.sh".to_string(),
+            "manifests/public-release-payload.yaml".to_string(),
             "$HOME/.agents/memory/projects/".to_string(),
         ],
         high_risk_indicators: vec![
@@ -238,14 +223,6 @@ pub fn check_protocol_status(target: &Path) -> ProtocolStatus {
                 critical
             ));
         }
-    }
-
-    // Check for validator
-    if !validator_available {
-        failures.push(
-            "CRITICAL: No task-card validator found — task cards cannot be validated in this repo"
-                .to_string(),
-        );
     }
 
     // Non-critical but recommended

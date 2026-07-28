@@ -425,16 +425,16 @@ pub(in crate::setup) fn private_install_health_report(
     {
         Ok(output) if output.status.success() => report.add(crate::setup::SetupFinding::pass(
             "private-install-node-check",
-            "node --check hook OK",
+            "node --check EvoMap hook OK",
         )),
         Ok(output) => report.add(crate::setup::SetupFinding::fail(
             "private-install-node-check",
-            "node --check hook failed",
+            "node --check EvoMap hook failed",
             String::from_utf8_lossy(&output.stderr).trim().to_string(),
         )),
         Err(e) => report.add(crate::setup::SetupFinding::warn(
             "private-install-node-check",
-            "node unavailable; skipped hook syntax check",
+            "node unavailable; skipped EvoMap hook syntax check",
             e.to_string(),
         )),
     }

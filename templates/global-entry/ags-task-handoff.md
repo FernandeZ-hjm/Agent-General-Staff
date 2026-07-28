@@ -10,11 +10,12 @@
 `## 任务卡`。已有卡先 validate-first；合法卡直接进入 policy/gate/LaunchPlan，非法卡停止，
 不得回落到 solution formation 或重新编译。
 
-任务卡权限只有 `plan-only` 与 `execute-and-verify`。Heavy 仅增加独立 review gate；
+任务卡权限由 `Execution mode`、`Execution topology`、`Delegation planning`
+共同定义。Heavy 仅增加独立 review gate；
 发布、外部写入、凭据、迁移、破坏性操作和受保护路径仍单独判断。
 
-任务卡至少包含 Executor、Runtime adapter、Execution surface、Permission mode、
-Parallelism、目标、背景、非目标、硬性要求、相关路径、Verification gate 和交付报告格式。
+任务卡至少包含 Executor、Runtime adapter、Execution surface、Execution mode、
+Execution topology、目标、背景、非目标、硬性要求、相关路径、Verification gate 和交付报告格式。
 `[skill: xxx]` 仅来自已确认的精确 `skill_id`，并须通过 registry、invoke hint 和当前机器
 snapshot 三闸。交付报告须遵循 `claude-delivery-report` 或项目等价协议。
 
@@ -31,4 +32,4 @@ snapshot 三闸。交付报告须遵循 `claude-delivery-report` 或项目等价
 ## 输出门禁
 
 只要最终输出包含 `Executor: Claude Code`，就必须交付可执行任务卡块。含内嵌代码块时，
-外层使用四反引号或四波浪线。可用 `bash scripts/validate.sh <task-card>` 校验。
+外层使用四反引号或四波浪线。用 `ags task validate <task-card>` 校验。

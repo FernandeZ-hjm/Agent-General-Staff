@@ -313,7 +313,7 @@ impl McpClient {
                 "name": "ags_route_request",
                 "arguments": {
                     "proposal": {
-                        "schema_version": "0.3.5-host-route-proposal",
+                        "schema_version": "0.3.6-host-route-proposal",
                         "request_fingerprint": fingerprint,
                         "phase": "execution",
                         "solution_state": "confirmed",
@@ -383,6 +383,119 @@ impl Drop for McpClient {
 /// Hermetic protocol fixture used by CI. Host names select AGS adapter
 /// behavior; they are not evidence that native host executables are installed
 /// or registered.
+#[test]
+fn mcp_status_and_restart_control_the_workspace_daemon_through_the_cli_seam() {
+    let environment = TestEnvironment::new();
+    environment.write_snapshot("codex");
+
+    let status_output = environment
+        .command()
+        .args(["mcp", "status", "--target"])
+        .arg(&environment.project_a)
+        .output()
+        .unwrap();
+    assert!(status_output.status.success());
+    let stopped: Value = serde_json::from_slice(&status_output.stdout).unwrap();
+    assert_eq!(stopped["state"], "stopped");
+
+    let first_output = environment
+        .command()
+        .args(["mcp", "restart", "--target"])
+        .arg(&environment.project_a)
+        .output()
+        .unwrap();
+    assert!(
+        first_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first_output.stderr)
+    );
+    let first: Value = serde_json::from_slice(&first_output.stdout).unwrap();
+    assert_eq!(first["state"], "running");
+    assert_eq!(first["current_binary"], true);
+    let first_pid = first["pid"].as_u64().unwrap();
+
+    let second_output = environment
+        .command()
+        .args(["mcp", "restart", "--target"])
+        .arg(&environment.project_a)
+        .output()
+        .unwrap();
+    assert!(
+        second_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second_output.stderr)
+    );
+    let second: Value = serde_json::from_slice(&second_output.stdout).unwrap();
+    assert_eq!(second["state"], "running");
+    assert_eq!(second["current_binary"], true);
+    assert_ne!(second["pid"].as_u64().unwrap(), first_pid);
+}
+
+#[test]
+fn cursor_govern_writes_native_hooks_and_reaches_full_lifecycle() {
+    let environment = TestEnvironment::new();
+    environment.write_snapshot("cursor");
+
+    let output = environment
+        .command()
+        .current_dir(&environment.project_a)
+        .args([
+            "agents", "govern", "--agent", "cursor", "--apply", "--format", "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["apply_status"], "memory-adapters-applied");
+
+    let hooks: Value =
+        serde_json::from_slice(&fs::read(environment.home.join(".cursor/hooks.json")).unwrap())
+            .unwrap();
+    assert_eq!(hooks["version"], 1);
+    for (native_event, rust_event) in [
+        ("sessionStart", "session-start"),
+        ("sessionEnd", "session-end"),
+        ("stop", "stop-guard"),
+    ] {
+        assert!(hooks["hooks"][native_event]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["command"]
+                .as_str()
+                .is_some_and(|command| command.contains(&format!(
+                    "host lifecycle --event {rust_event} --host cursor"
+                )))));
+    }
+
+    let verify = environment
+        .command()
+        .current_dir(&environment.project_a)
+        .args(["agents", "verify", "--host", "cursor", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        verify.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&verify.stdout),
+        String::from_utf8_lossy(&verify.stderr),
+    );
+    let verification: Value = serde_json::from_slice(&verify.stdout).unwrap();
+    assert_eq!(
+        verification["capability_visibility"]["status"],
+        "incomplete"
+    );
+    assert_eq!(
+        verification["memory_lifecycle"]["adapter"],
+        "cursor-command-hooks"
+    );
+    assert_eq!(verification["memory_lifecycle"]["status"], "full");
+}
+
 #[test]
 fn hermetic_host_adapters_share_one_workspace_service_but_keep_sessions_and_leases_isolated() {
     let environment = TestEnvironment::new();
@@ -463,7 +576,7 @@ fn hermetic_host_adapters_share_one_workspace_service_but_keep_sessions_and_leas
         .any(|error| error["code"] == "skill_target_kind_mismatch"));
 
     let handoff = json!({
-        "schema_version": "0.3.5-handoff-contract",
+        "schema_version": "0.3.6-handoff-contract",
         "task_level": "Light",
         "task": "compile the routed E2E task card",
         "fields": {
@@ -510,7 +623,7 @@ fn hermetic_host_adapters_share_one_workspace_service_but_keep_sessions_and_leas
     let applied = clients[0].apply(6, compile_lease, compile_action);
     assert!(applied["content"][0]["text"]
         .as_str()
-        .is_some_and(|text| text.contains("0.3.5-task-contract")));
+        .is_some_and(|text| text.contains("0.3.6-task-contract")));
 
     let route = clients[0].route_project_verify();
     let lease_id = route["lease"]["lease_id"].as_str().unwrap();

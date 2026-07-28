@@ -59,10 +59,6 @@ fn yaml_string(value: &str) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
 }
 
-fn portable_validate_script() -> String {
-    "#!/usr/bin/env bash\n# AGS portable task-card validator wrapper.\nset -euo pipefail\nexec ags task validate \"$@\"\n".to_string()
-}
-
 pub(crate) fn project_protocol_files() -> &'static [&'static str] {
     &[
         "agent-task-protocol.md",
@@ -156,7 +152,6 @@ pub(crate) fn project_init_plan_with_protocol(
     let mut directories = vec![
         canonical.join("config"),
         canonical.join("protocol"),
-        canonical.join("scripts"),
         memory_dir.join("task-archive"),
         memory_dir.join("sessions"),
     ];
@@ -183,7 +178,7 @@ pub(crate) fn project_init_plan_with_protocol(
         path: canonical.join("CLAUDE.md"),
         description: "Claude Code AGS execution protocol entrypoint".to_string(),
         content: format!(
-            "# CLAUDE.md\n\n@AGENTS.md\n\n## Agent Governance Suite\n\nThis project is governed by AGS {AGS_VERSION}. Claude Code consumes a validated task card or an explicitly bounded direct-edit request. It must not infer task level, permission mode, review gate, or verification gate from raw language. Follow `protocol/agent-task-protocol.md` and `protocol/runtime-adapters.md` when relevant.\n"
+            "# CLAUDE.md\n\n@AGENTS.md\n\n## Agent Governance Suite\n\nThis project is governed by AGS {AGS_VERSION}. Claude Code consumes a validated task card or an explicitly bounded direct-edit request. It must not infer task level, execution mode, review gate, or verification gate from raw language. Follow `protocol/agent-task-protocol.md` and `protocol/runtime-adapters.md` when relevant.\n"
         ),
         mode: None,
     });
@@ -237,15 +232,9 @@ defaults:
   executor: {}
   runtime_adapter: {}
   execution_surface: {}
-  # Omitted-field defaults only: use these values only when a generated task card
-  # does not declare `Permission mode:`. Task level is a risk/review tier, not an
-  # execution cap. A Heavy card that explicitly declares execute-and-verify remains
-  # executable and still goes through the Heavy Review gate.
-  permission_mode_by_level:
-    light: execute-and-verify
-    medium: execute-and-verify
-    heavy: plan-only
-  parallelism: none
+  execution_mode: single-writer
+  execution_topology: single
+  delegation_planning: no
 
 verification:
   default_commands:
@@ -319,13 +308,6 @@ user_preferences:
         description: "AGS project profile".to_string(),
         content: profile,
         mode: None,
-    });
-
-    files.push(InitFile {
-        path: canonical.join("scripts/validate.sh"),
-        description: "portable project task-card validator wrapper".to_string(),
-        content: portable_validate_script(),
-        mode: Some(0o755),
     });
 
     files.push(InitFile {

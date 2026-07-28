@@ -1,6 +1,6 @@
 use super::*;
 
-pub const RECEIPT_SCHEMA_VERSION: &str = "0.3.5-task-receipt";
+pub const RECEIPT_SCHEMA_VERSION: &str = "0.3.6-task-receipt";
 
 // ── Data model ──────────────────────────────────────────────────────────────
 
@@ -50,19 +50,35 @@ pub struct GovernanceEvidence {
     pub skill_selection: Option<ReceiptSkillSelection>,
 }
 
+/// The authority actually exercised by the host. This is evidence, not a
+/// second source of permission: task close has already proved it is no broader
+/// than the sealed LaunchPlan.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionFootprint {
+    pub execution_mode_used: String,
+    pub execution_topology_used: String,
+    pub delegation_used: String,
+}
+
 /// A task run receipt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Receipt {
     pub schema_version: String,
     pub receipt_id: String,
     pub timestamp: String,
     pub task_card_hash: String,
+    pub launch_plan_hash: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_card_path: Option<String>,
+    pub launch_plan_path: String,
+    pub delivery_report_path: String,
     pub gate_result: GateResult,
     pub verification_results: Vec<VerificationResult>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub delivery_report_hash: Option<String>,
+    pub delivery_report_hash: String,
+    pub execution_footprint: ExecutionFootprint,
+    pub closure_status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

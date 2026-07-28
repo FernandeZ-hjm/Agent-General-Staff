@@ -1,9 +1,11 @@
 use super::*;
+use std::io::Write;
 use std::path::Path;
+use std::process::{Command, Stdio};
 
 fn report(scope: Scope, errors: usize, warnings: usize, skipped: usize) -> VerificationReport {
     VerificationReport {
-        schema_version: "0.3.5-verification-report".to_string(),
+        schema_version: "0.3.6-verification-report".to_string(),
         scope,
         repo_root: "/tmp".to_string(),
         items: Vec::new(),
@@ -169,4 +171,90 @@ fn runtime_templates_reject_real_leaks_and_accept_placeholders() {
             "{content}"
         );
     }
+}
+
+#[test]
+fn evolver_stop_template_still_records_a_sanitized_method_event() {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .unwrap();
+    let script = workspace.join("manifests/templates/hooks/claude-code-executor-stop.template.js");
+    let temp = tempfile::tempdir().unwrap();
+    let transcript = temp.path().join("transcript.md");
+    let method_log = temp.path().join("method-events.jsonl");
+    std::fs::write(
+        &transcript,
+        "# 任务交付报告\n\n## 任务状态\n完成\n\n验证结果已通过。\n",
+    )
+    .unwrap();
+
+    let mut child = Command::new("node")
+        .arg(&script)
+        .env("EVOLVER_METHOD_LOG", &method_log)
+        .current_dir(temp.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("node is required to verify the retained EvoMap hook");
+    let input = serde_json::json!({
+        "cwd": temp.path(),
+        "task_id": "task-12345678",
+        "transcript_path": transcript,
+    });
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(serde_json::to_string(&input).unwrap().as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "EvoMap hook failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let hook_output: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(hook_output["systemMessage"]
+        .as_str()
+        .is_some_and(|message| message.contains("Method capture recorded")));
+    let event: serde_json::Value =
+        serde_json::from_str(std::fs::read_to_string(&method_log).unwrap().trim()).unwrap();
+    assert_eq!(event["schema_version"], "ags-evolution-memory/1");
+    assert_eq!(event["source"], "hook:evolver-session-end");
+    assert_eq!(event["reference_id"], "task-12345678");
+    assert_eq!(event["evidence_path"], "");
+    assert_eq!(event["outcome"]["status"], "completed");
+    let serialized = serde_json::to_string(&event).unwrap();
+    assert!(!serialized.contains(transcript.to_string_lossy().as_ref()));
+}
+
+#[test]
+fn planner_recall_template_remains_advisory_and_authority_safe() {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .unwrap();
+    let content = std::fs::read_to_string(
+        workspace.join("manifests/templates/hooks/codex-planner-recall.template.json"),
+    )
+    .unwrap();
+    let template: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+    assert_eq!(template["evolver_recall"], "advisory_only");
+    assert_eq!(template["enabled_by_default"], false);
+    assert_eq!(template["authority_boundary"]["ags_authority_wins"], true);
+    for hook in ["SessionStart", "UserPromptSubmit", "PostToolUse"] {
+        assert_eq!(template["hooks"][hook]["advisory_only"], true);
+    }
+    let boundary = template["authority_boundary"]["must_not_decide"]
+        .as_array()
+        .unwrap();
+    assert!(boundary.iter().any(|value| {
+        value
+            .as_str()
+            .is_some_and(|text| text.contains("execution mode"))
+    }));
 }

@@ -6,13 +6,6 @@ use super::workspace_facts::*;
 use ags_host_integration::*;
 use std::path::{Path, PathBuf};
 
-const MEMORY_SCRIPTS: &[&str] = &[
-    "context-memory.sh",
-    "context-memory-start.py",
-    "claude-stop-memory-capture.py",
-    "raw-tool-call-stop-guard.js",
-];
-
 fn temp(tag: &str) -> PathBuf {
     let root =
         std::env::temp_dir().join(format!("ags-workspace-facts-{tag}-{}", std::process::id()));
@@ -44,28 +37,20 @@ fn write_memory(home: &Path, slug: &str, archive: bool) {
     }
 }
 
-fn write_scripts(home: &Path) {
-    let dir = home.join(".agents/scripts");
-    std::fs::create_dir_all(&dir).unwrap();
-    for name in MEMORY_SCRIPTS {
-        std::fs::write(dir.join(name), "x").unwrap();
-    }
-}
-
 fn write_claude_hooks(project: &Path, start: bool, stop: bool) {
     let mut hooks = serde_json::Map::new();
     if start {
         hooks.insert(
             "SessionStart".into(),
-            serde_json::json!([{"hooks":[{"command":"python3 $HOME/.agents/scripts/context-memory-start.py"}]}]),
+            serde_json::json!([{"hooks":[{"command":"ags host lifecycle --event session-start --host claude-code --target . --input -"}]}]),
         );
     }
     if stop {
         hooks.insert(
             "Stop".into(),
             serde_json::json!([{"hooks":[
-                {"command":"node $HOME/.agents/scripts/raw-tool-call-stop-guard.js"},
-                {"command":"python3 $HOME/.agents/scripts/claude-stop-memory-capture.py"}
+                {"command":"ags host lifecycle --event stop-guard --host claude-code --target . --input -"},
+                {"command":"ags host lifecycle --event session-end --host claude-code --target . --input -"}
             ]}]),
         );
     }
@@ -80,12 +65,11 @@ fn write_claude_hooks(project: &Path, start: bool, stop: bool) {
 
 #[test]
 fn memory_lifecycle_state_matrix() {
-    for (tag, memory, scripts, start, stop, archive, expected) in [
-        ("absent", false, false, false, false, false, "absent"),
-        ("files", true, true, false, false, true, "files-only"),
-        ("read", true, true, true, false, true, "read-only"),
-        ("unbacked", true, false, true, true, true, "unbacked"),
-        ("full", true, true, true, true, true, "full"),
+    for (tag, memory, start, stop, archive, expected) in [
+        ("absent", false, false, false, false, "absent"),
+        ("files", true, false, false, true, "files-only"),
+        ("read", true, true, false, true, "read-only"),
+        ("full", true, true, true, true, "full"),
     ] {
         let root = temp(tag);
         let home = root.join("home");
@@ -94,9 +78,6 @@ fn memory_lifecycle_state_matrix() {
         write_profile(&project, tag);
         if memory {
             write_memory(&home, tag, archive);
-        }
-        if scripts {
-            write_scripts(&home);
         }
         if start || stop {
             write_claude_hooks(&project, start, stop);
@@ -118,7 +99,6 @@ fn memory_lifecycle_is_host_specific_and_supports_codex_and_omp() {
     std::fs::create_dir_all(&project).unwrap();
     write_profile(&project, "hosts");
     write_memory(&home, "hosts", true);
-    write_scripts(&home);
     write_claude_hooks(&project, true, true);
 
     assert_eq!(
@@ -134,7 +114,7 @@ fn memory_lifecycle_is_host_specific_and_supports_codex_and_omp() {
     std::fs::create_dir_all(codex.parent().unwrap()).unwrap();
     std::fs::write(
         codex,
-        r#"{"hooks":{"SessionStart":[{"hooks":[{"command":"context-memory-start.py"}]}],"SessionEnd":[{"hooks":[{"command":"claude-stop-memory-capture.py"}]}]}}"#,
+        r#"{"hooks":{"SessionStart":[{"hooks":[{"command":"ags host lifecycle --event session-start --host codex --target . --input -"}]}],"SessionEnd":[{"hooks":[{"command":"ags host lifecycle --event session-end --host codex --target . --input -"}]}],"Stop":[{"hooks":[{"command":"ags host lifecycle --event stop-guard --host codex --target . --input -"}]}]}}"#,
     )
     .unwrap();
     assert_eq!(
@@ -146,12 +126,13 @@ fn memory_lifecycle_is_host_specific_and_supports_codex_and_omp() {
     std::fs::create_dir_all(extension.parent().unwrap()).unwrap();
     std::fs::write(
         extension,
-        r#"// context-memory-start.py claude-stop-memory-capture.py
+        r#"import { spawnSync } from "node:child_process";
 export default function (pi) {
   pi.on("session_start", async () => {});
   pi.on("before_agent_start", async () => ({ systemPromptAppend: "memory" }));
   pi.on("agent_settled", async () => {});
   pi.on("session_shutdown", async () => {});
+  spawnSync("ags", ["host", "lifecycle", "session-start", "session-end", "stop-guard", "--host", "omp"]);
 }"#,
     )
     .unwrap();
@@ -256,12 +237,10 @@ fn verification_command_detection_is_target_aware() {
     let root = temp("verify");
     assert!(detect_verification_commands(&root)
         .iter()
-        .any(|command| command.contains("No project-specific")));
+        .any(|command| command.contains("ags verify")));
     std::fs::write(root.join("Cargo.toml"), "[package]\nname='demo'\n").unwrap();
-    std::fs::create_dir_all(root.join("scripts")).unwrap();
-    std::fs::write(root.join("scripts/verify.sh"), "#!/bin/sh\n").unwrap();
     let commands = detect_verification_commands(&root);
-    for expected in ["cargo fmt", "cargo test", "cargo build", "verify.sh"] {
+    for expected in ["cargo fmt", "cargo test", "cargo build", "ags verify"] {
         assert!(
             commands.iter().any(|command| command.contains(expected)),
             "{expected}"

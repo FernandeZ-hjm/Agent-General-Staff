@@ -272,6 +272,7 @@ impl WorkspaceSessionHandler for CapturingHandler {
         _writer: TcpStream,
         _workspace: Arc<WorkspaceState>,
         session_id: String,
+        _startup_executable_hash: String,
     ) {
         self.session_ids.lock().unwrap().push(session_id);
     }

@@ -9,7 +9,7 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use ags_platform::{atomic_write, sha256_file};
+use ags_platform::{atomic_write, executable_content_hash};
 
 pub(super) const REGISTRY_SCHEMA: &str = "ags-workspace-registry/1";
 pub(super) const START_TIMEOUT: Duration = Duration::from_secs(10);
@@ -237,7 +237,7 @@ pub(super) fn workspace_key(workspace: &Path) -> String {
 pub(super) fn current_executable_hash() -> Result<String, String> {
     let executable =
         std::env::current_exe().map_err(|error| format!("current_exe failed: {error}"))?;
-    sha256_file(&executable)
+    executable_content_hash(&executable)
 }
 
 pub(super) fn fresh_id(prefix: &str, workspace: &Path) -> String {

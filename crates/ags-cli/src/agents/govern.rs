@@ -19,11 +19,13 @@ pub(in crate::agents) fn cmd_agents_govern(agent: Option<&str>, apply: bool, for
     let chain = agents_governance_chain();
     let tool_surface = ags_mcp_tool_surface();
     let mut apply_report = ags_verification::doctor::HealthReport::new("agents-govern-apply");
-    let supported_memory_hosts = ["claude-code", "codex", "omp"];
     if apply {
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         for target in &targets {
-            if supported_memory_hosts.contains(&target.id.as_str()) {
+            if ags_host_integration::platform_spec(&target.id)
+                .and_then(|spec| spec.memory_protocol)
+                .is_some()
+            {
                 ags_lifecycle::setup::apply_host_memory_adapter(
                     &mut apply_report,
                     &home,
@@ -34,7 +36,7 @@ pub(in crate::agents) fn cmd_agents_govern(agent: Option<&str>, apply: bool, for
                 apply_report.add(ags_verification::doctor::Finding::fail(
                     "agents-memory-lifecycle-unsupported",
                     format!("no native memory lifecycle adapter for {}", target.id),
-                    "Supported adapters: claude-code, codex, omp.",
+                    "Supported adapters: claude-code, codex, cursor, omp.",
                 ));
             }
         }
@@ -121,7 +123,7 @@ pub(in crate::agents) fn cmd_agents_govern(agent: Option<&str>, apply: bool, for
         "hosts": host_plans,
         "memory_adapter_report": if apply { serde_json::to_value(&apply_report).expect("serializable doctor report") } else { serde_json::Value::Null },
         "receipt": receipt_path.as_ref().map(|path| path.display().to_string()),
-        "note": "MCP registration remains advice-only. --apply writes only AGS-owned Claude/Codex hooks or the OMP extension for the selected supported host.",
+        "note": "MCP registration remains advice-only. --apply writes only AGS-owned Claude/Codex/Cursor hooks or the OMP extension for the selected supported host.",
     });
     crate::output::emit(format, &output, || {
         let mut lines = vec![format!(

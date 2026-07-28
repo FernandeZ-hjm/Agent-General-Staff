@@ -450,7 +450,7 @@ pub(crate) fn check_contradictions(fields: &HashMap<String, String>, errors: &mu
     let non_goal = field_val(fields, "非目标：");
     let goal = field_val(fields, "目标：");
     let task = field_val(fields, "任务：");
-    let permission = field_val(fields, "Permission mode:");
+    let permission = field_val(fields, "Execution mode:");
 
     // 非目标 says "no code changes" but 目标/任务 require changes
     if non_goal.contains("不修改代码") || non_goal.contains("不修改任何文件") {
@@ -505,7 +505,7 @@ pub(crate) fn check_contradictions(fields: &HashMap<String, String>, errors: &mu
         let action = extended_action_context(fields);
         if has_modification_intent(&action) {
             errors.push(format!(
-                "[{}] Permission mode 为 {}，但任务行动内容包含修改操作",
+                "[{}] Execution mode 为 {}，但任务行动内容包含修改操作",
                 error_code::CONTRADICTORY_REQUIREMENT,
                 permission
             ));

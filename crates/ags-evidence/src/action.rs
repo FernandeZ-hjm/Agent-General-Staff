@@ -52,7 +52,7 @@ pub fn build_action_receipt(
     }
     let hash = sha256_hex(basis.as_bytes());
     ActionReceipt {
-        schema_version: "0.3.5-action-receipt".to_string(),
+        schema_version: "0.3.6-action-receipt".to_string(),
         receipt_id: format!("ar-{action}-{stamp}-{}", &hash[..16.min(hash.len())]),
         action: action.to_string(),
         timestamp: format!("unix-{stamp}"),

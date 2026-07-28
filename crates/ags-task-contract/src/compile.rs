@@ -369,26 +369,33 @@ fn compile_parsed_contract(
         });
     }
 
-    // Permission mode: — default direct execution. Heavy tasks with an
+    // Execution mode: — default one-writer execution. Heavy tasks with an
     // unspecified mode are conservatively rewritten to plan-only below.
-    if !has_field(&fields, "Permission mode:") {
-        fields.insert(
-            "Permission mode:".to_string(),
-            "execute-and-verify".to_string(),
-        );
+    if !has_field(&fields, "Execution mode:") {
+        fields.insert("Execution mode:".to_string(), "single-writer".to_string());
         slot_sources.push(SlotEntry {
-            field: "Permission mode:".to_string(),
-            value: "execute-and-verify".to_string(),
+            field: "Execution mode:".to_string(),
+            value: "single-writer".to_string(),
             source: SlotSource::Default,
         });
     }
 
-    // Parallelism: — default none
-    if !has_field(&fields, "Parallelism:") {
-        fields.insert("Parallelism:".to_string(), "none".to_string());
+    // Execution topology: — default single
+    if !has_field(&fields, "Execution topology:") {
+        fields.insert("Execution topology:".to_string(), "single".to_string());
         slot_sources.push(SlotEntry {
-            field: "Parallelism:".to_string(),
-            value: "none".to_string(),
+            field: "Execution topology:".to_string(),
+            value: "single".to_string(),
+            source: SlotSource::Default,
+        });
+    }
+
+    // Delegation planning is independent from writer authority.
+    if !has_field(&fields, "Delegation planning:") {
+        fields.insert("Delegation planning:".to_string(), "no".to_string());
+        slot_sources.push(SlotEntry {
+            field: "Delegation planning:".to_string(),
+            value: "no".to_string(),
             source: SlotSource::Default,
         });
     }
@@ -521,7 +528,7 @@ fn compile_parsed_contract(
     if !has_field(&fields, "交付：") {
         let delivery = "- 按 protocol/agent-task-protocol.md 输出交付报告\n\
 - 报告必须回填本卡 Contract ID、LaunchPlan task_card_hash，并逐项闭环 G-*/AC-*/V-*；未闭环项不得隐藏\n\
-- 报告落盘后运行 `ags task close <task-card> <delivery-report>`，通过后再生成或归档 receipt"
+- 报告落盘后运行 `ags task close <task-card> <launch-plan> <delivery-report> --receipt-out <receipt.json>`，通过后再归档 receipt"
             .to_string();
         fields.insert("交付：".to_string(), delivery.clone());
         slot_sources.push(SlotEntry {
@@ -536,28 +543,28 @@ fn compile_parsed_contract(
     // mode, fill plan-only as the conservative default for the unspecified
     // field. This is NOT the resolver's M4 — task LEVEL never downgrades an
     // explicitly declared permission. The perm_source_is_default guard ensures
-    // an explicit Permission mode is always preserved.
+    // an explicit Execution mode is always preserved.
     let task_level = fields.get("任务级别：").map(|s| s.as_str()).unwrap_or("");
     if task_level == "Heavy" {
-        // Check if permission mode was default-filled (not user-provided)
+        // Check if execution mode was default-filled (not user-provided)
         let perm_source_is_default = slot_sources
             .iter()
-            .any(|s| s.field == "Permission mode:" && s.source == SlotSource::Default);
+            .any(|s| s.field == "Execution mode:" && s.source == SlotSource::Default);
         if perm_source_is_default {
-            // Fill the unspecified Permission mode with the conservative default.
-            fields.insert("Permission mode:".to_string(), "plan-only".to_string());
+            // Fill the unspecified Execution mode with the conservative default.
+            fields.insert("Execution mode:".to_string(), "plan-only".to_string());
             // Update slot_sources: replace the Default entry
             if let Some(entry) = slot_sources
                 .iter_mut()
-                .find(|s| s.field == "Permission mode:")
+                .find(|s| s.field == "Execution mode:")
             {
                 entry.value = "plan-only".to_string();
                 entry.source = SlotSource::Default;
             }
             assumptions.push(
-                "Heavy task: Permission mode unspecified — compiler default plan-only \
+                "Heavy task: Execution mode unspecified — compiler default plan-only \
                  (conservative default for an unspecified field; an explicit \
-                 Permission mode is always preserved)"
+                 Execution mode is always preserved)"
                     .to_string(),
             );
         }

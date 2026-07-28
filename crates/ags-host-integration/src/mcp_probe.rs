@@ -3,9 +3,10 @@
 //! These helpers own host command invocation and output parsing. They never
 //! mutate host configuration or invoke an MCP effect.
 
-use crate::{platform_spec, McpListFormat};
+use crate::{inspect_host_mcp, HostProbeStatus, McpListFormat};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpServerRegistration {
     pub name: String,
     pub active: bool,
@@ -47,6 +48,16 @@ pub fn parse_mcp_list(format: McpListFormat, stdout: &str) -> Vec<McpServerRegis
                     }
                     (name, line.contains("enabled") && !line.contains("disabled"))
                 }
+                McpListFormat::Omp => {
+                    let mut columns = line.split('|').map(str::trim);
+                    let name = columns.next()?;
+                    let _transport = columns.next()?;
+                    let state = columns.next()?;
+                    if name.is_empty() {
+                        return None;
+                    }
+                    (name, state.eq_ignore_ascii_case("enabled"))
+                }
             };
             Some(McpServerRegistration {
                 name: name.to_string(),
@@ -57,32 +68,13 @@ pub fn parse_mcp_list(format: McpListFormat, stdout: &str) -> Vec<McpServerRegis
         .collect()
 }
 
-/// Return one matching row from a host's own live registrar surface.
-///
-/// Inherited configuration sources such as OMP's Codex registry are excluded:
-/// they may support capability visibility, but cannot prove a live OMP host.
+/// Return one matching row from the host's declared protocol surface.
 pub fn mcp_server_line(host: &str, server: &str) -> Result<Option<String>, String> {
-    let spec = platform_spec(host).ok_or_else(|| format!("unknown host: {host}"))?;
-    let probe = spec
-        .mcp_probe
-        .filter(|probe| probe.live_runtime_probe)
-        .ok_or_else(|| format!("{host} has no live MCP registrar probe"))?;
-    let output = std::process::Command::new(probe.program)
-        .args(probe.args)
-        .output()
-        .map_err(|error| error.to_string())?;
-    let combined = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    if output.status.success() {
-        Ok(parse_mcp_list(probe.format, &combined)
-            .into_iter()
-            .find(|entry| entry.name.eq_ignore_ascii_case(server))
-            .map(|entry| entry.evidence))
+    let report = inspect_host_mcp(host);
+    if report.status == HostProbeStatus::Ready {
+        Ok(report.find(server).map(|entry| entry.evidence.clone()))
     } else {
-        Err(combined.trim().to_string())
+        Err(format!("{}: {}", report.evidence_source, report.evidence))
     }
 }
 
@@ -97,25 +89,15 @@ pub fn codex_mcp_list_line(server: &str) -> Result<Option<String>, String> {
 
 /// List active MCP server identifiers exposed by a supported host.
 pub fn mcp_server_ids(host: &str) -> Result<Vec<String>, String> {
-    let Some(probe) = platform_spec(host)
-        .and_then(|spec| spec.mcp_probe)
-        .filter(|probe| probe.live_runtime_probe)
-    else {
-        return Ok(Vec::new());
-    };
-    let output = std::process::Command::new(probe.program)
-        .args(probe.args)
-        .output()
-        .map_err(|error| error.to_string())?;
-    let combined = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    if !output.status.success() {
-        return Err(combined.trim().to_string());
+    let report = inspect_host_mcp(host);
+    if report.status != HostProbeStatus::Ready {
+        if report.status == HostProbeStatus::ProtocolUnsupported {
+            return Ok(Vec::new());
+        }
+        return Err(format!("{}: {}", report.evidence_source, report.evidence));
     }
-    let mut ids = parse_mcp_list(probe.format, &combined)
+    let mut ids = report
+        .servers
         .into_iter()
         .filter(|entry| entry.active)
         .map(|entry| entry.name)
@@ -147,6 +129,18 @@ mod tests {
         assert_eq!(
             codex
                 .iter()
+                .map(|entry| (entry.name.as_str(), entry.active))
+                .collect::<Vec<_>>(),
+            vec![("ags", true), ("old", false)]
+        );
+
+        let omp = parse_mcp_list(
+            McpListFormat::Omp,
+            "ags | stdio | enabled | /usr/local/bin/ags [user]\n\
+             old | stdio | disabled | old [project]\n",
+        );
+        assert_eq!(
+            omp.iter()
                 .map(|entry| (entry.name.as_str(), entry.active))
                 .collect::<Vec<_>>(),
             vec![("ags", true), ("old", false)]

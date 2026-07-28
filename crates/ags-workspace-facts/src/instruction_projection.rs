@@ -44,8 +44,9 @@ pub struct InstructionFile {
 /// Agent-specific permission defaults.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentPermissions {
-    pub default_permission_mode: String,
-    pub default_parallelism: String,
+    pub default_execution_mode: String,
+    pub default_execution_topology: String,
+    pub default_delegation_planning: String,
     pub may_edit_files: bool,
     pub may_delegate: bool,
     pub may_install: bool,
@@ -76,8 +77,9 @@ pub(super) fn generate_agent_instructions_from_facts(
                 "Codex owns ambient preflight, complete conversation context, the only natural-language semantic decision, conditional solution formation, execution decision, and review. It reads `ags://capabilities/current-host` and submits a typed HostRouteProposal to read-only MCP `ags_route_request`. DirectResponse delivers and stops; exact SkillTarget is checked against ActiveSkillTable; MachineCli becomes a connection-held action and only `ags_apply_action` may consume it. An approved contract plus explicit same-session modification instruction enters host-native direct execution without repeating solution formation or compiling a task card. New unresolved solutions require confirmation. Explicit task-card generation requires a handoff instruction and confirmed contract. In host Plan mode, the final decision-complete artifact is the canonical task card; approval switches to execution mode and dispatches that exact card without regeneration. Reopened solution work stays in solution formation."
                     .to_string(),
                 AgentPermissions {
-                    default_permission_mode: "execute-and-verify".to_string(),
-                    default_parallelism: "none".to_string(),
+                    default_execution_mode: "single-writer".to_string(),
+                    default_execution_topology: "single".to_string(),
+                    default_delegation_planning: "no".to_string(),
                     may_edit_files: true,
                     may_delegate: true,
                     may_install: false,
@@ -138,8 +140,9 @@ pub(super) fn generate_agent_instructions_from_facts(
                 "Claude Code executes bounded handoff task cards. It reads the task card, protocol files, and project docs; implements within scope; runs verification; and outputs a delivery report. Claude Code must NOT perform solution formation or task-level classification from raw user requests — those phases belong to Codex/Cursor. Claude Code only consumes already-formed cards and must not infer same-session direct-edit authority from `方案 OK` or raw prose."
                     .to_string(),
                 AgentPermissions {
-                    default_permission_mode: "execute-and-verify".to_string(),
-                    default_parallelism: "none".to_string(),
+                    default_execution_mode: "single-writer".to_string(),
+                    default_execution_topology: "single".to_string(),
+                    default_delegation_planning: "no".to_string(),
                     may_edit_files: true,
                     may_delegate: true,
                     may_install: false,
@@ -157,9 +160,9 @@ pub(super) fn generate_agent_instructions_from_facts(
                         .to_string(),
                     "If the task risk escalates beyond what the task card declares, stop and report."
                         .to_string(),
-                    "For Heavy tasks: task level is a risk/review tier, not the execution authority — it never downgrades the permission mode and never by itself adds a mutation gate or forces a plan-first round trip. Two Heavy classes: Heavy plan (Permission mode plan-only, declared or the compiler default when Permission mode is unspecified) returns root cause + design + implementation plan + verification plan and waits for explicit human approval before mutation; Heavy execute (Permission mode execute-and-verify) runs and verifies directly per the task card. Always honor the card's independent Review gate and stop conditions."
+                    "For Heavy tasks: task level is a risk/review tier, not execution authority. Honor the task card's explicit Execution mode, Execution topology, Delegation planning, independent Review gate, and stop conditions. Heavy never upgrades or downgrades those authority fields."
                         .to_string(),
-                    "On resume/continue: reread the task card, run `git status --short`, reconfirm review_targets, and honor the card's permission mode (plan-only awaits explicit approval; execute-and-verify resumes execution and verification)."
+                    "On resume/continue: reread the task card, run `git status --short`, reconfirm review_targets, and honor its explicit execution authority without inferring permission from the task level or conversation state."
                         .to_string(),
                     "Do not generate task cards or call `ags task compile --task-card-requested --confirmed-handoff-contract` from raw user requests or unresolved solution-phase outputs. Only Codex/Cursor may generate task cards after receiving an explicit task-card instruction and confirming the handoff contract. \"方案 OK\" alone is not a task-card generation trigger."
                         .to_string(),
@@ -201,8 +204,9 @@ pub(super) fn generate_agent_instructions_from_facts(
                 "Cursor owns ambient preflight, complete conversation context, the only natural-language semantic decision, conditional solution formation, execution decision, and review inside its IDE workflow. It reads `ags://capabilities/current-host` and submits a typed HostRouteProposal to read-only MCP `ags_route_request`. DirectResponse delivers and stops; exact SkillTarget is checked against ActiveSkillTable; MachineCli is only consumed by explicit `ags_apply_action`. Explicit same-session modification authorization enters host-native direct execution. Explicit task compilation requires a confirmed contract and handoff request; in host Plan mode the final decision-complete artifact is the canonical task card, and approval switches mode before dispatching that exact card without regeneration."
                     .to_string(),
                 AgentPermissions {
-                    default_permission_mode: "execute-and-verify".to_string(),
-                    default_parallelism: "none".to_string(),
+                    default_execution_mode: "single-writer".to_string(),
+                    default_execution_topology: "single".to_string(),
+                    default_delegation_planning: "no".to_string(),
                     may_edit_files: true,
                     may_delegate: true,
                     may_install: false,
@@ -268,8 +272,9 @@ pub(super) fn generate_agent_instructions_from_facts(
                     "{host_label} is an AGS-compatible governed host (Tencent Agent hosts — WorkBuddy and CodeBuddy-Code — resolve to this governed-host profile; other unknown hosts use it too). It must complete AGS initialization preflight before any AGS scenario work, then follow the governed lifecycle surfaced by the preflight report. Governed hosts may form solutions, but must not infer privileges from the Agent product name. Explicit same-session modification authorization and confirmed-contract task-card handoff are separate paths; `方案 OK` alone authorizes neither."
                 ),
                 AgentPermissions {
-                    default_permission_mode: "execute-and-verify".to_string(),
-                    default_parallelism: "none".to_string(),
+                    default_execution_mode: "single-writer".to_string(),
+                    default_execution_topology: "single".to_string(),
+                    default_delegation_planning: "no".to_string(),
                     may_edit_files: true,
                     may_delegate: true,
                     may_install: false,
@@ -548,12 +553,12 @@ pub(super) fn build_instructions_text(
     // Permissions
     lines.push("## Default Permissions".to_string());
     lines.push(format!(
-        "- Permission mode: {}",
-        permissions.default_permission_mode
+        "- Execution mode: {}",
+        permissions.default_execution_mode
     ));
     lines.push(format!(
-        "- Parallelism: {}",
-        permissions.default_parallelism
+        "- Execution topology: {}",
+        permissions.default_execution_topology
     ));
     lines.push(format!(
         "- May edit files: {}",

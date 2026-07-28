@@ -24,6 +24,46 @@ use crate::protocol::{
 use crate::{prompts, resources, tools};
 use ags_session::WorkspaceState;
 
+const RUNTIME_IDENTITY_ERROR: &str =
+    "mcp_runtime_identity_stale_reconnect_required: AGS executable content changed";
+
+#[derive(Debug)]
+struct RuntimeIdentity {
+    executable: PathBuf,
+    startup_hash: String,
+}
+
+impl RuntimeIdentity {
+    fn current(startup_hash: String) -> Result<Self, String> {
+        let executable =
+            std::env::current_exe().map_err(|error| format!("current_exe failed: {error}"))?;
+        Ok(Self {
+            executable,
+            startup_hash,
+        })
+    }
+
+    #[cfg(test)]
+    fn from_path(executable: PathBuf) -> Result<Self, String> {
+        let startup_hash = ags_platform::executable_content_hash(&executable)?;
+        Ok(Self {
+            executable,
+            startup_hash,
+        })
+    }
+
+    /// Deliberately hash the complete file for every governed request. No
+    /// inode/size/timestamp shortcut is permitted on this security boundary.
+    fn verify(&self) -> Result<(), String> {
+        let current_hash = ags_platform::executable_content_hash(&self.executable)?;
+        if current_hash == self.startup_hash {
+            Ok(())
+        } else {
+            Err(RUNTIME_IDENTITY_ERROR.to_string())
+        }
+    }
+}
+
 // ── Preflight State ─────────────────────────────────────────────────────────
 
 /// Per-connection preflight state for the AGS Initialization Gate.
@@ -249,9 +289,11 @@ pub(crate) fn run_mcp_session<R: BufRead, W: Write>(
     mut writer: W,
     workspace: Arc<WorkspaceState>,
     session_id: String,
+    startup_executable_hash: String,
 ) {
     let mut initialized = false;
     let mut preflight = PreflightState::for_workspace(workspace, session_id);
+    let runtime_identity = RuntimeIdentity::current(startup_executable_hash);
 
     for line in reader.lines() {
         let line = match line {
@@ -280,7 +322,16 @@ pub(crate) fn run_mcp_session<R: BufRead, W: Write>(
                     continue;
                 }
 
-                let response = if !initialized && req.method != "initialize" {
+                let response = if request_requires_runtime_identity(&req)
+                    && runtime_identity
+                        .as_ref()
+                        .map_err(Clone::clone)
+                        .and_then(RuntimeIdentity::verify)
+                        .is_err()
+                {
+                    preflight.reset_session();
+                    JsonRpcResponse::error(req.id.clone(), -32001, RUNTIME_IDENTITY_ERROR)
+                } else if !initialized && req.method != "initialize" {
                     JsonRpcResponse::error(
                         req.id,
                         -32002,
@@ -311,6 +362,72 @@ pub(crate) fn run_mcp_session<R: BufRead, W: Write>(
                 }
             }
         }
+    }
+}
+
+fn request_requires_runtime_identity(req: &JsonRpcRequest) -> bool {
+    match req.method.as_str() {
+        "tools/call" => true,
+        "resources/read" => {
+            req.params
+                .as_ref()
+                .and_then(|params| params.get("uri"))
+                .and_then(|uri| uri.as_str())
+                == Some(tools::CURRENT_HOST_CAPABILITIES_URI)
+        }
+        "prompts/get" => req
+            .params
+            .as_ref()
+            .and_then(|params| params.get("name"))
+            .and_then(|name| name.as_str())
+            .is_some_and(|name| PHASE_GATED_PROMPTS.contains(&name)),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod runtime_identity_tests {
+    use super::*;
+
+    #[test]
+    fn equal_length_fast_replacement_is_detected_by_full_content_hash() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("ags");
+        std::fs::write(&executable, b"aaaa").unwrap();
+        let identity = RuntimeIdentity::from_path(executable.clone()).unwrap();
+        std::fs::write(executable, b"bbbb").unwrap();
+        assert_eq!(identity.verify().unwrap_err(), RUNTIME_IDENTITY_ERROR);
+    }
+
+    #[test]
+    fn only_governed_requests_require_runtime_identity_verification() {
+        let request = |method: &str, params: Option<serde_json::Value>| JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(1)),
+            method: method.to_string(),
+            params,
+        };
+
+        assert!(!request_requires_runtime_identity(&request(
+            "initialize",
+            None
+        )));
+        assert!(!request_requires_runtime_identity(&request(
+            "resources/list",
+            None
+        )));
+        assert!(request_requires_runtime_identity(&request(
+            "tools/call",
+            Some(serde_json::json!({"name": tools::TOOL_PREFLIGHT}))
+        )));
+        assert!(request_requires_runtime_identity(&request(
+            "resources/read",
+            Some(serde_json::json!({"uri": tools::CURRENT_HOST_CAPABILITIES_URI}))
+        )));
+        assert!(request_requires_runtime_identity(&request(
+            "prompts/get",
+            Some(serde_json::json!({"name": PHASE_GATED_PROMPTS[0]}))
+        )));
     }
 }
 
@@ -599,3 +716,39 @@ fn log_error(msg: &str) {
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tools_call_requires_preflight() {
+        let workspace = tempfile::tempdir().unwrap();
+        let runtime = tempfile::tempdir().unwrap();
+        let state = Arc::new(
+            WorkspaceState::new(
+                workspace.path().canonicalize().unwrap(),
+                runtime.path().to_path_buf(),
+            )
+            .unwrap(),
+        );
+        let mut preflight = PreflightState::for_workspace(state, "test-session".to_string());
+        let mut initialized = true;
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(1)),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::json!({
+                "name": tools::TOOL_ROUTE_REQUEST,
+                "arguments": {}
+            })),
+        };
+
+        let response = dispatch_request(&request, &mut initialized, &mut preflight);
+        let error = response
+            .error
+            .expect("preflight gate must reject tools/call");
+        assert_eq!(error.code, -32000);
+        assert_eq!(error.message, PREFLIGHT_GATE_ERROR);
+    }
+}

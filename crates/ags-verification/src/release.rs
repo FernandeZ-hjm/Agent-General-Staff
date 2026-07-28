@@ -27,6 +27,7 @@ pub(super) fn check_release_boundary(repo_root: &Path) -> Vec<CheckItem> {
         ));
     }
     items.push(check_release_version_surfaces(repo_root));
+    items.push(check_first_party_language_boundary(repo_root));
     items.push(check_validator_mutation_guards(repo_root));
 
     // Check 2: Verify bootstrap --apply produces a sanitized public payload.
@@ -104,29 +105,127 @@ pub(super) fn check_release_boundary(repo_root: &Path) -> Vec<CheckItem> {
     items
 }
 
-fn check_validator_mutation_guards(repo_root: &Path) -> CheckItem {
-    let script = "scripts/verify-validator-mutations.py";
-    if !repo_root.join(script).is_file() {
-        return CheckItem::fail(
-            "validator-mutation-guards",
-            "release",
-            &format!("Required mutation verifier is missing: {script}"),
-            "Restore the task-card mutation verifier.",
-        );
+fn check_first_party_language_boundary(repo_root: &Path) -> CheckItem {
+    let mut violations = Vec::new();
+    let scripts = repo_root.join("scripts");
+    match std::fs::read_dir(&scripts) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let relative = format!("scripts/{}", entry.file_name().to_string_lossy());
+                match entry.file_type() {
+                    Ok(file_type)
+                        if file_type.is_file()
+                            && relative == "scripts/ags-memory-lifecycle-omp.js" => {}
+                    Ok(_) => violations.push(format!(
+                        "{relative}: scripts/ may contain only the thin OMP lifecycle adapter"
+                    )),
+                    Err(error) => {
+                        violations.push(format!("{relative}: cannot inspect file type: {error}"))
+                    }
+                }
+            }
+        }
+        Err(error) => violations.push(format!("scripts/: cannot inspect directory: {error}")),
     }
 
-    let (code, stdout, stderr) = run_command(repo_root, "python3", &[script], &[]);
-    if code == 0 {
-        CheckItem::pass("validator-mutation-guards", "release", stdout.trim())
+    for file in rust_source_files(&repo_root.join("crates")) {
+        match std::fs::read_to_string(&file) {
+            Ok(body)
+                if body.contains(concat!("python", "3"))
+                    || body.contains(concat!("Command::new(\"", "python", "\")"))
+                    || body.contains(concat!("Command::new(\"", "python", "3\")")) =>
+            {
+                violations.push(format!(
+                    "{}: Rust core must not delegate first-party logic to Python",
+                    file.strip_prefix(repo_root).unwrap_or(&file).display()
+                ));
+            }
+            Ok(_) => {}
+            Err(error) => violations.push(format!(
+                "{}: cannot inspect source: {error}",
+                file.strip_prefix(repo_root).unwrap_or(&file).display()
+            )),
+        }
+    }
+
+    let omp = scripts.join("ags-memory-lifecycle-omp.js");
+    match std::fs::read_to_string(&omp) {
+        Ok(body) => {
+            let lower = body.to_ascii_lowercase();
+            for forbidden in [
+                "permission mode",
+                "execution mode",
+                "execution topology",
+                "task-card-hash",
+                "launch-plan-hash",
+                "sha256",
+                "receipt_id",
+                "receipt-id",
+            ] {
+                if lower.contains(forbidden) {
+                    violations.push(format!(
+                        "scripts/ags-memory-lifecycle-omp.js: thin adapter contains forbidden governance token `{forbidden}`"
+                    ));
+                }
+            }
+            for required in ["spawnSync", "\"host\"", "\"lifecycle\""] {
+                if !body.contains(required) {
+                    violations.push(format!(
+                        "scripts/ags-memory-lifecycle-omp.js: missing thin-adapter marker `{required}`"
+                    ));
+                }
+            }
+        }
+        Err(error) => violations.push(format!(
+            "scripts/ags-memory-lifecycle-omp.js: cannot read required adapter: {error}"
+        )),
+    }
+
+    if violations.is_empty() {
+        CheckItem::pass(
+            "first-party-language-boundary",
+            "release",
+            "Rust owns first-party governance, lifecycle, verification, release, and safety logic; scripts/ contains only the thin OMP adapter.",
+        )
     } else {
         CheckItem::fail(
-            "validator-mutation-guards",
+            "first-party-language-boundary",
             "release",
-            &truncate(&format!("{stdout}\n{stderr}"), 1000),
-            "Repair the semantic contract or CLI fixture gate that survived mutation.",
+            &truncate(&violations.join("\n"), 1600),
+            "Move first-party logic into Rust and keep non-Rust host adapters transport-only.",
         )
-        .with_command(&format!("python3 {script}"))
-        .with_exit_code(code)
+    }
+}
+
+fn rust_source_files(root: &Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return files;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            files.extend(rust_source_files(&path));
+        } else if file_type.is_file() && path.extension().is_some_and(|extension| extension == "rs")
+        {
+            files.push(path);
+        }
+    }
+    files
+}
+
+fn check_validator_mutation_guards(repo_root: &Path) -> CheckItem {
+    match crate::mutation_guard::verify(repo_root) {
+        Ok(evidence) => CheckItem::pass("semantic-mutation-guards", "release", &evidence),
+        Err(error) => CheckItem::fail(
+            "semantic-mutation-guards",
+            "release",
+            &truncate(&error, 1200),
+            "Repair the Rust semantic contract test or the production invariant that survived mutation.",
+        )
     }
 }
 

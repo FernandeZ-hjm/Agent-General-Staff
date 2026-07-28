@@ -3,7 +3,7 @@
 //! The runner orchestrates validate → policy → gate → adapter resolve →
 //! launch plan. It ONLY consumes the resolved execution policy from
 //! `ags_governance_decision::policy` — it never reads raw task-card fields to decide
-//! permissions, parallelism, or launch args. It never launches an executor,
+//! permissions, execution_topology, or launch args. It never launches an executor,
 //! writes a receipt, runs verification, or claims that the task completed.
 //!
 //! ## Modes
@@ -31,6 +31,14 @@ use std::path::Path;
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct LaunchPlan {
     pub schema_version: String,
+    /// Hash of the exact canonical task-card bytes consumed by the runner.
+    pub task_card_hash: String,
+    /// SHA-256 of the canonical JSON plan body with this field removed.
+    pub launch_plan_hash: String,
+    /// Effective authority duplicated at the envelope for closure consumers.
+    pub effective_execution_mode: String,
+    pub effective_execution_topology: String,
+    pub delegation_planning: bool,
     pub task_card_path: String,
     pub mode: String,
     pub governance_status: GovernanceStatus,
@@ -107,7 +115,27 @@ pub struct ReceiptPlan {
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
-pub const SCHEMA_VERSION: &str = "0.3.5-launch-plan";
+pub const SCHEMA_VERSION: &str = "0.3.6-launch-plan";
+
+/// Compute the stable hash of a launch-plan JSON value. The hash field is
+/// removed before serialization, avoiding self-reference.
+pub fn canonical_launch_plan_hash(value: &serde_json::Value) -> Result<String, String> {
+    let mut body = value.clone();
+    let object = body
+        .as_object_mut()
+        .ok_or_else(|| "launch plan must be a JSON object".to_string())?;
+    object.remove("launch_plan_hash");
+    let bytes = serde_json::to_vec(&body)
+        .map_err(|error| format!("cannot canonicalize launch plan: {error}"))?;
+    Ok(ags_platform::sha256_hex(&bytes))
+}
+
+fn seal_launch_plan(mut plan: LaunchPlan) -> LaunchPlan {
+    let value = serde_json::to_value(&plan).expect("LaunchPlan serialization is infallible");
+    plan.launch_plan_hash =
+        canonical_launch_plan_hash(&value).expect("LaunchPlan canonicalization is infallible");
+    plan
+}
 
 // ── Main entry point ──────────────────────────────────────────────────────
 
@@ -119,7 +147,7 @@ pub const SCHEMA_VERSION: &str = "0.3.5-launch-plan";
 /// (may act as the M9 generic-adapter capability override).
 /// `current_task_approval` — pass the host-detected, current-task execution
 /// instruction to the resolver as an audit/hint signal. Task level does not
-/// downgrade the permission mode, so neither signal is a Heavy execution unlock.
+/// downgrade the execution mode, so neither signal is a Heavy execution unlock.
 ///
 /// Returns a `LaunchPlan`; no branch launches a process or performs task work.
 /// The caller checks `governance_status` and `host_execution_required` before
@@ -188,8 +216,13 @@ pub fn run_task_card_inner(
     let content = match read_input(task_card_path) {
         Ok(c) => c,
         Err(e) => {
-            return LaunchPlan {
+            return seal_launch_plan(LaunchPlan {
                 schema_version: SCHEMA_VERSION.to_string(),
+                task_card_hash: String::new(),
+                launch_plan_hash: String::new(),
+                effective_execution_mode: String::new(),
+                effective_execution_topology: String::new(),
+                delegation_planning: false,
                 task_card_path: display_path,
                 mode: mode.to_string(),
                 governance_status: GovernanceStatus::BlockedByPolicy,
@@ -206,7 +239,7 @@ pub fn run_task_card_inner(
                 receipt_plan: empty_receipt_plan(""),
                 verification_log_refs: vec![],
                 delivery_report_ref: String::new(),
-            };
+            });
         }
     };
 
@@ -216,8 +249,13 @@ pub fn run_task_card_inner(
     let card = match crate::validator::parse_validated(&content) {
         Ok(c) => c,
         Err(errors) => {
-            return LaunchPlan {
+            return seal_launch_plan(LaunchPlan {
                 schema_version: SCHEMA_VERSION.to_string(),
+                task_card_hash: task_card_hash.clone(),
+                launch_plan_hash: String::new(),
+                effective_execution_mode: String::new(),
+                effective_execution_topology: String::new(),
+                delegation_planning: false,
                 task_card_path: display_path,
                 mode: mode.to_string(),
                 governance_status: GovernanceStatus::BlockedByPolicy,
@@ -234,7 +272,7 @@ pub fn run_task_card_inner(
                 receipt_plan: empty_receipt_plan(&task_card_hash),
                 verification_log_refs: vec![],
                 delivery_report_ref: String::new(),
-            };
+            });
         }
     };
 
@@ -245,7 +283,7 @@ pub fn run_task_card_inner(
     // Use the canonical approval builder shared with the CLI gate and the AGS
     // MCP. `--current-task-approval` is structured live-request evidence from
     // the host/operator; it is never read from task-card prose and is an
-    // audit/hint signal only — task level does not downgrade the permission mode.
+    // audit/hint signal only — task level does not downgrade the execution mode.
     let input = ags_governance_decision::policy::TaskPolicyInput::from_fields_with_approval(
         &card.fields,
         approve_writes,
@@ -265,8 +303,13 @@ pub fn run_task_card_inner(
         } else {
             GovernanceStatus::AdvisoryNoMutation
         };
-        return LaunchPlan {
+        return seal_launch_plan(LaunchPlan {
             schema_version: SCHEMA_VERSION.to_string(),
+            task_card_hash: task_card_hash.clone(),
+            launch_plan_hash: String::new(),
+            effective_execution_mode: policy.effective_execution_mode.to_string(),
+            effective_execution_topology: policy.effective_execution_topology.to_string(),
+            delegation_planning: policy.delegation_planning,
             task_card_path: display_path,
             mode: mode.to_string(),
             governance_status,
@@ -303,7 +346,7 @@ pub fn run_task_card_inner(
             },
             verification_log_refs: vec![],
             delivery_report_ref: String::new(),
-        };
+        });
     }
 
     // ── Phase 5.5: Runtime skill-tag availability gate (the third gate) ──
@@ -355,7 +398,7 @@ pub fn run_task_card_inner(
             "receipt-{}",
             &task_card_hash[..12.min(task_card_hash.len())]
         ),
-        task_card_hash,
+        task_card_hash: task_card_hash.clone(),
         gate_result_for_receipt,
         suggested_verification_commands: vec![
             "cargo fmt --check".to_string(),
@@ -380,8 +423,13 @@ pub fn run_task_card_inner(
         "host must generate delivery-report.md after execution and verification".to_string()
     };
 
-    LaunchPlan {
+    seal_launch_plan(LaunchPlan {
         schema_version: SCHEMA_VERSION.to_string(),
+        task_card_hash: task_card_hash.clone(),
+        launch_plan_hash: String::new(),
+        effective_execution_mode: policy.effective_execution_mode.to_string(),
+        effective_execution_topology: policy.effective_execution_topology.to_string(),
+        delegation_planning: policy.delegation_planning,
         task_card_path: display_path,
         mode: mode.to_string(),
         governance_status: if launch_blocked {
@@ -402,7 +450,7 @@ pub fn run_task_card_inner(
         receipt_plan,
         verification_log_refs,
         delivery_report_ref,
-    }
+    })
 }
 
 // ── Adapter resolution ────────────────────────────────────────────────────
@@ -444,7 +492,7 @@ fn resolve_adapter(policy: &ResolvedExecutionPolicy, _task_card_path: &str) -> A
             adapter: "codex-local".to_string(),
             launch_command: format!(
                 "codex execute --permission {} [task-card]",
-                policy.effective_permission_mode
+                policy.effective_execution_mode
             ),
             launch_args: vec![],
             is_stub: true,
@@ -461,7 +509,7 @@ fn resolve_adapter(policy: &ResolvedExecutionPolicy, _task_card_path: &str) -> A
             adapter: "cursor".to_string(),
             launch_command: format!(
                 "cursor agent --mode {} [task-card]",
-                policy.effective_permission_mode
+                policy.effective_execution_mode
             ),
             launch_args: vec![],
             is_stub: true,
@@ -558,6 +606,8 @@ pub fn render_text(plan: &LaunchPlan) -> String {
     lines.push("AGS Runner — Launch Plan".to_string());
     lines.push("=========================".to_string());
     lines.push(format!("Schema version:  {}", plan.schema_version));
+    lines.push(format!("Task-card hash:  {}", plan.task_card_hash));
+    lines.push(format!("Launch-plan hash: {}", plan.launch_plan_hash));
     lines.push(format!("Task card:       {}", plan.task_card_path));
     lines.push(format!("Mode:            {}", plan.mode));
     lines.push(format!(
@@ -594,12 +644,20 @@ pub fn render_text(plan: &LaunchPlan) -> String {
         lines.push(format!("  Executor:          {}", policy.executor));
         lines.push(format!("  Runtime adapter:   {}", policy.runtime_adapter));
         lines.push(format!(
-            "  Permission mode:   {}",
-            policy.effective_permission_mode
+            "  Execution mode:   {}",
+            policy.effective_execution_mode
         ));
         lines.push(format!(
-            "  Parallelism:       {}",
-            policy.effective_parallelism
+            "  Execution topology: {}",
+            policy.effective_execution_topology
+        ));
+        lines.push(format!(
+            "  Delegation planning: {}",
+            if policy.delegation_planning {
+                "yes"
+            } else {
+                "no"
+            }
         ));
         lines.push(format!(
             "  Exec surface:      {}",

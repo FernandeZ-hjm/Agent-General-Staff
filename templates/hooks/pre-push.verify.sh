@@ -18,8 +18,7 @@
 # (`cargo run -p ags-cli -- verify`) so it always validates against THIS
 # branch's rules, never a possibly-stale global `ags` on PATH (an older suite
 # version would silently apply outdated rules). It falls back to
-# `scripts/verify.sh`, then to a PATH `ags` (with a version-mismatch warning),
-# and refuses the push if no verifier is available (fail-closed).
+# a PATH `ags`, and refuses the push if no verifier is available (fail-closed).
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
@@ -30,14 +29,12 @@ echo "[ags pre-push] running local verification gate…"
 # Repo-local first: build the verifier from THIS checkout so the hook can never
 # validate with an older global `ags` (version skew = governance gap).
 if command -v cargo >/dev/null 2>&1 && [ -f Cargo.toml ]; then
-    cargo run -q -p ags-cli -- verify --scope local --format text
-elif [ -f scripts/verify.sh ]; then
-    bash scripts/verify.sh
+    cargo run -q -p ags-cli -- verify --scope release --format text
 elif command -v ags >/dev/null 2>&1; then
     echo "[ags pre-push] WARNING: cannot build from source; falling back to PATH ags ($(ags --version 2>/dev/null || echo unknown)), which may not match this checkout." >&2
-    ags verify --scope local --format text
+    ags verify --scope release --format text
 else
-    echo "[ags pre-push] no verifier available (cargo / scripts/verify.sh / ags); refusing to push (fail-closed)." >&2
+    echo "[ags pre-push] no verifier available (cargo / ags); refusing to push (fail-closed)." >&2
     exit 1
 fi
 

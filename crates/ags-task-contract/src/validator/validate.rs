@@ -77,6 +77,14 @@ pub fn validate(input: &str) -> Vec<String> {
         errors.push(format!("任务卡缺少必需字段: {}", missing.join(", ")));
     }
 
+    for removed in ["Permission mode:", "Parallelism:", "Workflow authority:"] {
+        if input.lines().any(|line| line.trim().starts_with(removed)) {
+            errors.push(format!(
+                "旧权限字段 `{removed}` 已删除；只允许 Execution mode、Execution topology、Delegation planning"
+            ));
+        }
+    }
+
     // Parse card for semantic checks
     let fields = parse_card(input);
 

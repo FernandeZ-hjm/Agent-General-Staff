@@ -81,7 +81,7 @@ pub(crate) fn run(action: CliOnboardingAction) {
                 .ok()
                 .map(|path| path.display().to_string());
             let output = ApplyOutput {
-                schema_version: "0.3.5-onboarding-apply",
+                schema_version: "0.3.6-onboarding-apply",
                 plan_hash: &plan.plan_hash,
                 item_id: &item,
                 success,
@@ -157,15 +157,10 @@ fn plan_or_exit(target: &Path, host: &str) -> OnboardingPlan {
 }
 
 fn probe_ags_registration(host: &str) -> Option<bool> {
-    platform_spec(host)?
-        .mcp_probe?
-        .live_runtime_probe
-        .then(|| {
-            mcp_server_line(host, "ags")
-                .ok()
-                .map(|entry| entry.is_some())
-        })
-        .flatten()
+    platform_spec(host)?.mcp_probe?;
+    mcp_server_line(host, "ags")
+        .ok()
+        .map(|entry| entry.is_some())
 }
 
 fn current_ags() -> Result<PathBuf, String> {

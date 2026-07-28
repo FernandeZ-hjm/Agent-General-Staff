@@ -12,7 +12,7 @@
 
 use super::input::TaskPolicyInput;
 use super::model::{
-    DowngradeReason, Parallelism, PermissionMode, ResolvedExecutionPolicy, StopReason,
+    DowngradeReason, ExecutionMode, ExecutionTopology, ResolvedExecutionPolicy, StopReason,
 };
 
 // ── Utility: record a downgrade ─────────────────────────────────────────
@@ -30,13 +30,13 @@ fn record_stop(policy: &mut ResolvedExecutionPolicy, reason: StopReason) {
 // ── M1–M3: Exhaustive-effort rules ───────────────────────────────────────
 //
 // The exhaustive execution-effort tier is thinking intensity ONLY.  It does NOT:
-//   M1 – change permission mode
-//   M2 – enable parallelism
+//   M1 – change execution mode
+//   M2 – enable execution_topology
 //   M3 – generate any permission-escalating launch arg
 //
 /// Apply exhaustive-effort thinking-intensity rules (M1, M2, M3).
 ///
-/// Does NOT touch permission mode, parallelism, or launch args.
+/// Does NOT touch execution mode, execution_topology, or launch args.
 pub(crate) fn apply_exhaustive_effort(
     input: &TaskPolicyInput,
     policy: &mut ResolvedExecutionPolicy,
@@ -48,13 +48,13 @@ pub(crate) fn apply_exhaustive_effort(
 
 // ── M4: task level does not rewrite permission ─────────────────────────
 //
-// Permission has exactly two states: plan-only and execute-and-verify. The
+// Execution authority is ordered from plan-only through fanout-cross-card. The
 // task level is a risk/review tier and never rewrites the selected state.
 // Heavy review remains an independent validator boundary.
 
 // ── M5–M6: plan-only → no write-type launch args ───────────────────────
 //
-// When the effective permission mode forbids writes, the allowed launch args
+// When the effective execution mode forbids writes, the allowed launch args
 // must not include anything that enables write operations.  This is enforced
 // inside `generate_launch_args()` — this function provides a post-check for
 // the structural invariant.
@@ -65,7 +65,7 @@ pub(crate) fn apply_exhaustive_effort(
 /// enforcement point; this function provides a debug-assertion safety net.
 /// In test builds, it panics if the invariant is violated.
 pub(crate) fn apply_launch_args_writability_gate(policy: &ResolvedExecutionPolicy) {
-    if policy.effective_permission_mode.forbids_writes() {
+    if policy.effective_execution_mode.forbids_writes() {
         // Write-enabling flags that must NEVER appear when forbids_writes():
         //   --parallel (enables multi-agent execution)
         //   --worktree (creates a git worktree — filesystem write)
@@ -91,55 +91,11 @@ pub(crate) fn apply_launch_args_writability_gate(policy: &ResolvedExecutionPolic
     let _ = policy;
 }
 
-// ── M7: Parallelism requires Workflow authority ─────────────────────────
-
-/// Apply parallelism vs Workflow authority rule (M7).
-///
-/// - `subagent`, `multi-session`, `agent-team` require Workflow authority
-///   `within-card` or `allowed`.
-/// - `worktree` requires Workflow authority NOT `none`.
-/// - Without required authority, parallelism is downgraded to `None`.
-pub(crate) fn apply_parallelism_authority_rule(
-    input: &TaskPolicyInput,
-    policy: &mut ResolvedExecutionPolicy,
-) {
-    let authority = input.authority();
-
-    if !policy.effective_parallelism.is_active() {
-        return;
-    }
-
-    match &policy.effective_parallelism {
-        Parallelism::Subagent | Parallelism::MultiSession | Parallelism::AgentTeam => {
-            if authority != "within-card" && authority != "allowed" {
-                record_downgrade(
-                    policy,
-                    DowngradeReason::parallelism_requires_workflow_authority(
-                        &policy.effective_parallelism.to_string(),
-                        authority,
-                    ),
-                );
-                policy.effective_parallelism = Parallelism::None;
-            }
-        }
-        Parallelism::Worktree => {
-            if authority == "none" {
-                record_downgrade(
-                    policy,
-                    DowngradeReason::parallelism_requires_workflow_authority("worktree", "none"),
-                );
-                policy.effective_parallelism = Parallelism::None;
-            }
-        }
-        Parallelism::None => {} // nothing to downgrade
-    }
-}
-
 // ── M9: Generic runtime adapter caps permission at plan-only ────────────
 
 /// Apply generic runtime adapter permission cap (M9).
 ///
-/// When the runtime adapter is `generic`, the effective permission mode
+/// When the runtime adapter is `generic`, the effective execution mode
 /// cannot exceed `plan-only` unless the input carries explicit approval.
 pub(crate) fn apply_generic_adapter_rule(
     input: &TaskPolicyInput,
@@ -154,14 +110,14 @@ pub(crate) fn apply_generic_adapter_rule(
         return;
     }
 
-    if policy.effective_permission_mode == PermissionMode::ExecuteAndVerify {
+    if policy.effective_execution_mode != ExecutionMode::PlanOnly {
         record_downgrade(
             policy,
             DowngradeReason::generic_adapter_capped_at_plan_only(
-                &policy.effective_permission_mode.to_string(),
+                &policy.effective_execution_mode.to_string(),
             ),
         );
-        policy.effective_permission_mode = PermissionMode::PlanOnly;
+        policy.effective_execution_mode = ExecutionMode::PlanOnly;
     }
 }
 
@@ -188,47 +144,47 @@ pub(crate) fn verify_downgrade_invariants(policy: &ResolvedExecutionPolicy) {
     }
 }
 
-// ── M5 enforcement: stop-on-stripped-parallelism ────────────────────────
+// ── M5 enforcement: stop-on-stripped-execution_topology ────────────────────────
 
-/// When the effective permission mode forbids writes but active parallelism
+/// When the effective execution mode forbids writes but active execution_topology
 /// was requested, set `stop_before_launch = true` with a clear reason.
 ///
 /// This is the "stop" complement to M5/M6: not only do we strip the launch
 /// args, we also tell the LaunchPlan preparer that the host cannot safely
-/// launch with the requested parallelism.
-pub(crate) fn apply_stop_on_stripped_parallelism(
+/// launch with the requested execution_topology.
+pub(crate) fn apply_stop_on_stripped_execution_topology(
     input: &TaskPolicyInput,
     policy: &mut ResolvedExecutionPolicy,
 ) {
-    if !policy.effective_permission_mode.forbids_writes() {
+    if !policy.effective_execution_mode.forbids_writes() {
         return;
     }
-    // Only stop if the ORIGINAL input requested active parallelism AND the
-    // effective parallelism still shows it (it hasn't already been downgraded).
-    // But note: we haven't downgraded parallelism for writability reasons yet
+    // Only stop if the ORIGINAL input requested active execution_topology AND the
+    // effective execution_topology still shows it (it hasn't already been downgraded).
+    // But note: we haven't downgraded execution_topology for writability reasons yet
     // (M7 only downgrades for authority).  The writability gate is enforced in
     // generate_launch_args by stripping the flags.  So we check the input.
-    let requested_parallelism = Parallelism::from_str(&input.parallelism);
-    if requested_parallelism.has_filesystem_side_effects() {
-        // Record a downgrade for the stripped parallelism
+    let requested_execution_topology = ExecutionTopology::from_str(&input.execution_topology);
+    if requested_execution_topology.has_filesystem_side_effects() {
+        // Record a downgrade for the stripped execution_topology
         record_downgrade(
             policy,
-            DowngradeReason::parallelism_stripped_for_non_mutating_mode(
-                &requested_parallelism.to_string(),
-                &policy.effective_permission_mode.to_string(),
+            DowngradeReason::execution_topology_stripped_for_non_mutating_mode(
+                &requested_execution_topology.to_string(),
+                &policy.effective_execution_mode.to_string(),
             ),
         );
-        // M5: When forbids_writes() is true, the effective parallelism must
-        // be set to None — the resolution declares no parallelism is allowed,
+        // M5: When forbids_writes() is true, the effective execution_topology must
+        // be set to None — the resolution declares no execution_topology is allowed,
         // even if the input requested it and M7 allowed it through.
-        policy.effective_parallelism = Parallelism::None;
+        policy.effective_execution_topology = ExecutionTopology::Single;
         // Set stop — the prepared plan must not authorize host launch with the
-        // requested parallelism.
+        // requested execution_topology.
         record_stop(
             policy,
-            StopReason::WritableParallelismBlockedByPermission {
-                requested_parallelism: requested_parallelism.to_string(),
-                effective_permission: policy.effective_permission_mode.to_string(),
+            StopReason::WritableExecutionTopologyBlockedByPermission {
+                requested_execution_topology: requested_execution_topology.to_string(),
+                effective_permission: policy.effective_execution_mode.to_string(),
             },
         );
     }
@@ -236,7 +192,7 @@ pub(crate) fn apply_stop_on_stripped_parallelism(
 
 // ── M5 enforcement: stop-on-stripped-headless ────────────────────────────
 
-/// When the effective permission mode forbids writes but background-agent
+/// When the effective execution mode forbids writes but background-agent
 /// execution surface was requested, set `stop_before_launch = true` with a
 /// clear reason.
 ///
@@ -247,7 +203,7 @@ pub(crate) fn apply_stop_on_stripped_headless(
     input: &TaskPolicyInput,
     policy: &mut ResolvedExecutionPolicy,
 ) {
-    if !policy.effective_permission_mode.forbids_writes() {
+    if !policy.effective_execution_mode.forbids_writes() {
         return;
     }
     if input.execution_surface != "background-agent" {
@@ -258,7 +214,7 @@ pub(crate) fn apply_stop_on_stripped_headless(
     record_downgrade(
         policy,
         DowngradeReason::background_surface_stripped_for_non_mutating_mode(
-            &policy.effective_permission_mode.to_string(),
+            &policy.effective_execution_mode.to_string(),
         ),
     );
     // Downgrade the effective surface to cli — safe interactive fallback
@@ -268,7 +224,7 @@ pub(crate) fn apply_stop_on_stripped_headless(
     record_stop(
         policy,
         StopReason::BackgroundSurfaceBlockedByPermission {
-            effective_permission: policy.effective_permission_mode.to_string(),
+            effective_permission: policy.effective_execution_mode.to_string(),
         },
     );
 }
@@ -293,43 +249,45 @@ pub(crate) fn apply_stop_before_launch_arg_gate(policy: &mut ResolvedExecutionPo
 /// Rules enforced:
 /// - PlanOnly + claude-code: `--permission-mode plan`
 /// - ExecuteAndVerify: no special permission arg needed
-/// - Active parallelism: runtime-specific parallelism flags (stripped if
-///   effective permission forbids writes — M5/M6)
+/// - Active execution_topology: runtime-specific execution_topology flags (stripped if
+///   effective execution mode forbids writes — M5/M6)
 /// - Execution effort does NOT inject any launch arg (M3).
 pub(crate) fn generate_launch_args(input: &TaskPolicyInput, policy: &mut ResolvedExecutionPolicy) {
     let mut args: Vec<String> = Vec::new();
 
     let is_claude = input.runtime_adapter == "claude-code";
-    let forbids_writes = policy.effective_permission_mode.forbids_writes();
+    let forbids_writes = policy.effective_execution_mode.forbids_writes();
 
     // Only claude-code currently has CLI flag mapping.
     // codex-local and cursor are IDE-based; generic has no known CLI.
 
     if is_claude {
         // Permission-mode flag
-        match policy.effective_permission_mode {
-            PermissionMode::PlanOnly => {
+        match policy.effective_execution_mode {
+            ExecutionMode::PlanOnly => {
                 args.push("--permission-mode".to_string());
                 args.push("plan".to_string());
             }
-            PermissionMode::ExecuteAndVerify => {
+            ExecutionMode::SingleWriter
+            | ExecutionMode::FanoutInCard
+            | ExecutionMode::FanoutCrossCard => {
                 // Default claude-code behavior — no special flag needed.
             }
         }
 
-        // Parallelism flags — ONLY when writes are NOT forbidden (M5/M6).
+        // ExecutionTopology flags — ONLY when writes are NOT forbidden (M5/M6).
         // Plan-only must never produce --parallel or --worktree
         // because those flags enable filesystem side effects.
         if !forbids_writes {
-            match policy.effective_parallelism {
-                Parallelism::Subagent | Parallelism::MultiSession | Parallelism::AgentTeam => {
+            match policy.effective_execution_topology {
+                ExecutionTopology::Parallel => {
                     args.push("--parallel".to_string());
                 }
-                Parallelism::Worktree => {
+                ExecutionTopology::Worktree => {
                     args.push("--parallel".to_string());
                     args.push("--worktree".to_string());
                 }
-                Parallelism::None => {}
+                ExecutionTopology::Single => {}
             }
 
             // Background-agent surface — only when writes are not forbidden.
@@ -354,9 +312,10 @@ pub(crate) fn build_initial_policy(input: &TaskPolicyInput) -> ResolvedExecution
     ResolvedExecutionPolicy {
         executor: input.executor.clone(),
         runtime_adapter: input.runtime_adapter.clone(),
-        effective_permission_mode: PermissionMode::from_str(&input.permission_mode),
-        effective_parallelism: Parallelism::from_str(&input.parallelism),
+        effective_execution_mode: ExecutionMode::from_str(&input.execution_mode),
+        effective_execution_topology: ExecutionTopology::from_str(&input.execution_topology),
         effective_execution_surface: input.execution_surface.clone(),
+        delegation_planning: input.delegation_planning_enabled(),
         allowed_launch_args: Vec::new(),
         stop_before_launch: false,
         stop_reasons: Vec::new(),

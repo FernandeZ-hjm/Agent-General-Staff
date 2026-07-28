@@ -1,878 +1,218 @@
 # Runtime Adapters
 
-This file defines the generic execution fields used by Agent task cards and how
-those fields map to specific agent runtimes.
+AGS has one Rust Host Adapter and a table of host protocol descriptions. Codex,
+Claude Code, Cursor, and OMP are not separate policy implementations.
 
-Keep the task-card skeleton generic. Put runtime-specific behavior here.
-
-## Purpose
-
-The task card is an execution contract, not a Claude Code-only prompt. Cursor,
-Codex, Claude Code, OMP, or another agent may execute the same contract when
-the runtime adapter is explicit.
-
-Use this file when generating, reviewing, or executing task cards that need to
-state:
-
-- who executes the task,
-- where the task runs,
-- what permissions are allowed,
-- whether parallel work is allowed,
-- what review gate is required,
-- what evidence is required before claiming completion.
-
-## Lifecycle Boundary: Host Proposal Is Not Runner Execution
-
-The fields defined in this file (Permission mode, Parallelism, Execution
-surface, launch args) govern task-card handoff execution. They do not govern
-the earlier lifecycle phases, bounded `direct-response`, or authorized
-host-native `direct-edit`:
-
-- **Ambient preflight** (project detection, context reading, git status) is a
-  read-only discovery phase. It runs before any task card exists and is not
-  constrained by Permission mode or Parallelism.
-- **Host semantic proposal** is the only natural-language interpretation. The
-  host reads the current capability catalog, uses complete conversation context,
-  and submits a typed `HostRouteProposal`. AGS validates exact targets but does
-  not classify raw text.
-- **Solution phase** (understanding, diagnosis, solution formation, user
-  confirmation) is conditional framing performed by Codex / Cursor only while
-  material decisions remain unresolved. An already approved contract is reused
-  instead of being designed again.
-- **Direct edit** is host-native same-session execution only when an approved
-  contract and an explicit live modification instruction are both present. It
-  does not compile a task card, but still obeys independent protected-path,
-  release, review, and verification boundaries. An unresolved or reopened
-  design returns to solution formation.
-
-Only after an explicit task-card handoff, or after a host Plan mode reaches its
-final decision-complete artifact, and the card is compiled do runtime-adapter
-fields take effect. The runner, resolver, and gate operate on that card; they do
-not govern solution formation or direct edit.
-
-**RouteResolution is not a runtime adapter field.** It is distinct from
-`Runtime adapter`, `Permission mode`, and `Execution surface`, and never sets or
-changes them. WorkBuddy and CodeBuddy-Code are Tencent Agent host clients;
-like any host other than `codex` / `claude-code` / `cursor` / `omp` they map to
-`Runtime adapter: generic` (M9 caps permission at `plan-only` without explicit
-approval). Request governance does not change that mapping.
-
-Two distinct layers must not be conflated. The `default_permission_mode` reported
-by `ags agent instructions` / `ags session preflight` (for example,
-`execute-and-verify` for governed hosts) is the host's **interactive discovery baseline** —
-descriptive metadata surfaced during preflight, not an enforced write gate.
-AGS MCP keeps workspace capability state in one canonical-path daemon and keeps
-preflight/lease state isolated per client session; its route operation remains
-strictly read-only. The **enforced** write gate is the
-execution-policy resolver acting on a task card's `Runtime adapter` field: M9 caps
-`generic` at `plan-only` without explicit approval. A Tencent Agent client
-(WorkBuddy / CodeBuddy-Code) carried as a generic host therefore still has its
-actual task-card writes gated at `plan-only` by M9, regardless of the discovery
-baseline shown in agent instructions. `ags_route_request` itself is strictly
-read-only; `ags_apply_action` is the sole effectful MCP tool and only consumes a
-daemon-client-session-bound fixed action.
-
-**Task-card handoff gate**: explicit handoff uses
-`--task-card-requested --confirmed-handoff-contract`. A host Plan mode final
-artifact uses `--host-plan-mode-final --confirmed-handoff-contract`; reaching
-that final step replaces the extra task-card-request prompt, not the confirmed
-contract gate. Missing handoff evidence reports
-`block_reason=task_card_not_requested`; missing structured contract evidence
-reports `block_reason=handoff_contract_not_confirmed`; reopened solution work
-reports `solution_formation_required`. This compiler gate does not apply to
-authorized same-session `direct-edit`.
-
-## Host Plan Mode Finalization
-
-Plan mode is a host collaboration state, not task-card `Permission mode`.
-
-1. While decisions remain open, the host performs only non-mutating discovery
-   and solution formation.
-2. When the contract is decision-complete, the final Plan-mode artifact is the
-   single canonical `## 任务卡`; do not create a separate final-plan document.
-3. Compile it with
-   `ags task compile --host-plan-mode-final --confirmed-handoff-contract`.
-4. If the host requires a `<proposed_plan>` rendering block, the block is only
-   an envelope. Its inner first non-empty line is `## 任务卡`.
-5. The Plan UI keeps the exact card pending activation. Selecting Execute first
-   switches the host to Default/execution mode, then dispatches the unchanged
-   card plus its `task_card_hash`.
-6. The execution Agent validates the existing card and must not regenerate,
-   summarize, or reinterpret it. Staying in Plan mode keeps the card pending
-   and permits further replacement by a complete new card.
-
-## Generic Fields
-
-### Executor
-
-Who performs the task.
-
-Allowed values:
-
-- `Codex`
-- `Claude Code`
-- `Cursor`
-- `OMP`
-- `Human`
-- `Other`
-
-### Runtime Adapter
-
-The mapping layer from generic task-card intent to runtime-specific behavior.
-
-Allowed values:
-
-- `codex-local`
-- `claude-code`
-- `cursor`
-- `omp`
-- `generic`
-
-### Execution Surface
-
-Where the task is executed.
-
-Allowed values:
-
-- `local-workspace` — local repository and shell access.
-- `cli` — command-line agent runtime.
-- `ide` — IDE-integrated agent runtime.
-- `web` — browser-hosted or web app agent runtime.
-- `remote-control` — local GUI or browser controlled through automation.
-- `background-agent` — detached or long-running agent session.
-
-### Permission Mode
-
-What the executor may do without asking again.
-
-Allowed values:
-
-- `plan-only` — inspect, diagnose, audit, or return a plan; do not edit files.
-- `execute-and-verify` — edit within scope and run verification before delivery.
-
-Use the narrowest permission mode that can complete the task safely.
-
-Task level does not change the permission mode. Task level (Light / Medium /
-Heavy) is a risk/review tier; the permission mode is the execution authority.
-The only permission modes are plan-only and execute-and-verify;
-execute-and-verify runs directly and includes verification. A Heavy task keeps
-its declared permission mode — it is never downgraded by task level. Heavy adds
-its independent review gate, not an extra planning round. When a
-Heavy card does not declare a permission mode, the compiler fills the
-conservative `plan-only` default (an explicit permission mode is always
-preserved). Runtime capability, previous context, or a continuation message
-cannot rewrite the task card's authority or skip the review gate.
-
-### Parallelism
-
-Whether the executor may split the work.
-
-Allowed values:
-
-- `none`
-- `subagent`
-- `worktree`
-- `multi-session`
-- `agent-team`
-
-Default to `none`. Use parallelism only when the task can be split into bounded,
-non-overlapping work with clear verification.
-
-### Review Gate
-
-The explicit review required before delivery or commit. Stop review hooks are
-deprecated; they are no longer the final execution point or automatic blocking
-mechanism. Task cards and explicit human action carry the review contract.
-
-Required slot:
-
-```markdown
-Review gate:
-- 按 protocol/agent-task-protocol.md 的 Review Gate 规则执行当前任务级别。
+```text
+host-native event or MCP probe
+        │
+        ▼
+AgentPlatformSpec (data)
+        │
+        ▼
+HostAdapter (one Rust implementation)
+        │
+        ├─ MCP status/probe normalization
+        ├─ lifecycle event normalization
+        └─ LaunchPlan handoff
 ```
 
-The selected task level determines the binding rule. The single canonical
-mapping lives in `agent-task-protocol.md`; this file only defines where the
-field appears and how runtime adapters preserve it.
+Host-specific code may translate transport envelopes. It must not parse task
+cards, calculate authority, compare artifact hashes, generate receipts, or
+implement closure policy.
 
-### Verification Gate
+## Canonical Task Authority
 
-The evidence required before claiming completion.
+Every task card declares three independent fields:
 
-Required slots:
-
-```markdown
-Verification gate:
-- commands:
-- expected evidence:
-- stop condition:
+```text
+Execution mode: plan-only | single-writer | fanout-in-card | fanout-cross-card
+Execution topology: single | parallel | worktree
+Delegation planning: no | yes
 ```
 
-Examples of expected evidence:
+`Execution mode` is the writer-authority lattice:
 
-- test command result,
-- linter or syntax-check result,
-- `git diff --stat`,
-- generated report path,
-- screenshot or browser check,
-- dry-run output,
-- delivery report.
-
-Stop conditions must name when the executor should pause instead of continuing,
-such as destructive action, baseline mutation, missing verification, unclear
-scope, or risk higher than the task card declared.
-
-## Default Profiles
-
-### Codex Direct Execution
-
-Use when the user asks Codex to execute directly.
-
-```markdown
-Executor: Codex
-Runtime adapter: codex-local
-Execution surface: local-workspace
-Permission mode: execute-and-verify
-Parallelism: none
-Review gate:
-- 按 protocol/agent-task-protocol.md 的 Review Gate 规则执行当前任务级别。
-Verification gate:
-- commands: <narrowest relevant verification command>
-- expected evidence: changed files + command result + residual risk note
-- stop condition: destructive action / unclear scope / risk escalation
+```text
+plan-only < single-writer < fanout-in-card < fanout-cross-card
 ```
 
-### Claude Code Handoff
+- `plan-only`: no filesystem or external mutation.
+- `single-writer`: one writer owns all mutation.
+- `fanout-in-card`: multiple writers are allowed only within the current card.
+- `fanout-cross-card`: the current card may coordinate separately closed cards.
 
-Use when generating a task card for Claude Code.
+`Execution topology` is the maximum execution shape:
 
-```markdown
-Executor: Claude Code
-Runtime adapter: claude-code
-Execution surface: cli
-Permission mode: execute-and-verify
-Parallelism: none
-Review gate:
-- 按 protocol/agent-task-protocol.md 的 Review Gate 规则执行当前任务级别。
-Verification gate:
-- commands: <task-card-specified commands>
-- expected evidence: delivery report + command result + git diff summary
-- stop condition: risk higher than task card / baseline mutation / missing verification
+- `single` permits only single.
+- `parallel` permits single or parallel.
+- `worktree` permits single, parallel, or worktree.
+
+`Delegation planning: yes` permits designing a delegation plan. It does not
+create writers and does not upgrade `Execution mode`.
+
+The following combinations fail closed:
+
+- `plan-only` with topology other than `single`.
+- `plan-only` or `single-writer` with actual delegation.
+- fanout requested by task text without a `fanout-*` execution mode.
+- subtask orchestration without `parallel` or `worktree`.
+
+`Execution effort` remains a reasoning-intensity field:
+
+```text
+low | normal | high | exhaustive
 ```
 
-### Cursor Execution
+It never changes authority, topology, delegation, review, or launch arguments.
+Task level (`Light`, `Medium`, `Heavy`) is a risk and review tier only.
 
-Use when Cursor is expected to execute inside an IDE workflow.
+## LaunchPlan
 
-```markdown
-Executor: Cursor
-Runtime adapter: cursor
-Execution surface: ide
-Permission mode: execute-and-verify
-Parallelism: none
-Review gate:
-- 按 protocol/agent-task-protocol.md 的 Review Gate 规则执行当前任务级别。
-Verification gate:
-- commands: <project-specific checks>
-- expected evidence: changed files + command result + short delivery summary
-- stop condition: broad refactor / destructive action / unclear scope
+`ags run` validates the card and resolves policy, then emits a
+`0.3.6-launch-plan`. It prepares execution but does not start a host.
+
+Required binding fields:
+
+- `task_card_hash`
+- `launch_plan_hash`
+- `effective_execution_mode`
+- `effective_execution_topology`
+- `delegation_planning`
+- resolved launch arguments
+- downgrade reasons
+
+`launch_plan_hash` is SHA-256 over deterministic LaunchPlan body JSON excluding
+the hash itself and any timestamp or random value. The same validated input and
+policy produce the same plan and hash.
+
+Launch arguments come only from the resolved policy. A non-writing mode must
+not emit `--parallel`, `--worktree`, `--headless`, or another write-capable
+flag.
+
+## Downscope at Closure
+
+The delivery report declares actual use:
+
+```text
+Closure schema: 1.1
+task-card-hash:
+launch-plan-hash:
+execution-mode-used:
+execution-topology-used:
+delegation-used: none | in-card | cross-card
 ```
 
-### OMP Execution
-
-Use when OMP owns the native agent session.
-
-```markdown
-Executor: OMP
-Runtime adapter: omp
-Execution surface: cli
-Permission mode: execute-and-verify
-Parallelism: none
-Review gate:
-- 按 protocol/agent-task-protocol.md 的 Review Gate 规则执行当前任务级别。
-Verification gate:
-- commands: <project-specific checks>
-- expected evidence: changed files + command result + short delivery summary
-- stop condition: broad refactor / destructive action / unclear scope
-```
-
-### High-Risk Planning
-
-Use only when the confirmed Heavy contract is a planning/audit pass.
-
-```markdown
-Executor: <Codex / Claude Code / Cursor>
-Runtime adapter: <runtime>
-Execution surface: <surface>
-Permission mode: plan-only
-Parallelism: none
-Review gate:
-- 按 protocol/agent-task-protocol.md 的 Review Gate 规则执行当前任务级别。
-Verification gate:
-- commands: read-only audit first
-- expected evidence: root cause + implementation plan + verification plan
-- stop condition: stop without mutation; later implementation requires an execute-and-verify task card
-```
-
-## Adapter Selection Rules
-
-Choose the adapter before filling task-specific details.
-
-| User request | Executor | Runtime adapter | Execution surface |
-|---|---|---|---|
-| "you execute", "你直接做", "你来改" | `Codex` | `codex-local` | `local-workspace` |
-| "give me a Claude Code task card", "给 Claude Code 任务卡" | `Claude Code` | `claude-code` | `cli` |
-| "Cursor execute", "给 Cursor 任务卡" | `Cursor` | `cursor` | `ide` |
-| "OMP execute", "给 OMP 任务卡" | `OMP` | `omp` | `cli` |
-| "human checklist", "我自己执行" | `Human` | `generic` | `local-workspace` |
-| external or unknown agent | `Other` | `generic` | choose the narrowest known surface |
-
-If the user does not name an executor, follow the project operating protocol.
-For this suite's default collaboration model, Codex or Cursor frames the task
-and Claude Code may execute bounded implementation work.
-
-## Task-Level Defaults
-
-Task level is a risk/review tier, not the execution authority. The table below is
-the compiler's permission default *when a card omits `Permission mode:`* — it does
-not override an explicitly declared permission. Do not escalate permission just
-because the runtime supports it.
-
-| Task level | Default permission (when unspecified) | Default parallelism | Execution behavior |
-|---|---|---|---|
-| Light | `execute-and-verify` | `none` | execute and verify directly; independent stop conditions still apply |
-| Medium | `execute-and-verify` | `none` | give a short root cause or design note when useful, then execute and verify without pausing |
-| Heavy | `plan-only` | `none` | default only when unspecified. Heavy plan returns root cause, design, implementation plan, and verification plan without writing; explicit Heavy `execute-and-verify` runs and verifies directly and still requires the independent Heavy review gate |
-
-Select `plan-only` when any of these are true:
-
-- the confirmed contract asks only for diagnosis, an audit, a dry-run report, or
-  a plan,
-- implementation authority is absent or the writable scope is unresolved,
-- the executor sees risk outside the task card and must stop for a revised
-  execution contract.
-
-Data, migration, deletion, publishing, credential, external-write, and other
-protected operations remain independent stop conditions. They do not create a
-third permission mode.
-
-## Resume / Compression Recovery Rules
-
-When the session resumes from "continue", context compression,
-task-notification, or a background-agent handoff:
-
-- Heavy executors must reread the task card, run `git status --short`, and
-  reconfirm `review_targets`.
-- The executor must honor the confirmed task card's `Permission mode`:
-  `plan-only` remains non-mutating, while `execute-and-verify` resumes execution
-  and verification.
-- "Continue", a resume notification, an earlier plan, or a compressed summary
-  must not be treated as authority to rewrite the permission mode.
-- If the task card, target repositories, permission mode, or review state cannot
-  be confirmed, stop and report instead of executing.
-
-## Execution Surface Rules
-
-| Surface | Use when | Avoid when |
-|---|---|---|
-| `local-workspace` | local files, shell commands, tests, scripts, docs | browser session or remote UI is the source of truth |
-| `cli` | command-line agent runtime or generated terminal prompt | IDE state or user profile/session is required |
-| `ide` | Cursor or editor-native workflows | headless automation is required |
-| `web` | browser-hosted agent or web-only interface | local repo mutation is required but unavailable |
-| `remote-control` | GUI or browser automation is required | the task can be handled by file or CLI APIs |
-| `background-agent` | detached long-running agent work | user needs immediate interactive confirmation |
-
-## Receipt-First Execution
-
-Receipt-first execution is a host logging and foreground-interaction policy,
-not a Runner side effect, workflow family, or permission mode.
-
-Use it when the host executor should keep detailed process evidence in its
-receipt package while keeping the foreground context limited to:
-
-- phase summaries,
-- explicit approval prompts,
-- stop conditions,
-- final delivery report pointers.
-
-Receipt-first execution must not replace the task card, Review gate,
-Verification gate, or independent stop conditions. A user clicking approval
-prompts is approval only for the specific action described in that prompt, not
-a standing approval for unrelated writes, destructive commands, or scope
-expansion.
-
-Recommended receipt artifacts:
-
-- `process-summary.md` for phase summaries, notable decisions, and approval
-  points,
-- `claude-output.log` for headless Claude Code output,
-- `verification.log` for runner Verification gate command output,
-- `delivery-report.md` for the final acceptance record.
-
-## Parallelism Rules
-
-Default to `none`.
-
-Allow `subagent` when:
-
-- the side task is read-only or has a disjoint write scope,
-- the parent executor can review the result,
-- the result is useful but not on the immediate critical path.
-
-Allow `worktree` when:
-
-- implementation can be isolated from the current working tree,
-- branches or worktrees are acceptable in the project,
-- the task card states how to verify and merge or discard the result.
-
-Allow `multi-session` only when:
-
-- each session has a non-overlapping scope,
-- the owner is explicit,
-- there is a final integration and verification step.
-
-Allow `agent-team` only when the user explicitly requests experimental
-multi-agent execution or the runtime has a documented team mode. Treat it as
-unsupported for generic agents.
-
-## Subtask Scope Rules
-
-`子任务编排` declares a splittable structure; it never itself fires a subagent or
-workflow (the claude-code adapter / runner translates it under the resolved
-policy). When subtasks ARE used, their scope is restricted:
-
-- Subtasks may contain ONLY parallelizable work: read-only audit / analysis,
-  bounded implementation, documentation sync, or test addition.
-- The following MUST stay with the main executor and may NOT be delegated to a
-  subtask: the final verification run, the delivery report, `git` commit / push,
-  and any release gate.
-- All subtask results merge into a single diff; the main executor then runs the
-  unified verification, reads the full output, and writes the delivery report.
-
-Rationale: only the main executor has continuity across all phases and can make
-coherent verification / commit / delivery decisions. Subtasks are
-work-generation units; their output is material the main executor integrates,
-verifies, and delivers.
-
-## Permission Downgrade Rules
-
-The executor must downgrade permission and stop when:
-
-- the workspace has unrelated dirty changes that affect the target files,
-- required files or docs are missing,
-- verification commands are unavailable or unsafe,
-- the task requires secrets or credentials,
-- the task would mutate protected data, generated baselines, or external state,
-- the requested runtime cannot express the declared permission mode safely.
-
-When downgrading, report the current evidence and the narrowest safe next step.
-
-## Runtime Mappings
-
-### `codex-local`
-
-Use for Codex executing in the current local workspace.
-
-Permission mapping:
-
-- `plan-only`: inspect and return diagnosis, audit findings, options, or an
-  implementation plan; do not edit.
-- `execute-and-verify`: edit scoped files, run targeted verification, and report
-  changed files, verification evidence, and residual risk.
-
-Execution notes:
-
-- Use existing repository tools and patterns before introducing new ones.
-- Check `git status --short` before editing.
-- Do not revert unrelated dirty changes.
-- Run the narrowest meaningful verification before claiming completion.
-- Stop review hooks are deprecated. Codex keeps `UserPromptSubmit` skill-alias
-  sync, but project memory loads once through native `SessionStart` and closes
-  through bounded `SessionEnd`; the retired per-prompt memory shell hook is
-  removed during host governance. Claude Code uses native SessionStart/Stop;
-  OMP uses its native lifecycle extension. Reviews remain explicit task-card or
-  human gates and are separate from memory closure.
-
-Parallelism mapping:
-
-- `subagent`: only when the user explicitly asks for delegated agent work.
-- `worktree`: create or use a worktree only when the user asks or the task card
-  explicitly requires isolation.
-- `multi-session` and `agent-team`: treat as unsupported unless the user provides
-  a concrete runtime.
-
-### `claude-code`
-
-Use for task cards intended to be pasted into or launched with Claude Code.
-
-Permission mapping:
-
-- `plan-only`: inspect repository state and report findings or a plan only; use
-  Claude Code plan mode, such as `--permission-mode plan`, when launched from CLI.
-- `execute-and-verify`: edit within task-card scope and run verification before
-  the delivery report.
-
-Execution notes:
-
-- The task card should name required project docs and paths instead of repeating
-  all fixed protocol text.
-- The task card should include exact verification commands when known.
-- Claude Code must output the delivery report required by the project protocol.
-- For Heavy tasks: if the card is `plan-only`, return the diagnosis/plan without
-  mutation; if it declares `execute-and-verify`, execute and verify directly.
-  Task level does not downgrade the permission mode or add another planning
-  round.
-- On Heavy resume, reread the task card, `git status --short`, and
-  `review_targets`; then honor the confirmed `Permission mode` (`plan-only`
-  remains non-mutating, `execute-and-verify` resumes).
-- When the host uses receipt-first mode after consuming a LaunchPlan, keep
-  verbose process logs in the host-owned receipt package and foreground output to phase summaries, approval
-  prompts, stop conditions, and delivery-report pointers.
-
-Parallelism mapping:
-
-- `subagent`: use Claude Code subagents for bounded investigation or side tasks.
-- `worktree`: use git worktrees for independent implementation branches.
-- `multi-session`: use multiple Claude Code sessions only with separate scopes.
-- `agent-team`: use only for explicitly approved experimental multi-agent work.
-
-### `cursor`
-
-Use for Cursor or an IDE-native agent executing the task.
-
-Permission mapping:
-
-- `plan-only`: use planning or chat mode to inspect code, docs, and diffs and
-  return findings or a plan without editing.
-- `execute-and-verify`: edit scoped files and run verification commands.
-
-Execution notes:
-
-- Keep task-card facts project-local; do not bake global suite internals into
-  project-specific prompts.
-- Use IDE context only as supporting evidence; final claims still need commands,
-  diffs, screenshots, or other explicit evidence.
-- Stop before broad refactors unless the task card explicitly authorizes them.
-
-Parallelism mapping:
-
-- `subagent`: use only if the Cursor environment has an equivalent delegated
-  agent mechanism.
-- `worktree`: require explicit task-card authorization.
-- `multi-session` and `agent-team`: require explicit task-card authorization.
-
-### `omp`
-
-Use for task cards executed by an OMP-native agent session.
-
-Permission mapping:
-
-- `plan-only`: inspect and return diagnosis, audit findings, or a plan without
-  mutating the workspace.
-- `execute-and-verify`: execute within the confirmed task-card scope and return
-  explicit verification evidence.
-
-Execution notes:
-
-- OMP owns process launch and its native lifecycle extension; AGS Runner only
-  returns a host-handoff `LaunchPlan`.
-- Do not translate OMP into `generic` or apply the generic M9 permission cap.
-- The task card remains the execution authority; OMP-native extensions cannot
-  rewrite permission, review, verification, or protected-path boundaries.
-
-Parallelism mapping:
-
-- Use only the parallelism modes that the task card explicitly authorizes and
-  the active OMP runtime can express safely.
-
-### `generic`
-
-Use when the runtime is unknown or external.
-
-- Prefer `plan-only` unless the task card is self-contained and explicitly
-  authorizes `execute-and-verify`.
-- Do not assume tool-specific commands, hooks, worktrees, or agent teams exist.
-- State required evidence in generic terms.
-- Ask the user to choose a runtime adapter before write operations when the risk
-  is Medium or Heavy.
-
-## Task-Card Authoring Rules
-
-- Keep generic fields in the task card.
-- Put tool-specific command hints in `Runtime adapter` notes or this file.
-- Do not create separate full task-card templates for each tool.
-- Do not encode one machine's paths as adapter defaults.
-- If the user names a tool, select the matching runtime adapter.
-- If the user says "you execute", use `codex-local`.
-- If the user asks for a Claude Code prompt or task card, use `claude-code`.
-- If the user asks for Cursor execution, use `cursor`.
-- If the user asks for OMP execution, use `omp`.
-- If no executor is specified, follow the project operating protocol.
-
-## Execution-Policy Resolver
-
-The `execution-policy` crate (`crates/execution-policy/`) is the resolver that
-reads a validated task card and produces a structured resolution of **how** the
-task should actually execute — what launch args to use, what to downgrade, and
-whether to stop before launch.
-
-### Relationship with validator and runner
-
-```
-task card text
-      │
-      ▼
-┌─────────────────┐
-│ task-card-       │  "Is this task card valid?"
-│ validator        │  → pass / fail + error list
-│ (hard gate)      │
-└─────────────────┘
-      │ (pass)
-      ▼
-┌─────────────────┐
-│ execution-policy │  "How should this valid task card execute?"
-│ resolver         │  → ResolvedExecutionPolicy
-│ (read-only)      │    (launch args, downgrades, stop reasons)
-└─────────────────┘
-      │
-      ▼
-┌─────────────────┐
-│ runner           │  Prepares a LaunchPlan only
-│                  │  → HOST_EXECUTION_REQUIRED
-└─────────────────┘
-```
-
-The validator is a **hard gate** — an invalid task card must be fixed before
-proceeding. The execution-policy resolver is a **soft resolution layer** — it
-takes a valid task card and may downgrade permission or parallelism, but it
-never rejects a valid card; it only adjusts the launch strategy and records why.
-
-The Runner never dispatches the command preview. It does not perform execution,
-verification, delivery-report generation, or receipt writing. The host owns
-those steps after consuming an allowed LaunchPlan.
-
-### Key resolution rules
-
-The resolver enforces the following MUST rules (canonical rule IDs M1–M10).
-> **命名空间说明**: 以下 M1-M10 是 execution-policy 规则编号，与 Roadmap M0-M8
-> 里程碑编号在不同的命名空间中，互不相关。
-
-| Rule | Description |
-|---|---|
-| M1–M3 | Execution effort is thinking intensity only. It does **not** change permission mode, enable parallelism, or inject any launch arg. |
-| M4 | Task level never rewrites the permission mode. A resolved `execute-and-verify` card runs directly; Heavy adds no extra planning round. `current-task-approval` / `approve-writes` remain structured audit/hint signals; `approve-writes` may still act as the M9 generic-adapter capability override. |
-| M5–M6 | `plan-only` must **never** produce write-type launch args. Active parallelism flags (`--parallel`, `--worktree`) and `--headless` are stripped. |
-| M7 | `subagent`, `multi-session`, `agent-team` require Workflow authority `within-card` or `allowed`. `worktree` requires Workflow authority **not** `none`. |
-| M8 | Every downgrade records a structured `DowngradeReason` with the before/after values and the triggering rule.  The `downgrade_reasons` list provides a full audit trail. |
-| M9 | `generic` runtime adapter caps permission at `plan-only` without explicit approval. |
-| M10 | Every downgrade records a structured reason. No downgrade = no reason entries. |
-
-### CLI
-
-Validate and resolve execution policy in one command:
+Actual authority may only shrink:
+
+- execution mode used must be no greater than the effective mode;
+- topology used must be no greater than the effective topology;
+- `plan-only` and `single-writer` require `delegation-used: none`;
+- `fanout-in-card` permits `none` or `in-card`;
+- `fanout-cross-card` permits `none`, `in-card`, or `cross-card`.
+
+Closure is performed only through:
 
 ```bash
-ags policy resolve <task-card> --format text|json [--current-task-approval] [--approve-writes]
+ags task close <task-card> <launch-plan> <delivery-report> \
+  --receipt-out <receipt.json> \
+  --format text|json
 ```
 
-The command runs the canonical task-card validator first; on validation failure
-it prints errors to stderr and exits 1.  On success it outputs the resolved
-policy in text or JSON format.  It is **read-only** — it never launches a
-runner.
+This single Rust operation verifies all hashes and authority, generates the
+`0.3.6-task-receipt`, and writes the session closure pointer.
 
-The optional `--current-task-approval` flag sets `approval_source` to
-`current-task-instruction`. It is an audit/hint signal only — task level no
-longer downgrades the permission mode, so a Heavy card is already executable
-when its declared permission mode is `execute-and-verify`. The signal does not
-rewrite a `plan-only` card.
+## Host Protocol Table
 
-The optional `--approve-writes` flag sets `approval_source` to `cli-flag`. It is
-likewise an audit/hint signal; it may additionally act as the M9 generic-adapter
-capability override. Neither signal is required for a Heavy card to execute —
-task level never downgrades an explicitly declared permission mode.
+The Rust `AgentPlatformSpec` table describes:
 
-### Default semantics
+- canonical host ID and display name;
+- CLI names and config locations;
+- MCP probe command and output format;
+- native skill roots;
+- memory/lifecycle protocol;
+- supported verification and registration operations.
 
-| Input field | When absent | Resolved value |
-|---|---|---|
-| `Execution effort:` | absent or empty | `"unknown"` |
-| `Workflow authority:` | absent or empty | `"none"` |
-| `approval_source` | (not in task card fields) | `none` |
+The table currently includes:
 
-`Execution effort` accepts the neutral execution-intensity values `low` /
-`normal` / `high` / `exhaustive` (default `unknown` when absent). The exhaustive
-tier sets `is_exhaustive_mode`. Host-private depth/workflow trigger words are
-translated to execution behavior only by the host adapter from the resolved
-policy — never read from the task-card body.
+| Host | Host ID | Runtime adapter | Lifecycle bridge |
+|---|---|---|---|
+| Codex | `codex` | `codex-local` | native hooks call Rust |
+| Claude Code | `claude-code` | `claude-code` | native hooks call Rust |
+| Cursor | `cursor` | `cursor` | native lowercase hooks call Rust |
+| OMP | `omp` | `omp` | thin JS extension calls Rust |
 
-The resolver does not accept `approval_source` from the task card text — only
-structured launch inputs can set it: `--current-task-approval` →
-`current-task-instruction`, `--approve-writes` → `cli-flag`, or runner
-environment override (`AGS_APPROVE_WRITES=1` → `runner-env`). Task card text is
-**never** an approval source.
+Adding a host means adding a protocol description and contract tests. It does
+not mean copying policy or lifecycle implementations.
 
-### Stop before host execution
+## Lifecycle Contract
 
-The resolver has one host-execution blocking mechanism. The field name remains
-`stop_before_launch` is retained as an explicit policy result; AGS 0.3.5 Runner never launches:
+All four hosts call:
 
-| Mechanism | Meaning | Runner behavior |
-|---|---|---|
-| `stop_before_launch=true` | Do **not** authorize host launch. | Runner returns a stopped LaunchPlan with `host_execution_required=false`. The task card or execution context must be corrected before another attempt. |
-
-`stop_before_launch` is set when:
-- Active parallelism (subagent, worktree, multi-session, agent-team) is
-  requested but the effective permission mode forbids writes — the
-  parallelism flags would create filesystem side effects incompatible
-  with `plan-only`.
-- `background-agent` execution surface is requested but the effective
-  permission mode forbids writes — headless background execution could
-  have side effects (process spawning, resource consumption) incompatible
-  with `plan-only`.  The resolver records an M5 downgrade
-  on `execution_surface` (before=`background-agent`, after=`cli`) and
-  sets `stop_before_launch=true` with stop reason entry kind
-  `background-surface-blocked-by-permission`.
-
-Protected destructive, external-write, credential, migration, and release
-actions may add their own action-specific stop/approval gates. Those gates are
-orthogonal to task-card permission and do not create another permission mode.
-
-### Execution surface values
-
-The validator now accepts the full set of protocol-defined execution surface
-values: `local-workspace`, `cli`, `ide`, `web`, `remote-control`,
-`background-agent`.  All six values are aligned between validator, protocol,
-and resolver.
-
-### Resolved policy JSON schema
-
-`ags policy resolve <task-card> --format json` is the stable machine contract
-consumed by the LaunchPlan preparer and then by the host. The text format is
-human-readable diagnostics only.
-
-| Field | Type | Stable values / semantics |
-|---|---|---|
-| `executor` | string | Validated task-card executor. |
-| `runtime_adapter` | string | Validated task-card runtime adapter. |
-| `effective_permission_mode` | string | `plan-only` or `execute-and-verify`. This is the only permission mode a host may use. |
-| `effective_parallelism` | string | `none`, `subagent`, `worktree`, `multi-session`, `agent-team`. This is the resolved value after authority and writability gates. |
-| `effective_execution_surface` | string | `local-workspace`, `cli`, `ide`, `web`, `remote-control`, `background-agent`. If `background-agent` is blocked by `plan-only`, this becomes `cli`. |
-| `allowed_launch_args` | string array | Exact host CLI args. Runner may only copy them verbatim into `AdapterPlan`; it never launches and MUST NOT synthesize arguments from raw task-card fields. |
-| `stop_before_launch` | boolean | If `true`, Runner MUST return a stopped LaunchPlan and the host MUST NOT launch. |
-| `stop_reasons` | object array | Canonical stop reasons. |
-| `was_downgraded` | boolean | Whether any field was downgraded from the input card. |
-| `downgrade_reasons` | object array | Full audit trail; each entry has `rule_id`, `field`, `before`, `after`, `reason`. |
-| `execution_effort` | string | Declared effort, defaulting to `unknown` when absent. |
-| `is_exhaustive_mode` | boolean | `true` for `Execution effort: exhaustive`; it never grants permission or parallelism. |
-| `approval_source` | string | `none`, `current-task-instruction`, `cli-flag`, or `runner-env`. Task-card text is never an approval source. |
-
-Stopped policy invariant:
-
-- If `stop_before_launch=true`, `allowed_launch_args` MUST be `[]`.
-- Runner MUST check `stop_before_launch` before exposing adapter args, and the
-  host MUST check it before execution.
-
-## `ags run` LaunchPlan Contract
-
-`ags run` is the sole LaunchPlan preparation entrypoint. It validates the card,
-resolves policy, applies gates, and returns either `HOST_EXECUTION_REQUIRED` or
-`STOP`; it never launches the host process.
-
-Its flags are:
-
-- `--check-only` — stop after the gate check; exit `0` if allowed and `1` if
-  stopped.
-- `--dry-run` — mark and emit the full launch plan as a dry run. No mode executes.
-- `--current-task-approval` — pass live current-task approval through to the
-  resolver as an audit/hint signal (task level does not downgrade the permission
-  mode).
-- `--approve-writes` — pass the write-approval audit/hint signal through to the
-  resolver (may act as the M9 generic-adapter capability override).
-- `--format text|json` — output format passed through to `ags run`
-  (default `text`).
-
-The task-card path comes first. `ags run` adds no post-task behavior, never reads
-raw task-card fields to synthesize launch flags, and never executes a task.
-
-### Flow
-
-```
-task card
-    │
-    ▼
-ags run <task-card> [flags]                ◄── canonical plan preparer owns:
-    │  validates the canonical task card        validation, gate, policy resolve,
-    │  resolves execution policy (M1–M10)        adapter, receipt planning
-    │  applies authority / writability gates
-    │
-    ▼
-HOST_EXECUTION_REQUIRED or STOP
+```bash
+ags host lifecycle --event session-start|session-end|stop-guard \
+  --host codex|claude-code|cursor|omp \
+  --target <repo>
 ```
 
-### Resolver-first contract (enforced by `ags run`)
+- `session-start` returns bounded, read-only memory context.
+- `session-end` archives only a verified closure pointer.
+- `stop-guard` checks raw tool-call markup leakage.
 
-The resolver enforces M5/M6: `plan-only` must never produce write-type launch
-args or active parallelism flags. `ags run` therefore prepares its LaunchPlan
-from the **resolved execution policy** (`ags policy resolve`), not from raw
-task-card fields. If it bypassed the resolver and used unprocessed task-card
-values directly, it could expose
-`--parallel`, `--worktree`, or `--headless` flags for a `plan-only` card —
-bypassing the resolver's writability gate entirely.
+Claude-compatible hosts consume `hookSpecificOutput.additionalContext`. Cursor
+consumes `additional_context` on `sessionStart` and `followup_message` on
+`stop`; this response-envelope difference is declared in `AgentPlatformSpec`,
+not implemented as a second lifecycle kernel. Cursor registration evidence is
+read through `cursor-agent mcp list` with its file credential-store mode so the
+probe does not depend on the macOS login keychain.
 
-`ags run` MUST:
+OMP's JavaScript extension is intentionally thin: register events, pass JSON to
+the command, map the result. OMP itself is not patched.
 
-1. Resolve the execution policy via `ags policy resolve <task-card> --format json`
-   (with `--current-task-approval` or `--approve-writes` when the invoking
-   context carries the matching structured approval).
-2. Check `stop_before_launch` — if `true`, return a stopped LaunchPlan and
-   surface all `stop_reasons` entries. Multiple independent gates can stop the
-   same proposed host launch.
-3. Copy `allowed_launch_args` verbatim into `AdapterPlan.launch_args`; do not
-   start a process. The host decides whether and how to execute after receiving
-   `HOST_EXECUTION_REQUIRED`.
-4. Never read `Parallelism:`, `Execution surface:`, or `Permission mode:`
-   from the raw task card to decide launch flags — those values have already
-   been resolved, downgraded, and gated by the resolver.
-5. Run the runtime skill-tag availability gate (the third gate) on the
-   LaunchPlan path. After the policy gate, `ags run` extracts the card's
-   trailing `[skill: …]` tags, derives the active host from the resolved
-   `runtime_adapter` (`claude-code` / `codex-local`→`codex` / `cursor`;
-   `generic`/unknown → host-agnostic, fail-closed), and runs the equivalent of
-   `ags gate skill-tags`. Any tag the live machine snapshot does not judge
-   `available` forces `gate_decision=stop` (`gate_error_kind=skill_tags_unavailable`),
-   empties launch args, and disables the future host receipt plan. This makes
-   the third gate automatic on the main task-card preparation chain—not only the manual
-   `ags gate skill-tags` subcommand. `--check-only` stops at the offline policy
-   gate and does NOT run the runtime skill-tag gate, preserving the validator's
-   offline static determinism. The `LaunchPlan.skill_tags_gate` field carries the
-   per-tag verdicts and `snapshot_hash` for audit.
+## MCP Process Ownership
 
-### Example: resolved policy → launch flags
+The MCP server never restarts itself. Process management belongs at the
+CLI/lifecycle seam:
 
-Given a task card with `Permission mode: plan-only`, `Parallelism: worktree`:
-
-```json
-{
-  "effective_permission_mode": "plan-only",
-  "effective_parallelism": "none",
-  "allowed_launch_args": [],
-  "stop_before_launch": true,
-  "stop_reasons": [
-    { "kind": "writable-parallelism-blocked-by-permission", ... }
-  ]
-}
+```bash
+ags mcp status
+ags mcp restart
 ```
 
-`ags run` sees `stop_before_launch: true`, returns a stopped LaunchPlan, and
-reports the stop reason entries. It never generates `--parallel --worktree`,
-never launches, and exposes no launch args because stopped policies contain
-`allowed_launch_args: []`.
+Restart stops the workspace service and lets the host reconnect to the current
+binary. All old connection-bound preflight bindings, actions, and leases become
+invalid.
 
-### Defaults preserved
+## MCP Self-Integrity
 
-`ags run` never upgrades `Permission mode`. Task level never downgrades it
-either: a Heavy card keeps its declared permission mode.
-When a Heavy card omits `Permission mode:`, the compiler default is `plan-only`;
-an explicit `execute-and-verify` mode is preserved without an extra planning
-round, but actual execution still belongs to the host. Receipt generation is a
-post-execution host obligation; Runner only returns `ReceiptPlan` metadata.
+Before serving a governed request, MCP hashes the complete current executable
+content and compares it with the startup identity. It deliberately has no
+inode/mtime/ctime shortcut because those metadata are not reliable change
+signals on every filesystem.
+
+## Review and Resume
+
+Review gates are independent from execution authority:
+
+- Light: focused self-review.
+- Medium: integration and boundary review.
+- Heavy: independent review.
+
+On resume, reread the exact task card and LaunchPlan, inspect current workspace
+state, and continue only within the sealed authority. Conversation text,
+memory, task level, skill selection, and host product name cannot upgrade it.
+
+## Adapter Conformance
+
+Every supported host runs the same contract suite:
+
+- task-card and policy input mapping;
+- lifecycle start/end/stop behavior;
+- no transcript inference;
+- idempotent repeated SessionEnd;
+- no closure pointer means safe skip;
+- MCP probe result normalization;
+- plan-only launch-argument gate.
+
+Host-native integration tests may add transport checks, but they cannot weaken
+the shared Rust semantics.

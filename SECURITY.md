@@ -31,12 +31,16 @@ If you find a security vulnerability in AGS, please report it privately:
 
 ## Runtime Executable Trust Boundary
 
-AGS does not perform request-time self-integrity rehashing of its running MCP
-executable. That control was removed because filesystem metadata cannot
-reliably reveal same-size replacement on every supported filesystem. Trust is
-established at release and installation time through published checksums,
-provenance, controlled write permissions, and daemon restart after upgrade.
-An attacker who can replace the installed executable is therefore already
-inside the local runtime trust boundary.
+AGS v0.3.6 hashes the complete running MCP executable before every governed
+request and compares it with the startup identity. It deliberately does not use
+inode, size, mtime, or ctime as a shortcut because those signals are not
+reliable on every supported filesystem. A mismatch closes the gate and requires
+the host to reconnect after `ags mcp restart`.
+
+Versions v0.3.4 and v0.3.5 did not provide request-time executable
+self-integrity verification. The earlier metadata-based check was removed
+because it could miss equal-length replacement on filesystems with coarse or
+non-standard timestamp behavior. v0.3.6 restores the control using full-content
+hashing rather than filesystem metadata.
 
 历史 `2.x` tag 不属于当前受支持产品线。

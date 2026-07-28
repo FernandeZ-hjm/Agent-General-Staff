@@ -322,7 +322,7 @@ pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
         ("SECURITY.md", supported_series),
         (
             "SECURITY.md",
-            "AGS does not perform request-time self-integrity rehashing".to_string(),
+            "AGS v0.3.6 hashes the complete running MCP executable".to_string(),
         ),
         ("protocol/mcp-server.md", format!("AGS {VERSION} MCP")),
     ];
@@ -381,73 +381,73 @@ pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
     for (relative, marker) in [
         (
             "crates/ags-governance-decision/src/lib.rs",
-            "0.3.5-host-route-proposal",
+            "0.3.6-host-route-proposal",
         ),
         (
             "crates/ags-governance-decision/src/lib.rs",
-            "0.3.5-route-resolution",
+            "0.3.6-route-resolution",
         ),
         (
             "crates/ags-task-contract/src/intent.rs",
-            "0.3.5-handoff-contract",
+            "0.3.6-handoff-contract",
         ),
         (
             "crates/ags-task-contract/src/intent.rs",
-            "0.3.5-task-contract",
+            "0.3.6-task-contract",
         ),
         (
             "crates/ags-task-contract/src/runner.rs",
-            "0.3.5-launch-plan",
+            "0.3.6-launch-plan",
         ),
         (
             "crates/ags-lifecycle/src/onboarding/mod.rs",
-            "0.3.5-onboarding-plan",
+            "0.3.6-onboarding-plan",
         ),
         (
             "crates/ags-lifecycle/src/init/model.rs",
-            "0.3.5-project-init",
+            "0.3.6-project-init",
         ),
         (
             "crates/ags-lifecycle/src/setup/mod.rs",
-            "0.3.5-private-install",
+            "0.3.6-private-install",
         ),
         (
             "crates/ags-capability-governance/src/authority.rs",
-            "0.3.5-host-capability-snapshot",
+            "0.3.6-host-capability-snapshot",
         ),
         (
             "crates/ags-capability-governance/src/skill_body/console/model.rs",
-            "0.3.5-skill-console",
+            "0.3.6-skill-console",
         ),
         (
             "crates/ags-capability-governance/src/skill_body/model.rs",
-            "0.3.5-skill-inventory",
+            "0.3.6-skill-inventory",
         ),
         (
             "crates/ags-governance-decision/src/policy/model.rs",
-            "0.3.5-execution-policy",
+            "0.3.6-execution-policy",
         ),
         (
             "crates/ags-verification/src/orchestrator.rs",
-            "0.3.5-verification-report",
+            "0.3.6-verification-report",
         ),
         (
             "crates/ags-verification/src/bootstrap.rs",
-            "0.3.5-bootstrap-plan",
+            "0.3.6-bootstrap-plan",
         ),
         (
             "crates/ags-verification/src/release_package.rs",
-            "0.3.5-release-plan",
+            "0.3.6-release-plan",
         ),
         (
             "crates/ags-evidence/src/receipt_model.rs",
-            "0.3.5-task-receipt",
+            "0.3.6-task-receipt",
         ),
         (
             "crates/ags-evidence/src/delivery_report.rs",
-            "0.3.5-delivery-closure",
+            "0.3.6-delivery-closure",
         ),
-        ("crates/ags-evidence/src/action.rs", "0.3.5-action-receipt"),
+        ("crates/ags-evidence/src/action.rs", "0.3.6-action-receipt"),
     ] {
         match std::fs::read_to_string(repo_root.join(relative)) {
             Ok(content) if content.contains(marker) => {}

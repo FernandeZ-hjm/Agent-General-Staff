@@ -74,10 +74,10 @@ pub(crate) enum CapabilityAction {
     /// Resolves the installed AGS capability authority independently of the
     /// current project directory. Missing required registry parents remain in
     /// the expected set and fail closed. `ags skill verify` is the public
-    /// human-facing facade for the same host verification. Claude Code / Codex /
-    /// CodeBuddy-Code supported; Cursor reserved.
+    /// human-facing facade for the same host verification. Claude Code, Codex,
+    /// Cursor, OMP, and CodeBuddy-Code are supported capability identities.
     Verify {
-        /// Host to verify: claude-code | codex | codebuddy-code (cursor reserved)
+        /// Host to verify: claude-code | codex | cursor | omp | codebuddy-code
         #[arg(long, default_value = "claude-code")]
         host: String,
         /// Gate mode: exit nonzero unless status is "ok" (post-apply gate).
@@ -139,8 +139,9 @@ pub(crate) enum AgentsAction {
     },
     /// Plan host onboarding; --apply installs AGS-owned memory lifecycle wiring.
     ///
-    /// Default dry-run. `--apply` writes only AGS-owned Claude/Codex lifecycle
-    /// hooks or the OMP extension. External MCP registrars remain advice-only.
+    /// Default dry-run. `--apply` writes only AGS-owned Claude/Codex/Cursor
+    /// lifecycle hooks or the OMP extension. External MCP registrars remain
+    /// advice-only.
     Govern {
         /// Limit to one host id (claude-code|codex|omp|cursor|workbuddy|codebuddy-code).
         #[arg(long)]

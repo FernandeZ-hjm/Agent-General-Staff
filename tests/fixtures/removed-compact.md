@@ -11,9 +11,9 @@ Runtime adapter: claude-code
 
 Execution surface: cli
 
-Permission mode: execute-and-verify
+Execution mode: single-writer
 
-Parallelism: none
+Execution topology: single
 
 任务级别：Medium
 

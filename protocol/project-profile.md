@@ -67,14 +67,9 @@ defaults:
   executor: ""
   runtime_adapter: ""
   execution_surface: ""
-  # Omitted-field defaults only: use these values only when a generated card does
-  # not declare `Permission mode:`. Task level is a risk/review tier — it never
-  # downgrades an explicitly declared permission mode.
-  permission_mode_by_level:
-    light: execute-and-verify
-    medium: execute-and-verify
-    heavy: plan-only
-  parallelism: none
+  execution_mode: single-writer
+  execution_topology: single
+  delegation_planning: no
 
 verification:
   default_commands: []
@@ -106,11 +101,9 @@ user_preferences:
 ## Governance
 
 - The profile is project-owned, not suite-owned.
-- `permission_mode_by_level` is not an execution cap. It fills an omitted field
-  during task-card generation only. A Heavy card that explicitly declares
-  `execute-and-verify` remains executable and still requires the Heavy Review
-  gate. A Heavy card with omitted or explicit `plan-only` remains non-mutating;
-  later implementation requires an `execute-and-verify` task card.
+- Profile defaults may prefill a compiler input, but the emitted task card must
+  explicitly contain all three authority fields. Task level never rewrites
+  them. A later change in authority requires a new task card and LaunchPlan.
 - Suite bootstrap installs only a template; it must not overwrite a project's
   real profile.
 - Profile changes are normal project changes and should be reviewed with the

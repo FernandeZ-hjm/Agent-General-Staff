@@ -74,7 +74,7 @@ pub(super) fn tool_apply_action(
             }
         };
     pretty(&ApplyResult {
-        schema_version: "0.3.5-apply-result",
+        schema_version: "0.3.6-apply-result",
         governance_status: status,
         lease_id,
         action_id,
@@ -182,6 +182,58 @@ pub(super) fn emit_onboarding_receipt(
     ags_evidence::emit_action_receipt(&runtime_home.join("receipts"), &receipt)
         .map(|path| path.display().to_string())
         .map_err(|error| format!("onboarding receipt failed for {}: {error}", held.action_id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decision_lease_is_consumed_exactly_once() {
+        let lease_id = "lease-one-shot".to_string();
+        let action_id = "action-one-shot".to_string();
+        let mut session = RoutingSession::for_session("test-session");
+        session.insert(
+            action_id.clone(),
+            HeldAction {
+                evidence: DecisionLeaseEvidence {
+                    lease_id: lease_id.clone(),
+                    decision_id: "decision".to_string(),
+                    proposal_hash: "sha256:proposal".to_string(),
+                    scope_hash: "sha256:scope".to_string(),
+                    host: "codex".to_string(),
+                    target: ".".to_string(),
+                    registry_hash: "sha256:registry".to_string(),
+                    snapshot_hash: "sha256:snapshot".to_string(),
+                    policy_hash: "sha256:policy".to_string(),
+                },
+                action_id: action_id.clone(),
+                kind: HeldActionKind::RecordOutcome {
+                    request_fingerprint: "sha256:request".to_string(),
+                    skill_id: "test-skill".to_string(),
+                    entrypoint: None,
+                },
+                consumed: false,
+            },
+        );
+        let binding = PreflightBinding {
+            host: "codex".to_string(),
+            target: ".".into(),
+            host_home: ".".into(),
+            capability: None,
+        };
+        let args = serde_json::json!({
+            "lease_id": lease_id,
+            "action_id": action_id,
+            "outcome": {"status": "succeeded"}
+        });
+        let runtime = tempfile::tempdir().unwrap();
+
+        let first = tool_apply_action(&args, &binding, &mut session, runtime.path());
+        assert!(first.is_ok(), "{first:?}");
+        let replay = tool_apply_action(&args, &binding, &mut session, runtime.path());
+        assert_eq!(replay.unwrap_err(), "decision_lease_invalid_or_consumed");
+    }
 }
 
 #[derive(Debug, Serialize)]

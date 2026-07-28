@@ -289,7 +289,7 @@ pub(super) fn tool_onboarding_plan(
         .next()
         .map(|action| action.evidence.clone());
     pretty(&OnboardingPlanResult {
-        schema_version: "0.3.5-onboarding-plan-result",
+        schema_version: "0.3.6-onboarding-plan-result",
         governance_status: if plan.bootstrap_required {
             GovernanceStatus::NeedsUserDecision
         } else {

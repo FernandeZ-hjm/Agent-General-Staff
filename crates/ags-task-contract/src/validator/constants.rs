@@ -13,28 +13,24 @@ pub(crate) const VALID_EXECUTION_SURFACES: &[&str] = &[
     "remote-control",
     "background-agent",
 ];
-pub(crate) const VALID_PERMISSION_MODES: &[&str] = &["plan-only", "execute-and-verify"];
-pub(crate) const VALID_PARALLELISM: &[&str] = &[
-    "none",
-    "limited",
-    "parallel",
-    "subagent",
-    "worktree",
-    "multi-session",
-    "agent-team",
+pub(crate) const VALID_EXECUTION_MODES: &[&str] = &[
+    "plan-only",
+    "single-writer",
+    "fanout-in-card",
+    "fanout-cross-card",
 ];
+pub(crate) const VALID_EXECUTION_TOPOLOGIES: &[&str] = &["single", "parallel", "worktree"];
 pub(crate) const VALID_TASK_LEVELS: &[&str] = &["Light", "Medium", "Heavy"];
 /// Allowed `Execution effort` values. `unknown` is the absent default.
 pub(crate) const VALID_EXECUTION_EFFORT: &[&str] =
     &["low", "normal", "high", "exhaustive", "unknown"];
-pub(crate) const VALID_WORKFLOW_AUTHORITY: &[&str] =
-    &["none", "within-card", "plan-only", "allowed"];
+pub(crate) const VALID_DELEGATION_PLANNING: &[&str] = &["no", "yes"];
 pub(crate) const VALID_HANDOFF_SOURCES: &[&str] =
     &["explicit-handoff", "host-plan-mode", "existing-card"];
 /// Allowed `子任务编排` (subtask orchestration) mode values. `none` = no
 /// orchestration declared; `optional` / `required` declare splittable subtask
-/// structure. A non-`none` mode requires a delegation-capable Parallelism and a
-/// non-`none` Workflow authority (checked in the execution authority gate). The
+/// structure. A non-`none` mode requires a multi-worker execution topology and
+/// a fanout execution mode (checked in the execution authority gate). The
 /// slot only DECLARES splittable structure — actual subagent/workflow ignition is
 /// translated by the claude-code adapter / runner from the resolved policy.
 pub(crate) const VALID_SUBTASK_ORCHESTRATION_MODES: &[&str] = &["none", "optional", "required"];

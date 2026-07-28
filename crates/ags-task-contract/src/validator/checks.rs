@@ -33,25 +33,6 @@ pub(crate) const WORKFLOW_REQUEST_KEYWORDS: &[&str] = &[
     "通过工作流执行",
 ];
 
-/// Keywords that imply parallelism/delegation in task body text (used for
-/// Parallelism: none/limited → body text contradiction check).
-pub(crate) const PARALLELISM_BODY_KEYWORDS: &[&str] = &[
-    "subagent",
-    "sub-agent",
-    "multi-session",
-    "agent-team",
-    "dynamic workflow",
-    "dynamic workflows",
-    "parallel agents",
-    "delegate",
-    "delegation",
-    "并行 agent",
-    "并行代理",
-    "子代理",
-    "多会话",
-    "动态工作流",
-];
-
 /// Keywords that indicate the exhaustive execution-effort tier is being abused as
 /// execution-authority rather than thinking-intensity.  Matched case-insensitively
 /// against the full action-bearing context.
@@ -292,26 +273,26 @@ pub(crate) fn check_field_values(fields: &HashMap<String, String>, errors: &mut 
         }
     }
 
-    // Permission mode
-    if let Some(v) = fields.get("Permission mode:") {
-        if !VALID_PERMISSION_MODES.contains(&v.as_str()) {
+    // Execution mode
+    if let Some(v) = fields.get("Execution mode:") {
+        if !VALID_EXECUTION_MODES.contains(&v.as_str()) {
             errors.push(format!(
-                "[{}] Permission mode 值 `{}` 非法，允许: {}",
+                "[{}] Execution mode 值 `{}` 非法，允许: {}",
                 error_code::INVALID_FIELD_VALUE,
                 v,
-                VALID_PERMISSION_MODES.join(", ")
+                VALID_EXECUTION_MODES.join(", ")
             ));
         }
     }
 
-    // Parallelism
-    if let Some(v) = fields.get("Parallelism:") {
-        if !VALID_PARALLELISM.contains(&v.as_str()) {
+    // ExecutionTopology
+    if let Some(v) = fields.get("Execution topology:") {
+        if !VALID_EXECUTION_TOPOLOGIES.contains(&v.as_str()) {
             errors.push(format!(
-                "[{}] Parallelism 值 `{}` 非法，允许: {}",
+                "[{}] Execution topology 值 `{}` 非法，允许: {}",
                 error_code::INVALID_FIELD_VALUE,
                 v,
-                VALID_PARALLELISM.join(", ")
+                VALID_EXECUTION_TOPOLOGIES.join(", ")
             ));
         }
     }
@@ -340,14 +321,14 @@ pub(crate) fn check_field_values(fields: &HashMap<String, String>, errors: &mut 
         }
     }
 
-    // Workflow authority
-    if let Some(v) = fields.get("Workflow authority:") {
-        if !VALID_WORKFLOW_AUTHORITY.contains(&v.as_str()) {
+    // Delegation planning
+    if let Some(v) = fields.get("Delegation planning:") {
+        if !VALID_DELEGATION_PLANNING.contains(&v.as_str()) {
             errors.push(format!(
-                "[{}] Workflow authority 值 `{}` 非法，允许: {}",
+                "[{}] Delegation planning 值 `{}` 非法，允许: {}",
                 error_code::INVALID_FIELD_VALUE,
                 v,
-                VALID_WORKFLOW_AUTHORITY.join(", ")
+                VALID_DELEGATION_PLANNING.join(", ")
             ));
         }
     }
@@ -373,9 +354,9 @@ pub(crate) fn check_field_values(fields: &HashMap<String, String>, errors: &mut 
 pub(crate) fn check_field_combinations(fields: &HashMap<String, String>, errors: &mut Vec<String>) {
     let executor = field_val(fields, "Executor:");
     let adapter = field_val(fields, "Runtime adapter:");
-    let permission = field_val(fields, "Permission mode:");
+    let permission = field_val(fields, "Execution mode:");
     let level = field_val(fields, "任务级别：");
-    let authority = get_workflow_authority(fields);
+    let delegation_planning = get_delegation_planning(fields);
 
     // Executor ↔ Runtime adapter
     if !executor.is_empty() && !adapter.is_empty() {
@@ -392,36 +373,23 @@ pub(crate) fn check_field_combinations(fields: &HashMap<String, String>, errors:
         }
     }
 
-    // NOTE: Heavy + execute-and-verify is NOT forbidden. Task LEVEL is a
-    // risk/review tier, not the execution authority — the permission MODE is.
-    // A Heavy card may declare execute-and-verify and executes directly. The
+    // NOTE: Heavy executable modes are not forbidden. Task LEVEL remains a
+    // risk/review tier, not execution authority.
     // Heavy + plan-only delivery gate and the Heavy executable Review-gate
     // requirement below keep the review boundary machine-enforced.
 
-    // Workflow authority: allowed only for Medium or Heavy
-    if authority == "allowed" && level != "Medium" && level != "Heavy" {
+    if permission == "fanout-cross-card" && level == "Light" {
         errors.push(format!(
-            "[{}] Workflow authority 为 allowed，但任务级别为 {}（仅允许 Medium 或 Heavy）",
-            error_code::WORKFLOW_AUTHORITY_VIOLATION,
+            "[{}] Execution mode 为 fanout-cross-card，但任务级别为 {}（仅允许 Medium 或 Heavy）",
+            error_code::EXECUTION_MODE_AUTHORITY_VIOLATION,
             level
         ));
     }
 
-    // Workflow authority cannot exceed Permission mode
-    if authority == "allowed" && permission == "plan-only" {
+    if delegation_planning == "yes" && permission == "plan-only" {
         errors.push(format!(
-            "[{}] Workflow authority 为 allowed，但 Permission mode 为 {}（allowed 不可突破 Permission mode）",
-            error_code::WORKFLOW_AUTHORITY_VIOLATION,
-            permission
-        ));
-    }
-
-    // Permission mode: plan-only → Workflow authority at most plan-only
-    if permission == "plan-only" && (authority == "within-card" || authority == "allowed") {
-        errors.push(format!(
-            "[{}] Permission mode 为 plan-only，Workflow authority 不能为 {}",
-            error_code::WORKFLOW_AUTHORITY_VIOLATION,
-            authority
+            "[{}] Delegation planning 为 yes，但 Execution mode 为 plan-only；计划模式不能现场编排执行",
+            error_code::EXECUTION_MODE_AUTHORITY_VIOLATION,
         ));
     }
 
@@ -459,7 +427,7 @@ pub(crate) fn check_field_combinations(fields: &HashMap<String, String>, errors:
             .any(|kw| delivery_lower.contains(&kw.to_lowercase()));
         if has_bad_delivery {
             errors.push(format!(
-                "[{}] 任务级别 Heavy + Permission mode plan-only：交付 不得承诺修改完成、提交、push 或同步 stable/A1。plan-only 只能产出方案/计划，等待人工审阅后才能进入修改阶段",
+                "[{}] 任务级别 Heavy + Execution mode plan-only：交付 不得承诺修改完成、提交、push 或同步 stable/A1。plan-only 只能产出方案/计划，等待人工审阅后才能进入修改阶段",
                 error_code::PLAN_ONLY_DELIVERY_VIOLATION
             ));
         }
@@ -494,7 +462,7 @@ pub(crate) fn check_field_combinations(fields: &HashMap<String, String>, errors:
             .any(|kw| delivery_lower.contains(&kw.to_lowercase()));
         if !has_handoff_in_stop && !has_handoff_in_gate_stop && !has_handoff_in_delivery {
             errors.push(format!(
-                "[{}] 任务级别 Heavy + Permission mode plan-only：停止条件 或 交付（含 Verification gate stop condition）必须明确要求返回用户/Codex 审阅、等待明确批准、不得直接修改。当前各段均未检测到审阅交还语义",
+                "[{}] 任务级别 Heavy + Execution mode plan-only：停止条件 或 交付（含 Verification gate stop condition）必须明确要求返回用户/Codex 审阅、等待明确批准、不得直接修改。当前各段均未检测到审阅交还语义",
                 error_code::HEAVY_PLAN_ONLY_MISSING_REVIEW_HANDOFF
             ));
         }
@@ -502,13 +470,13 @@ pub(crate) fn check_field_combinations(fields: &HashMap<String, String>, errors:
 
     // ── Heavy + executable permission → independent Review gate required ──
     // Task level is decoupled from execution authority, so a Heavy card may use
-    // execute-and-verify. The INDEPENDENT Review gate is the machine-enforced
+    // any executable mode. The INDEPENDENT Review gate is the machine-enforced
     // guard for an executable Heavy card, so it fails closed: it must name a
     // distinct reviewer — human / Codex / adversarial / 第三方 — or delegate to
     // the protocol Review Gate rules. A missing gate, a generic level-name gate,
     // OR an executor self-review / 自查 gate (even one that uses a review verb
     // like 审查 / 复核) is rejected — self-review is not an independent handoff.
-    if level == "Heavy" && permission == "execute-and-verify" {
+    if level == "Heavy" && permission != "plan-only" {
         let review = field_val(fields, "Review gate:");
         let review_lower = review.to_lowercase();
         // A review VERB says some review happens, but not who performs it. On its
@@ -561,7 +529,7 @@ pub(crate) fn check_field_combinations(fields: &HashMap<String, String>, errors:
             || (review_verb && !self_or_executor_review);
         if review.trim().is_empty() || !independent_review {
             errors.push(format!(
-                "[{}] 任务级别 Heavy + Permission mode execute-and-verify：Review gate 必须声明独立审查方（人工 / Codex / adversarial / 第三方，或按 protocol Review Gate 规则），不得缺失、仅写泛化级别名，或仅由执行者自我审查 / 自查放行",
+                "[{}] 任务级别 Heavy + 可执行 Execution mode：Review gate 必须声明独立审查方（人工 / Codex / adversarial / 第三方，或按 protocol Review Gate 规则），不得缺失、仅写泛化级别名，或仅由执行者自我审查 / 自查放行",
                 error_code::HEAVY_EXECUTABLE_MISSING_REVIEW_GATE
             ));
         }
@@ -572,8 +540,8 @@ pub(crate) fn check_field_combinations(fields: &HashMap<String, String>, errors:
 
 pub(crate) fn check_protected_paths(fields: &HashMap<String, String>, errors: &mut Vec<String>) {
     let level = field_val(fields, "任务级别：");
-    let permission = field_val(fields, "Permission mode:");
-    let authority = get_workflow_authority(fields);
+    let permission = field_val(fields, "Execution mode:");
+    let execution_mode = field_val(fields, "Execution mode:");
     let action = action_context(fields);
 
     // Check if any protected path is mentioned in action-bearing sections.
@@ -607,23 +575,18 @@ pub(crate) fn check_protected_paths(fields: &HashMap<String, String>, errors: &m
     // Plan-only + modification intent on protected paths → fail
     if permission == "plan-only" {
         errors.push(format!(
-            "[{}] Permission mode `{}` 不允许修改保护路径（检测到修改意图 + 保护路径）",
+            "[{}] Execution mode `{}` 不允许修改保护路径（检测到修改意图 + 保护路径）",
             error_code::PROTECTED_PATH_VIOLATION,
             permission
         ));
     }
 
-    // ── Boundary + Workflow authority rules ──
-
-    // Workflow authority: allowed and within-card must not be used with
-    // protected-boundary modifications.  The executor could fan out changes
-    // across boundaries uncontrollably.  Only none and plan-only are permitted
-    // when the action targets protected assets with modification intent.
-    if authority == "allowed" || authority == "within-card" {
+    // Cross-card fanout must never spread protected-boundary modifications.
+    if execution_mode == "fanout-cross-card" {
         errors.push(format!(
-            "[{}] 任务涉及保护边界资产且要求修改，Workflow authority 不能为 {}（只能 none 或 plan-only）",
-            error_code::WORKFLOW_AUTHORITY_VIOLATION,
-            authority
+            "[{}] 任务涉及保护边界资产且要求修改，Execution mode 不能为 {}",
+            error_code::EXECUTION_MODE_AUTHORITY_VIOLATION,
+            execution_mode
         ));
     }
 }

@@ -18,8 +18,8 @@ Before development, debugging, review, commit, or task-card generation:
 - Do not treat raw user requests as executable task cards.
 - If the first non-empty line is `## 任务卡`, treat the input as an existing task card and validate it before raw-request classification.
 - A valid existing card goes directly to policy resolution and runner consumption; invalid card-shaped input fails closed and never falls through to task-card generation.
-- Task-card permission has exactly two modes: `plan-only` and `execute-and-verify`.
-- Light and Medium default to `execute-and-verify`. Heavy defaults to `plan-only`; an explicit Heavy `execute-and-verify` card executes and verifies directly, with an independent review gate.
+- Task-card authority is the explicit `Execution mode`, `Execution topology`,
+  and `Delegation planning` tuple. Task level changes review depth, not authority.
 - `方案 OK` only ends the solution phase; wait for an explicit task-card instruction before routing or calling `ags task compile --task-card-requested`.
 - Preserve user-owned entry-file rules; if they conflict with this block, stop and report the conflict.
 

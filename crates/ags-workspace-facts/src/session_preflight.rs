@@ -62,7 +62,9 @@ pub struct SessionPreflight {
     pub should_stop: bool,
     pub stop_conditions: Vec<String>,
     pub verification_commands: Vec<String>,
-    pub default_permission_mode: String,
+    pub default_execution_mode: String,
+    pub default_execution_topology: String,
+    pub default_delegation_planning: String,
 
     // Aggregated diagnostics
     pub governance_status: ags_governance_decision::GovernanceStatus,
@@ -166,9 +168,9 @@ pub fn run_session_preflight(target: &Path, agent_type: &AgentType) -> SessionPr
                     .to_string(),
             );
             next_steps.push(format!(
-                "  {} will execute with permission mode: {}",
+                "  {} will use default execution mode: {}",
                 agent_type.display_name(),
-                instructions.permissions.default_permission_mode
+                instructions.permissions.default_execution_mode
             ));
             next_steps.push("  Read required protocol files before starting any task.".to_string());
         }
@@ -222,7 +224,9 @@ pub fn run_session_preflight(target: &Path, agent_type: &AgentType) -> SessionPr
         should_stop: instructions.should_stop,
         stop_conditions: instructions.stop_conditions.clone(),
         verification_commands: instructions.verification_commands.clone(),
-        default_permission_mode: instructions.permissions.default_permission_mode.clone(),
+        default_execution_mode: instructions.permissions.default_execution_mode.clone(),
+        default_execution_topology: instructions.permissions.default_execution_topology.clone(),
+        default_delegation_planning: instructions.permissions.default_delegation_planning.clone(),
 
         governance_status: if overall_status == PreflightStatus::Stop {
             ags_governance_decision::GovernanceStatus::BlockedByPolicy

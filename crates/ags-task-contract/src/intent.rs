@@ -3,15 +3,15 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub const SCHEMA_VERSION: &str = "0.3.5-task-contract";
+pub const SCHEMA_VERSION: &str = "0.3.6-task-contract";
 
-pub const HANDOFF_CONTRACT_SCHEMA_VERSION: &str = "0.3.5-handoff-contract";
+pub const HANDOFF_CONTRACT_SCHEMA_VERSION: &str = "0.3.6-handoff-contract";
 
 /// Structured origin of a newly compiled task card.
 ///
 /// Host Plan mode is an alternative structured handoff signal: its final,
 /// decision-complete artifact is the canonical task card. It is not the task
-/// card's `Permission mode` and grants no execution authority by itself.
+/// card's `Execution mode` and grants no execution authority by itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum HandoffSource {

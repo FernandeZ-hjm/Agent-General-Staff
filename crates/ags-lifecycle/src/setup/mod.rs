@@ -31,7 +31,7 @@ use recommendations::{render_third_party_recommendations_text, third_party_recom
 
 pub use memory::{apply_host_memory_adapter, MergeOutcome};
 
-pub const PRIVATE_INSTALL_SCHEMA: &str = "0.3.5-private-install";
+pub const PRIVATE_INSTALL_SCHEMA: &str = "0.3.6-private-install";
 const AGS_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -310,8 +310,8 @@ pub fn apply_private(request: PrivateApplyRequest<'_>) -> PrivateApplyResult {
     for file in &plan.files {
         report.add(write_install_file(file, request.force));
     }
-    for dir in &plan.cleanup_dirs {
-        report.add(cleanup_install_dir(dir, request.force));
+    for path in &plan.cleanup_paths {
+        report.add(cleanup_install_dir(path, request.force));
     }
     if request.register_claude {
         add_claude_registration_checks(&mut report, request.target);
@@ -407,6 +407,19 @@ fn retired_codex_ags_skill_dirs(home: &Path) -> Vec<PathBuf> {
     ]
 }
 
+fn retired_ags_memory_script_paths(home: &Path) -> Vec<PathBuf> {
+    [
+        "context-memory-start.py",
+        "claude-stop-memory-capture.py",
+        "raw-tool-call-stop-guard.js",
+        "context-memory.sh",
+        "stop-archive-hook.sh",
+    ]
+    .into_iter()
+    .map(|name| home.join(".agents/scripts").join(name))
+    .collect()
+}
+
 fn sanitize_name(path: &str) -> String {
     path.trim_matches('/')
         .replace(['/', '\\', '.'], "-")
@@ -417,10 +430,6 @@ fn sanitize_name(path: &str) -> String {
 fn shell_quote(path: &Path) -> String {
     let text = path.to_string_lossy();
     format!("'{}'", text.replace('\'', "'\\''"))
-}
-
-fn portable_validate_script() -> String {
-    "#!/usr/bin/env bash\n# AGS portable task-card validator wrapper.\nset -euo pipefail\nexec ags task validate \"$@\"\n".to_string()
 }
 
 fn project_protocol_files() -> &'static [&'static str] {

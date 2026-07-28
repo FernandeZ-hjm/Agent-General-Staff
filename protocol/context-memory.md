@@ -1,185 +1,116 @@
 # Context Memory
 
-Context memory provides cross-conversation continuity through native adapters
-for Claude Code, Codex, and OMP without changing the cache-stable task-card
-skeleton. Other hosts use the explicit read/capture fallback until they have a
-native adapter and must not report `full`.
+AGS context memory is a derived, local view of verified task closure. It helps a
+host resume work; it never grants authority and never replaces the task card,
+LaunchPlan, delivery report, or receipt.
 
-## Default Store
-
-The suite-owned local memory store is:
+## Store
 
 ```text
 $HOME/.agents/memory/projects/<project-slug>/
+├── context-capsule.md
+├── task-memory.md
+└── task-archive/<receipt-id>/
+    ├── task-card.md
+    ├── launch-plan.json
+    ├── delivery-report.md
+    └── receipt.json
 ```
 
-Recommended files:
+- `context-capsule.md` is a manual project charter. Automation must not rewrite
+  `## 项目设计目的` or other human-owned boundaries.
+- `task-memory.md` is explicitly non-authoritative. It contains only a compact
+  view derived from verified receipts.
+- `task-archive/` preserves the raw hash-bound artifacts.
+- The local store is never part of a public release payload.
 
-```text
-context-capsule.md          # manual project charter
-task-memory.md              # automatically refreshed task continuity summary
-task-archive/               # full local receipt archive per task run
+## Rust Ownership
+
+The Rust kernel owns all lifecycle and archive decisions:
+
+```bash
+ags memory status
+ags memory init
+ags memory archive <receipt.json>
+
+ags host lifecycle --event session-start --host <host> --target <repo>
+ags host lifecycle --event session-end --host <host> --target <repo>
+ags host lifecycle --event stop-guard --host <host> --target <repo>
 ```
 
-## Context Memory Authority
+`ags memory archive` first verifies the receipt and the task-card,
+LaunchPlan, and delivery-report hashes. A failed or incomplete receipt is never
+archived.
 
-Context memory owns project truth.
-If other local notes, summaries, or automation outputs conflict with context
-memory, context memory wins.
+## Host Adapter Contract
 
-`context-capsule.md` is the project charter and is manual-only.
-`task-memory.md` stores task continuity facts.
-`task-archive/` stores evidence and receipts.
+Codex, Claude Code, Cursor, and OMP use one Rust lifecycle contract. Their
+protocol descriptions only map native events to it:
 
-The memory store is local. Do not publish it and do not copy it into public
-suite releases. Projects with non-ASCII directory names should set
-`project.slug` in `config/agent-project-profile.yaml`, or pass
-`--project-slug`, so their local memory path is stable and does not collapse
-to a generic fallback.
+| Native host event | Rust lifecycle event |
+|---|---|
+| Session start | `session-start` |
+| Session end or settled task | `session-end` |
+| Output/tool-call guard | `stop-guard` |
 
-## Context Capsule Contract
+Cursor maps these to its lowercase `sessionStart`, `sessionEnd`, and `stop`
+command hooks. Its native response fields are `additional_context` and
+`followup_message`; the Rust lifecycle kernel selects that envelope from the
+platform protocol table.
 
-`context-capsule.md` is a manual project charter. It must always contain this
-manual block:
+Host adapters do not parse task cards, infer completion from transcripts,
+compare hashes, generate receipts, or implement authority policy.
 
-```markdown
-## 项目设计目的
+OMP retains one required JavaScript extension. It may only register OMP events,
+pass their JSON envelope to `ags host lifecycle`, and map the returned host
+protocol value. OMP itself is not modified.
 
-<只能人工修改。用于约束 AI 不偏离项目初衷、业务边界、产品方向。>
+## Session Start
+
+`session-start` reads bounded `context-capsule.md` and `task-memory.md` content
+and returns the host-specific protocol envelope. The read is local and
+non-mutating. Missing memory returns an empty result.
+
+Memory can provide context but never upgrades:
+
+- `Execution mode`
+- `Execution topology`
+- `Delegation planning`
+- protected-operation authorization
+
+## Session End
+
+Successful closure is created only by:
+
+```bash
+ags task close <task-card> <launch-plan> <delivery-report> \
+  --receipt-out <receipt.json>
 ```
 
-Rules for this block:
+That command atomically writes a session closure pointer after all bindings and
+authority checks pass. `session-end` follows only this pointer.
 
-- runner / hook / capture must not overwrite it.
-- automatic summaries must not rewrite it.
-- it may change only when the user explicitly asks for a manual update.
-- every task-start context path must read it before task execution.
-- if the task goal conflicts with it, the agent must stop and report.
+- A valid pointer archives the verified receipt and its three source artifacts.
+- Repeating `session-end` is idempotent.
+- No pointer produces a `skipped` close receipt.
+- Transcript, assistant messages, filenames, and conversation summaries are
+  never searched to guess a task card or completed delivery.
 
-The same manual-only rule applies to project boundaries, core business
-positioning, and principle-level decisions that require human judgment.
+## Stop Guard
 
-## Task-Card Use
+`stop-guard` examines the host-provided final message envelope for leaked raw
+tool-call markup. It does not inspect task authority and does not archive
+memory.
 
-Task cards must not paste long memory. Use the fixed `记忆胶囊` slot:
+## Resume
 
-```text
-记忆胶囊：
-- 无 / `$HOME/.agents/memory/projects/<project-slug>/context-capsule.md`
-```
+On continue, context compaction, or task notification:
 
-When the capsule exists, the executor may read it as stable project context.
-Only short, task-relevant facts should be copied into `背景` or `实施要求`.
-The executor must also read sibling `task-memory.md` when present before
-starting work.
+1. Reread the exact task card and LaunchPlan.
+2. Read the named capsule and derived task memory when present.
+3. Run `git status --short`.
+4. Continue only within the sealed execution mode and topology.
+5. Close through `ags task close`; do not construct memory evidence manually.
 
-Task cards may also include a fixed `任务存档` slot:
-
-```text
-任务存档：
-- 无 / `$HOME/.agents/memory/projects/<project-slug>/task-memory.md`
-```
-
-Before any memory exists this can be `无`. `ags run` does not execute or refresh
-memory. The host's completed-task capture hook—or an explicit
-`context-memory.sh capture`—refreshes `task-memory.md`, making it the single task
-continuity entrypoint. Full evidence remains under `task-archive/<run-id>/`.
-
-## Capture Policy
-
-Memory capture is append-only and conservative:
-
-- Archive each host-generated completed-task receipt under `task-archive/` when
-  memory capture is enabled.
-- Refresh `task-memory.md` from recent local task archives, including a compact
-  excerpt of the latest delivery report.
-- Prefer references to receipt files over copying logs.
-- Do not overwrite `context-capsule.md`.
-- Do not automatically update project design purpose, long-term boundaries,
-  core business positioning, or principle-level decisions.
-- Do not store secrets, credentials, raw `.env` values, private tokens, or long
-  code snippets.
-- Do not turn every session into a new rule or skill automatically.
-- Extract reusable workflow ideas as proposals first; humans decide whether to
-  promote them into rules, profiles, or skills.
-
-## Host and Memory Integration
-
-The lifecycle is host-specific. A hook from one host is never accepted as
-evidence for another host.
-
-| Host | Start/read adapter | Close adapter |
-|---|---|---|
-| Claude Code | `SessionStart` command hook | `Stop` command hook |
-| Codex | `SessionStart` command hook | `SessionEnd` command hook (maximum 3 seconds) |
-| OMP | extension `session_start`, injected once on the next `before_agent_start` through `systemPromptAppend` | extension `agent_settled` / `session_shutdown` |
-
-All adapters use the same bounded reader and conservative close/capture bridge:
-
-- `scripts/context-memory-start.py` resolves the current repository and emits
-  `hookSpecificOutput.additionalContext`. It never writes project memory.
-- `scripts/claude-stop-memory-capture.py` is the compatibility-named,
-  host-neutral close bridge. It accepts Claude, Codex, and OMP event envelopes.
-  Every supported close event writes a small receipt under
-  `$HOME/.agents/memory-close-receipts/<host>/`; its status is `captured`,
-  `skipped`, or `failed`. A normal conversation without a canonical task card is
-  recorded as `skipped`; it does not pollute task memory.
-- Only a paired canonical task card plus valid delivery closure is archived and
-  delegated to `context-memory.sh capture`.
-- `scripts/ags-memory-lifecycle-omp.js` is the OMP native extension installed at
-  `$HOME/.omp/agent/extensions/ags-memory-lifecycle.js`.
-- `scripts/raw-tool-call-stop-guard.js` remains Claude-specific and independent
-  from memory capture.
-
-Preflight reports the exact requested host, adapter, and closure state.
-`full` requires that host's native start and close wiring, backing scripts,
-memory files, and archive directory. Unsupported hosts report `unsupported`;
-they never inherit another host's result.
-
-Command responsibilities:
-
-- `ags setup --yes --force` installs or refreshes the shared scripts and OMP
-  extension. The compatibility `--register-claude` path still reconciles Claude
-  MCP plus current-workspace hooks.
-- `ags agents govern --agent <claude-code|codex|omp> --apply` performs the
-  explicit host-adapter write. It structurally preserves unrelated hooks,
-  atomically replaces AGS-owned JSON or extension content, and bootstraps the current
-  repository's memory store. External MCP registration remains advice-only.
-- Codex migration removes only the retired AGS
-  `UserPromptSubmit -> memory-start-context.sh` entry; memory then loads once at
-  `SessionStart`. Other user hooks remain intact.
-- `ags init` creates the per-project memory store (capsule, `task-memory.md`,
-  `task-archive/`) and registers the project. Host adapters remain machine-level
-  and repository-aware.
-- `ags doctor` aggregates every detected supported host; one complete Claude
-  chain cannot hide missing Codex or OMP wiring. `ags session preflight --for
-  <host>` reports the requested host only.
-
-Boundary notes:
-
-- The runner (`ags run`) prepares a LaunchPlan and returns
-  `HOST_EXECUTION_REQUIRED`; it does not execute, verify, write the task receipt,
-  or generate a delivery report. The host owns post-execution memory, receipt,
-  and delivery-report writes.
-- The startup reader, close bridge, Claude/Codex hooks, and OMP extension are
-  distinct adapters over the same project-memory authority.
-- No capture path may overwrite `context-capsule.md`.
-
-Use `--no-memory` only when a task run should intentionally skip local memory
-capture.
-
-## Resume Behavior
-
-On "continue", context compression, or task-notification resume:
-
-1. Reread the task card.
-2. Read the memory capsule if the task card names one.
-3. Read `task-memory.md` beside the capsule if present.
-4. Read a named task archive if the task card names one.
-5. Run `git status --short`.
-6. Honor the card's permission mode before mutation: `plan-only` remains
-   non-mutating and waits for a newly issued executable task card;
-   `execute-and-verify` resumes execution and verification. Task level alone
-   does not rewrite this authority.
-
-Memory can provide continuity, but it is not approval for write operations.
+Context memory owns project continuity. Evolver may propose reusable methods,
+but it cannot write project truth or override receipt-bound facts.

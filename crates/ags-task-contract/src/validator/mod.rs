@@ -7,7 +7,7 @@
 //!   second non-empty line is `读取并遵守：` (the removed compact format is
 //!   rejected at that structural position)
 //! - Check required header and body fields
-//! - Validate field values against allowed sets (e.g. Executor, Permission mode)
+//! - Validate field values against allowed sets (e.g. Executor, Execution mode)
 //! - Validate field combinations (e.g. Executor ↔ Runtime adapter)
 //! - Detect protected-path violations
 //! - Check content quality (non-empty goals, concrete verification, etc.)
@@ -18,7 +18,7 @@
 //! ```rust
 //! use ags_task_contract::validator::validate;
 //!
-//! let input = "## 任务卡\n读取并遵守：\n- AGENTS.md\nContract ID: tc-0123456789abcdef\nHandoff source: existing-card\nExecutor: Claude Code\nRuntime adapter: claude-code\nExecution surface: cli\nPermission mode: execute-and-verify\nParallelism: none\n任务级别：Medium\nReview gate:\n- Medium review\n任务：运行测试验证校验器\n背景：验证校验器功能\n项目画像：无\n记忆胶囊：无\n任务存档：无\n目标文件夹路径：\n- .\n相关路径：\n- .\n本次任务相关文件：\n- .\n目标：\n- G-01: 验证校验器功能\n验收标准：\n- AC-01 -> G-01: 合法任务卡通过校验\n非目标：不修改文件\n验证：\ncargo test\nVerification gate:\n- commands:\n  - V-01 -> AC-01: cargo test\n- expected evidence:\n  - EV-01 -> AC-01: test pass\n- stop condition:\n  - 测试失败时停止\n交付：\n返回结果\n";
+//! let input = "## 任务卡\n读取并遵守：\n- AGENTS.md\nContract ID: tc-0123456789abcdef\nHandoff source: existing-card\nExecutor: Claude Code\nRuntime adapter: claude-code\nExecution surface: cli\nExecution mode: single-writer\nExecution topology: single\nDelegation planning: no\n任务级别：Medium\nReview gate:\n- Medium review\n任务：运行测试验证校验器\n背景：验证校验器功能\n项目画像：无\n记忆胶囊：无\n任务存档：无\n目标文件夹路径：\n- .\n相关路径：\n- .\n本次任务相关文件：\n- .\n目标：\n- G-01: 验证校验器功能\n验收标准：\n- AC-01 -> G-01: 合法任务卡通过校验\n非目标：不修改文件\n验证：\ncargo test\nVerification gate:\n- commands:\n  - V-01 -> AC-01: cargo test\n- expected evidence:\n  - EV-01 -> AC-01: test pass\n- stop condition:\n  - 测试失败时停止\n交付：\n返回结果\n";
 //! let errors = validate(input);
 //! assert!(errors.is_empty());
 //! ```

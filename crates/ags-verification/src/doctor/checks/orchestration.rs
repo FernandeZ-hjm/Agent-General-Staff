@@ -25,7 +25,7 @@ pub fn run_checks(report: &mut HealthReport, repo_root: &Path) {
     }
 
     // ── AGS project-memory capture chain (advisory) ────────────────────
-    report.add(memory_capture_scripts_present());
+    report.add(omp_lifecycle_extension_present());
     if identity.is_ags_suite {
         report.add(host_skill_body_singleton_check(repo_root));
     }

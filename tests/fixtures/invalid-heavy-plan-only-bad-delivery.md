@@ -9,13 +9,13 @@ Runtime adapter: claude-code
 
 Execution surface: cli
 
-Permission mode: plan-only
+Execution mode: plan-only
 
-Parallelism: none
+Execution topology: single
 
 Execution effort: normal
 
-Workflow authority: none
+Delegation planning: no
 
 任务级别：Heavy
 

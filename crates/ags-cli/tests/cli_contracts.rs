@@ -135,7 +135,7 @@ fn task_card_pipeline_cli_contract() {
         &run_ags(&["policy", "resolve", card, "--format", "json"]),
         "policy resolve",
     );
-    assert_eq!(policy["effective_permission_mode"], "execute-and-verify");
+    assert_eq!(policy["effective_execution_mode"], "single-writer");
 
     let gate = parse_json(
         &run_ags(&["gate", "check", card, "--format", "json"]),
@@ -157,7 +157,9 @@ fn host_plan_card_closes_against_its_exact_delivery_report() {
     let temp = TestDir::new("host-plan-closure");
     let contract_path = temp.path().join("handoff.json");
     let task_card_path = temp.path().join("task-card.md");
+    let launch_plan_path = temp.path().join("launch-plan.json");
     let delivery_report_path = temp.path().join("delivery-report.md");
+    let receipt_path = temp.path().join("receipt.json");
     let contract = serde_json::json!({
         "schema_version": ags_task_contract::HANDOFF_CONTRACT_SCHEMA_VERSION,
         "task_level": "Medium",
@@ -195,13 +197,29 @@ fn host_plan_card_closes_against_its_exact_delivery_report() {
     std::fs::write(&task_card_path, &card).unwrap();
 
     let task_card_hash = ags_evidence::sha256_hex(card.as_bytes());
+    let launch_plan_output = run_ags(&[
+        "run",
+        task_card_path.to_str().unwrap(),
+        "--current-task-approval",
+        "--format",
+        "json",
+    ]);
+    assert_success(&launch_plan_output, "launch plan");
+    std::fs::write(&launch_plan_path, &launch_plan_output.stdout).unwrap();
+    let launch_plan: Value = serde_json::from_slice(&launch_plan_output.stdout).unwrap();
+    let launch_plan_hash = launch_plan["launch_plan_hash"].as_str().unwrap();
+    let receipt_id = ags_evidence::receipt_id(&task_card_hash, launch_plan_hash);
     let report = format!(
         "# 任务交付报告\n\
 \n\
-Closure schema: 1.0\n\
+Closure schema: 1.1\n\
 Contract ID: {contract_id}\n\
 task-card-hash: {task_card_hash}\n\
-receipt-id: receipt-{}\n\
+launch-plan-hash: {launch_plan_hash}\n\
+execution-mode-used: single-writer\n\
+execution-topology-used: single\n\
+delegation-used: none\n\
+receipt-id: {receipt_id}\n\
 状态: completed\n\
 review-gate: n/a\n\
 \n\
@@ -215,8 +233,7 @@ review-gate: n/a\n\
 - V-01: pass — ags task validate; exit 0\n\
 \n\
 ## 未闭环项\n\
-- none\n",
-        &task_card_hash[..12]
+- none\n"
     );
     std::fs::write(&delivery_report_path, report).unwrap();
 
@@ -225,7 +242,10 @@ review-gate: n/a\n\
             "task",
             "close",
             task_card_path.to_str().unwrap(),
+            launch_plan_path.to_str().unwrap(),
             delivery_report_path.to_str().unwrap(),
+            "--receipt-out",
+            receipt_path.to_str().unwrap(),
             "--format",
             "json",
         ]),
@@ -234,12 +254,53 @@ review-gate: n/a\n\
     assert_eq!(closed["valid"], true);
     assert_eq!(closed["contract_id"], contract_id);
     assert_eq!(closed["task_card_hash"], task_card_hash);
+    assert_eq!(closed["launch_plan_hash"], launch_plan_hash);
+    assert!(receipt_path.is_file());
 }
 
 #[test]
 fn integrity_and_bootstrap_cli_contract() {
     let root = repo_root();
-    let receipt = root.join("tests/fixtures/receipt-valid.json");
+    let temp = TestDir::new("receipt-verify");
+    let task = temp.path().join("task.md");
+    let plan = temp.path().join("launch-plan.json");
+    let report = temp.path().join("report.md");
+    let receipt = temp.path().join("receipt.json");
+    std::fs::write(&task, "task").unwrap();
+    let mut plan_value = serde_json::json!({
+        "schema_version": "0.3.6-launch-plan",
+        "task_card_hash": ags_evidence::sha256_hex(b"task"),
+        "launch_plan_hash": "",
+        "effective_execution_mode": "single-writer",
+        "effective_execution_topology": "single",
+        "delegation_planning": false
+    });
+    let plan_hash = ags_task_contract::runner::canonical_launch_plan_hash(&plan_value).unwrap();
+    plan_value["launch_plan_hash"] = Value::String(plan_hash.clone());
+    std::fs::write(&plan, serde_json::to_vec_pretty(&plan_value).unwrap()).unwrap();
+    std::fs::write(&report, "report").unwrap();
+    let task_hash = ags_evidence::sha256_hex(b"task");
+    let receipt_value = serde_json::json!({
+        "schema_version": "0.3.6-task-receipt",
+        "receipt_id": ags_evidence::receipt_id(&task_hash, &plan_hash),
+        "timestamp": "unix-0",
+        "task_card_hash": task_hash,
+        "launch_plan_hash": plan_hash,
+        "task_card_path": task,
+        "launch_plan_path": plan,
+        "delivery_report_path": report,
+        "gate_result": {"decision": "allow"},
+        "verification_results": [],
+        "delivery_report_hash": ags_evidence::sha256_hex(b"report"),
+        "execution_footprint": {
+            "execution_mode_used": "single-writer",
+            "execution_topology_used": "single",
+            "delegation_used": "none"
+        },
+        "closure_status": "completed",
+        "exit_code": 0
+    });
+    std::fs::write(&receipt, serde_json::to_vec_pretty(&receipt_value).unwrap()).unwrap();
     let receipt = receipt.to_str().expect("UTF-8 receipt path");
 
     let verified = parse_json(

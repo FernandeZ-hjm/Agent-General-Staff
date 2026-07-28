@@ -3,13 +3,14 @@ use super::{assets::*, merge::*};
 
 /// Wire the project-memory-capture step into a workspace `settings.json`.
 ///
-/// Reads, merges (preserving existing hooks), backs up the prior file to
-/// Writes pretty JSON atomically. Returns a diagnostic `Finding`.
+/// Reads and merges while preserving existing hooks, then writes pretty JSON
+/// atomically. Returns a diagnostic `Finding`.
 /// Never deletes user hooks, and never clobbers the file on
 /// unreadable / invalid JSON.
 pub(in crate::setup) fn wire_workspace_memory_capture(
     settings_path: &Path,
     command: &str,
+    guard_command: &str,
 ) -> crate::setup::SetupFinding {
     let check = "setup-memory-capture-hook";
     let mut value: serde_json::Value = if settings_path.exists() {
@@ -39,7 +40,7 @@ pub(in crate::setup) fn wire_workspace_memory_capture(
         serde_json::json!({})
     };
 
-    let outcome = merge_memory_capture(&mut value, command);
+    let outcome = merge_memory_capture(&mut value, command, guard_command);
     if outcome == MergeOutcome::AlreadyPresent {
         return crate::setup::SetupFinding::pass(
             check,
@@ -180,8 +181,9 @@ pub(crate) fn wire_codex_memory_lifecycle(hooks_path: &Path) -> crate::setup::Se
 
     let outcome = merge_codex_memory_lifecycle(
         &mut value,
-        &memory_start_command(),
-        &codex_memory_capture_command(),
+        &memory_start_command("codex"),
+        &memory_capture_command("codex"),
+        &raw_guard_command("codex"),
     );
     if outcome == MergeOutcome::AlreadyPresent {
         return crate::setup::SetupFinding::pass(
@@ -208,6 +210,85 @@ pub(crate) fn wire_codex_memory_lifecycle(hooks_path: &Path) -> crate::setup::Se
             check,
             format!(
                 "wired Codex SessionStart + SessionEnd memory lifecycle in {}",
+                hooks_path.display()
+            ),
+        ),
+        Err(error) => crate::setup::SetupFinding::fail(
+            check,
+            format!("write failed: {}", hooks_path.display()),
+            error.to_string(),
+        ),
+    }
+}
+
+/// Wire Cursor's native lowercase command-hook protocol without replacing
+/// existing user or marketplace hooks.
+pub(crate) fn wire_cursor_memory_lifecycle(hooks_path: &Path) -> crate::setup::SetupFinding {
+    let check = "agents-cursor-memory-lifecycle";
+    let mut value: serde_json::Value = if hooks_path.exists() {
+        match std::fs::read_to_string(hooks_path)
+            .map_err(|error| error.to_string())
+            .and_then(|raw| serde_json::from_str(&raw).map_err(|error| error.to_string()))
+        {
+            Ok(value) => value,
+            Err(error) => {
+                return crate::setup::SetupFinding::fail(
+                    check,
+                    format!(
+                        "{} is unreadable or invalid JSON; left unchanged",
+                        hooks_path.display()
+                    ),
+                    error,
+                );
+            }
+        }
+    } else {
+        serde_json::json!({})
+    };
+
+    let outcome = match merge_cursor_memory_lifecycle(
+        &mut value,
+        &memory_start_command("cursor"),
+        &memory_capture_command("cursor"),
+        &raw_guard_command("cursor"),
+    ) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            return crate::setup::SetupFinding::fail(
+                check,
+                format!(
+                    "{} has an unsupported hook schema; left unchanged",
+                    hooks_path.display()
+                ),
+                error,
+            );
+        }
+    };
+    if outcome == MergeOutcome::AlreadyPresent {
+        return crate::setup::SetupFinding::pass(
+            check,
+            format!(
+                "Cursor memory lifecycle already wired in {}",
+                hooks_path.display()
+            ),
+        );
+    }
+    if let Some(parent) = hooks_path.parent() {
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            return crate::setup::SetupFinding::fail(
+                check,
+                format!("cannot create {}", parent.display()),
+                error.to_string(),
+            );
+        }
+    }
+    let mut body = serde_json::to_string_pretty(&value).unwrap_or_default();
+    body.push('\n');
+    match ags_platform::atomic_write(hooks_path, body.as_bytes()) {
+        Ok(()) => crate::setup::SetupFinding::pass(
+            check,
+            format!(
+                "wired Cursor sessionStart + sessionEnd + stop lifecycle in {}",
                 hooks_path.display()
             ),
         ),

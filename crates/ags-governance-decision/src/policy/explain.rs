@@ -30,7 +30,7 @@ pub fn gate_check(input: &TaskPolicyInput) -> GateCheckOutput {
     let resolved = resolve_policy(input.clone());
     let decision = derive_decision(&resolved);
     GateCheckOutput {
-        schema_version: "0.3.5-execution-policy".to_string(),
+        schema_version: "0.3.6-execution-policy".to_string(),
         decision,
         resolved_policy: resolved,
     }
@@ -44,7 +44,7 @@ pub fn gate_check(input: &TaskPolicyInput) -> GateCheckOutput {
 /// `decision=stop` with error details, not just a raw exit code.
 pub fn gate_check_failed(error_kind: &str, errors: Vec<String>) -> GateErrorOutput {
     GateErrorOutput {
-        schema_version: "0.3.5-execution-policy".to_string(),
+        schema_version: "0.3.6-execution-policy".to_string(),
         decision: GateDecision::Stop,
         error_kind: error_kind.to_string(),
         errors,
@@ -59,8 +59,8 @@ fn build_task_summary(input: &TaskPolicyInput) -> TaskSummary {
         executor: input.executor.clone(),
         task_level: input.task_level.clone(),
         execution_effort: input.effort().to_string(),
-        permission_mode: input.permission_mode.clone(),
-        parallelism: input.parallelism.clone(),
+        execution_mode: input.execution_mode.clone(),
+        execution_topology: input.execution_topology.clone(),
         execution_surface: input.execution_surface.clone(),
     }
 }
@@ -83,20 +83,21 @@ pub fn explain_policy(input: &TaskPolicyInput) -> PolicyExplainOutput {
         decision: if exhaustive { "applied" } else { "not_applicable" }.to_string(),
         field: Some("execution_effort".to_string()),
         detail: if exhaustive {
-            "Execution effort: exhaustive sets is_exhaustive_mode=true without changing permission mode, parallelism, or launch args.".to_string()
+            "Execution effort: exhaustive sets is_exhaustive_mode=true without changing execution mode, execution_topology, or launch args.".to_string()
         } else {
             "Execution effort is not the exhaustive tier; M1-M3 rules do not apply.".to_string()
         },
     });
 
-    // ── M2: Exhaustive effort does not enable parallelism ─────────────
-    let requested_parallelism = super::model::Parallelism::from_str(&input.parallelism);
-    let exhaustive_no_para = exhaustive && !requested_parallelism.is_active();
+    // ── M2: Exhaustive effort does not enable execution_topology ─────────────
+    let requested_execution_topology =
+        super::model::ExecutionTopology::from_str(&input.execution_topology);
+    let exhaustive_no_para = exhaustive && !requested_execution_topology.is_active();
     explanations.push(PolicyExplanation {
         rule_id: "M2".to_string(),
-        rule_name: "Exhaustive Effort No Parallelism".to_string(),
+        rule_name: "Exhaustive Effort No ExecutionTopology".to_string(),
         decision: if exhaustive {
-            if policy.effective_parallelism == super::model::Parallelism::None {
+            if policy.effective_execution_topology == super::model::ExecutionTopology::Single {
                 "passed"
             } else {
                 "not_applicable"
@@ -105,11 +106,11 @@ pub fn explain_policy(input: &TaskPolicyInput) -> PolicyExplainOutput {
             "not_applicable"
         }
         .to_string(),
-        field: Some("parallelism".to_string()),
+        field: Some("execution_topology".to_string()),
         detail: if exhaustive_no_para {
-            "Exhaustive effort does not enable parallelism; effective_parallelism remains none.".to_string()
+            "Exhaustive effort does not enable execution_topology; effective_execution_topology remains none.".to_string()
         } else if exhaustive {
-            "Exhaustive effort is set but parallelism was enabled by another rule; M2 itself does not escalate parallelism.".to_string()
+            "Exhaustive effort is set but execution_topology was enabled by another rule; M2 itself does not escalate execution_topology.".to_string()
         } else {
             "Not an exhaustive-effort task.".to_string()
         },
@@ -133,29 +134,29 @@ pub fn explain_policy(input: &TaskPolicyInput) -> PolicyExplainOutput {
         rule_id: "M4".to_string(),
         rule_name: "Two-State Permission Independence".to_string(),
         decision: "passed".to_string(),
-        field: Some("permission_mode".to_string()),
+        field: Some("execution_mode".to_string()),
         detail: format!(
-            "Effective permission mode is '{}'. Task level does not rewrite permission: plan-only remains non-mutating and execute-and-verify runs directly. Heavy review is enforced independently by task-card validation.",
-            policy.effective_permission_mode
+            "Effective execution mode is '{}'. Task level does not rewrite writer scope. Heavy review is enforced independently by task-card validation.",
+            policy.effective_execution_mode
         ),
     });
 
-    // ── M5: Writability gate — parallelism stripping ──────────────────
+    // ── M5: Writability gate — execution_topology stripping ──────────────────
     let m5_para_reasons: Vec<_> = policy
         .downgrade_reasons
         .iter()
-        .filter(|r| r.rule_id == "M5" && r.field == "parallelism")
+        .filter(|r| r.rule_id == "M5" && r.field == "execution_topology")
         .collect();
     let m5_surface_reasons: Vec<_> = policy
         .downgrade_reasons
         .iter()
         .filter(|r| r.rule_id == "M5" && r.field == "execution_surface")
         .collect();
-    let forbids = policy.effective_permission_mode.forbids_writes();
+    let forbids = policy.effective_execution_mode.forbids_writes();
 
     explanations.push(PolicyExplanation {
         rule_id: "M5".to_string(),
-        rule_name: "Writability Gate — Parallelism & Surface".to_string(),
+        rule_name: "Writability Gate — ExecutionTopology & Surface".to_string(),
         decision: if !m5_para_reasons.is_empty() || !m5_surface_reasons.is_empty() {
             "applied"
         } else if forbids {
@@ -169,22 +170,22 @@ pub fn explain_policy(input: &TaskPolicyInput) -> PolicyExplainOutput {
             let mut parts: Vec<String> = Vec::new();
             if !m5_para_reasons.is_empty() {
                 parts.push(format!(
-                    "Parallelism '{}' stripped → '{}': effective permission '{}' forbids filesystem side effects.",
+                    "ExecutionTopology '{}' stripped → '{}': effective execution mode '{}' forbids filesystem side effects.",
                     m5_para_reasons[0].before, m5_para_reasons[0].after,
-                    policy.effective_permission_mode
+                    policy.effective_execution_mode
                 ));
             }
             if !m5_surface_reasons.is_empty() {
                 parts.push(format!(
-                    "Execution surface '{}' stripped → '{}': effective permission '{}' forbids headless side effects.",
+                    "Execution surface '{}' stripped → '{}': effective execution mode '{}' forbids headless side effects.",
                     m5_surface_reasons[0].before, m5_surface_reasons[0].after,
-                    policy.effective_permission_mode
+                    policy.effective_execution_mode
                 ));
             }
             if parts.is_empty() && forbids {
                 parts.push(format!(
-                    "Effective permission '{}' forbids writes; no writability-violating parallelism or surface was requested — check passed.",
-                    policy.effective_permission_mode
+                    "Effective permission '{}' forbids writes; no writability-violating execution_topology or surface was requested — check passed.",
+                    policy.effective_execution_mode
                 ));
             }
             if parts.is_empty() {
@@ -209,7 +210,7 @@ pub fn explain_policy(input: &TaskPolicyInput) -> PolicyExplainOutput {
             };
             format!(
                 "Effective permission '{}' forbids writes; launch args verified: no --parallel, --worktree, --headless, acceptEdits, or bypassPermissions present. Args: [{}]",
-                policy.effective_permission_mode,
+                policy.effective_execution_mode,
                 args_display
             )
         } else {
@@ -217,38 +218,18 @@ pub fn explain_policy(input: &TaskPolicyInput) -> PolicyExplainOutput {
         },
     });
 
-    // ── M7: Parallelism authority ────────────────────────────────────
-    let m7_reasons: Vec<_> = policy
-        .downgrade_reasons
-        .iter()
-        .filter(|r| r.rule_id == "M7")
-        .collect();
+    // ── M7: topology and delegation planning are non-authority dimensions ──
     explanations.push(PolicyExplanation {
         rule_id: "M7".to_string(),
-        rule_name: "Parallelism Workflow Authority".to_string(),
-        decision: if !m7_reasons.is_empty() {
-            "applied"
-        } else if requested_parallelism.is_active() {
-            "passed"
-        } else {
-            "not_applicable"
-        }
-        .to_string(),
-        field: Some("parallelism".to_string()),
-        detail: if !m7_reasons.is_empty() {
-            format!(
-                "{} — downgraded: '{}' → '{}'.",
-                m7_reasons[0].reason, m7_reasons[0].before, m7_reasons[0].after
-            )
-        } else if requested_parallelism.is_active() {
-            format!(
-                "Parallelism '{}' is active with sufficient Workflow authority '{}'.",
-                requested_parallelism,
-                input.authority()
-            )
-        } else {
-            "No active parallelism requested; M7 does not apply.".to_string()
-        },
+        rule_name: "Topology And Delegation Independence".to_string(),
+        decision: "passed".to_string(),
+        field: Some("execution_topology".to_string()),
+        detail: format!(
+            "Topology '{}' describes layout and Delegation planning '{}' only permits planning; neither grants writer scope beyond Execution mode '{}'.",
+            requested_execution_topology,
+            if input.delegation_planning_enabled() { "yes" } else { "no" },
+            policy.effective_execution_mode
+        ),
     });
 
     // ── M8: Audit trail ──────────────────────────────────────────────
@@ -286,7 +267,7 @@ pub fn explain_policy(input: &TaskPolicyInput) -> PolicyExplainOutput {
             "not_applicable"
         }
         .to_string(),
-        field: Some("permission_mode".to_string()),
+        field: Some("execution_mode".to_string()),
         detail: if !m9_reasons.is_empty() {
             format!(
                 "Generic adapter caps permission at plan-only without explicit approval. {}",
@@ -323,9 +304,9 @@ pub fn explain_policy(input: &TaskPolicyInput) -> PolicyExplainOutput {
                 .to_string(),
         );
     }
-    if policy.effective_permission_mode.forbids_writes() {
+    if policy.effective_execution_mode.forbids_writes() {
         assertions.push(
-            "WRITE PROTECTION: effective permission forbids writes; no write-enabling launch args present."
+            "WRITE PROTECTION: effective execution mode forbids writes; no write-enabling launch args present."
                 .to_string(),
         );
     }
@@ -337,7 +318,7 @@ pub fn explain_policy(input: &TaskPolicyInput) -> PolicyExplainOutput {
     }
     if policy.is_exhaustive_mode {
         assertions.push(
-            "EXHAUSTIVE MODE: deep reasoning enabled (Execution effort: exhaustive). No permission or parallelism escalation."
+            "EXHAUSTIVE MODE: deep reasoning enabled (Execution effort: exhaustive). No permission or execution_topology escalation."
                 .to_string(),
         );
     }
@@ -346,7 +327,7 @@ pub fn explain_policy(input: &TaskPolicyInput) -> PolicyExplainOutput {
     }
 
     PolicyExplainOutput {
-        schema_version: "0.3.5-execution-policy".to_string(),
+        schema_version: "0.3.6-execution-policy".to_string(),
         task_summary: summary,
         explanations,
         safety_assertions: assertions,

@@ -146,7 +146,7 @@ pub fn list_tools() -> ToolListResult {
                             "required": ["schema_version", "request_fingerprint", "phase", "solution_state", "execution_authority", "scope_hash", "targets"],
                             "additionalProperties": false,
                             "properties": {
-                                "schema_version": { "type": "string", "const": "0.3.5-host-route-proposal" },
+                                "schema_version": { "type": "string", "const": "0.3.6-host-route-proposal" },
                                 "request_fingerprint": { "type": "string" },
                                 "phase": { "type": "string", "enum": ["direct_response", "solution_formation", "execution"] },
                                 "solution_state": { "type": "string", "enum": ["not_required", "open", "confirmed"] },

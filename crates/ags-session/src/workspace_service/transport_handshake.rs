@@ -250,6 +250,7 @@ pub(super) fn handle_connection(
         return Err("unsupported workspace daemon handshake".to_string());
     }
     let session_id = fresh_id("daemon-session", &registry.workspace);
+    let startup_executable_hash = registry.executable_hash.clone();
     write_json_line(
         &mut writer,
         &HandshakeResult {
@@ -261,7 +262,7 @@ pub(super) fn handle_connection(
             daemon_nonce: registry.daemon_nonce,
         },
     )?;
-    handler.run(reader, writer, state, session_id);
+    handler.run(reader, writer, state, session_id, startup_executable_hash);
     Ok(())
 }
 

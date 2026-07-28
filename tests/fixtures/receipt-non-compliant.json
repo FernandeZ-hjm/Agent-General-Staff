@@ -1,12 +1,12 @@
 {
-  "schema_version": "0.3.5-task-receipt",
+  "schema_version": "0.3.6-task-receipt",
   "receipt_id": "receipt-noncompliant",
   "timestamp": "unix-0",
   "task_card_hash": "d568542eeaba086b8a48101374828e6c05fa1399a097ab67c63d9f301be96a02",
   "task_card_path": "tests/fixtures/valid-full.md",
   "gate_result": {
     "decision": "stop",
-    "reason": "writable-parallelism-blocked-by-permission"
+    "reason": "writable-execution_topology-blocked-by-permission"
   },
   "verification_results": [
     {

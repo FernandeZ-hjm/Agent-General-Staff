@@ -24,6 +24,7 @@ pub use ags_governance_decision::GovernanceStatus;
 mod edition;
 mod local_checks;
 mod model;
+mod mutation_guard;
 mod orchestrator;
 mod promotion;
 mod release;

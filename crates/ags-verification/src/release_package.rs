@@ -1,7 +1,19 @@
 //! Canonical release-package discovery and payload planning.
 
-use std::path::Path;
+use serde::Serialize;
+use std::collections::BTreeSet;
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
+
+pub const RELEASE_PLAN_SCHEMA_VERSION: &str = "0.3.6-release-plan";
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RuntimeStageResult {
+    pub schema_version: &'static str,
+    pub source_root: String,
+    pub target_root: String,
+    pub staged_files: Vec<String>,
+}
 
 fn matches_path_boundary(relative: &str, boundary: &str) -> bool {
     let relative = relative.trim_start_matches("./").replace('\\', "/");
@@ -150,7 +162,7 @@ pub fn release_package_plan(
         .collect();
 
     let plan = serde_json::json!({
-        "schema_version": "0.3.5-release-plan",
+        "schema_version": RELEASE_PLAN_SCHEMA_VERSION,
         "profile": profile,
         "dry_run": dry_run,
         "source_root": source_root.to_string_lossy(),
@@ -196,10 +208,244 @@ pub fn release_package_plan(
 
     (plan, has_forbidden_included)
 }
+
+pub fn stage_release_runtime(
+    plan_path: &Path,
+    source_root: &Path,
+    target_root: &Path,
+) -> Result<RuntimeStageResult, String> {
+    reject_root_symlink(plan_path, "release plan")?;
+    let plan_bytes = std::fs::read(plan_path)
+        .map_err(|error| format!("cannot read release plan {}: {error}", plan_path.display()))?;
+    let plan: serde_json::Value = serde_json::from_slice(&plan_bytes)
+        .map_err(|error| format!("invalid release plan JSON: {error}"))?;
+    if plan["schema_version"].as_str() != Some(RELEASE_PLAN_SCHEMA_VERSION) {
+        return Err(format!(
+            "release plan schema_version must be {RELEASE_PLAN_SCHEMA_VERSION}"
+        ));
+    }
+    if plan["profile"].as_str() != Some("public-full") {
+        return Err("release plan profile must be public-full".to_string());
+    }
+    for (field, message) in [
+        ("authority_errors", "release payload authority errors"),
+        ("required_missing", "release payload missing required files"),
+        (
+            "extra_files",
+            "release payload contains non-authority files",
+        ),
+        (
+            "content_mismatches",
+            "release payload contains unapproved content drift",
+        ),
+        (
+            "forbidden_included",
+            "release payload contains forbidden files",
+        ),
+    ] {
+        let values = string_array(&plan, field)?;
+        if !values.is_empty() {
+            return Err(format!("{message}: {}", values.join(", ")));
+        }
+    }
+    let runtime_assets = string_array(&plan, "runtime_asset_files")?;
+    let included_files = string_array(&plan, "included_files")?;
+    ensure_unique(&runtime_assets, "runtime_asset_files")?;
+    ensure_unique(&included_files, "included_files")?;
+    let included: BTreeSet<_> = included_files.iter().cloned().collect();
+    let outside: Vec<_> = runtime_assets
+        .iter()
+        .filter(|path| !included.contains(*path))
+        .cloned()
+        .collect();
+    if !outside.is_empty() {
+        return Err(format!(
+            "runtime assets are outside the canonical included payload: {}",
+            outside.join(", ")
+        ));
+    }
+
+    let source_input = absolute(source_root)?;
+    reject_root_symlink(&source_input, "runtime source root")?;
+    let source = source_input
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve runtime source root: {error}"))?;
+    let target_input = absolute(target_root)?;
+    reject_root_symlink(&target_input, "runtime target root")?;
+    std::fs::create_dir_all(&target_input)
+        .map_err(|error| format!("cannot create runtime target root: {error}"))?;
+    let target = target_input
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve runtime target root: {error}"))?;
+    let entries = std::fs::read_dir(&target)
+        .map_err(|error| format!("cannot inspect runtime target root: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("cannot inspect runtime target entry: {error}"))?;
+    if entries.iter().any(|entry| {
+        std::fs::symlink_metadata(entry.path())
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    }) {
+        return Err("runtime target path must not contain a symlink".to_string());
+    }
+    if !entries.is_empty() {
+        return Err("runtime target root must be empty before staging".to_string());
+    }
+
+    let mut validated = Vec::new();
+    for relative in &runtime_assets {
+        let relative_path = safe_relative_path(relative)?;
+        reject_symlink_components(&source, &relative_path, "runtime source")?;
+        let source_file = source.join(&relative_path);
+        let metadata = std::fs::symlink_metadata(&source_file)
+            .map_err(|_| format!("runtime asset missing: {relative}"))?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(format!("runtime asset is not a regular file: {relative}"));
+        }
+        let resolved_source = source_file
+            .canonicalize()
+            .map_err(|error| format!("cannot resolve runtime asset {relative}: {error}"))?;
+        if !resolved_source.starts_with(&source) {
+            return Err(format!("runtime asset escapes source root: {relative}"));
+        }
+        validated.push((relative.clone(), relative_path, resolved_source));
+    }
+
+    for (relative, relative_path, resolved_source) in &validated {
+        let parent = ensure_target_parent(&target, relative_path)?;
+        let target_file = target.join(relative_path);
+        if std::fs::symlink_metadata(&target_file)
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+        {
+            return Err(format!(
+                "runtime target path must not contain a symlink: {relative}"
+            ));
+        }
+        if target_file.exists() && !target_file.is_file() {
+            return Err(format!("runtime target is not a regular file: {relative}"));
+        }
+        let resolved_parent = parent
+            .canonicalize()
+            .map_err(|error| format!("cannot resolve runtime target parent: {error}"))?;
+        if !resolved_parent.starts_with(&target) {
+            return Err(format!("runtime target escapes target root: {relative}"));
+        }
+        std::fs::copy(resolved_source, &target_file)
+            .map_err(|error| format!("cannot stage runtime asset {relative}: {error}"))?;
+    }
+
+    Ok(RuntimeStageResult {
+        schema_version: "0.3.6-runtime-stage",
+        source_root: source.display().to_string(),
+        target_root: target.display().to_string(),
+        staged_files: runtime_assets,
+    })
+}
+
+fn string_array(plan: &serde_json::Value, field: &str) -> Result<Vec<String>, String> {
+    let values = plan
+        .get(field)
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| format!("release plan {field} must be a string array"))?;
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| format!("release plan {field} must be a string array"))
+        })
+        .collect()
+}
+
+fn ensure_unique(values: &[String], field: &str) -> Result<(), String> {
+    let unique: BTreeSet<_> = values.iter().collect();
+    if unique.len() == values.len() {
+        Ok(())
+    } else {
+        Err(format!("release plan {field} must not contain duplicates"))
+    }
+}
+
+fn absolute(path: &Path) -> Result<PathBuf, String> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        std::env::current_dir()
+            .map(|current| current.join(path))
+            .map_err(|error| format!("cannot resolve current directory: {error}"))
+    }
+}
+
+fn reject_root_symlink(path: &Path, label: &str) -> Result<(), String> {
+    if std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        Err(format!("{label} must not be a symlink: {}", path.display()))
+    } else {
+        Ok(())
+    }
+}
+
+fn safe_relative_path(relative: &str) -> Result<PathBuf, String> {
+    let path = Path::new(relative);
+    if relative.is_empty()
+        || relative.contains('\\')
+        || path == Path::new(".")
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(format!("unsafe runtime asset path: {relative}"));
+    }
+    Ok(path.to_path_buf())
+}
+
+fn reject_symlink_components(root: &Path, relative: &Path, label: &str) -> Result<(), String> {
+    reject_root_symlink(root, &format!("{label} root"))?;
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        current.push(component.as_os_str());
+        if std::fs::symlink_metadata(&current)
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+        {
+            return Err(format!(
+                "{label} path must not contain a symlink: {}",
+                relative.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_target_parent(root: &Path, relative: &Path) -> Result<PathBuf, String> {
+    let mut current = root.to_path_buf();
+    if let Some(parent) = relative.parent() {
+        for component in parent.components() {
+            current.push(component.as_os_str());
+            if std::fs::symlink_metadata(&current)
+                .is_ok_and(|metadata| metadata.file_type().is_symlink())
+            {
+                return Err(format!(
+                    "runtime target path must not contain a symlink: {}",
+                    relative.display()
+                ));
+            }
+            std::fs::create_dir(&current)
+                .or_else(|error| if current.is_dir() { Ok(()) } else { Err(error) })
+                .map_err(|error| {
+                    format!(
+                        "runtime target parent is not a directory for {}: {error}",
+                        relative.display()
+                    )
+                })?;
+        }
+    }
+    Ok(current)
+}
 #[cfg(test)]
 mod tests {
     use super::{
         is_public_release_profile, matches_path_boundary, release_file_list, release_package_plan,
+        stage_release_runtime, RELEASE_PLAN_SCHEMA_VERSION,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -209,16 +455,16 @@ mod tests {
     #[test]
     fn file_boundary_requires_exact_match() {
         assert!(matches_path_boundary(
-            "scripts/verify.sh",
-            "scripts/verify.sh"
+            "scripts/ags-memory-lifecycle-omp.js",
+            "scripts/ags-memory-lifecycle-omp.js"
         ));
         assert!(!matches_path_boundary(
-            "scripts/verify.sh.tmp",
-            "scripts/verify.sh"
+            "scripts/ags-memory-lifecycle-omp.js.tmp",
+            "scripts/ags-memory-lifecycle-omp.js"
         ));
         assert!(!matches_path_boundary(
-            "scripts/verify.sh/extra",
-            "scripts/verify.sh"
+            "scripts/ags-memory-lifecycle-omp.js/extra",
+            "scripts/ags-memory-lifecycle-omp.js"
         ));
     }
 
@@ -244,6 +490,138 @@ mod tests {
             .expect("system time")
             .as_nanos();
         std::env::temp_dir().join(format!("{name}-{}-{suffix}", std::process::id()))
+    }
+
+    fn write_stage_plan(root: &Path, assets: &[&str]) -> PathBuf {
+        let plan = root.join("plan.json");
+        fs::write(
+            &plan,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "schema_version": RELEASE_PLAN_SCHEMA_VERSION,
+                "profile": "public-full",
+                "authority_errors": [],
+                "required_missing": [],
+                "extra_files": [],
+                "content_mismatches": [],
+                "forbidden_included": [],
+                "runtime_asset_files": assets,
+                "included_files": assets,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        plan
+    }
+
+    #[test]
+    fn runtime_stage_copies_only_authorized_assets() {
+        let root = unique_temp_repo("ags-runtime-stage-success");
+        let source = root.join("source");
+        let target = root.join("target");
+        for relative in ["manifests/a.yaml", "protocol/b.md"] {
+            let path = source.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, relative).unwrap();
+        }
+        let plan = write_stage_plan(&root, &["manifests/a.yaml", "protocol/b.md"]);
+
+        let result = stage_release_runtime(&plan, &source, &target).unwrap();
+        assert_eq!(result.staged_files.len(), 2);
+        assert_eq!(
+            fs::read_to_string(target.join("manifests/a.yaml")).unwrap(),
+            "manifests/a.yaml"
+        );
+        assert_eq!(
+            fs::read_to_string(target.join("protocol/b.md")).unwrap(),
+            "protocol/b.md"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn runtime_stage_rejects_non_authority_plans_and_nonempty_targets() {
+        for field in [
+            "authority_errors",
+            "required_missing",
+            "extra_files",
+            "content_mismatches",
+            "forbidden_included",
+        ] {
+            let root = unique_temp_repo("ags-runtime-stage-authority");
+            fs::create_dir_all(root.join("source")).unwrap();
+            let plan_path = write_stage_plan(&root, &[]);
+            let mut plan: serde_json::Value =
+                serde_json::from_slice(&fs::read(&plan_path).unwrap()).unwrap();
+            plan[field] = serde_json::json!(["rejected.txt"]);
+            fs::write(&plan_path, serde_json::to_vec(&plan).unwrap()).unwrap();
+            assert!(
+                stage_release_runtime(&plan_path, &root.join("source"), &root.join("target"))
+                    .is_err(),
+                "{field}"
+            );
+            let _ = fs::remove_dir_all(root);
+        }
+
+        let root = unique_temp_repo("ags-runtime-stage-nonempty");
+        fs::create_dir_all(root.join("source")).unwrap();
+        fs::create_dir_all(root.join("target")).unwrap();
+        fs::write(root.join("target/stale"), "stale").unwrap();
+        let plan = write_stage_plan(&root, &[]);
+        let error =
+            stage_release_runtime(&plan, &root.join("source"), &root.join("target")).unwrap_err();
+        assert!(error.contains("must be empty"), "{error}");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn runtime_stage_rejects_path_traversal_and_assets_outside_payload() {
+        let root = unique_temp_repo("ags-runtime-stage-paths");
+        fs::create_dir_all(root.join("source")).unwrap();
+        let plan = write_stage_plan(&root, &["../outside"]);
+        let error =
+            stage_release_runtime(&plan, &root.join("source"), &root.join("target")).unwrap_err();
+        assert!(error.contains("unsafe runtime asset path"), "{error}");
+        let _ = fs::remove_dir_all(&root);
+
+        let root = unique_temp_repo("ags-runtime-stage-outside");
+        fs::create_dir_all(root.join("source")).unwrap();
+        let plan_path = write_stage_plan(&root, &["private.txt"]);
+        let mut plan: serde_json::Value =
+            serde_json::from_slice(&fs::read(&plan_path).unwrap()).unwrap();
+        plan["included_files"] = serde_json::json!([]);
+        fs::write(&plan_path, serde_json::to_vec(&plan).unwrap()).unwrap();
+        let error = stage_release_runtime(&plan_path, &root.join("source"), &root.join("target"))
+            .unwrap_err();
+        assert!(error.contains("outside the canonical included payload"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runtime_stage_rejects_symlinked_plan_source_and_target_paths() {
+        let root = unique_temp_repo("ags-runtime-stage-symlinks");
+        let source = root.join("source");
+        let outside = root.join("outside");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("a.yaml"), "outside").unwrap();
+        std::os::unix::fs::symlink(&outside, source.join("manifests")).unwrap();
+        let plan = write_stage_plan(&root, &["manifests/a.yaml"]);
+        let error =
+            stage_release_runtime(&plan, &source, &root.join("target-source-link")).unwrap_err();
+        assert!(error.contains("source path must not contain a symlink"));
+
+        let linked_plan = root.join("linked-plan.json");
+        std::os::unix::fs::symlink(&plan, &linked_plan).unwrap();
+        let error = stage_release_runtime(&linked_plan, &source, &root.join("target-plan-link"))
+            .unwrap_err();
+        assert!(error.contains("plan must not be a symlink"));
+
+        let target = root.join("target");
+        std::os::unix::fs::symlink(&outside, &target).unwrap();
+        let error = stage_release_runtime(&plan, &source, &target).unwrap_err();
+        assert!(error.contains("target root must not be a symlink"));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -279,7 +657,11 @@ mod tests {
         assert!(included.contains(&"Cargo.toml"));
         assert!(included.contains(&"crates/ags-cli/src/main.rs"));
         assert!(included.contains(&"protocol/task-card-template.md"));
-        assert!(!included.contains(&"manifests/templates/runtime-profiles.template.yaml"));
+        assert!(included.contains(&"manifests/templates/runtime-profiles.template.yaml"));
+        assert!(
+            included.contains(&"manifests/templates/hooks/claude-code-executor-stop.template.js")
+        );
+        assert!(included.contains(&"manifests/templates/hooks/codex-planner-recall.template.json"));
         assert!(included.contains(&"manifests/mcp-registry.yaml"));
         assert!(included.contains(&"manifests/skills-registry.yaml"));
         assert!(!included.contains(&"protocol/evolution-memory.md"));

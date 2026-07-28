@@ -42,7 +42,7 @@ suite_interfaces:
     package:
       manager: "cargo"
       name: "ags-mcp"
-      version: "0.3.5"
+      version: "0.3.6"
       repository: "this repository"
       license: "GPL-3.0-only"
     install:
@@ -56,11 +56,12 @@ suite_interfaces:
       installed_clients:
         - "codex"
         - "claude-code"
+        - "cursor"
+        - "omp"
       not_installed_clients:
         # Tencent Agent host family (WorkBuddy, CodeBuddy-Code) and Cursor are
         # recognized hosts but not wired by default. tencent-agent is the
         # umbrella host id; workbuddy/codebuddy-code are its clients.
-        - "cursor"
         - "tencent-agent"
         - "workbuddy"
         - "codebuddy-code"

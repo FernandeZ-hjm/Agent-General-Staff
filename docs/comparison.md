@@ -49,7 +49,7 @@ Agent 的**任务入口**提供 boundary check —— 确保 Agent 在项目约�
 - 宿主是否已完成 AGS MCP `ags_preflight` 初始化门禁？
 - 任务卡是否合法（validator）？
 - 权限模式是否合适（policy resolver）？
-- 权限是否收敛为 `plan-only` / `execute-and-verify` 两态，且独立 stop 条件是否满足？
+- 权限是否由 execution mode/topology/delegation 三元组显式封闭，且实际使用只能向下收缩？
 
 **关系**：AGS 可以作为一个 LangGraph workflow 的 **pre-launch gate** 和
 **post-execution receipt 层**。LangGraph 负责工作流怎么跑，AGS 负责能不能跑、

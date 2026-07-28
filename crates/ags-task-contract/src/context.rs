@@ -17,7 +17,7 @@ pub enum SlotSource {
     WorkspaceIdentity,
     /// Filled from local memory paths.
     MemoryPath,
-    /// A well-known default value (e.g. Parallelism: none).
+    /// A well-known default value (e.g. Execution topology: single).
     Default,
     /// Deterministically derived from the closed handoff contract.
     Derived,

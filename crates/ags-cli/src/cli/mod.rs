@@ -114,7 +114,6 @@ pub(crate) enum Commands {
         format: String,
     },
     /// Task card operations
-    #[command(hide = true)]
     Task {
         #[command(subcommand)]
         action: TaskAction,
@@ -220,10 +219,19 @@ pub(crate) enum Commands {
 
     // ── M6 Receipt / Compliance ──────────────────────────────────────
     /// Receipt generation and verification operations (M6)
-    #[command(hide = true)]
     Receipt {
         #[command(subcommand)]
         action: ReceiptAction,
+    },
+    /// Receipt-backed project memory operations.
+    Memory {
+        #[command(subcommand)]
+        action: MemoryAction,
+    },
+    /// Unified governed-host lifecycle adapter.
+    Host {
+        #[command(subcommand)]
+        action: HostAction,
     },
     /// Compliance checking against policy gates (M6)
     #[command(hide = true)]
@@ -288,7 +296,7 @@ pub(crate) enum Commands {
     ///
     /// Flow: validate → gate → policy → adapter resolve → launch plan.
     /// The runner ONLY consumes resolved execution policy — it never reads
-    /// raw task-card fields to decide permissions, parallelism, or launch args.
+    /// raw task-card fields to decide permissions, execution_topology, or launch args.
     ///
     /// --check-only stops after gate check. --dry-run outputs the full launch
     /// plan. Without flags, returns `host_execution_required` after the same
@@ -312,7 +320,7 @@ pub(crate) enum Commands {
         approve_writes: bool,
 
         /// Structured current-task approval signal from the live request
-        /// (audit/hint only — task level does not downgrade the permission mode).
+        /// (audit/hint only — task level does not downgrade the execution mode).
         #[arg(long, default_value_t = false)]
         current_task_approval: bool,
 

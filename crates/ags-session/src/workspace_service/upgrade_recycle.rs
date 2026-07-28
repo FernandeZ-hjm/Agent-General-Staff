@@ -20,10 +20,71 @@ use super::transport_handshake::{
     read_json_line, spawn_workspace_connection, write_json_line, Handshake, HandshakeResult,
     WIRE_SCHEMA,
 };
+use super::WorkspaceServiceStatus;
 use super::WorkspaceSessionHandler;
 
 const DEFAULT_IDLE_MS: u64 = 30 * 60 * 1000;
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+pub(super) fn workspace_service_status_impl(
+    workspace: &Path,
+) -> Result<WorkspaceServiceStatus, String> {
+    let workspace = canonical_workspace_root(workspace)?;
+    let paths = ServicePaths::new(
+        &ags_capability_governance::locate_runtime_home(),
+        &workspace,
+    );
+    let current_hash = current_executable_hash()?;
+    let Some(registry) = read_registry(&paths.registry)? else {
+        return Ok(WorkspaceServiceStatus {
+            schema_version: "0.3.6-workspace-service-status".to_string(),
+            workspace: workspace.display().to_string(),
+            state: "stopped".to_string(),
+            pid: None,
+            endpoint: None,
+            executable_hash: None,
+            current_executable_hash: current_hash,
+            current_binary: false,
+        });
+    };
+    let alive = registry_matches_process(&registry);
+    let reachable = alive && TcpStream::connect(&registry.endpoint).is_ok();
+    Ok(WorkspaceServiceStatus {
+        schema_version: "0.3.6-workspace-service-status".to_string(),
+        workspace: workspace.display().to_string(),
+        state: if reachable { "running" } else { "stale" }.to_string(),
+        pid: Some(registry.pid),
+        endpoint: Some(registry.endpoint),
+        current_binary: reachable && registry.executable_hash == current_hash,
+        executable_hash: Some(registry.executable_hash),
+        current_executable_hash: current_hash,
+    })
+}
+
+pub(super) fn restart_workspace_service_impl(
+    workspace: &Path,
+) -> Result<WorkspaceServiceStatus, String> {
+    let workspace = canonical_workspace_root(workspace)?;
+    let paths = ServicePaths::new(
+        &ags_capability_governance::locate_runtime_home(),
+        &workspace,
+    );
+    if let Some(registry) = read_registry(&paths.registry)? {
+        if registry.workspace != workspace {
+            return Err("workspace daemon registry identity mismatch".to_string());
+        }
+        if registry_matches_process(&registry) {
+            if request_shutdown(&registry)? {
+                wait_for_shutdown(&paths, &registry)?;
+            }
+        } else {
+            remove_registry_if_owned(&paths.registry, &registry.token);
+        }
+    }
+    let (stream, _) = connect_or_start(&workspace)?;
+    drop(stream);
+    workspace_service_status_impl(&workspace)
+}
 
 pub(super) fn run_workspace_daemon_impl(
     workspace: &Path,

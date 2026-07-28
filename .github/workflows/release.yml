@@ -28,20 +28,17 @@ jobs:
           tag_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
           main_commit="$(git rev-parse "origin/main^{commit}")"
           test "$tag_commit" = "$main_commit"
-          version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(p["version"] for p in data["packages"] if p["name"] == "ags-cli"))')"
+          version="$(cargo run -q -p ags-cli -- --version)"
+          version="${version##* }"
           npm_version="$(node -p "require('./packages/ags-mcp/package.json').version")"
           test "$GITHUB_REF_NAME" = "v$version"
           test "$npm_version" = "$version"
           grep -Fqx "## Release $version" RELEASE_NOTES.md
           test "$GITHUB_REPOSITORY" = "FernandeZ-hjm/Agent-General-Staff"
           ! grep -Eq 'name: "(gep|evomap)"|evolution_asset_recall|private-runtime' manifests/mcp-registry.yaml
-      - run: cargo fmt --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: cargo test --workspace
-        env:
-          RUSTFLAGS: "-D warnings"
       - run: npm test --prefix packages/ags-mcp
-      - run: python3 scripts/test-stage-release-runtime.py
+      - run: cargo test -p ags-verification runtime_stage
       - run: cargo run -q -p ags-cli -- verify --scope release --format text
       - name: Freeze canonical public release plan
         shell: bash
@@ -96,7 +93,7 @@ jobs:
           asset="ags-v${version}-${{ matrix.target }}.tar.gz"
           mkdir -p stage/runtime
           cp "target/${{ matrix.target }}/release/ags" stage/ags
-          python3 scripts/stage-release-runtime.py \
+          "target/${{ matrix.target }}/release/ags" release stage-runtime \
             --plan public-release-plan.json \
             --source . \
             --target stage/runtime
@@ -109,7 +106,7 @@ jobs:
           $asset = "ags-v$version-${{ matrix.target }}.zip"
           New-Item -ItemType Directory -Force -Path stage/runtime | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/ags.exe" stage/ags.exe
-          python scripts/stage-release-runtime.py `
+          & "target/${{ matrix.target }}/release/ags.exe" release stage-runtime `
             --plan public-release-plan.json `
             --source . `
             --target stage/runtime

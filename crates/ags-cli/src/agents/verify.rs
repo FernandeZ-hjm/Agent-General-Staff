@@ -20,7 +20,7 @@ pub(in crate::agents) fn cmd_agents_verify(host: &str, strict: bool, format: &st
     let ok = capability.status == "ok" && memory.status == "full";
 
     let output = serde_json::json!({
-        "schema_version": "0.3.5-agent-host-verification",
+        "schema_version": "0.3.6-agent-host-verification",
         "host": host,
         "status": if ok { "ok" } else { "drifted" },
         "capability_visibility": capability,

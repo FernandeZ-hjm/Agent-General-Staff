@@ -128,7 +128,7 @@ pub fn run(repo_root: &Path) -> HealthReport {
 use serde::{Deserialize, Serialize};
 
 /// Schema version for bootstrap plan/apply artifacts.
-pub const SCHEMA_VERSION: &str = "0.3.5-bootstrap-plan";
+pub const SCHEMA_VERSION: &str = "0.3.6-bootstrap-plan";
 
 /// A single action in a bootstrap plan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -151,46 +151,20 @@ pub struct BootstrapPlan {
 /// The plan describes what files would be written — it is **read-only**
 /// and does not create any files.
 ///
-/// `source_repo` is the A repository providing protocol/ and scripts/.
+/// `source_repo` is the A repository providing the canonical Rust payload.
 /// `target` is the directory to be bootstrapped.
-pub fn plan(source_repo: &Path, target: &Path) -> BootstrapPlan {
+pub fn plan(source_repo: &Path, target: &Path) -> Result<BootstrapPlan, Vec<String>> {
     let mut actions: Vec<BootstrapAction> = Vec::new();
 
-    // ── Public-safe protocol files ──────────────────────────────────────
-    let protocol_files = [
-        "agent-task-protocol.md",
-        "task-card-template.md",
-        "runtime-adapters.md",
-        "task-routing.md",
-    ];
-
-    for name in &protocol_files {
-        let src = source_repo.join("protocol").join(name);
-        let dst = target.join("protocol").join(name);
-        if src.exists() {
-            actions.push(BootstrapAction {
-                action: "copy".into(),
-                path: dst.display().to_string(),
-                description: format!("copy protocol/{}", name),
-            });
-        }
-    }
-
-    // ── Private suite validation script (NOT public-safe) ────────────────
-    // validate.sh requires Cargo.toml + ags-cli. verify.sh is excluded
-    // entirely because it references private source topology and build gates.
-    let scripts = ["validate.sh"];
-
-    for name in &scripts {
-        let src = source_repo.join("scripts").join(name);
-        let dst = target.join("scripts").join(name);
-        if src.exists() {
-            actions.push(BootstrapAction {
-                action: "copy".into(),
-                path: dst.display().to_string(),
-                description: format!("copy scripts/{}", name),
-            });
-        }
+    // Bootstrap consumes the same A-owned authority as public promotion. This
+    // prevents a second handwritten payload list from drifting away from the
+    // Rust kernel or silently reintroducing retired scripts.
+    for relative in crate::release_manifest::public_source_payload_files(source_repo)? {
+        actions.push(BootstrapAction {
+            action: "copy".into(),
+            path: target.join(&relative).display().to_string(),
+            description: format!("copy canonical payload {relative}"),
+        });
     }
 
     // ── Bootstrap log (generated, not copied) ───────────────────────────
@@ -200,11 +174,11 @@ pub fn plan(source_repo: &Path, target: &Path) -> BootstrapPlan {
         description: "create bootstrap log".into(),
     });
 
-    BootstrapPlan {
+    Ok(BootstrapPlan {
         schema_version: SCHEMA_VERSION.into(),
         target: target.display().to_string(),
         actions,
-    }
+    })
 }
 
 /// Execute a bootstrap plan — copy files from source to target.
@@ -308,13 +282,14 @@ pub fn apply(source_repo: &Path, plan: &BootstrapPlan) -> HealthReport {
 /// are present after a bootstrap apply.
 ///
 /// This is a lighter check than `run()` — it does NOT require a Rust
-/// workspace (Cargo.toml, cargo, rustc).  Bootstrapped targets may be
-/// non-Rust projects that only need protocol/ and scripts/.
+/// workspace build to succeed, but v0.3.6 payloads always carry the Rust
+/// kernel surface instead of first-party shell implementations.
 pub fn verify(target: &Path) -> HealthReport {
     let mut report = HealthReport::new("bootstrap-verify");
 
     let expected = [
-        ("scripts/validate.sh", "validate script"),
+        ("Cargo.toml", "Rust workspace manifest"),
+        ("crates/ags-cli/Cargo.toml", "AGS CLI crate manifest"),
         ("protocol/agent-task-protocol.md", "agent task protocol"),
         ("protocol/task-card-template.md", "task card template"),
         (".ags-bootstrap.log", "bootstrap log"),
@@ -333,58 +308,6 @@ pub fn verify(target: &Path) -> HealthReport {
                 format!("{label} missing ({rel_path})"),
                 format!("expected at: {}", full.display()),
             ));
-        }
-    }
-
-    // A Windows image can expose an unrunnable WSL bash.exe launcher on PATH.
-    // Prove the selected executable can actually run before treating its
-    // syntax-check exit status as evidence about the copied scripts.
-    let bash_usable = ags_platform::is_on_path("bash")
-        && std::process::Command::new("bash")
-            .args(["-c", "exit 0"])
-            .current_dir(target)
-            .output()
-            .is_ok_and(|output| output.status.success());
-
-    // ── bash -n syntax check on copied scripts ─────────────────────────
-    for script in &["scripts/validate.sh"] {
-        let full = target.join(script);
-        if full.exists() {
-            if !bash_usable {
-                report.add(Finding::skip(
-                    format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
-                    format!("bash -n {script} skipped (bash is not runnable)"),
-                ));
-                continue;
-            }
-            let output = std::process::Command::new("bash")
-                .arg("-n")
-                .arg(script)
-                .current_dir(target)
-                .output();
-            match output {
-                Ok(o) if o.status.success() => {
-                    report.add(Finding::pass(
-                        format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
-                        format!("bash -n {script} OK"),
-                    ));
-                }
-                Ok(o) => {
-                    let stderr = String::from_utf8_lossy(&o.stderr);
-                    report.add(Finding::fail(
-                        format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
-                        format!("bash -n {script} FAILED"),
-                        stderr.trim().to_string(),
-                    ));
-                }
-                Err(e) => {
-                    report.add(Finding::warn(
-                        format!("bootstrap-verify-bash-n-{}", sanitize_name(script)),
-                        format!("bash not available, skipped syntax check for {script}"),
-                        format!("{e}"),
-                    ));
-                }
-            }
         }
     }
 
@@ -473,7 +396,10 @@ mod tests {
     fn names_are_sanitized_for_check_ids() {
         assert_eq!(sanitize_name("crates/"), "crates");
         assert_eq!(sanitize_name("Cargo.toml"), "Cargo-toml");
-        assert_eq!(sanitize_name("scripts/verify.sh"), "scripts-verify-sh");
+        assert_eq!(
+            sanitize_name("templates/hooks/check.sh"),
+            "templates-hooks-check-sh"
+        );
     }
 
     #[test]
@@ -485,9 +411,9 @@ mod tests {
             .unwrap();
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("bootstrapped");
-        let plan = plan(repo_root, &target);
+        let plan = plan(repo_root, &target).unwrap();
 
-        assert_eq!(plan.schema_version, "0.3.5-bootstrap-plan");
+        assert_eq!(plan.schema_version, "0.3.6-bootstrap-plan");
         assert!(!plan.actions.is_empty());
         assert!(plan.actions.iter().any(|action| {
             Path::new(&action.path)
@@ -497,12 +423,23 @@ mod tests {
         assert!(plan.actions.iter().any(|action| {
             Path::new(&action.path)
                 .strip_prefix(&target)
-                .is_ok_and(|relative| relative.starts_with("scripts"))
+                .is_ok_and(|relative| relative.starts_with("crates/ags-cli"))
         }));
-        assert!(!plan
+        let script_actions = plan
             .actions
             .iter()
-            .any(|action| action.path.contains("verify.sh")));
+            .filter_map(|action| {
+                Path::new(&action.path)
+                    .strip_prefix(&target)
+                    .ok()
+                    .filter(|relative| relative.starts_with("scripts"))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            script_actions,
+            vec![Path::new("scripts/ags-memory-lifecycle-omp.js")],
+            "only the required OMP lifecycle bridge may remain in scripts/"
+        );
         assert!(
             plan.actions
                 .iter()
@@ -540,17 +477,16 @@ mod tests {
             "protocol file should exist"
         );
         assert!(
-            target.join("scripts").join("validate.sh").exists(),
-            "script should exist"
-        );
-        assert!(
             target.join(".ags-bootstrap.log").exists(),
             "bootstrap log should exist"
         );
-        // verify.sh excluded
+        assert!(
+            !target.join("scripts").join("validate.sh").exists(),
+            "retired validate.sh must not be in bootstrap payload"
+        );
         assert!(
             !target.join("scripts").join("verify.sh").exists(),
-            "verify.sh must not be in bootstrap payload"
+            "retired verify.sh must not be in bootstrap payload"
         );
         let report = verify(&target);
         assert!(report.passed(), "verify should pass: {:?}", report.findings);

@@ -28,4 +28,4 @@ ags session preflight --for <host> --target .
 `ags-init`、`ags-doctor` 或 `ags-agents` 提交为 MCP `SkillTarget`；它们由宿主按
 冻结的 CLI hint 直接调用。
 
-此技能期望的 AGS 版本：0.3.5。
+此技能期望的 AGS 版本：0.3.6。

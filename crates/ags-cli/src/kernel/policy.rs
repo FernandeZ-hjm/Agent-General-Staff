@@ -12,12 +12,12 @@ pub(in crate::kernel) fn format_policy_text(
     lines.push(format!("Executor:          {}", policy.executor));
     lines.push(format!("Runtime adapter:   {}", policy.runtime_adapter));
     lines.push(format!(
-        "Permission mode:   {}",
-        policy.effective_permission_mode
+        "Execution mode:   {}",
+        policy.effective_execution_mode
     ));
     lines.push(format!(
-        "Parallelism:       {}",
-        policy.effective_parallelism
+        "Execution topology:       {}",
+        policy.effective_execution_topology
     ));
     lines.push(format!(
         "Exec surface:      {}",
@@ -148,7 +148,7 @@ fn format_explain_text(
     lines.push(format!("Task level: {}", output.task_summary.task_level));
     lines.push(format!(
         "Permission: {}",
-        output.task_summary.permission_mode
+        output.task_summary.execution_mode
     ));
     lines.push(String::new());
 

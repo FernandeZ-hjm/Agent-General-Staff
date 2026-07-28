@@ -81,6 +81,8 @@ fn host_entry_semantic_report(core_path: &Path) -> ags_verification::doctor::Hea
         .filter(|marker| content.contains(marker))
         .collect();
     let core_required = [
+        "决策优先级：第一性原理",
+        "技能和 MCP 只提供",
         "HostRouteProposal",
         "RouteResolution",
         "ags://capabilities/current-host",
@@ -238,7 +240,9 @@ mod tests {
 
         fs::write(
             &core,
-            "HostRouteProposal RouteResolution ags://capabilities/current-host\n\
+            "决策优先级：第一性原理\n\
+             技能和 MCP 只提供方法、证据与执行接口\n\
+             HostRouteProposal RouteResolution ags://capabilities/current-host\n\
              ags-task-handoff.md verification-before-completion\n",
         )
         .unwrap();

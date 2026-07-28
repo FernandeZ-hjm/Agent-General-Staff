@@ -1,6 +1,6 @@
 # Agent Task Protocol
 
-> AGS 0.3.5 权威任务协议。宿主解释语义；AGS 校验结构化提案、权限与确定性能力准入。
+> AGS 0.3.6 权威任务协议。宿主解释语义；AGS 校验结构化提案、权限与确定性能力准入。
 
 ## 完整生命周期
 
@@ -100,17 +100,20 @@ Runner 不启动宿主、不执行项目任务、不运行事后验证、不写�
 
 ### 8. Receipt
 
-收据 writer、reader 与 verifier 只接受当前 `0.3.5-task-receipt` schema。`governance_evidence` 只保存 decision/lease/proposal/scope/snapshot/policy hash、skill selection 与 outcome event id，不保存原始请求。只有
-`ags task close <task-card> <delivery-report>` 返回 `valid: true` 后，交付报告才可进入最终
-receipt 或 Stop-hook 任务存档。
+收据 writer、reader 与 verifier 只接受当前 `0.3.6-task-receipt` schema。
+`governance_evidence` 只保存 decision/lease/proposal/scope/snapshot/policy hash
+与 skill selection，不保存原始请求。只有
+`ags task close <task-card> <launch-plan> <delivery-report> --receipt-out <receipt>`
+完成三方 hash 绑定与权限降权校验后，receipt 才可进入任务存档。
 
 ## 任务级别与权限
 
-任务级别是风险/review 层，不是需求路由结果，也不能覆盖显式 permission：
+任务级别是风险/review 层，不是需求路由结果，也不能覆盖显式 execution authority：
 
-- Light：缺省 `execute-and-verify`；边界小、验证快。
-- Medium：缺省 `execute-and-verify`；跨文件或需要完整集成验证。
-- Heavy：缺省 `plan-only`；若卡片显式为 `execute-and-verify`，可直接执行，但必须完成独立 Heavy review。
+- `Execution mode`、`Execution topology`、`Delegation planning` 必须在任务卡中显式声明。
+- Light：边界小、验证快。
+- Medium：跨文件或需要完整集成验证。
+- Heavy：必须完成独立 review，但不能因此升级或降级执行权限。
 
 destructive、external-write、credential、migration、release 与 protected-path 是独立 stop conditions。
 

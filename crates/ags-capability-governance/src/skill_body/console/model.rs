@@ -1,42 +1,16 @@
 use super::*;
-pub const CONSOLE_SCHEMA_VERSION: &str = "0.3.5-skill-console";
+pub const CONSOLE_SCHEMA_VERSION: &str = "0.3.6-skill-console";
 
-// ── Command runner seam ─────────────────────────────────────────────────────
+// ── Host-adapter runner seam ────────────────────────────────────────────────
 
-/// Outcome of attempting to run a host CLI (e.g. `claude mcp list`).
-#[derive(Debug, Clone)]
-pub enum CommandOutcome {
-    /// The command ran to completion (regardless of exit status).
-    Ran { success: bool, stdout: String },
-    /// The command binary could not be spawned (not installed / not on PATH).
-    Unavailable,
-}
-
-/// Seam for running host CLIs. Production uses [`SystemCommandRunner`]; tests
-/// inject canned responses so no real host CLI is ever invoked.
-pub trait CommandRunner: Send + Sync {
-    fn run(&self, program: &str, args: &[&str]) -> CommandOutcome;
-}
-
-/// Production runner — spawns the real binary via `std::process::Command`.
-/// Read-only host discovery commands only; never used for installers.
-pub struct SystemCommandRunner;
-
-impl CommandRunner for SystemCommandRunner {
-    fn run(&self, program: &str, args: &[&str]) -> CommandOutcome {
-        match std::process::Command::new(program).args(args).output() {
-            Ok(out) => CommandOutcome::Ran {
-                success: out.status.success(),
-                stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
-            },
-            Err(_) => CommandOutcome::Unavailable,
-        }
-    }
-}
+pub use ags_host_integration::{
+    HostProbeExecution as CommandOutcome, HostProbeRunner as CommandRunner,
+    SystemHostProbeRunner as SystemCommandRunner,
+};
 
 // ── Injectable context (testability seam) ───────────────────────────────────
 
-/// All filesystem roots and the command runner the console reads through.
+/// All filesystem roots and the host-protocol runner the console reads through.
 /// Production builds it with the real repo root, real `$HOME`, and the system
 /// command runner; tests inject temp dirs and a mock runner.
 pub struct ConsoleContext {

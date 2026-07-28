@@ -15,33 +15,33 @@
 schema_version: "2.0-skill"
 suite:
   name: "agent-general-staff"
-  version: "0.3.5"
+  version: "0.3.6"
   description: >
-    Agent General Staff 0.3.5 public edition — Rust-native governance control
+    Agent General Staff 0.3.6 public edition — Rust-native governance control
     plane for multi-agent development. It governs admission, authority, policy,
     evidence, capability state, and lifecycle; it is not an Agent scheduler.
     Optional third-party development skills require confirmed installation.
   required:
     - name: "ags-agents"
-      version: "0.3.5"
+      version: "0.3.6"
       source: "templates/command-skills/ags-agents"
-      hash: "ead45bd7153c1bbdb182881ee33f0ddf9b4abb71caacf1ef801f0413b7431d6b"
+      hash: "225be8b756bfc4ccacfb9fad67f2e71c47b9ab186962bd99d1f7690491dd5dbb"
     - name: "ags-doctor"
-      version: "0.3.5"
+      version: "0.3.6"
       source: "templates/command-skills/ags-doctor"
-      hash: "96cec5efdbdbb64ec046ca501d736fdea573de9bc5385665f371a495be4490cc"
+      hash: "dc8065de2d375ea4d49835b8540ee504ea1e3ba88c553072ad55f1911d8da8b8"
     - name: "ags-init"
-      version: "0.3.5"
+      version: "0.3.6"
       source: "templates/command-skills/ags-init"
-      hash: "6244330d2ac5fa6210f7d41306f33ca7cd3b84084a253fffa203a1b7de360d33"
+      hash: "466a978d7841dc0d0d19e4b1916f74dd5a212332f07dcf8850e0c7ff19875532"
     - name: "ags-setup"
-      version: "0.3.5"
+      version: "0.3.6"
       source: "templates/command-skills/ags-setup"
-      hash: "6f28bef949ba984ed4f6306cc5467657c252ab1e02ea4c95a05f7fffb7ba3916"
+      hash: "df42a14526c58c7bdaeb01264fe3b1492b9131edea94de285fc528e9697e18ff"
     - name: "ags-skill"
-      version: "0.3.5"
+      version: "0.3.6"
       source: "templates/command-skills/ags-skill"
-      hash: "cbfb4a527cba70cf2bdc00a4ee8ccde73a608933eb82860e86fa686da30e2209"
+      hash: "ce18a8fc0dcf224c4a5f138ab1690530da2f1bf45ba5d5e0eb7567995ec65896"
   optional:
     # The host submits a typed HostRouteProposal. Skill Resolver validates exact
     # SkillTarget identifiers against the machine-local HostCapabilitySnapshot;

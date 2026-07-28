@@ -182,8 +182,8 @@ fn project_item(ctx: &AssessContext<'_>) -> OnboardingItem {
 }
 
 fn host_item(ctx: &AssessContext<'_>) -> OnboardingItem {
-    let Some(spec) = ags_host_integration::platform_spec(ctx.host)
-        .filter(|spec| spec.native_memory_adapter.is_some())
+    let Some(spec) =
+        ags_host_integration::platform_spec(ctx.host).filter(|spec| spec.memory_protocol.is_some())
     else {
         return OnboardingItem {
             id: format!("host:{}", ctx.host),

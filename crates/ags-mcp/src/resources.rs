@@ -56,7 +56,7 @@ pub fn list_resources() -> ResourceListResult {
                 uri: "ags://protocol/runtime-adapters".to_string(),
                 name: "Runtime Adapters".to_string(),
                 description: Some(
-                    "Executor, permission mode, parallelism, execution surface, and resolve rules."
+                    "Executor, execution mode, execution_topology, execution surface, and resolve rules."
                         .to_string(),
                 ),
                 mimeType: Some("text/markdown".to_string()),

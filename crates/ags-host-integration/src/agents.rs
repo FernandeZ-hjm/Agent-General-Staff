@@ -1,4 +1,4 @@
-use crate::{mcp_server_line, platform_spec, CrossPlatformInitPlan};
+use crate::{inspect_host_mcp, CrossPlatformInitPlan, HostProbeStatus};
 
 /// One row of `ags agents scan`: a detected host + AGS-MCP registration probe.
 #[derive(Debug, Clone)]
@@ -75,21 +75,20 @@ pub fn ags_mcp_tool_surface() -> Vec<&'static str> {
         "ags_apply_action",
     ]
 }
-/// Production probe: Claude Code via `claude mcp list` and Codex via
-/// `codex mcp list`. OMP is deliberately unprobeable here: a Codex registry
-/// entry is configuration-source evidence, not a live OMP-session connection.
+/// Production probe through the one host-adapter engine. Each host supplies
+/// only its communication protocol.
 pub fn default_agents_probe(host_id: &str) -> Option<(bool, String)> {
-    let probe = platform_spec(host_id)?.mcp_probe?;
-    if !probe.live_runtime_probe {
-        return None;
-    }
-    Some(match mcp_server_line(host_id, "ags") {
-        Ok(Some(line)) => (true, line),
-        Ok(None) => (false, format!("not in {}", probe.evidence_source)),
-        Err(error) => (
-            false,
-            format!("{} unavailable: {error}", probe.evidence_source),
-        ),
+    let report = inspect_host_mcp(host_id);
+    (report.status != HostProbeStatus::ProtocolUnsupported).then(|| {
+        report.find("ags").map_or_else(
+            || {
+                (
+                    false,
+                    format!("{}: {}", report.evidence_source, report.evidence),
+                )
+            },
+            |entry| (entry.active, entry.evidence.clone()),
+        )
     })
 }
 
@@ -129,10 +128,7 @@ mod agents_scan_tests {
     }
 
     #[test]
-    fn omp_is_not_marked_registered_from_an_inherited_codex_source() {
-        assert!(
-            default_agents_probe("omp").is_none(),
-            "a Codex registry row is not live OMP runtime evidence"
-        );
+    fn unprobeable_host_remains_advice_only() {
+        assert!(default_agents_probe("workbuddy").is_none());
     }
 }

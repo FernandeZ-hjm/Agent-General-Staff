@@ -27,8 +27,11 @@ classification.
 - AGS MCP is the suite host adapter, not a governed third-party MCP.
 - `agents govern --apply` may install only AGS-owned host memory adapters;
   external MCP registration remains advice-only.
-- Task-card permission is only `plan-only` or `execute-and-verify`; Heavy adds an
-  independent review gate.
+- Task-card authority is the explicit `Execution mode`, `Execution topology`,
+  and `Delegation planning` tuple; Heavy adds only an independent review gate.
+- Debugging, architecture, and change-design decisions start from first
+  principles. Skills and MCPs provide evidence or capability, not the decision;
+  this rule never bypasses safety or authorization gates.
 - Preserve unrelated working-tree changes and user-owned entry-file content.
 
 ## Read when relevant
@@ -51,7 +54,7 @@ Use the narrowest relevant check during development. Before delivery:
 cargo fmt --check
 RUSTFLAGS="-D warnings" cargo test
 cargo build --release
-bash scripts/verify.sh
+ags verify --scope release
 git diff --check
 ```
 

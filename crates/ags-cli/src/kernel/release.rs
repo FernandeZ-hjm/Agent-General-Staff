@@ -88,5 +88,26 @@ pub(crate) fn run(action: ReleaseAction) {
             dry_run,
             format,
         } => cmd_release_package(&profile, dry_run, &format),
+        ReleaseAction::StageRuntime {
+            plan,
+            source,
+            target,
+            format,
+        } => {
+            let result =
+                ags_verification::release_package::stage_release_runtime(&plan, &source, &target)
+                    .unwrap_or_else(|error| {
+                        eprintln!("release stage-runtime: {error}");
+                        std::process::exit(1);
+                    });
+            crate::output::emit(&format, &result, || {
+                format!(
+                    "Release runtime staged\nsource: {}\ntarget: {}\nfiles: {}",
+                    result.source_root,
+                    result.target_root,
+                    result.staged_files.len()
+                )
+            });
+        }
     }
 }

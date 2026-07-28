@@ -23,6 +23,7 @@ mod action;
 mod action_model;
 /// Delivery-report closure against a canonical task contract.
 pub mod delivery_report;
+pub mod memory;
 mod receipt;
 mod receipt_model;
 

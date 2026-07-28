@@ -6,7 +6,7 @@ plane. It governs admission, authorization, policy, verification, receipts,
 capability state, and memory closure; it is not an Agent scheduler or execution
 platform.
 
-Current product release: **v0.3.5**.
+Current product release: **v0.3.6**.
 
 The normal request path is:
 
@@ -139,8 +139,7 @@ Use the narrowest relevant check while developing. Before promotion:
 cargo fmt --check
 RUSTFLAGS="-D warnings" cargo test
 cargo build --release
-bash scripts/verify.sh
-ags verify --scope local
+ags verify --scope release
 git diff --check
 ```
 

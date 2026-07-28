@@ -32,7 +32,9 @@ mod resources;
 mod server;
 mod tools;
 
-pub use ags_session::run_stdio_adapter;
+pub use ags_session::{
+    restart_workspace_service, run_stdio_adapter, workspace_service_status, WorkspaceServiceStatus,
+};
 
 use std::io::BufReader;
 use std::net::TcpStream;
@@ -48,8 +50,15 @@ impl ags_session::WorkspaceSessionHandler for McpSessionHandler {
         writer: TcpStream,
         workspace: Arc<ags_session::WorkspaceState>,
         session_id: String,
+        startup_executable_hash: String,
     ) {
-        server::run_mcp_session(reader, writer, workspace, session_id);
+        server::run_mcp_session(
+            reader,
+            writer,
+            workspace,
+            session_id,
+            startup_executable_hash,
+        );
     }
 }
 

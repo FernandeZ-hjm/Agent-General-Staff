@@ -101,6 +101,21 @@ pub fn sha256_file(path: &Path) -> Result<String, String> {
     Ok(sha256(bytes))
 }
 
+/// Fast cryptographic digest for request-time executable integrity checks.
+///
+/// Unlike artifact hashes, this digest is recomputed over the complete file on
+/// every governed request. BLAKE3 keeps that fail-closed check cheap enough to
+/// remain on the request path without relying on filesystem metadata.
+pub fn executable_content_hash(path: &Path) -> Result<String, String> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        format!(
+            "executable hash read failed for {}: {error}",
+            path.display()
+        )
+    })?;
+    Ok(format!("blake3:{}", blake3::hash(&bytes).to_hex()))
+}
+
 /// Atomically replace a file with fully flushed bytes in the same directory.
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path

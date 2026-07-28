@@ -29,6 +29,49 @@ fn group_has_marker(group: &serde_json::Value, marker: &str) -> bool {
     nested || flat
 }
 
+const LEGACY_AGS_MEMORY_MARKERS: &[&str] = &[
+    "context-memory-start.py",
+    "claude-stop-memory-capture.py",
+    "raw-tool-call-stop-guard.js",
+    "memory-start-context.sh",
+    "context-memory.sh",
+    "stop-archive-hook.sh",
+];
+
+fn is_legacy_ags_memory_hook(hook: &serde_json::Value) -> bool {
+    command_str(hook).is_some_and(|command| {
+        LEGACY_AGS_MEMORY_MARKERS
+            .iter()
+            .any(|marker| command.contains(marker))
+    })
+}
+
+fn retire_legacy_ags_memory_hooks(groups: &mut Vec<serde_json::Value>) -> bool {
+    let before = serde_json::to_vec(groups).unwrap_or_default();
+    let mut kept = Vec::with_capacity(groups.len());
+    for mut group in groups.drain(..) {
+        if is_legacy_ags_memory_hook(&group) {
+            continue;
+        }
+        if let Some(nested) = group
+            .get_mut("hooks")
+            .and_then(|hooks| hooks.as_array_mut())
+        {
+            nested.retain(|hook| !is_legacy_ags_memory_hook(hook));
+            let ags_only_empty_group = nested.is_empty()
+                && group
+                    .as_object()
+                    .is_some_and(|object| object.keys().all(|key| key == "hooks"));
+            if ags_only_empty_group {
+                continue;
+            }
+        }
+        kept.push(group);
+    }
+    *groups = kept;
+    serde_json::to_vec(groups).unwrap_or_default() != before
+}
+
 pub(super) fn hooks_contain(groups: &[serde_json::Value], marker: &str) -> bool {
     groups.iter().any(|group| group_has_marker(group, marker))
 }
@@ -41,10 +84,10 @@ fn memory_hook_entry(command: &str) -> serde_json::Value {
     })
 }
 
-fn raw_guard_hook_entry() -> serde_json::Value {
+fn raw_guard_hook_entry(command: &str) -> serde_json::Value {
     serde_json::json!({
         "type": "command",
-        "command": raw_guard_command(),
+        "command": command,
         "timeout": 2,
     })
 }
@@ -82,9 +125,14 @@ pub(in crate::setup) fn merge_memory_start(
         *start = serde_json::json!([]);
     }
     let start_arr = start.as_array_mut().expect("SessionStart array");
+    let changed = retire_legacy_ags_memory_hooks(start_arr);
 
     if hooks_contain(start_arr, MEMORY_START_MARKER) {
-        return MergeOutcome::AlreadyPresent;
+        return if changed {
+            MergeOutcome::Wired
+        } else {
+            MergeOutcome::AlreadyPresent
+        };
     }
 
     let entry = memory_start_hook_entry(command);
@@ -111,6 +159,7 @@ pub(crate) fn merge_codex_memory_lifecycle(
     value: &mut serde_json::Value,
     start_command: &str,
     close_command: &str,
+    guard_command: &str,
 ) -> MergeOutcome {
     let mut changed = merge_memory_start(value, start_command) == MergeOutcome::Wired;
     let root = value.as_object_mut().expect("object");
@@ -124,9 +173,7 @@ pub(crate) fn merge_codex_memory_lifecycle(
         .get_mut("UserPromptSubmit")
         .and_then(|groups| groups.as_array_mut())
     {
-        let before = prompt_groups.len();
-        prompt_groups.retain(|group| !group_has_marker(group, "memory-start-context.sh"));
-        changed |= before != prompt_groups.len();
+        changed |= retire_legacy_ags_memory_hooks(prompt_groups);
     }
 
     let end = hooks
@@ -137,6 +184,7 @@ pub(crate) fn merge_codex_memory_lifecycle(
         changed = true;
     }
     let end_arr = end.as_array_mut().expect("SessionEnd array");
+    changed |= retire_legacy_ags_memory_hooks(end_arr);
     if !hooks_contain(end_arr, MEMORY_CAPTURE_MARKER) {
         end_arr.push(serde_json::json!({
             "hooks": [{
@@ -148,6 +196,21 @@ pub(crate) fn merge_codex_memory_lifecycle(
         changed = true;
     }
 
+    let stop = hooks.entry("Stop").or_insert_with(|| serde_json::json!([]));
+    if !stop.is_array() {
+        *stop = serde_json::json!([]);
+        changed = true;
+    }
+    let stop_arr = stop.as_array_mut().expect("Stop array");
+    changed |= retire_legacy_ags_memory_hooks(stop_arr);
+    if !hooks_contain(stop_arr, RAW_GUARD_MARKER) {
+        stop_arr.insert(
+            0,
+            serde_json::json!({ "hooks": [raw_guard_hook_entry(guard_command)] }),
+        );
+        changed = true;
+    }
+
     if changed {
         MergeOutcome::Wired
     } else {
@@ -155,7 +218,7 @@ pub(crate) fn merge_codex_memory_lifecycle(
     }
 }
 
-fn insert_raw_guard(stop_arr: &mut Vec<serde_json::Value>) {
+fn insert_raw_guard(stop_arr: &mut Vec<serde_json::Value>, command: &str) {
     let mut first_nested_group: Option<usize> = None;
     let mut preferred_group: Option<usize> = None;
     for (idx, group) in stop_arr.iter().enumerate() {
@@ -163,7 +226,9 @@ fn insert_raw_guard(stop_arr: &mut Vec<serde_json::Value>) {
             if first_nested_group.is_none() {
                 first_nested_group = Some(idx);
             }
-            if group_has_marker(group, MEMORY_CAPTURE_MARKER) {
+            if group_has_marker(group, MEMORY_CAPTURE_MARKER)
+                || group_has_marker(group, EVOLVER_MARKER)
+            {
                 preferred_group = Some(idx);
                 break;
             }
@@ -175,9 +240,12 @@ fn insert_raw_guard(stop_arr: &mut Vec<serde_json::Value>) {
             .get_mut("hooks")
             .and_then(|h| h.as_array_mut())
             .expect("nested hooks array")
-            .insert(0, raw_guard_hook_entry());
+            .insert(0, raw_guard_hook_entry(command));
     } else {
-        stop_arr.insert(0, serde_json::json!({ "hooks": [raw_guard_hook_entry()] }));
+        stop_arr.insert(
+            0,
+            serde_json::json!({ "hooks": [raw_guard_hook_entry(command)] }),
+        );
     }
 }
 
@@ -190,6 +258,7 @@ fn insert_raw_guard(stop_arr: &mut Vec<serde_json::Value>) {
 pub(in crate::setup) fn merge_memory_capture(
     value: &mut serde_json::Value,
     command: &str,
+    guard_command: &str,
 ) -> MergeOutcome {
     if !value.is_object() {
         *value = serde_json::json!({});
@@ -208,9 +277,9 @@ pub(in crate::setup) fn merge_memory_capture(
     }
     let stop_arr = stop.as_array_mut().expect("stop array");
 
-    let mut changed = false;
+    let mut changed = retire_legacy_ags_memory_hooks(stop_arr);
     if !hooks_contain(stop_arr, RAW_GUARD_MARKER) {
-        insert_raw_guard(stop_arr);
+        insert_raw_guard(stop_arr, guard_command);
         changed = true;
     }
 
@@ -224,13 +293,31 @@ pub(in crate::setup) fn merge_memory_capture(
 
     let entry = memory_hook_entry(command);
 
-    let first_nested_group = stop_arr.iter().position(|group| {
-        group
-            .get("hooks")
-            .and_then(|hooks| hooks.as_array())
-            .is_some()
-    });
-    if let Some(gi) = first_nested_group {
+    let mut evolver_group: Option<usize> = None;
+    let mut first_nested_group: Option<usize> = None;
+    for (idx, group) in stop_arr.iter().enumerate() {
+        if let Some(arr) = group.get("hooks").and_then(|hooks| hooks.as_array()) {
+            if first_nested_group.is_none() {
+                first_nested_group = Some(idx);
+            }
+            if arr.iter().any(|hook| hook_has_marker(hook, EVOLVER_MARKER)) {
+                evolver_group = Some(idx);
+                break;
+            }
+        }
+    }
+
+    if let Some(gi) = evolver_group {
+        let hooks = stop_arr[gi]
+            .get_mut("hooks")
+            .and_then(|hooks| hooks.as_array_mut())
+            .expect("nested hooks array");
+        let position = hooks
+            .iter()
+            .position(|hook| hook_has_marker(hook, EVOLVER_MARKER))
+            .unwrap_or(hooks.len());
+        hooks.insert(position, entry);
+    } else if let Some(gi) = first_nested_group {
         stop_arr[gi]
             .get_mut("hooks")
             .and_then(|h| h.as_array_mut())
@@ -241,6 +328,59 @@ pub(in crate::setup) fn merge_memory_capture(
     }
 
     MergeOutcome::Wired
+}
+
+/// Merge Cursor's native flat command-hook format while preserving all
+/// non-AGS entries.
+pub(crate) fn merge_cursor_memory_lifecycle(
+    value: &mut serde_json::Value,
+    start_command: &str,
+    close_command: &str,
+    guard_command: &str,
+) -> Result<MergeOutcome, String> {
+    if !value.is_object() {
+        *value = serde_json::json!({});
+    }
+    let root = value.as_object_mut().expect("object");
+    match root.get("version").and_then(serde_json::Value::as_u64) {
+        Some(1) | None => {}
+        Some(version) => {
+            return Err(format!(
+                "unsupported Cursor hooks version {version}; expected version 1"
+            ));
+        }
+    }
+    root.entry("version").or_insert(serde_json::json!(1));
+    let hooks = root.entry("hooks").or_insert_with(|| serde_json::json!({}));
+    if !hooks.is_object() {
+        return Err("Cursor hooks field must be an object".to_string());
+    }
+    let hooks = hooks.as_object_mut().expect("hooks object");
+    let mut changed = false;
+    for (event, command, marker, timeout) in [
+        ("sessionStart", start_command, MEMORY_START_MARKER, 5),
+        ("sessionEnd", close_command, MEMORY_CAPTURE_MARKER, 3),
+        ("stop", guard_command, RAW_GUARD_MARKER, 2),
+    ] {
+        let entries = hooks.entry(event).or_insert_with(|| serde_json::json!([]));
+        if !entries.is_array() {
+            return Err(format!("Cursor hooks.{event} must be an array"));
+        }
+        let entries = entries.as_array_mut().expect("event array");
+        if !hooks_contain(entries, marker) {
+            entries.push(serde_json::json!({
+                "type": "command",
+                "command": command,
+                "timeout": timeout,
+            }));
+            changed = true;
+        }
+    }
+    Ok(if changed {
+        MergeOutcome::Wired
+    } else {
+        MergeOutcome::AlreadyPresent
+    })
 }
 
 /// Describe the ordering of the relevant Stop steps for diagnostics.
@@ -261,6 +401,8 @@ pub(super) fn describe_order(value: &serde_json::Value) -> String {
                             && !seen.contains(&"memory-capture")
                         {
                             seen.push("memory-capture");
+                        } else if c.contains(EVOLVER_MARKER) && !seen.contains(&"evolver") {
+                            seen.push("evolver");
                         }
                     }
                 }
@@ -268,4 +410,169 @@ pub(super) fn describe_order(value: &serde_json::Value) -> String {
         }
     }
     seen.join(" → ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stop_commands(value: &serde_json::Value) -> Vec<&str> {
+        value["hooks"]["Stop"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|group| group["hooks"].as_array().into_iter().flatten())
+            .filter_map(command_str)
+            .collect()
+    }
+
+    #[test]
+    fn memory_and_evolver_stop_hooks_coexist_in_safe_order() {
+        let mut settings = serde_json::json!({
+            "project_owned": {"keep": true},
+            "hooks": {
+                "Stop": [{
+                    "hooks": [
+                        {"type": "command", "command": "echo project-owned"},
+                        {"type": "command", "command": "node .claude/hooks/evolver-session-end.js"}
+                    ]
+                }]
+            }
+        });
+
+        assert_eq!(
+            merge_memory_capture(
+                &mut settings,
+                &memory_capture_command("claude-code"),
+                &raw_guard_command("claude-code")
+            ),
+            MergeOutcome::Wired
+        );
+        let commands = stop_commands(&settings);
+        let raw = commands
+            .iter()
+            .position(|command| command.contains(RAW_GUARD_MARKER))
+            .unwrap();
+        let memory = commands
+            .iter()
+            .position(|command| command.contains(MEMORY_CAPTURE_MARKER))
+            .unwrap();
+        let evolver = commands
+            .iter()
+            .position(|command| command.contains(EVOLVER_MARKER))
+            .unwrap();
+
+        assert!(raw < memory && memory < evolver);
+        assert!(commands.contains(&"echo project-owned"));
+        assert_eq!(settings["project_owned"]["keep"], true);
+        assert_eq!(
+            merge_memory_capture(
+                &mut settings,
+                &memory_capture_command("claude-code"),
+                &raw_guard_command("claude-code")
+            ),
+            MergeOutcome::AlreadyPresent
+        );
+    }
+
+    #[test]
+    fn cursor_lifecycle_is_flat_idempotent_and_preserves_existing_hooks() {
+        let mut hooks = serde_json::json!({
+            "version": 1,
+            "project_owned": true,
+            "hooks": {
+                "sessionStart": [{"type": "command", "command": "echo keep-start"}],
+                "stop": [{"type": "command", "command": "echo keep-stop"}]
+            }
+        });
+        assert_eq!(
+            merge_cursor_memory_lifecycle(
+                &mut hooks,
+                &memory_start_command("cursor"),
+                &memory_capture_command("cursor"),
+                &raw_guard_command("cursor"),
+            )
+            .unwrap(),
+            MergeOutcome::Wired
+        );
+        assert_eq!(hooks["project_owned"], true);
+        for (event, marker, host) in [
+            ("sessionStart", MEMORY_START_MARKER, "--host cursor"),
+            ("sessionEnd", MEMORY_CAPTURE_MARKER, "--host cursor"),
+            ("stop", RAW_GUARD_MARKER, "--host cursor"),
+        ] {
+            let entries = hooks["hooks"][event].as_array().unwrap();
+            assert!(hooks_contain(entries, marker));
+            assert!(entries
+                .iter()
+                .any(|entry| command_str(entry).is_some_and(|command| command.contains(host))));
+        }
+        assert_eq!(
+            merge_cursor_memory_lifecycle(
+                &mut hooks,
+                &memory_start_command("cursor"),
+                &memory_capture_command("cursor"),
+                &raw_guard_command("cursor"),
+            )
+            .unwrap(),
+            MergeOutcome::AlreadyPresent
+        );
+    }
+
+    #[test]
+    fn cursor_merge_fails_closed_on_unknown_schema() {
+        let mut hooks = serde_json::json!({"version": 2, "hooks": {}});
+        let original = hooks.clone();
+        assert!(merge_cursor_memory_lifecycle(
+            &mut hooks,
+            &memory_start_command("cursor"),
+            &memory_capture_command("cursor"),
+            &raw_guard_command("cursor"),
+        )
+        .is_err());
+        assert_eq!(hooks, original);
+    }
+
+    #[test]
+    fn legacy_wiring_is_replaced_without_removing_evolver_or_user_hooks() {
+        let mut settings = serde_json::json!({
+            "hooks": {
+                "SessionStart": [{
+                    "hooks": [
+                        {"command": "node keep-start.js"},
+                        {"command": "$HOME/.agents/scripts/context-memory-start.py"}
+                    ]
+                }],
+                "Stop": [{
+                    "hooks": [
+                        {"command": "node \"$HOME/.agents/scripts/raw-tool-call-stop-guard.js\""},
+                        {"command": "$HOME/.agents/scripts/claude-stop-memory-capture.py"},
+                        {"command": "node .claude/hooks/evolver-session-end.js"},
+                        {"command": "node keep-stop.js"}
+                    ]
+                }]
+            }
+        });
+
+        assert_eq!(
+            merge_memory_start(&mut settings, &memory_start_command("claude-code")),
+            MergeOutcome::Wired
+        );
+        assert_eq!(
+            merge_memory_capture(
+                &mut settings,
+                &memory_capture_command("claude-code"),
+                &raw_guard_command("claude-code"),
+            ),
+            MergeOutcome::Wired
+        );
+        let rendered = settings.to_string();
+        for marker in LEGACY_AGS_MEMORY_MARKERS {
+            assert!(!rendered.contains(marker));
+        }
+        assert!(rendered.contains("keep-start.js"));
+        assert!(rendered.contains("keep-stop.js"));
+        assert!(rendered.contains("evolver-session-end.js"));
+        assert!(rendered.contains("--host claude-code"));
+    }
 }
