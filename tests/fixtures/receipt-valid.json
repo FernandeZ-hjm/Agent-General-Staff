@@ -1,8 +1,8 @@
 {
-  "schema_version": "0.3.4-task-receipt",
-  "receipt_id": "receipt-b0bad337861a",
+  "schema_version": "0.3.5-task-receipt",
+  "receipt_id": "receipt-ebd47a7e5f7b",
   "timestamp": "unix-0",
-  "task_card_hash": "b0bad337861a4cadc387399dc7c8846265fa0ee8d485852f1171185359fde7f0",
+  "task_card_hash": "ebd47a7e5f7bb784561478324c40fff52a024461476c5c0e7df186aab57a102a",
   "task_card_path": "tests/fixtures/valid-full.md",
   "gate_result": {
     "decision": "allow"

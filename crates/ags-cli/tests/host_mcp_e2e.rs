@@ -313,7 +313,7 @@ impl McpClient {
                 "name": "ags_route_request",
                 "arguments": {
                     "proposal": {
-                        "schema_version": "0.3.4-host-route-proposal",
+                        "schema_version": "0.3.5-host-route-proposal",
                         "request_fingerprint": fingerprint,
                         "phase": "execution",
                         "solution_state": "confirmed",
@@ -463,7 +463,7 @@ fn hermetic_host_adapters_share_one_workspace_service_but_keep_sessions_and_leas
         .any(|error| error["code"] == "skill_target_kind_mismatch"));
 
     let handoff = json!({
-        "schema_version": "0.3.4-handoff-contract",
+        "schema_version": "0.3.5-handoff-contract",
         "task_level": "Light",
         "task": "compile the routed E2E task card",
         "fields": {
@@ -510,7 +510,7 @@ fn hermetic_host_adapters_share_one_workspace_service_but_keep_sessions_and_leas
     let applied = clients[0].apply(6, compile_lease, compile_action);
     assert!(applied["content"][0]["text"]
         .as_str()
-        .is_some_and(|text| text.contains("0.3.4-task-contract")));
+        .is_some_and(|text| text.contains("0.3.5-task-contract")));
 
     let route = clients[0].route_project_verify();
     let lease_id = route["lease"]["lease_id"].as_str().unwrap();

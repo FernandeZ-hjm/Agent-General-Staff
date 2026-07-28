@@ -19,41 +19,39 @@ pub(in crate::update) fn cmd_update_check(format: &str) {
     let source = source_root_or_exit("ags update check");
     let home = default_private_runtime_home();
     let lanes = build_all_update_lanes(&source, &home);
-    if format == "json" {
-        let arr: Vec<_> = lanes.iter().map(update_lane_json).collect();
-        let reg =
-            managed_projects::load(&managed_projects::registry_path(&home)).unwrap_or_default();
-        let reg_json: serde_json::Value =
-            serde_json::from_str(&managed_projects::render_registry_json(&reg)).unwrap_or_default();
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "command": "update check",
-                "version": AGS_VERSION,
-                "lanes": arr,
-                "managed_projects": reg_json,
-            }))
-            .unwrap()
-        );
-    } else {
-        println!("AGS Update — drift check (read-only)");
-        println!("Version: {AGS_VERSION}");
+    let arr: Vec<_> = lanes.iter().map(update_lane_json).collect();
+    let reg = managed_projects::load(&managed_projects::registry_path(&home)).unwrap_or_default();
+    let reg_json: serde_json::Value =
+        serde_json::from_str(&managed_projects::render_registry_json(&reg))
+            .expect("managed project registry renderer emits JSON");
+    let output = serde_json::json!({
+        "command": "update check",
+        "version": AGS_VERSION,
+        "lanes": arr,
+        "managed_projects": reg_json,
+    });
+    crate::output::emit(format, &output, || {
+        let mut lines = vec![
+            "AGS Update — drift check (read-only)".to_string(),
+            format!("Version: {AGS_VERSION}"),
+        ];
         for p in &lanes {
             let drift = match p.drift {
                 Some(true) => "DRIFT",
                 Some(false) => "ok",
                 None => "unknown",
             };
-            println!(
+            lines.push(format!(
                 "  [{:<8}] {:<6} {:<7} {}",
                 p.lane.id(),
                 p.risk_tier,
                 drift,
                 p.summary
-            );
+            ));
         }
-        println!("\nNext: `ags update plan` for the full plan; `ags update apply --apply` updates local executable lanes.");
-    }
+        lines.push("\nNext: `ags update plan` for the full plan; `ags update apply --apply` updates local executable lanes.".to_string());
+        lines.join("\n")
+    });
 }
 pub(in crate::update) fn cmd_update_plan(lane: Option<UpdateLane>, format: &str) {
     let source = source_root_or_exit("ags update plan");
@@ -62,28 +60,23 @@ pub(in crate::update) fn cmd_update_plan(lane: Option<UpdateLane>, format: &str)
         build_all_update_lanes(&source, &home),
         lane.map(lifecycle_lane),
     );
-    if format == "json" {
-        let arr: Vec<_> = lanes.iter().map(update_lane_json).collect();
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "command": "update plan",
-                "lanes": arr,
-                "receipt_outline": "apply / repair-local emit a receipt to <runtime home>/receipts/",
-            }))
-            .unwrap()
-        );
-    } else {
-        println!("AGS Update Plan (plan-only)");
+    let arr: Vec<_> = lanes.iter().map(update_lane_json).collect();
+    let output = serde_json::json!({
+        "command": "update plan",
+        "lanes": arr,
+        "receipt_outline": "apply / repair-local emit a receipt to <runtime home>/receipts/",
+    });
+    crate::output::emit(format, &output, || {
+        let mut lines = vec!["AGS Update Plan (plan-only)".to_string()];
         for p in &lanes {
             let exec = if p.auto_executes {
                 "auto (local)"
             } else {
                 "advice-only"
             };
-            println!("  → [{}] {} ({})", p.lane.id(), p.summary, exec);
+            lines.push(format!("  → [{}] {} ({})", p.lane.id(), p.summary, exec));
             for c in &p.commands {
-                println!("       $ {c}");
+                lines.push(format!("       $ {c}"));
             }
             for detail in &p.details {
                 let target = detail.get("target").and_then(|v| v.as_str()).unwrap_or("?");
@@ -93,11 +86,12 @@ pub(in crate::update) fn cmd_update_plan(lane: Option<UpdateLane>, format: &str)
                     .and_then(|v| v.as_array())
                     .map(Vec::len)
                     .unwrap_or(0);
-                println!("       - {target}: {status}, {changed} file(s)");
+                lines.push(format!("       - {target}: {status}, {changed} file(s)"));
             }
         }
-        println!("\nNOTE: apply executes core/runtime/projects locally under explicit --apply; agents/skills/public stay advice. Project refresh never commits or pushes. Receipt written on apply.");
-    }
+        lines.push("\nNOTE: apply executes core/runtime/projects locally under explicit --apply; agents/skills/public stay advice. Project refresh never commits or pushes. Receipt written on apply.".to_string());
+        lines.join("\n")
+    });
 }
 pub(in crate::update) fn cmd_update_verify(target: Option<PathBuf>, strict: bool, format: &str) {
     let home = update_verify_runtime_home(target);
@@ -131,59 +125,57 @@ pub(in crate::update) fn cmd_update_verify(target: Option<PathBuf>, strict: bool
     }
     .drift();
 
-    if format == "json" {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "command": "update verify",
-                "version": AGS_VERSION,
-                "runtime_home": home.display().to_string(),
-                "runtime_present": runtime_present,
-                "drift": drift,
-                "projects": update_lane_json(&project_lane),
-                "skill_resolver": {
-                    "active_host": "codex",
-                    "snapshot_path": snapshot_path.display().to_string(),
-                    "snapshot_present": snapshot_present,
-                    "snapshot_current": skill_snapshot_current,
-                    "auth_evidence_boundary_clean": auth_boundary_clean,
-                    "refresh_command": "ags capability snapshot --host codex --write",
+    let output = serde_json::json!({
+        "command": "update verify",
+        "version": AGS_VERSION,
+        "runtime_home": home.display().to_string(),
+        "runtime_present": runtime_present,
+        "drift": drift,
+        "projects": update_lane_json(&project_lane),
+        "skill_resolver": {
+            "active_host": "codex",
+            "snapshot_path": snapshot_path.display().to_string(),
+            "snapshot_present": snapshot_present,
+            "snapshot_current": skill_snapshot_current,
+            "auth_evidence_boundary_clean": auth_boundary_clean,
+            "refresh_command": "ags capability snapshot --host codex --write",
+        },
+    });
+    crate::output::emit(format, &output, || {
+        [
+            "AGS Update Verify".to_string(),
+            format!("  version: {AGS_VERSION}"),
+            format!(
+                "  runtime home: {} ({})",
+                home.display(),
+                if runtime_present {
+                    "present"
+                } else {
+                    "MISSING"
+                }
+            ),
+            format!(
+                "  projects: {}",
+                if projects_drift { "DRIFT" } else { "clean" }
+            ),
+            format!(
+                "  skill snapshot: {} auth_boundary={}",
+                if skill_snapshot_current {
+                    "current"
+                } else if snapshot_present {
+                    "STALE"
+                } else {
+                    "MISSING"
                 },
-            }))
-            .unwrap()
-        );
-    } else {
-        println!("AGS Update Verify");
-        println!("  version: {AGS_VERSION}");
-        println!(
-            "  runtime home: {} ({})",
-            home.display(),
-            if runtime_present {
-                "present"
-            } else {
-                "MISSING"
-            }
-        );
-        println!(
-            "  projects: {}",
-            if projects_drift { "DRIFT" } else { "clean" }
-        );
-        println!(
-            "  skill snapshot: {} auth_boundary={}",
-            if skill_snapshot_current {
-                "current"
-            } else if snapshot_present {
-                "STALE"
-            } else {
-                "MISSING"
-            },
-            if auth_boundary_clean {
-                "clean"
-            } else {
-                "VIOLATION"
-            },
-        );
-    }
+                if auth_boundary_clean {
+                    "clean"
+                } else {
+                    "VIOLATION"
+                },
+            ),
+        ]
+        .join("\n")
+    });
     if strict && drift {
         std::process::exit(1);
     }

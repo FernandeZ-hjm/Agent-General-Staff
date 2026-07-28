@@ -92,75 +92,75 @@ pub(in crate::agents) fn cmd_agents_govern(agent: Option<&str>, apply: bool, for
         }
     }
 
-    if format == "json" {
-        let host_plans: Vec<_> = targets
-            .iter()
-            .map(|p| {
-                serde_json::json!({
-                    "host": p.id,
-                    "display": p.display,
-                    "detected": p.detected,
-                    "advised_mcp_registration": p.mcp_host_command,
-                    "registers_server": "ags",
-                    "mandatory_first_tool": "ags_preflight",
-                    "mcp_tools": tool_surface,
-                })
-            })
-            .collect();
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "command": "agents govern",
-                "mode": if apply { "apply" } else { "dry-run" },
-                "apply_requested": apply,
-                "apply_status": if apply { if apply_report.passed() { "memory-adapters-applied" } else { "memory-adapter-apply-failed" } } else { "advised-only" },
-                "applied": apply,
-                "selection_required": !apply,
-                "governance_chain": chain,
-                "registration_granularity": "mcp-server",
+    let host_plans: Vec<_> = targets
+        .iter()
+        .map(|p| {
+            serde_json::json!({
+                "host": p.id,
+                "display": p.display,
+                "detected": p.detected,
+                "advised_mcp_registration": p.mcp_host_command,
                 "registers_server": "ags",
                 "mandatory_first_tool": "ags_preflight",
                 "mcp_tools": tool_surface,
-                "hosts": host_plans,
-                "memory_adapter_report": if apply { serde_json::to_value(&apply_report).unwrap_or_default() } else { serde_json::Value::Null },
-                "receipt": receipt_path.as_ref().map(|path| path.display().to_string()),
-                "note": "MCP registration remains advice-only. --apply writes only AGS-owned Claude/Codex hooks or the OMP extension for the selected supported host.",
-            }))
-            .unwrap()
-        );
-    } else {
-        println!(
+            })
+        })
+        .collect();
+    let output = serde_json::json!({
+        "command": "agents govern",
+        "mode": if apply { "apply" } else { "dry-run" },
+        "apply_requested": apply,
+        "apply_status": if apply { if apply_report.passed() { "memory-adapters-applied" } else { "memory-adapter-apply-failed" } } else { "advised-only" },
+        "applied": apply,
+        "selection_required": !apply,
+        "governance_chain": chain,
+        "registration_granularity": "mcp-server",
+        "registers_server": "ags",
+        "mandatory_first_tool": "ags_preflight",
+        "mcp_tools": tool_surface,
+        "hosts": host_plans,
+        "memory_adapter_report": if apply { serde_json::to_value(&apply_report).expect("serializable doctor report") } else { serde_json::Value::Null },
+        "receipt": receipt_path.as_ref().map(|path| path.display().to_string()),
+        "note": "MCP registration remains advice-only. --apply writes only AGS-owned Claude/Codex hooks or the OMP extension for the selected supported host.",
+    });
+    crate::output::emit(format, &output, || {
+        let mut lines = vec![format!(
             "Agent Governance ({})",
             if apply {
                 "memory-adapter apply"
             } else {
                 "plan-only"
             }
-        );
+        )];
         if targets.is_empty() {
-            println!("  No target hosts (none detected; pass --agent <id> to target one).");
+            lines
+                .push("  No target hosts (none detected; pass --agent <id> to target one).".into());
         }
         for p in &targets {
-            println!("  → {} ({})", p.id, p.display);
-            println!("      advise: {}", p.mcp_host_command);
-            println!("      server: ags");
-            println!("      mandatory first tool: ags_preflight");
-            println!("      tools: {}", tool_surface.join(", "));
+            lines.push(format!("  → {} ({})", p.id, p.display));
+            lines.push(format!("      advise: {}", p.mcp_host_command));
+            lines.push("      server: ags".into());
+            lines.push("      mandatory first tool: ags_preflight".into());
+            lines.push(format!("      tools: {}", tool_surface.join(", ")));
         }
-        println!("\nGovernance chain (success = host can call ags_preflight, then flow through):");
+        lines.push(
+            "\nGovernance chain (success = host can call ags_preflight, then flow through):".into(),
+        );
         for step in &chain {
-            println!("  - {step}");
+            lines.push(format!("  - {step}"));
         }
         if apply {
-            println!("\n{}", ags_verification::doctor::render_text(&apply_report));
+            lines.push(format!(
+                "\n{}",
+                ags_verification::doctor::render_text(&apply_report)
+            ));
             if let Some(path) = &receipt_path {
-                println!("{}", ags_evidence::render_action_receipt_summary_line(path));
+                lines.push(ags_evidence::render_action_receipt_summary_line(path));
             }
         }
-        println!(
-            "\nNOTE: MCP registration is advice-only. --apply changes only AGS-owned native memory lifecycle wiring."
-        );
-    }
+        lines.push("\nNOTE: MCP registration is advice-only. --apply changes only AGS-owned native memory lifecycle wiring.".into());
+        lines.join("\n")
+    });
     if apply && !apply_report.passed() {
         std::process::exit(apply_report.exit_code());
     }

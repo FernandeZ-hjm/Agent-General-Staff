@@ -109,18 +109,7 @@ pub(crate) fn cmd_policy_resolve(
     let policy = ags_governance_decision::policy::resolve_policy(input);
 
     // Phase 4: output
-    match format {
-        "json" => match serde_json::to_string_pretty(&policy) {
-            Ok(json) => println!("{}", json),
-            Err(e) => {
-                eprintln!("JSON serialization error: {}", e);
-                std::process::exit(1);
-            }
-        },
-        _ => {
-            println!("{}", format_policy_text(&policy));
-        }
-    }
+    crate::output::emit(format, &policy, || format_policy_text(&policy));
 }
 /// Shared dispatch: `policy explain`
 fn cmd_policy_explain(path: &str, format: &str, approve_writes: bool, current_task_approval: bool) {
@@ -128,18 +117,9 @@ fn cmd_policy_explain(path: &str, format: &str, approve_writes: bool, current_ta
     let input = build_policy_input(&card.fields, approve_writes, current_task_approval);
     let output = ags_governance_decision::policy::explain_policy(&input);
 
-    match format {
-        "json" => match serde_json::to_string_pretty(&output) {
-            Ok(json) => println!("{}", json),
-            Err(e) => {
-                eprintln!("JSON serialization error: {}", e);
-                std::process::exit(1);
-            }
-        },
-        _ => {
-            println!("{}", format_explain_text(&output, &display_path));
-        }
-    }
+    crate::output::emit(format, &output, || {
+        format_explain_text(&output, &display_path)
+    });
 }
 /// Shared dispatch: `policy check` — exit 0 if no stop, 1 if stop/validation.
 fn cmd_policy_check(path: &str, format: &str, approve_writes: bool, current_task_approval: bool) {
@@ -147,18 +127,7 @@ fn cmd_policy_check(path: &str, format: &str, approve_writes: bool, current_task
     let input = build_policy_input(&card.fields, approve_writes, current_task_approval);
     let policy = ags_governance_decision::policy::resolve_policy(input);
 
-    match format {
-        "json" => match serde_json::to_string_pretty(&policy) {
-            Ok(json) => println!("{}", json),
-            Err(e) => {
-                eprintln!("JSON serialization error: {}", e);
-                std::process::exit(1);
-            }
-        },
-        _ => {
-            println!("{}", format_policy_text(&policy));
-        }
-    }
+    crate::output::emit(format, &policy, || format_policy_text(&policy));
 
     if policy.stop_before_launch {
         std::process::exit(1);

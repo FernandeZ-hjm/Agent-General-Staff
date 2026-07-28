@@ -3,7 +3,7 @@
 本文件是 Agent General Staff 公开版治理控制面协议概述。Canonical 协议文件位于本仓库
 `protocol/` 目录下，自包含，不依赖私有基础设施或私有仓库。
 
-Current product version: **0.3.4**.
+Current product version: **0.3.5**.
 
 这是 Agent General Staff Public Edition 的当前 latest 产品版本。AGS 负责准入、
 授权、策略、验证、回执、能力快照和记忆闭环，不提供任务队列、Agent 调度器、
@@ -15,20 +15,19 @@ Current product version: **0.3.4**.
 
 此仓库是 Agent General Staff 公开可分发版本，提供 Rust 原生 CLI 工具链 (`ags`)，包含：
 
-- `ags task validate`（别名：`task-card-validator`） — 任务卡格式与语义校验
-- `ags policy resolve`（别名：`resolve-policy`） — 执行策略解析
+- `ags task validate` — 任务卡格式与语义校验
+- `ags policy resolve` — 执行策略解析
 - `ags policy explain` — 逐条输出策略规则解释、rule IDs、安全断言
 - `ags policy check` — 校验 + 解析，按 gate 结果 exit
-- `ags sync check`（别名：`workflow-sync-check`） — 协议漂移检查
-- `ags doctor`（别名：`suite-doctor`） — 套件健康诊断
+- `ags doctor` — 套件健康诊断
 - `ags setup` — 写入公开安全的本机 AGS runtime、MCP 片段、Claude `/ags` 入口和 Codex AGS 命令技能
 - `ags init` — 对用户项目执行 AGS managed-block 接入
 - `ags mcp serve --transport stdio` — 启动公开版 AGS MCP 服务
-- `ags bootstrap --dry-run`（别名：`bootstrap-dry-run`） — 引导干运行模拟
+- `ags bootstrap --dry-run` — 引导干运行模拟
 - `ags project detect` / `ags protocol status` / `ags agent instructions` — M2 Agent 感知能力（只读）
 - `ags project integrate --dry-run|--confirm` — 增量融合 AGS 托管入口块到用户项目入口文件，不覆盖用户自有内容
 - `ags session preflight --for codex|claude-code|cursor|omp` — 聚合 Agent 唤醒检查（CLI 降级/独立检查入口，不依赖 skill governance）
-- `ags verify --scope local|full|release|promotion` — 结构化验证入口；`release`
+- `ags verify --scope local|release|promotion` — 结构化验证入口；`release`
   自包含验证公开源码树，`promotion` 只在显式提供 public worktree 时验证 A→B
   边界，二者都提供稳定 CheckItem 模型和 text/json 双格式报告
 
@@ -94,28 +93,23 @@ Canonical 协议文件位于本仓库：
 
 ## Task Card Validation
 
-Rust task-card-validator (`crates/task-card-validator`) 是唯一的 canonical
+Rust task-card validator (`crates/ags-task-contract`) 是唯一的 canonical
 任务卡格式门禁。它提供格式校验、字段值检查、字段组合检查、保护路径分析、矛盾检测和
 Execution Authority Gate。
 
 ## Execution-Policy Resolver
 
-`crates/execution-policy` 是 runner 前的策略解析层。它消费 validator 输出的结构化字段，
+`crates/ags-governance-decision` 是 runner 前的策略解析层。它消费 validator 输出的结构化字段，
 产出 `ResolvedExecutionPolicy` — 包含实际应使用的 permission mode、parallelism、
 启动参数、降级原因和停止条件。resolver 只读，不启动 runner；`ags policy resolve`
-提供主 CLI 入口，旧 `ags resolve-policy` 仅作为隐藏兼容别名保留。
+提供唯一 CLI 入口，不保留隐藏兼容别名。
 解析规则（M1–M10）写入 `protocol/runtime-adapters.md`。
 
-## Workflow Sync Check
+## Exact Release Manifest
 
-`crates/workflow-sync-check` 是多目标协议漂移检查器，负责：
-- 比较不同目标之间的协议文件漂移
-- 验证关键协议安全断言在目标中完整存在
-- 区分 legal redaction（allowlist）和 dangerous drift
-- 输出结构化 text/JSON drift report
-
-workflow-sync-check 是 **read-only drift checker**，不决定任务是否进入 plan-only，
-不替代或影响 execution-policy / resolve-policy 的执行决策。
+`crates/ags-verification::release_manifest` 只负责公开发行边界：A→B 按精确文件清单、
+B 自有 rewrite/overlay 的固定哈希以及禁止项 fail closed。旧的章节解析、allowlist
+和多目标 drift 引擎已删除；A→S 由 Git fast-forward 与 tree identity 证明。
 
 ## Public-Full Sanitized Boundary
 
@@ -177,8 +171,8 @@ Capability expected 集合以已安装 AGS source authority 为准，不得随�
 
 ## Protocol Safety Assertions
 
-workflow-sync-check 强制执行以下关键协议安全断言。缺失或矛盾改写始终为 FAIL，
-即使在 public 目标上也不能被 allowlist 掩盖：
+validator、policy 和 release gates 强制执行以下关键协议安全断言。缺失或矛盾改写
+始终为 FAIL，公开目标也不能用 rewrite/overlay 掩盖：
 
 1. **ultracode thinking-only**: `Execution effort: ultracode` 只是 thinking intensity，
    不改变 permission mode、不启用 parallelism、不添加 launch args。

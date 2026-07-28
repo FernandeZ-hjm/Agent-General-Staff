@@ -1,5 +1,48 @@
 # Agent Governance Suite Release Notes
 
+## Release 0.3.5
+
+0.3.5 is a corrective release for the 0.3.4 slimming pass. It restores
+high-value proof without restoring retired runtime complexity.
+
+- The task-card hard gate now has focused semantic contracts for every one of
+  its 19 active machine error codes, including authorization, protected-path,
+  Heavy review, closure mapping, OMP executor, and skill-tag failures. Two
+  exported error constants that never had a production emission path were
+  removed instead of being preserved as misleading compatibility surface.
+- The release verifier again executes the canonical full task-card fixture
+  through the real CLI and proves that the removed compact format is rejected.
+  Missing fixtures fail rather than silently skip.
+- Project initialization has a permanent regression contract proving that AGS
+  `.gitignore` rules remain idempotent when a user changes headings or rule
+  order, while missing rules still trigger an append.
+- The version gate now covers the workspace release marker and the documented
+  executable-trust boundary, preventing release documentation from lagging the
+  product version or implying a security control that is not present.
+- 0.3.4 deliberately removed request-time MCP executable replacement detection:
+  its metadata shortcut was not portable across overlay and coarse-timestamp
+  filesystems. 0.3.5 does not restore that unreliable control. Release
+  checksums/provenance, controlled installation, filesystem permissions, and
+  daemon restart on upgrade remain the executable trust boundary.
+- The 0.3.4 static capability model is unchanged: normal preflight, resource
+  reads, route, and apply do not scan, refresh, compare, or advance capability
+  state. OMP remains a first-class executor and host.
+- The hidden section-drift/sync engine and its `full` verification scope are
+  removed. Promotion now has one authoritative boundary: the exact, pinned
+  public release manifest. Private-to-stable equivalence is established by
+  fast-forward commit/tree identity instead of a second Markdown diff system.
+- Host integration facts are declared once: native/shared skill roots, Codex
+  plugin visibility, MCP probe format and evidence source, registrar, and
+  memory adapter. This removes divergent host string tables and keeps OMP's
+  inherited Codex registration distinct from live OMP evidence.
+- CLI commands now share one closed `text | json` output seam. Domain text
+  renderers remain separate, while JSON serialization failures are reported
+  consistently instead of silently becoming empty output.
+
+Promotion remains private authority → stable → public. Public `main` and
+exact-commit CI must pass before the annotated `v0.3.5` tag, release assets,
+and npm `latest` are published.
+
 ## Release 0.3.4
 
 0.3.4 removes runtime capability churn and retires compatibility surfaces that

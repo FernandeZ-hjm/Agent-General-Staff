@@ -115,13 +115,11 @@ fn cmd_receipt_generate(
         governance_evidence: None,
     };
 
-    match format {
-        "json" => println!("{}", ags_evidence::render_receipt_json(&receipt)),
-        _ => {
-            // Text format: print JSON because text receipt is just the JSON body
-            println!("{}", ags_evidence::render_receipt_json(&receipt));
-        }
-    }
+    crate::output::emit_rendered(
+        format,
+        || ags_evidence::render_receipt_json(&receipt),
+        || ags_evidence::render_receipt_json(&receipt),
+    );
 }
 /// Shared dispatch: `receipt verify`
 fn cmd_receipt_verify(path: &str, format: &str) {
@@ -142,10 +140,11 @@ fn cmd_receipt_verify(path: &str, format: &str) {
     };
 
     let result = ags_evidence::verify_receipt(&receipt);
-    match format {
-        "json" => println!("{}", ags_evidence::render_verify_json(&result)),
-        _ => println!("{}", ags_evidence::render_verify_text(&result)),
-    }
+    crate::output::emit_rendered(
+        format,
+        || ags_evidence::render_verify_json(&result),
+        || ags_evidence::render_verify_text(&result),
+    );
 
     if !result.valid {
         std::process::exit(1);

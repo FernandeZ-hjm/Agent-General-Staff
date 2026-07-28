@@ -11,9 +11,9 @@ Agent Governance Suite（AGS）是一个**多 Agent 开发治理控制面**。�
 队列、并行执行器或多 Agent 协商运行时。
 
 本仓是 AGS 的公开发行版，采用 **GPL-3.0-only**。当前产品版本和 latest release
-是 **v0.3.4**。
+是 **v0.3.5**。
 
-## v0.3.4 核心链路
+## v0.3.5 核心链路
 
 ```text
 用户请求
@@ -58,7 +58,7 @@ ags mcp serve --transport stdio
 
 ## 十二个主要 module
 
-v0.3.4 的 runtime workspace 只暴露十二个权威 Cargo package：
+v0.3.5 的 runtime workspace 只暴露十二个权威 Cargo package：
 
 | Module | 职责 |
 |---|---|
@@ -78,7 +78,7 @@ v0.3.4 的 runtime workspace 只暴露十二个权威 Cargo package：
 原 `bootstrap-dry-run`、`capability-registry`、
 `delivery-report-validator`、`execution-policy`、`runner`、
 `skill-governance`、`suite-doctor`、`task-card-validator`、
-`workflow-sync-check` 的实现已收口到对应权威 module。0.3.4 只保留当前实际调用的
+`workflow-sync-check` 的实现已收口到对应权威 module。0.3.5 只保留当前实际调用的
 命令、wire/schema 和必要 re-export，不再保留旧命令或第二套 package authority。详见
 [WORKSPACE.md](WORKSPACE.md) 和 [docs/architecture.md](docs/architecture.md)。
 
@@ -89,7 +89,7 @@ v0.3.4 的 runtime workspace 只暴露十二个权威 Cargo package：
 | Codex | 支持 | 全局/项目 skills | SessionStart / SessionEnd adapter | 原生 MCP 登记探针 + MCP 进程 E2E |
 | Claude Code | 支持 | `/ags` 与 skills | SessionStart / Stop adapter | 原生 MCP 连接探针 + MCP 进程 E2E |
 | OMP | 支持；可复用 Codex 配置 | native/shared skills | OMP lifecycle extension | 原生 RPC 可发现性探针 + MCP 进程 E2E |
-| Cursor | 支持 | host/project skill projection | 尚无完整原生记忆闭环声明 | MCP 进程 E2E；v0.3.4 原生 CLI 探针因本机钥匙串锁定而由操作者显式豁免 |
+| Cursor | 支持 | host/project skill projection | 尚无完整原生记忆闭环声明 | MCP 进程 E2E；v0.3.5 原生 CLI 探针因本机钥匙串锁定而由操作者显式豁免 |
 | CodeBuddy-Code / WorkBuddy | MCP 接入 | setup 生成配置片段 | 尚无完整原生记忆闭环声明 | 初始化与静态/可见性验证 |
 
 这里的 E2E 会启动真实 `ags` stdio adapter 和 workspace daemon，覆盖同工作区共享、
@@ -141,7 +141,7 @@ setup、preflight、resource read、route 和 apply 都不联网刷新。
 
 ## 稳定命令面
 
-v0.3.4 只承诺下列当前命令面。已删除的旧命令、alias 和 plan-only 假动作不再作为兼容合同。
+v0.3.5 只承诺下列当前命令面。已删除的旧命令、alias 和 plan-only 假动作不再作为兼容合同。
 
 ```bash
 ags setup --help
@@ -176,25 +176,25 @@ cargo build --release
 git diff --check
 ```
 
-公开版完成判定不能只看 `PUBLIC_MANIFEST` 或 release drift。还必须验证十二 module 源码
+公开版完成判定不能只看精确 release manifest。还必须验证十二 module 源码
 结构、双语文档、真实 MCP E2E、performance benchmark 合同、旧 authority 缺失、
 发布资产和 exact public commit 的远端 CI。
 
 ## 许可证与发布
 
 - 许可证：**GPL-3.0-only**
-- latest：**v0.3.4**
-- 当前合同：v0.3.4 human/Machine CLI
+- latest：**v0.3.5**
+- 当前合同：v0.3.5 human/Machine CLI
 - 历史：v0.3.1 release notes 保留，不作为 current version
 
 发布顺序不可倒置：
 
 1. public-safe 源码进入 GitHub `main`，等待 exact commit CI 全绿；
-2. Cargo、npm、manifest、文档和 release notes 统一为 `0.3.4`；
-3. 维护者显式推送 annotated `v0.3.4` tag；
+2. Cargo、npm、manifest、文档和 release notes 统一为 `0.3.5`；
+3. 维护者显式推送 annotated `v0.3.5` tag；
 4. tag workflow 构建五个平台资产、`SHA256SUMS` 和 provenance；
 5. Release 资产齐全后，手动 dispatch npm OIDC trusted-publisher workflow，
-   发布 `@agent-governance-suite/mcp@0.3.4` 为 latest。
+   发布 `@agent-governance-suite/mcp@0.3.5` 为 latest。
 
 日常 CI、同步 guard 和 npm workflow 都不会替维护者创建 tag。
 

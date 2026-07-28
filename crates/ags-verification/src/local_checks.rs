@@ -143,6 +143,72 @@ pub(super) fn check_cargo_build(repo_root: &Path) -> CheckItem {
     }
 }
 
+pub(super) fn check_task_card_fixtures(repo_root: &Path) -> Vec<CheckItem> {
+    let cases = [
+        (
+            "fixture-valid-full",
+            "tests/fixtures/valid-full.md",
+            true,
+            "Canonical full task card is accepted by the CLI validator",
+        ),
+        (
+            "fixture-invalid-compact-rejected",
+            "tests/fixtures/invalid-compact.md",
+            false,
+            "Removed compact task-card format is rejected by the CLI validator",
+        ),
+    ];
+
+    cases
+        .into_iter()
+        .map(|(id, relative, should_accept, success)| {
+            let path = repo_root.join(relative);
+            if !path.is_file() {
+                return CheckItem::fail(
+                    id,
+                    "local",
+                    &format!("Required task-card fixture is missing: {relative}"),
+                    "Restore the current canonical task-card fixture.",
+                );
+            }
+
+            let (code, stdout, stderr) = run_command(
+                repo_root,
+                "cargo",
+                &[
+                    "run",
+                    "-q",
+                    "-p",
+                    "ags-cli",
+                    "--",
+                    "task",
+                    "validate",
+                    &path.to_string_lossy(),
+                ],
+                &[],
+            );
+            let accepted = code == 0;
+            if accepted == should_accept {
+                CheckItem::pass(id, "local", success)
+            } else {
+                CheckItem::fail(
+                    id,
+                    "local",
+                    &format!(
+                        "{relative} expected accepted={should_accept}, exit={code}: {}",
+                        truncate(&format!("{stdout}\n{stderr}"), 400)
+                    ),
+                    "Repair the CLI validator or its current-contract fixture.",
+                )
+                .with_command(&format!(
+                    "cargo run -q -p ags-cli -- task validate {relative}"
+                ))
+                .with_exit_code(code)
+            }
+        })
+        .collect()
+}
+
 pub(super) fn check_governance_yaml(repo_root: &Path) -> Vec<CheckItem> {
     let yaml_files = ["manifests/suite.yaml", "manifests/mcp-registry.yaml"];
     let mut items = Vec::new();

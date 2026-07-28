@@ -4,7 +4,7 @@ use std::path::Path;
 pub(super) fn check_release_boundary(repo_root: &Path) -> Vec<CheckItem> {
     let mut items = Vec::new();
 
-    let manifest = crate::sync::manifest::verify_release_manifest(repo_root);
+    let manifest = crate::release_manifest::verify_release_manifest(repo_root);
     if manifest.passed {
         items.push(CheckItem::pass(
             "release-public-manifest",
@@ -27,6 +27,7 @@ pub(super) fn check_release_boundary(repo_root: &Path) -> Vec<CheckItem> {
         ));
     }
     items.push(check_release_version_surfaces(repo_root));
+    items.push(check_validator_mutation_guards(repo_root));
 
     // Check 2: Verify bootstrap --apply produces a sanitized public payload.
     let tmpdir = std::env::temp_dir().join(format!("ags-verify-release-{}", std::process::id()));
@@ -101,6 +102,32 @@ pub(super) fn check_release_boundary(repo_root: &Path) -> Vec<CheckItem> {
     let _ = std::fs::remove_dir_all(&tmpdir);
 
     items
+}
+
+fn check_validator_mutation_guards(repo_root: &Path) -> CheckItem {
+    let script = "scripts/verify-validator-mutations.py";
+    if !repo_root.join(script).is_file() {
+        return CheckItem::fail(
+            "validator-mutation-guards",
+            "release",
+            &format!("Required mutation verifier is missing: {script}"),
+            "Restore the task-card mutation verifier.",
+        );
+    }
+
+    let (code, stdout, stderr) = run_command(repo_root, "python3", &[script], &[]);
+    if code == 0 {
+        CheckItem::pass("validator-mutation-guards", "release", stdout.trim())
+    } else {
+        CheckItem::fail(
+            "validator-mutation-guards",
+            "release",
+            &truncate(&format!("{stdout}\n{stderr}"), 1000),
+            "Repair the semantic contract or CLI fixture gate that survived mutation.",
+        )
+        .with_command(&format!("python3 {script}"))
+        .with_exit_code(code)
+    }
 }
 
 /// Check that portable runtime profile templates exist, parse correctly,

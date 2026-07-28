@@ -1,19 +1,9 @@
 use super::*;
 
-pub(in super::super) const SUPPORTED_HOSTS: &[&str] =
-    &["claude-code", "codex", "omp", "codebuddy-code", "cursor"];
-
 /// The `~/<subdir>` skills directory a host loads skill entries from, if any.
 /// `Some` ⇒ the host is supported and gets a real probe.
 pub(in super::super) fn host_skills_subdir(host: &str) -> Option<&'static str> {
-    match host {
-        "claude-code" => Some(".claude/skills"),
-        "codex" => Some(".codex/skills"),
-        "omp" => Some(".omp/agent/skills"),
-        "codebuddy-code" => Some(".codebuddy/skills"),
-        "cursor" => Some(".cursor/skills"),
-        _ => None,
-    }
+    ags_host_integration::platform_spec(host)?.native_skill_subdir
 }
 
 /// Additional shared skill sources loaded by a host. Codex, Cursor, and OMP
@@ -24,10 +14,13 @@ pub(in super::super) fn shared_skill_dirs_for_host(
     host: &str,
 ) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    if matches!(host, "codex" | "cursor" | "omp") {
+    let Some(spec) = ags_host_integration::platform_spec(host) else {
+        return dirs;
+    };
+    if spec.loads_shared_agent_skills {
         dirs.push(ctx.home.join(".agents/skills"));
     }
-    if host == "codex" {
+    if spec.loads_codex_plugin_skills {
         dirs.extend(codex_plugin_skill_dirs(&ctx.home));
     }
     dirs

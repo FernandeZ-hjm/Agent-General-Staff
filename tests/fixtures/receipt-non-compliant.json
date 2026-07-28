@@ -1,5 +1,5 @@
 {
-  "schema_version": "0.3.4-task-receipt",
+  "schema_version": "0.3.5-task-receipt",
   "receipt_id": "receipt-noncompliant",
   "timestamp": "unix-0",
   "task_card_hash": "d568542eeaba086b8a48101374828e6c05fa1399a097ab67c63d9f301be96a02",

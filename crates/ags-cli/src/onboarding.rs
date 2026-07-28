@@ -1,7 +1,7 @@
 use crate::cli::OnboardingAction as CliOnboardingAction;
 use crate::context::{capability_authority_root_or_exit, home_dir};
 use crate::receipt_bridge::emit_ags_action_receipt;
-use ags_host_integration::{claude_mcp_list_line, codex_mcp_list_line, mcp_server_ids};
+use ags_host_integration::{mcp_server_ids, mcp_server_line, platform_spec};
 use ags_lifecycle::{assess_public_with_resolution, find_action, AssessContext, OnboardingPlan};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -81,7 +81,7 @@ pub(crate) fn run(action: CliOnboardingAction) {
                 .ok()
                 .map(|path| path.display().to_string());
             let output = ApplyOutput {
-                schema_version: "0.3.4-onboarding-apply",
+                schema_version: "0.3.5-onboarding-apply",
                 plan_hash: &plan.plan_hash,
                 item_id: &item,
                 success,
@@ -157,13 +157,15 @@ fn plan_or_exit(target: &Path, host: &str) -> OnboardingPlan {
 }
 
 fn probe_ags_registration(host: &str) -> Option<bool> {
-    match host {
-        "claude-code" => claude_mcp_list_line("ags")
-            .ok()
-            .map(|entry| entry.is_some()),
-        "codex" => codex_mcp_list_line("ags").ok().map(|entry| entry.is_some()),
-        _ => None,
-    }
+    platform_spec(host)?
+        .mcp_probe?
+        .live_runtime_probe
+        .then(|| {
+            mcp_server_line(host, "ags")
+                .ok()
+                .map(|entry| entry.is_some())
+        })
+        .flatten()
 }
 
 fn current_ags() -> Result<PathBuf, String> {
@@ -171,47 +173,50 @@ fn current_ags() -> Result<PathBuf, String> {
 }
 
 fn print_plan(plan: &OnboardingPlan, format: &str) {
-    if format == "json" {
-        println!("{}", serde_json::to_string_pretty(plan).unwrap_or_default());
-        return;
-    }
-    println!("AGS Public Onboarding {}", plan.schema_version);
-    println!("Host: {}", plan.host);
-    println!("Target: {}", plan.target);
-    println!("Plan hash: {}", plan.plan_hash);
-    println!(
-        "Capability registry snapshot: {} ({})",
-        plan.manifest_source, plan.manifest_hash
-    );
-    println!(
-        "State: {}",
-        if plan.ready {
-            "active-ready"
-        } else {
-            "bootstrap-required"
-        }
-    );
-    for item in &plan.items {
-        println!(
-            "  - {:<36} {:<26} {}{}",
-            item.id,
-            format!("{:?}", item.state).to_ascii_lowercase(),
-            item.reason,
-            if item.action.is_some() {
-                " [explicit apply available]"
-            } else {
-                ""
-            }
-        );
-    }
-    println!("Excluded: {}", plan.excluded_capabilities.join(", "));
+    crate::output::emit(format, plan, || {
+        let mut lines = vec![
+            format!("AGS Public Onboarding {}", plan.schema_version),
+            format!("Host: {}", plan.host),
+            format!("Target: {}", plan.target),
+            format!("Plan hash: {}", plan.plan_hash),
+            format!(
+                "Capability registry snapshot: {} ({})",
+                plan.manifest_source, plan.manifest_hash
+            ),
+            format!(
+                "State: {}",
+                if plan.ready {
+                    "active-ready"
+                } else {
+                    "bootstrap-required"
+                }
+            ),
+        ];
+        lines.extend(plan.items.iter().map(|item| {
+            format!(
+                "  - {:<36} {:<26} {}{}",
+                item.id,
+                format!("{:?}", item.state).to_ascii_lowercase(),
+                item.reason,
+                if item.action.is_some() {
+                    " [explicit apply available]"
+                } else {
+                    ""
+                }
+            )
+        }));
+        lines.push(format!(
+            "Excluded: {}",
+            plan.excluded_capabilities.join(", ")
+        ));
+        lines.join("\n")
+    });
 }
 
-fn print_serialized<T: Serialize>(value: &T, _format: &str) {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(value).unwrap_or_default()
-    );
+fn print_serialized<T: Serialize>(value: &T, format: &str) {
+    crate::output::emit(format, value, || {
+        crate::output::pretty_json(value).expect("serializable onboarding output")
+    });
 }
 
 #[derive(Serialize)]

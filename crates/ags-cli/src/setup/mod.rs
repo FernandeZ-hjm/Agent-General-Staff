@@ -49,38 +49,29 @@ pub(crate) fn cmd_private_plan(profile: &str, target: Option<PathBuf>, format: &
         false,
     );
     let wizard = cross_platform_init_plan(&home, &|command| ags_platform::is_on_path(command));
-    match format {
-        "json" => {
-            let mut value = presentation.install_json;
-            if let Some(object) = value.as_object_mut() {
-                object.insert(
-                    "cross_platform_init".to_string(),
-                    cross_platform_init_json(&wizard),
-                );
-                object.insert(
-                    "global_entry_protocol".to_string(),
-                    presentation.global_entry_json,
-                );
-                object.insert(
-                    "third_party_recommendations".to_string(),
-                    presentation.recommendations_json,
-                );
-            }
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&value).unwrap_or_default()
-            );
-        }
-        _ => {
-            println!("{}", presentation.install_text);
-            println!();
-            println!("{}", render_cross_platform_init_text(&wizard));
-            println!();
-            println!("{}", presentation.global_entry_text);
-            println!();
-            println!("{}", presentation.recommendations_text);
-        }
+    let text = format!(
+        "{}\n\n{}\n\n{}\n\n{}",
+        presentation.install_text,
+        render_cross_platform_init_text(&wizard),
+        presentation.global_entry_text,
+        presentation.recommendations_text
+    );
+    let mut value = presentation.install_json;
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "cross_platform_init".to_string(),
+            cross_platform_init_json(&wizard),
+        );
+        object.insert(
+            "global_entry_protocol".to_string(),
+            presentation.global_entry_json,
+        );
+        object.insert(
+            "third_party_recommendations".to_string(),
+            presentation.recommendations_json,
+        );
     }
+    crate::output::emit(format, &value, || text);
 }
 
 /// Core private-install apply without exiting. Output and exit policy remain in
@@ -126,27 +117,20 @@ pub(crate) fn cmd_private_apply(
 
     let (report, target, plan_text_before_apply) =
         run_private_apply(target, force, false, register_claude);
-    match format {
-        "json" => {
-            let output = serde_json::json!({
-                "schema_version": ags_lifecycle::setup::PRIVATE_INSTALL_SCHEMA,
-                "profile": profile,
-                "target": target.to_string_lossy(),
-                "register_claude": register_claude,
-                "force": force,
-                "report": report,
-            });
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&output).unwrap_or_default()
-            );
-        }
-        _ => {
-            println!("{plan_text_before_apply}");
-            println!();
-            println!("{}", ags_verification::doctor::render_text(&report));
-        }
-    }
+    let output = serde_json::json!({
+        "schema_version": ags_lifecycle::setup::PRIVATE_INSTALL_SCHEMA,
+        "profile": profile,
+        "target": target.to_string_lossy(),
+        "register_claude": register_claude,
+        "force": force,
+        "report": report,
+    });
+    crate::output::emit(format, &output, || {
+        format!(
+            "{plan_text_before_apply}\n\n{}",
+            ags_verification::doctor::render_text(&report)
+        )
+    });
     std::process::exit(report.exit_code());
 }
 
@@ -157,21 +141,15 @@ pub(crate) fn cmd_private_verify(profile: &str, target: Option<PathBuf>, format:
     }
     let target = private_install_target(target);
     let report = private_install_health_report(&target, false);
-    match format {
-        "json" => {
-            let output = serde_json::json!({
-                "schema_version": ags_lifecycle::setup::PRIVATE_INSTALL_SCHEMA,
-                "profile": profile,
-                "target": target.to_string_lossy(),
-                "report": report,
-            });
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&output).unwrap_or_default()
-            );
-        }
-        _ => println!("{}", ags_verification::doctor::render_text(&report)),
-    }
+    let output = serde_json::json!({
+        "schema_version": ags_lifecycle::setup::PRIVATE_INSTALL_SCHEMA,
+        "profile": profile,
+        "target": target.to_string_lossy(),
+        "report": report,
+    });
+    crate::output::emit(format, &output, || {
+        ags_verification::doctor::render_text(&report)
+    });
     std::process::exit(report.exit_code());
 }
 
@@ -189,27 +167,20 @@ pub(crate) fn cmd_setup(
     if did_apply {
         let (report, runtime_target, plan_text) =
             run_private_apply(target.clone(), force, false, register_claude);
-        match format {
-            "json" => {
-                let output = serde_json::json!({
-                    "schema_version": ags_lifecycle::setup::PRIVATE_INSTALL_SCHEMA,
-                    "profile": "private",
-                    "target": runtime_target.to_string_lossy(),
-                    "register_claude": register_claude,
-                    "force": force,
-                    "report": report,
-                });
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&output).unwrap_or_default()
-                );
-            }
-            _ => {
-                println!("{plan_text}");
-                println!();
-                println!("{}", ags_verification::doctor::render_text(&report));
-            }
-        }
+        let output = serde_json::json!({
+            "schema_version": ags_lifecycle::setup::PRIVATE_INSTALL_SCHEMA,
+            "profile": "private",
+            "target": runtime_target.to_string_lossy(),
+            "register_claude": register_claude,
+            "force": force,
+            "report": report,
+        });
+        crate::output::emit(format, &output, || {
+            format!(
+                "{plan_text}\n\n{}",
+                ags_verification::doctor::render_text(&report)
+            )
+        });
         let passed = report.passed();
         let receipt = ags_evidence::build_action_receipt(
             "setup-apply",
@@ -236,7 +207,7 @@ pub(crate) fn cmd_setup(
         receipt_path = emit_ags_action_receipt(&receipt).ok();
         apply_code = Some(report.exit_code());
     }
-    if format != "json" {
+    if !crate::output::is_json(format) {
         let source_root = source_root_or_exit("ags setup");
         println!();
         println!(
@@ -249,7 +220,7 @@ pub(crate) fn cmd_setup(
         );
     }
     cmd_private_plan("private", target, format);
-    if did_apply && format != "json" {
+    if did_apply && !crate::output::is_json(format) {
         if let Some(path) = &receipt_path {
             println!(
                 "\n{}",

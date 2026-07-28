@@ -13,7 +13,7 @@ pub(crate) fn is_public_edition(repo_root: &Path) -> bool {
             }
         }
     }
-    declared_public && crate::sync::manifest::verify_release_manifest(repo_root).passed
+    declared_public && crate::release_manifest::verify_release_manifest(repo_root).passed
 }
 
 #[cfg(test)]
@@ -38,7 +38,7 @@ mod tests {
             .parent()
             .and_then(Path::parent)
             .expect("workspace root");
-        let verified = crate::sync::manifest::verify_release_manifest(root).passed;
+        let verified = crate::release_manifest::verify_release_manifest(root).passed;
         assert_eq!(is_public_edition(root), verified);
     }
 }

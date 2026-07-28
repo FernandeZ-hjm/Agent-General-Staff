@@ -128,7 +128,7 @@ pub fn run(repo_root: &Path) -> HealthReport {
 use serde::{Deserialize, Serialize};
 
 /// Schema version for bootstrap plan/apply artifacts.
-pub const SCHEMA_VERSION: &str = "0.3.4-bootstrap-plan";
+pub const SCHEMA_VERSION: &str = "0.3.5-bootstrap-plan";
 
 /// A single action in a bootstrap plan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -487,7 +487,7 @@ mod tests {
         let target = dir.path().join("bootstrapped");
         let plan = plan(repo_root, &target);
 
-        assert_eq!(plan.schema_version, "0.3.4-bootstrap-plan");
+        assert_eq!(plan.schema_version, "0.3.5-bootstrap-plan");
         assert!(!plan.actions.is_empty());
         assert!(plan.actions.iter().any(|action| {
             Path::new(&action.path)

@@ -1,4 +1,4 @@
-use crate::{claude_mcp_list_line, codex_mcp_list_line, CrossPlatformInitPlan};
+use crate::{mcp_server_line, platform_spec, CrossPlatformInitPlan};
 
 /// One row of `ags agents scan`: a detected host + AGS-MCP registration probe.
 #[derive(Debug, Clone)]
@@ -79,19 +79,18 @@ pub fn ags_mcp_tool_surface() -> Vec<&'static str> {
 /// `codex mcp list`. OMP is deliberately unprobeable here: a Codex registry
 /// entry is configuration-source evidence, not a live OMP-session connection.
 pub fn default_agents_probe(host_id: &str) -> Option<(bool, String)> {
-    match host_id {
-        "claude-code" => Some(match claude_mcp_list_line("ags") {
-            Ok(Some(line)) => (true, line),
-            Ok(None) => (false, "not in `claude mcp list`".to_string()),
-            Err(e) => (false, format!("claude mcp list unavailable: {e}")),
-        }),
-        "codex" => Some(match codex_mcp_list_line("ags") {
-            Ok(Some(line)) => (true, line),
-            Ok(None) => (false, "not in `codex mcp list`".to_string()),
-            Err(e) => (false, format!("codex mcp list unavailable: {e}")),
-        }),
-        _ => None,
+    let probe = platform_spec(host_id)?.mcp_probe?;
+    if !probe.live_runtime_probe {
+        return None;
     }
+    Some(match mcp_server_line(host_id, "ags") {
+        Ok(Some(line)) => (true, line),
+        Ok(None) => (false, format!("not in {}", probe.evidence_source)),
+        Err(error) => (
+            false,
+            format!("{} unavailable: {error}", probe.evidence_source),
+        ),
+    })
 }
 
 #[cfg(test)]

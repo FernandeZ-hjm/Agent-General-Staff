@@ -9,12 +9,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 failures=0
-VERIFY_SCOPE="${AGS_VERIFY_SCOPE:-full}"
+VERIFY_SCOPE="${AGS_VERIFY_SCOPE:-local}"
 
 case "$VERIFY_SCOPE" in
-    local | full | release) ;;
+    local | release) ;;
     *)
-        echo "invalid AGS_VERIFY_SCOPE: $VERIFY_SCOPE (expected local, full, or release)" >&2
+        echo "invalid AGS_VERIFY_SCOPE: $VERIFY_SCOPE (expected local or release)" >&2
         exit 2
         ;;
 esac
@@ -54,8 +54,8 @@ echo "Repo: $REPO_ROOT"
 echo
 
 # Canonical structured verification. This already runs workspace fmt, tests,
-# release build, fixtures, governance YAML and preflight. Full adds drift
-# checks; release adds the fail-closed public release boundary.
+# release build, fixtures, governance YAML and preflight. Release adds the
+# fail-closed exact public payload boundary and mutation guards.
 verify_args=(verify --scope "$VERIFY_SCOPE" --format text)
 if [[ "$VERIFY_SCOPE" == "release" && -n "${AGS_RELEASE_PUBLIC_ROOT:-}" ]]; then
     verify_args+=(--public-root "$AGS_RELEASE_PUBLIC_ROOT")

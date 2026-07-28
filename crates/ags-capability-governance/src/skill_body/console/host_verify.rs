@@ -80,7 +80,8 @@ pub(super) fn scan_thin_index_drift(home: &Path, host: &str) -> Option<ThinIndex
 }
 
 pub(super) fn scan_shared_thin_index_drift(home: &Path, host: &str) -> Option<ThinIndexDrift> {
-    matches!(host, "codex" | "cursor" | "omp")
+    ags_host_integration::platform_spec(host)
+        .is_some_and(|spec| spec.loads_shared_agent_skills)
         .then(|| home.join(".agents/skills"))
         .and_then(|dir| scan_skill_dir_drift(&dir, "shared"))
 }
@@ -126,7 +127,7 @@ pub(super) fn scan_skill_dir_drift(dir: &Path, label: &str) -> Option<ThinIndexD
 
 /// Verify host visibility for one host. Read-only.
 pub fn verify_host(ctx: &ConsoleContext, host: &str) -> HostVerifyResult {
-    let supported = SUPPORTED_HOSTS.contains(&host);
+    let supported = host_skills_subdir(host).is_some();
     if !supported {
         return HostVerifyResult {
             schema_version: CONSOLE_SCHEMA_VERSION.to_string(),

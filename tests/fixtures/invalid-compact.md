@@ -2,38 +2,69 @@
 
 AGENT_SUITE_COMPACT_TASK_CARD_V1
 
-路径：
-- .
+读取并遵守：
+- AGENTS.md
 
-Executor: Claude Code
+Contract ID: tc-0123456789abcdef
 
-Runtime adapter: claude-code
+Handoff source: existing-card
 
-Execution surface: cli
+Executor: Codex
+
+Runtime adapter: codex-local
+
+Execution surface: local-workspace
 
 Permission mode: execute-and-verify
 
 Parallelism: none
 
-任务级别：Medium
+Execution effort: normal
 
-读取：
-- 本任务卡
+Workflow authority: none
 
-任务：运行 cargo test 验证所有测试通过
+任务级别：Light
 
-目标：验证 task-card-validator 拒绝已删除的 compact 任务卡格式
+Review gate:
+- Light review
+
+任务：测试 compact 格式的结构判别
+
+背景：除第二个非空行外，本卡满足当前完整任务卡合同
+
+项目画像：Rust workspace
+
+记忆胶囊：无
+
+任务存档：无
+
+目标文件夹路径：
+- .
+
+相关路径：
+- crates/
+
+本次任务相关文件：
+- Cargo.toml
+
+目标：
+- G-01: 确认 compact 结构标记被单独拒绝
+
+验收标准：
+- AC-01 -> G-01: validator 仅因第二个非空行的 compact 标记拒绝本卡
 
 非目标：不修改任何文件
 
-关键路径：
-- crates/
-
 验证：
-cargo test --workspace
+cargo test -p ags-task-contract
 
-停止条件：
-cargo test 失败时停止并报告
+Verification gate:
+- commands:
+  - V-01 -> AC-01: cargo test -p ags-task-contract
+- expected evidence:
+  - EV-01 -> AC-01: compact discriminator rejects this otherwise-valid card
+- stop condition:
+  - 任一验证失败即停止
 
 交付：
-返回测试通过结果
+- 返回验证结果

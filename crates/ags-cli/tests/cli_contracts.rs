@@ -58,6 +58,35 @@ fn run_ags_isolated(args: &[&str]) -> Output {
         .expect("run compiled ags binary in isolated host environment")
 }
 
+#[test]
+fn retired_sync_and_full_scope_are_absent_from_the_cli_surface() {
+    let root_help = run_ags(&["--help"]);
+    assert_success(&root_help, "root help");
+    let root_help = String::from_utf8_lossy(&root_help.stdout);
+    assert!(
+        !root_help
+            .lines()
+            .any(|line| line.trim_start().starts_with("sync ")),
+        "retired sync command leaked into root help:\n{root_help}"
+    );
+
+    let verify_help = run_ags(&["verify", "--help"]);
+    assert_success(&verify_help, "verify help");
+    let verify_help = String::from_utf8_lossy(&verify_help.stdout);
+    assert!(
+        !verify_help.contains("local, full, release"),
+        "retired full scope leaked into verify help:\n{verify_help}"
+    );
+
+    for args in [&["sync", "check"][..], &["verify", "--scope", "full"][..]] {
+        let output = run_ags(args);
+        assert!(
+            !output.status.success(),
+            "retired CLI surface unexpectedly succeeded: {args:?}"
+        );
+    }
+}
+
 fn copy_tree(source: &Path, destination: &Path) {
     std::fs::create_dir_all(destination).expect("create copied fixture directory");
     for entry in std::fs::read_dir(source).expect("read copied fixture directory") {

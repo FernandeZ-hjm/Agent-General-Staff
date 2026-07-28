@@ -14,26 +14,19 @@ pub(in crate::update) fn cmd_update_repair_local(
 ) {
     let runtime_target = private_install_target(target.clone());
     if !apply {
-        if format == "json" {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "command": "update repair-local",
-                    "mode": "dry-run",
-                    "apply_status": "dry-run",
-                    "would": ["re-run ags setup --yes (rewrite AGS-owned runtime + thin-index)"],
-                    "note": "no git pull, no cargo build; pass --apply to perform.",
-                }))
-                .unwrap()
-            );
-        } else {
-            println!("AGS Update Repair-Local (dry-run)");
-            println!(
-                "  would rewrite AGS-owned runtime snippets + thin-index at {}",
+        let output = serde_json::json!({
+            "command": "update repair-local",
+            "mode": "dry-run",
+            "apply_status": "dry-run",
+            "would": ["re-run ags setup --yes (rewrite AGS-owned runtime + thin-index)"],
+            "note": "no git pull, no cargo build; pass --apply to perform.",
+        });
+        crate::output::emit(format, &output, || {
+            format!(
+                "AGS Update Repair-Local (dry-run)\n  would rewrite AGS-owned runtime snippets + thin-index at {}\n  (no git pull, no cargo build) — run with --apply to perform.",
                 runtime_target.display()
-            );
-            println!("  (no git pull, no cargo build) — run with --apply to perform.");
-        }
+            )
+        });
         return;
     }
     guard_writable_target("ags update repair-local", &runtime_target);
@@ -72,30 +65,26 @@ pub(in crate::update) fn cmd_update_repair_local(
         passed,
     );
     let receipt_path = emit_ags_action_receipt(&receipt).ok();
-    if format == "json" {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "command": "update repair-local",
-                "apply_status": if passed { "applied" } else { "failed" },
-                "applied": passed,
-                "target": runtime_target.to_string_lossy(),
-                "report": outcome.report,
-                "receipt_ref": receipt_path.as_ref().map(|path| path.display().to_string()),
-            }))
-            .unwrap()
+    let output = serde_json::json!({
+        "command": "update repair-local",
+        "apply_status": if passed { "applied" } else { "failed" },
+        "applied": passed,
+        "target": runtime_target.to_string_lossy(),
+        "report": outcome.report,
+        "receipt_ref": receipt_path.as_ref().map(|path| path.display().to_string()),
+    });
+    crate::output::emit(format, &output, || {
+        let mut text = format!(
+            "{}\n\n{}",
+            outcome.plan_text,
+            crate::update::render_setup_report(&outcome.report)
         );
-    } else {
-        println!("{}", outcome.plan_text);
-        println!();
-        println!("{}", crate::update::render_setup_report(&outcome.report));
         if let Some(path) = &receipt_path {
-            println!(
-                "\n{}",
-                ags_evidence::render_action_receipt_summary_line(path)
-            );
+            text.push_str("\n\n");
+            text.push_str(&ags_evidence::render_action_receipt_summary_line(path));
         }
-    }
+        text
+    });
     if !passed {
         std::process::exit(1);
     }

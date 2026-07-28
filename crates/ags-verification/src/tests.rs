@@ -3,7 +3,7 @@ use std::path::Path;
 
 fn report(scope: Scope, errors: usize, warnings: usize, skipped: usize) -> VerificationReport {
     VerificationReport {
-        schema_version: "0.3.4-verification-report".to_string(),
+        schema_version: "0.3.5-verification-report".to_string(),
         scope,
         repo_root: "/tmp".to_string(),
         items: Vec::new(),
@@ -22,7 +22,6 @@ fn report(scope: Scope, errors: usize, warnings: usize, skipped: usize) -> Verif
 fn scope_and_check_item_contract_matrix() {
     for (text, scope) in [
         ("local", Scope::Local),
-        ("full", Scope::Full),
         ("release", Scope::Release),
         ("promotion", Scope::Promotion),
     ] {
@@ -102,18 +101,12 @@ fn renderers_preserve_machine_and_human_contracts() {
 }
 
 #[test]
-fn promotion_boundary_requires_explicit_target_and_structured_redactions() {
+fn promotion_boundary_requires_explicit_target() {
     let dir = tempfile::tempdir().unwrap();
     let items = check_promotion_boundary(dir.path(), None);
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].id, "promotion-public-root-required");
     assert_eq!(items[0].severity, Severity::Error);
-
-    let legal = r#"{"projects":[{"drifts":[{"code":"DRIFT_LEGAL_REDACTION","kind":"legal_redaction","severity":"info"}]}]}"#;
-    let blocking = r#"{"projects":[{"drifts":[{"code":"INVARIANT_MISSING","kind":"invariant","severity":"error"}]}]}"#;
-    assert_eq!(allowlisted_promotion_redaction_count(legal), Some(1));
-    assert_eq!(allowlisted_promotion_redaction_count(blocking), None);
-    assert_eq!(allowlisted_promotion_redaction_count("not-json"), None);
 }
 
 #[test]

@@ -107,7 +107,7 @@ pub struct ReceiptPlan {
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
-pub const SCHEMA_VERSION: &str = "0.3.4-launch-plan";
+pub const SCHEMA_VERSION: &str = "0.3.5-launch-plan";
 
 // ── Main entry point ──────────────────────────────────────────────────────
 

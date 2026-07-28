@@ -3,7 +3,7 @@
 //! Maps a set of changed file paths to a deterministic `ChangeLane`, and binds
 //! each lane to a minimal-sufficient `VerificationProfile`. This lets hygiene
 //! changes (e.g. a `.gitignore` edit) skip the full Rust gate while keeping
-//! protocol/core and release/sync changes on the full guarded path.
+//! protocol/core and release-manifest changes on their guarded paths.
 //!
 //! # Design
 //!
@@ -34,7 +34,7 @@ pub enum ChangeLane {
     /// `protocol/` files, `governance/`, and root governance entry files
     /// (`AGENTS.md`, `CLAUDE.md`, `AGENT_SUITE_PROTOCOL.md`, `WORKSPACE.md`).
     ProtocolCore,
-    /// Release/sync surface: `manifests/` (suite manifest, capability metadata,
+    /// Release surface: `manifests/` (suite manifest, capability metadata,
     /// runtime profiles, MCP registry).
     ReleaseSync,
 }
@@ -59,14 +59,14 @@ impl ChangeLane {
             ChangeLane::DocsOnly => VerificationProfile::Minimal,
             ChangeLane::ConfigOnly => VerificationProfile::YamlParse,
             ChangeLane::SourceCode => VerificationProfile::Standard,
-            ChangeLane::ProtocolCore => VerificationProfile::Full,
+            ChangeLane::ProtocolCore => VerificationProfile::Protocol,
             ChangeLane::ReleaseSync => VerificationProfile::Release,
         }
     }
 }
 
 /// Minimal-sufficient verification effort. Ordering is `Minimal < YamlParse <
-/// Standard < Full < Release` — used to pick the strongest profile when a
+/// Standard < Protocol < Release` — used to pick the strongest profile when a
 /// change set spans multiple lanes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -77,9 +77,9 @@ pub enum VerificationProfile {
     YamlParse,
     /// fmt + test + build + fixtures + yaml + preflight + templates (= local scope).
     Standard,
-    /// Standard + private↔stable drift + private↔public boundary (= full scope).
-    Full,
-    /// Full + release boundary checks (= release scope).
+    /// Standard plus governance-protocol checks.
+    Protocol,
+    /// Protocol plus release boundary checks (= release scope).
     Release,
 }
 
@@ -90,7 +90,7 @@ impl VerificationProfile {
             VerificationProfile::Minimal => "minimal",
             VerificationProfile::YamlParse => "yaml_parse",
             VerificationProfile::Standard => "standard",
-            VerificationProfile::Full => "full",
+            VerificationProfile::Protocol => "protocol",
             VerificationProfile::Release => "release",
         }
     }

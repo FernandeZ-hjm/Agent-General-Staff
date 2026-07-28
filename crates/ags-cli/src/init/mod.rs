@@ -45,11 +45,7 @@ pub(crate) fn run(target: &Path, slug: Option<String>, dry_run: bool, format: &s
                 .managed_project_registration()
                 .and_then(emit_registration_receipt);
             output.set_managed_project_receipt(receipt);
-            if format == "json" {
-                println!("{}", output.render_json());
-            } else {
-                println!("{}", output.render_text());
-            }
+            crate::output::emit_rendered(format, || output.render_json(), || output.render_text());
             if !output.succeeded() {
                 std::process::exit(1);
             }

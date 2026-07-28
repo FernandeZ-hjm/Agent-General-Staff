@@ -175,7 +175,7 @@ fn structured_failure_and_explain_outputs_keep_their_contract() {
 
     let explanation = explain_policy(&input());
     let json = serde_json::to_value(explanation).unwrap();
-    assert_eq!(json["schema_version"], "0.3.4-execution-policy");
+    assert_eq!(json["schema_version"], "0.3.5-execution-policy");
     assert!(json.get("task_summary").is_some());
     assert!(json.get("resolved_policy").is_some());
 }
@@ -183,7 +183,7 @@ fn structured_failure_and_explain_outputs_keep_their_contract() {
 #[test]
 fn resolved_policy_json_has_one_stable_schema() {
     let value = serde_json::to_value(resolve_policy(input())).unwrap();
-    assert_eq!(value["schema_version"], "0.3.4-execution-policy");
+    assert_eq!(value["schema_version"], "0.3.5-execution-policy");
     assert!(value.get("effective_permission_mode").is_some());
     assert!(value.get("allowed_launch_args").is_some());
 }

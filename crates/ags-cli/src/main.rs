@@ -101,7 +101,6 @@ fn run_cli() {
         // ── Hidden kernel surface ──
         Commands::Task { action } => kernel::task::run(action),
         Commands::Policy { action } => kernel::policy::run(action),
-        Commands::Sync { action } => kernel::sync::run(action),
         Commands::Bootstrap {
             dry_run,
             apply,

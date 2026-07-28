@@ -30,16 +30,13 @@ fn cmd_gate_check(path: &str, format: &str, approve_writes: bool, current_task_a
     });
     let input = build_policy_input(&card.fields, approve_writes, current_task_approval);
     let output = ags_governance_decision::policy::gate_check(&input);
-    if format == "json" {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&output).unwrap_or_default()
-        );
-    } else {
-        println!("Gate Decision: {}", output.decision);
-        println!("Task card:     {display_path}\n");
-        println!("{}", format_policy_text(&output.resolved_policy));
-    }
+    crate::output::emit(format, &output, || {
+        format!(
+            "Gate Decision: {}\nTask card:     {display_path}\n\n{}",
+            output.decision,
+            format_policy_text(&output.resolved_policy)
+        )
+    });
     if output.decision == ags_governance_decision::policy::GateDecision::Stop {
         std::process::exit(1);
     }
@@ -50,19 +47,15 @@ fn output_gate_error(
     display_path: &str,
     format: &str,
 ) {
-    if format == "json" {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(output).unwrap_or_default()
-        );
-    } else {
-        println!("Gate Decision: stop");
-        println!("Path: {display_path}");
-        println!("Error: {}", output.error_kind);
-        for error in &output.errors {
-            println!("  - {error}");
-        }
-    }
+    crate::output::emit(format, output, || {
+        let mut lines = vec![
+            "Gate Decision: stop".to_string(),
+            format!("Path: {display_path}"),
+            format!("Error: {}", output.error_kind),
+        ];
+        lines.extend(output.errors.iter().map(|error| format!("  - {error}")));
+        lines.join("\n")
+    });
 }
 
 #[derive(Debug, Serialize)]
@@ -108,28 +101,21 @@ fn cmd_gate_output(path: &str, for_request: Option<&str>, format: &str) {
         sample: content.chars().take(240).collect(),
         for_request: for_request.map(str::to_string),
     });
-    if format == "json" {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "gate": "output",
-                "decision": decision,
-                "block_reason": block_reason,
-                "validation_errors": validation_errors,
-                "governance_miss": governance_miss,
-            }))
-            .unwrap_or_default()
-        );
-    } else {
-        println!("Gate: output");
-        println!("Decision: {decision}");
+    let output = serde_json::json!({
+        "gate": "output",
+        "decision": decision,
+        "block_reason": block_reason,
+        "validation_errors": validation_errors,
+        "governance_miss": governance_miss,
+    });
+    crate::output::emit(format, &output, || {
+        let mut lines = vec!["Gate: output".to_string(), format!("Decision: {decision}")];
         if let Some(reason) = block_reason {
-            println!("Block reason: {reason}");
+            lines.push(format!("Block reason: {reason}"));
         }
-        for error in &validation_errors {
-            println!("  - {error}");
-        }
-    }
+        lines.extend(validation_errors.iter().map(|error| format!("  - {error}")));
+        lines.join("\n")
+    });
     if decision == "stop" {
         std::process::exit(1);
     }
@@ -143,27 +129,24 @@ fn cmd_gate_skill_tags(path: &str, _target: &Path, for_agent: &str, format: &str
     let tags = ags_task_contract::validator::extract_skill_tags(&content);
     let gate = ags_capability_governance::verify_skill_tags(&tags, for_agent);
     let decision = if gate.all_accepted { "allow" } else { "stop" };
-    if format == "json" {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "gate": "skill_tags",
-                "decision": decision,
-                "active_host": gate.active_host,
-                "snapshot_hash": gate.snapshot_hash,
-                "all_accepted": gate.all_accepted,
-                "rejected": gate.rejected,
-                "verdicts": gate.verdicts,
-            }))
-            .unwrap_or_default()
-        );
-    } else {
-        println!("Gate: skill-tags");
-        println!("Active host: {}", gate.active_host);
-        println!("Snapshot: {}", gate.snapshot_hash);
-        println!("Decision: {decision}");
+    let output = serde_json::json!({
+        "gate": "skill_tags",
+        "decision": decision,
+        "active_host": gate.active_host,
+        "snapshot_hash": gate.snapshot_hash,
+        "all_accepted": gate.all_accepted,
+        "rejected": gate.rejected,
+        "verdicts": gate.verdicts,
+    });
+    crate::output::emit(format, &output, || {
+        let mut lines = vec![
+            "Gate: skill-tags".to_string(),
+            format!("Active host: {}", gate.active_host),
+            format!("Snapshot: {}", gate.snapshot_hash),
+            format!("Decision: {decision}"),
+        ];
         for verdict in &gate.verdicts {
-            println!(
+            lines.push(format!(
                 "  - [skill: {}] {}{}",
                 verdict.tag,
                 if verdict.accepted { "ACCEPT" } else { "REJECT" },
@@ -172,9 +155,10 @@ fn cmd_gate_skill_tags(path: &str, _target: &Path, for_agent: &str, format: &str
                 } else {
                     format!(" ({})", verdict.reason)
                 }
-            );
+            ));
         }
-    }
+        lines.join("\n")
+    });
     if !gate.all_accepted {
         std::process::exit(1);
     }

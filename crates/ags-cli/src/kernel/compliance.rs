@@ -19,10 +19,11 @@ fn cmd_compliance_check(path: &str, format: &str) {
     };
 
     let result = ags_evidence::check_compliance(&receipt);
-    match format {
-        "json" => println!("{}", ags_evidence::render_compliance_json(&result)),
-        _ => println!("{}", ags_evidence::render_compliance_text(&result)),
-    }
+    crate::output::emit_rendered(
+        format,
+        || ags_evidence::render_compliance_json(&result),
+        || ags_evidence::render_compliance_text(&result),
+    );
 
     if !result.compliant {
         std::process::exit(1);

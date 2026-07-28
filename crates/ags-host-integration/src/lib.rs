@@ -18,12 +18,16 @@ pub use agents::{
     AgentScanRow,
 };
 pub use host_identity::{recognized_host_display, AgentType};
-pub use mcp_probe::{claude_mcp_list_line, codex_mcp_list_line, command_in_path, mcp_server_ids};
+pub use mcp_probe::{
+    claude_mcp_list_line, codex_mcp_list_line, command_in_path, mcp_server_ids, mcp_server_line,
+    parse_mcp_list, McpServerRegistration,
+};
 pub use memory_lifecycle::{
     compute_memory_lifecycle_at_for_host, compute_memory_lifecycle_for_host, extract_profile_slug,
     MemoryLifecycle,
 };
 pub use platforms::{
-    cross_platform_init_plan, cross_platform_init_plan_with_detectors, AgentPlatformSpec,
-    AgentPlatformStatus, CrossPlatformInitPlan, AGENT_PLATFORM_SPECS,
+    cross_platform_init_plan, cross_platform_init_plan_with_detectors, platform_spec,
+    static_skill_roots, supported_skill_hosts, AgentPlatformSpec, AgentPlatformStatus,
+    CrossPlatformInitPlan, McpListFormat, McpProbeSpec, AGENT_PLATFORM_SPECS,
 };

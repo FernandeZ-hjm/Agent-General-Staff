@@ -141,47 +141,43 @@ pub(crate) fn cmd_doctor(format: &str, repair: bool, dry_run: bool, target: &Pat
         let mut report = compose_doctor_report(kernel, project);
         report.findings.extend(capability.findings);
         report.findings.extend(host_entry.findings);
-        match format {
-            "json" => println!("{}", ags_verification::doctor::render_json(&report)),
-            _ => {
-                println!("{}", ags_verification::doctor::render_text(&report));
-                let reg = managed_projects::load(&managed_projects::registry_path(
-                    &default_private_runtime_home(),
-                ))
-                .unwrap_or_default();
-                println!();
-                println!("{}", managed_projects::render_registry_text(&reg));
-                println!(
-                    "Note: lightweight local repair lives in `ags update repair-local`; doctor stays read-only."
-                );
-            }
-        }
+        let reg = managed_projects::load(&managed_projects::registry_path(
+            &default_private_runtime_home(),
+        ))
+        .unwrap_or_default();
+        crate::output::emit_rendered(
+            format,
+            || ags_verification::doctor::render_json(&report),
+            || {
+                format!(
+                    "{}\n\n{}\nNote: lightweight local repair lives in `ags update repair-local`; doctor stays read-only.",
+                    ags_verification::doctor::render_text(&report),
+                    managed_projects::render_registry_text(&reg)
+                )
+            },
+        );
         std::process::exit(report.exit_code());
     }
 
     if dry_run {
         // Repair dry-run: show what would be repaired
         let plan = ags_verification::doctor::repair_plan(target);
-        match format {
-            "json" => println!(
-                "{}",
-                ags_verification::doctor::render_repair_plan_json(&plan)
-            ),
-            _ => println!(
-                "{}",
-                ags_verification::doctor::render_repair_plan_text(&plan)
-            ),
-        }
+        crate::output::emit_rendered(
+            format,
+            || ags_verification::doctor::render_repair_plan_json(&plan),
+            || ags_verification::doctor::render_repair_plan_text(&plan),
+        );
         std::process::exit(plan.exit_code());
     }
 
     // Actual repair (safe items only)
     guard_writable_target("ags doctor --fix", target);
     let result = ags_verification::doctor::repair(target);
-    match format {
-        "json" => println!("{}", ags_verification::doctor::render_repair_json(&result)),
-        _ => println!("{}", ags_verification::doctor::render_repair_text(&result)),
-    }
+    crate::output::emit_rendered(
+        format,
+        || ags_verification::doctor::render_repair_json(&result),
+        || ags_verification::doctor::render_repair_text(&result),
+    );
     std::process::exit(result.exit_code());
 }
 

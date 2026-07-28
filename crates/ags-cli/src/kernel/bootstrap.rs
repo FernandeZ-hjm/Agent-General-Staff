@@ -1,17 +1,15 @@
 use crate::context::{ensure_bootstrap_source_repo, guard_writable_target};
 use std::path::{Path, PathBuf};
 
-fn render_bootstrap_apply_json(
+fn bootstrap_apply_output(
     plan: &ags_verification::bootstrap::BootstrapPlan,
     report: &ags_verification::doctor::HealthReport,
-) -> String {
-    let output = serde_json::json!({
+) -> serde_json::Value {
+    serde_json::json!({
         "schema_version": ags_verification::bootstrap::SCHEMA_VERSION,
         "plan": plan,
         "apply_report": report,
-    });
-    serde_json::to_string_pretty(&output)
-        .unwrap_or_else(|e| format!(r#"{{"error":"JSON serialization failed: {e}"}}"#))
+    })
 }
 
 // ── Private runtime install profile ───────────────────────────────────────
@@ -22,21 +20,16 @@ fn cmd_bootstrap_apply(target: &Path, format: &str) {
 
     let plan = ags_verification::bootstrap::plan(&source_repo, target);
 
-    // Print plan first
-    if format != "json" {
-        println!("{}", ags_verification::bootstrap::render_plan_text(&plan));
-    }
-
     // Execute plan
     let report = ags_verification::bootstrap::apply(&source_repo, &plan);
-
-    match format {
-        "json" => println!("{}", render_bootstrap_apply_json(&plan, &report)),
-        _ => {
-            println!();
-            println!("{}", ags_verification::doctor::render_text(&report));
-        }
-    }
+    let output = bootstrap_apply_output(&plan, &report);
+    crate::output::emit(format, &output, || {
+        format!(
+            "{}\n\n{}",
+            ags_verification::bootstrap::render_plan_text(&plan),
+            ags_verification::doctor::render_text(&report)
+        )
+    });
 
     if !report.passed() {
         std::process::exit(1);
@@ -45,10 +38,11 @@ fn cmd_bootstrap_apply(target: &Path, format: &str) {
 /// Shared dispatch: `bootstrap --dry-run --target <dir>`
 fn cmd_bootstrap_dry_run_target(target: &Path, format: &str) {
     let report = ags_verification::bootstrap::run(target);
-    match format {
-        "json" => println!("{}", ags_verification::doctor::render_json(&report)),
-        _ => println!("{}", ags_verification::doctor::render_text(&report)),
-    }
+    crate::output::emit_rendered(
+        format,
+        || ags_verification::doctor::render_json(&report),
+        || ags_verification::doctor::render_text(&report),
+    );
     std::process::exit(report.exit_code());
 }
 

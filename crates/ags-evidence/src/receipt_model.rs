@@ -1,6 +1,6 @@
 use super::*;
 
-pub const RECEIPT_SCHEMA_VERSION: &str = "0.3.4-task-receipt";
+pub const RECEIPT_SCHEMA_VERSION: &str = "0.3.5-task-receipt";
 
 // ── Data model ──────────────────────────────────────────────────────────────
 

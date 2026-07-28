@@ -19,29 +19,24 @@ pub(in crate::agents) fn cmd_agents_verify(host: &str, strict: bool, format: &st
     let memory = ags_workspace_facts::compute_memory_lifecycle_for_host(&target, &agent);
     let ok = capability.status == "ok" && memory.status == "full";
 
-    match format {
-        "json" => println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "schema_version": "0.3.4-agent-host-verification",
-                "host": host,
-                "status": if ok { "ok" } else { "drifted" },
-                "capability_visibility": capability,
-                "memory_lifecycle": memory,
-                "strict_ready": ok,
-            }))
-            .unwrap_or_default()
-        ),
-        _ => {
-            println!("{}", console::render_verify_text(&capability));
-            println!();
-            println!("Native memory lifecycle");
-            println!("  host: {}", memory.host);
-            println!("  adapter: {}", memory.adapter);
-            println!("  status: {}", memory.status);
-            println!("  {}", memory.summary);
-        }
-    }
+    let output = serde_json::json!({
+        "schema_version": "0.3.5-agent-host-verification",
+        "host": host,
+        "status": if ok { "ok" } else { "drifted" },
+        "capability_visibility": capability,
+        "memory_lifecycle": memory,
+        "strict_ready": ok,
+    });
+    crate::output::emit(format, &output, || {
+        format!(
+            "{}\n\nNative memory lifecycle\n  host: {}\n  adapter: {}\n  status: {}\n  {}",
+            console::render_verify_text(&capability),
+            memory.host,
+            memory.adapter,
+            memory.status,
+            memory.summary
+        )
+    });
     if strict && !ok {
         std::process::exit(1);
     }

@@ -10,4 +10,4 @@ description: "当用户提到 /ags setup、AGS Setup、AGS setup，或需要初�
 
 它不是 MCP `SkillTarget`；宿主必须按静态 CLI hint 直接调用。
 
-此技能期望的 AGS 版本：0.3.4。
+此技能期望的 AGS 版本：0.3.5。

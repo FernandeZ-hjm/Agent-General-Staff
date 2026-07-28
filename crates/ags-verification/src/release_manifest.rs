@@ -1,9 +1,7 @@
-//! Sync manifests for different project types.
+//! Exact public release payload authority and verification.
 //!
-//! Each manifest defines which files must be checked for a given project kind.
-//! Public-full sanitized targets may have a different manifest compared to private/stable.
-
-use super::types::ProjectKind;
+//! This module is the single release seam shared by edition detection,
+//! packaging, self-verification, and private-to-public promotion.
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
@@ -13,47 +11,18 @@ use std::process::Command;
 // ── Manifest definition ────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SyncManifest {
+pub struct ReleaseManifest {
     /// Relative file paths that must exist and match the source.
     pub required_files: &'static [&'static str],
     /// Protocol directory files to scan for extras beyond the manifest.
     pub protocol_dir: &'static str,
 }
 
-/// The full sync manifest for private ↔ stable comparison.
-///
-/// Covers root-level governance files and all protocol files.
-pub const FULL_MANIFEST: SyncManifest = SyncManifest {
-    required_files: &[
-        "AGENTS.md",
-        "CLAUDE.md",
-        "WORKSPACE.md",
-        "AGENT_SUITE_PROTOCOL.md",
-        "protocol/README.md",
-        "protocol/agent-task-protocol.md",
-        "protocol/context-memory.md",
-        "protocol/entrypoint-guidelines.md",
-        "protocol/cursor-skill-index.md",
-        "protocol/evolution-memory.md",
-        "protocol/project-profile.md",
-        "protocol/runtime-adapters.md",
-        "protocol/task-card-template.md",
-        "protocol/task-routing.md",
-        "protocol/skill-governance.md",
-        "governance/skill-sync.md",
-        "manifests/mcp-registry.yaml",
-        "templates/global-entry/ags-core.md",
-        "templates/global-entry/ags-task-handoff.md",
-        "templates/global-entry/host-operations.md",
-    ],
-    protocol_dir: "protocol",
-};
-
 /// Manifest for public-full sanitized targets.
 ///
 /// Public-full includes the Rust AGS runtime and governance framework, while
 /// keeping private EvoMap/GEP runtime surfaces outside the public sync surface.
-pub const PUBLIC_MANIFEST: SyncManifest = SyncManifest {
+pub const PUBLIC_MANIFEST: ReleaseManifest = ReleaseManifest {
     required_files: &[
         "AGENTS.md",
         "CLAUDE.md",
@@ -219,7 +188,6 @@ const APPROVED_PUBLIC_REWRITE_PATHS: &[&str] = &[
     "crates/ags-verification/src/doctor/checks/mod.rs",
     "crates/ags-verification/src/doctor/checks/orchestration.rs",
     "crates/ags-verification/src/doctor/checks/runtime.rs",
-    "crates/ags-verification/src/sync/mod.rs",
     "docs/adr/0001-workspace-service-and-deep-modules.md",
     "docs/architecture.md",
     "governance/skill-sync.md",
@@ -608,26 +576,6 @@ pub fn public_runtime_asset_files(root: &Path) -> Result<Vec<String>, Vec<String
     } else {
         Err(errors)
     }
-}
-
-/// Select the appropriate manifest for a project kind.
-pub fn manifest_for(kind: &ProjectKind) -> &'static SyncManifest {
-    match kind {
-        ProjectKind::Stable | ProjectKind::Private | ProjectKind::Custom(_) => &FULL_MANIFEST,
-        ProjectKind::PublicCoreOnly => &PUBLIC_MANIFEST,
-    }
-}
-
-/// Return the union of all files across manifests for extra-file scanning.
-pub fn all_manifest_files() -> BTreeSet<&'static str> {
-    let mut set = BTreeSet::new();
-    for &path in FULL_MANIFEST.required_files {
-        set.insert(path);
-    }
-    for &path in PUBLIC_MANIFEST.required_files {
-        set.insert(path);
-    }
-    set
 }
 
 /// Whether a relative path is forbidden in public-full sanitized release payloads.
@@ -1033,8 +981,7 @@ mod tests {
 
     #[test]
     fn public_full_sanitized_uses_expanded_manifest() {
-        let m = manifest_for(&ProjectKind::PublicCoreOnly);
-        assert!(m.required_files.len() > 20);
+        assert!(PUBLIC_MANIFEST.required_files.len() > 20);
     }
 
     #[test]
@@ -1128,16 +1075,6 @@ mod tests {
             assert!(
                 !is_public_forbidden_payload(path),
                 "expected public-allowed payload: {path}"
-            );
-        }
-    }
-
-    #[test]
-    fn stable_and_custom_targets_use_the_full_manifest() {
-        for kind in [ProjectKind::Stable, ProjectKind::Custom("test".into())] {
-            assert_eq!(
-                manifest_for(&kind).required_files,
-                FULL_MANIFEST.required_files
             );
         }
     }

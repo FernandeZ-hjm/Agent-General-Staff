@@ -431,7 +431,7 @@ pub struct ResolvedExecutionPolicy {
 impl Serialize for ResolvedExecutionPolicy {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut map = serializer.serialize_map(None)?;
-        map.serialize_entry("schema_version", "0.3.4-execution-policy")?;
+        map.serialize_entry("schema_version", "0.3.5-execution-policy")?;
         map.serialize_entry("executor", &self.executor)?;
         map.serialize_entry("runtime_adapter", &self.runtime_adapter)?;
         map.serialize_entry("effective_permission_mode", &self.effective_permission_mode)?;

@@ -1,5 +1,5 @@
 use super::*;
-pub const CONSOLE_SCHEMA_VERSION: &str = "0.3.4-skill-console";
+pub const CONSOLE_SCHEMA_VERSION: &str = "0.3.5-skill-console";
 
 // ── Command runner seam ─────────────────────────────────────────────────────
 

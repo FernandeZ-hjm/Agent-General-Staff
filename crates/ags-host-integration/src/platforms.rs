@@ -4,7 +4,23 @@
 //! host identities, supported signals, primary-host selection, registration
 //! advice, and capability-verification support.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpListFormat {
+    Claude,
+    Codex,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct McpProbeSpec {
+    pub program: &'static str,
+    pub args: &'static [&'static str],
+    pub format: McpListFormat,
+    pub evidence_source: &'static str,
+    /// False when the command only proves an inherited configuration source.
+    pub live_runtime_probe: bool,
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct AgentPlatformSpec {
@@ -14,6 +30,12 @@ pub struct AgentPlatformSpec {
     pub config_subdirs: &'static [&'static str],
     pub app_bundles: &'static [&'static str],
     pub mcp_host_command: &'static str,
+    pub native_skill_subdir: Option<&'static str>,
+    pub loads_shared_agent_skills: bool,
+    pub loads_codex_plugin_skills: bool,
+    pub mcp_probe: Option<McpProbeSpec>,
+    pub mcp_registrar: Option<&'static str>,
+    pub native_memory_adapter: Option<&'static str>,
     pub verify_supported: bool,
 }
 
@@ -25,6 +47,18 @@ pub const AGENT_PLATFORM_SPECS: &[AgentPlatformSpec] = &[
         config_subdirs: &[".claude"],
         app_bundles: &[],
         mcp_host_command: "claude mcp add ags -- ags mcp serve --transport stdio",
+        native_skill_subdir: Some(".claude/skills"),
+        loads_shared_agent_skills: false,
+        loads_codex_plugin_skills: false,
+        mcp_probe: Some(McpProbeSpec {
+            program: "claude",
+            args: &["mcp", "list"],
+            format: McpListFormat::Claude,
+            evidence_source: "`claude mcp list`",
+            live_runtime_probe: true,
+        }),
+        mcp_registrar: Some("claude"),
+        native_memory_adapter: Some("claude-command-hooks"),
         verify_supported: true,
     },
     AgentPlatformSpec {
@@ -34,6 +68,18 @@ pub const AGENT_PLATFORM_SPECS: &[AgentPlatformSpec] = &[
         config_subdirs: &[".codex"],
         app_bundles: &[],
         mcp_host_command: "codex mcp add ags -- ags mcp serve --transport stdio",
+        native_skill_subdir: Some(".codex/skills"),
+        loads_shared_agent_skills: true,
+        loads_codex_plugin_skills: true,
+        mcp_probe: Some(McpProbeSpec {
+            program: "codex",
+            args: &["mcp", "list"],
+            format: McpListFormat::Codex,
+            evidence_source: "`codex mcp list`",
+            live_runtime_probe: true,
+        }),
+        mcp_registrar: Some("codex"),
+        native_memory_adapter: Some("codex-command-hooks"),
         verify_supported: true,
     },
     AgentPlatformSpec {
@@ -43,6 +89,18 @@ pub const AGENT_PLATFORM_SPECS: &[AgentPlatformSpec] = &[
         config_subdirs: &[".omp", ".omp/agent"],
         app_bundles: &[],
         mcp_host_command: "no duplicate registration required: OMP discovers MCP servers from existing host configs including Codex; use project `.mcp.json` only for OMP-specific additions",
+        native_skill_subdir: Some(".omp/agent/skills"),
+        loads_shared_agent_skills: true,
+        loads_codex_plugin_skills: false,
+        mcp_probe: Some(McpProbeSpec {
+            program: "codex",
+            args: &["mcp", "list"],
+            format: McpListFormat::Codex,
+            evidence_source: "inherited Codex registration source (`codex mcp list`); live OMP runtime probe NOT_RUN",
+            live_runtime_probe: false,
+        }),
+        mcp_registrar: None,
+        native_memory_adapter: Some("omp-extension"),
         verify_supported: true,
     },
     AgentPlatformSpec {
@@ -52,6 +110,12 @@ pub const AGENT_PLATFORM_SPECS: &[AgentPlatformSpec] = &[
         config_subdirs: &[".cursor"],
         app_bundles: &["Cursor.app"],
         mcp_host_command: "configure AGS MCP in Cursor settings (reserved)",
+        native_skill_subdir: Some(".cursor/skills"),
+        loads_shared_agent_skills: true,
+        loads_codex_plugin_skills: false,
+        mcp_probe: None,
+        mcp_registrar: None,
+        native_memory_adapter: None,
         verify_supported: false,
     },
     AgentPlatformSpec {
@@ -61,6 +125,12 @@ pub const AGENT_PLATFORM_SPECS: &[AgentPlatformSpec] = &[
         config_subdirs: &[".workbuddy"],
         app_bundles: &["WorkBuddy.app", "WorkBuddy IDE.app"],
         mcp_host_command: "register AGS MCP in WorkBuddy host config (exposes ags_preflight / ags_agent_instructions / ags_task_validate / ags_policy_resolve); AGS never runs the registrar",
+        native_skill_subdir: None,
+        loads_shared_agent_skills: false,
+        loads_codex_plugin_skills: false,
+        mcp_probe: None,
+        mcp_registrar: None,
+        native_memory_adapter: None,
         verify_supported: false,
     },
     AgentPlatformSpec {
@@ -70,9 +140,40 @@ pub const AGENT_PLATFORM_SPECS: &[AgentPlatformSpec] = &[
         config_subdirs: &[".codebuddy"],
         app_bundles: &["CodeBuddy CN.app", "CodeBuddy Code.app", "CodeBuddy.app"],
         mcp_host_command: "register AGS MCP in CodeBuddy-Code host config (exposes ags_preflight / ags_agent_instructions / ags_task_validate / ags_policy_resolve); AGS never runs the registrar",
+        native_skill_subdir: Some(".codebuddy/skills"),
+        loads_shared_agent_skills: false,
+        loads_codex_plugin_skills: false,
+        mcp_probe: None,
+        mcp_registrar: None,
+        native_memory_adapter: None,
         verify_supported: false,
     },
 ];
+
+pub fn platform_spec(id: &str) -> Option<&'static AgentPlatformSpec> {
+    AGENT_PLATFORM_SPECS.iter().find(|spec| spec.id == id)
+}
+
+pub fn supported_skill_hosts() -> impl Iterator<Item = &'static str> {
+    AGENT_PLATFORM_SPECS
+        .iter()
+        .filter(|spec| spec.native_skill_subdir.is_some())
+        .map(|spec| spec.id)
+}
+
+pub fn static_skill_roots(home: &Path, host: &str) -> Vec<PathBuf> {
+    let Some(spec) = platform_spec(host) else {
+        return Vec::new();
+    };
+    let mut roots = Vec::new();
+    if let Some(subdir) = spec.native_skill_subdir {
+        roots.push(home.join(subdir));
+    }
+    if spec.loads_shared_agent_skills {
+        roots.push(home.join(".agents/skills"));
+    }
+    roots
+}
 
 #[derive(Debug, Clone)]
 pub struct AgentPlatformStatus {
@@ -196,6 +297,32 @@ mod tests {
                 .is_primary
         );
         let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn host_runtime_facts_keep_omp_inherited_probe_distinct_from_live_evidence() {
+        let omp = platform_spec("omp").unwrap();
+        let probe = omp.mcp_probe.unwrap();
+        assert_eq!(probe.program, "codex");
+        assert!(!probe.live_runtime_probe);
+        assert!(omp.mcp_registrar.is_none());
+        assert_eq!(omp.native_memory_adapter, Some("omp-extension"));
+    }
+
+    #[test]
+    fn cursor_and_omp_share_the_agent_skill_store_without_codex_plugins() {
+        let home = Path::new("/tmp/ags-host-facts");
+        for host in ["cursor", "omp"] {
+            assert_eq!(
+                static_skill_roots(home, host),
+                vec![
+                    home.join(platform_spec(host).unwrap().native_skill_subdir.unwrap()),
+                    home.join(".agents/skills"),
+                ]
+            );
+            assert!(!platform_spec(host).unwrap().loads_codex_plugin_skills);
+        }
+        assert!(platform_spec("codex").unwrap().loads_codex_plugin_skills);
     }
 
     #[test]

@@ -21,17 +21,18 @@ fn cmd_verify_run(scope: &str, format: &str, target: &Path, public_root: Option<
     };
     let report = ags_verification::run_verify_with_options(scope, target, &options);
 
-    match format {
-        "json" => println!("{}", ags_verification::render_json(&report)),
-        _ => println!("{}", ags_verification::render_text(&report)),
-    }
+    crate::output::emit_rendered(
+        format,
+        || ags_verification::render_json(&report),
+        || ags_verification::render_text(&report),
+    );
 
     std::process::exit(report.exit_code());
 }
 /// `ags verify lane` — classify the change lane for a git diff range.
 ///
 /// Deterministic, read-only. `range` is the commit range under review (e.g.
-/// `<a1-head>..HEAD`), or `cached` / `staged` for the index. Release/sync
+/// `<a1-head>..HEAD`), or `cached` / `staged` for the index. Release
 /// automation can use this to route hygiene changes onto a minimal path; it never defaults the
 /// range so a multi-commit push is not misjudged by a `HEAD~1` assumption.
 fn cmd_verify_lane(range: &str, format: &str, target: &Path) {
@@ -47,26 +48,22 @@ fn cmd_verify_lane(range: &str, format: &str, target: &Path) {
     };
 
     match ags_verification::classify_from_git_range(target, &range_norm) {
-        Ok(classification) => match format {
-            "json" => match serde_json::to_string_pretty(&classification) {
-                Ok(s) => println!("{}", s),
-                Err(e) => {
-                    eprintln!("verify lane: JSON serialization error: {}", e);
-                    std::process::exit(1);
-                }
-            },
-            _ => {
+        Ok(classification) => {
+            crate::output::emit(format, &classification, || {
                 let components: Vec<&str> = classification
                     .components
                     .iter()
                     .map(|c| c.as_str())
                     .collect();
-                println!("Lane: {}", classification.lane.as_str());
-                println!("Profile: {}", classification.profile.as_str());
-                println!("Components: {}", components.join(", "));
-                println!("Changed files: {}", classification.changed_files.len());
-            }
-        },
+                format!(
+                    "Lane: {}\nProfile: {}\nComponents: {}\nChanged files: {}",
+                    classification.lane.as_str(),
+                    classification.profile.as_str(),
+                    components.join(", "),
+                    classification.changed_files.len()
+                )
+            });
+        }
         Err(e) => {
             eprintln!("verify lane: {}", e);
             std::process::exit(1);

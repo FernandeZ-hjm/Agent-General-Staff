@@ -37,7 +37,7 @@ Review gate:
 任务存档：参考此前 compact card 校验通过记录
 
 目标文件夹路径：
-- /Volumes/AI Project/agent-governance-suite-private
+- /workspace/agent-governance-suite
 
 相关路径：
 - crates/

@@ -74,7 +74,7 @@ pub(super) fn tool_apply_action(
             }
         };
     pretty(&ApplyResult {
-        schema_version: "0.3.4-apply-result",
+        schema_version: "0.3.5-apply-result",
         governance_status: status,
         lease_id,
         action_id,

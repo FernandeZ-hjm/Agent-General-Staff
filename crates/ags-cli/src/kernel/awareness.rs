@@ -12,13 +12,11 @@ fn cmd_project_detect(target: &Path, format: &str) {
     }
 
     let identity = ags_workspace_facts::detect_project(target);
-    match format {
-        "json" => println!("{}", ags_workspace_facts::render_json(&identity)),
-        _ => println!(
-            "{}",
-            ags_workspace_facts::render_project_identity_text(&identity)
-        ),
-    }
+    crate::output::emit_rendered(
+        format,
+        || ags_workspace_facts::render_json(&identity),
+        || ags_workspace_facts::render_project_identity_text(&identity),
+    );
     std::process::exit(ags_workspace_facts::project_detect_exit_code(&identity));
 }
 /// Shared dispatch: `protocol status`
@@ -32,13 +30,11 @@ fn cmd_protocol_status(target: &Path, format: &str) {
     }
 
     let status = ags_workspace_facts::check_protocol_status(target);
-    match format {
-        "json" => println!("{}", ags_workspace_facts::render_json(&status)),
-        _ => println!(
-            "{}",
-            ags_workspace_facts::render_protocol_status_text(&status)
-        ),
-    }
+    crate::output::emit_rendered(
+        format,
+        || ags_workspace_facts::render_json(&status),
+        || ags_workspace_facts::render_protocol_status_text(&status),
+    );
     std::process::exit(ags_workspace_facts::protocol_status_exit_code(&status));
 }
 /// Shared dispatch: `agent instructions`
@@ -60,13 +56,11 @@ fn cmd_agent_instructions(for_agent: &str, target: &Path, format: &str) {
     };
 
     let instructions = ags_workspace_facts::generate_agent_instructions(target, &agent_type);
-    match format {
-        "json" => println!("{}", ags_workspace_facts::render_json(&instructions)),
-        _ => println!(
-            "{}",
-            ags_workspace_facts::render_agent_instructions_text(&instructions)
-        ),
-    }
+    crate::output::emit_rendered(
+        format,
+        || ags_workspace_facts::render_json(&instructions),
+        || ags_workspace_facts::render_agent_instructions_text(&instructions),
+    );
     std::process::exit(instructions.exit_code);
 }
 /// Shared dispatch: `session preflight`
@@ -88,13 +82,11 @@ fn cmd_session_preflight(for_agent: &str, target: &Path, format: &str) {
     };
 
     let preflight = ags_workspace_facts::run_session_preflight(target, &agent_type);
-    match format {
-        "json" => println!("{}", ags_workspace_facts::render_json(&preflight)),
-        _ => println!(
-            "{}",
-            ags_workspace_facts::render_session_preflight_text(&preflight)
-        ),
-    }
+    crate::output::emit_rendered(
+        format,
+        || ags_workspace_facts::render_json(&preflight),
+        || ags_workspace_facts::render_session_preflight_text(&preflight),
+    );
     std::process::exit(preflight.exit_code);
 }
 

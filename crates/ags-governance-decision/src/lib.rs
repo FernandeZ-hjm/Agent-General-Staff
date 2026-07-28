@@ -11,8 +11,8 @@ use sha2::{Digest, Sha256};
 /// Execution-policy resolution lives behind the governance-decision seam.
 pub mod policy;
 
-pub const HOST_ROUTE_PROPOSAL_SCHEMA_VERSION: &str = "0.3.4-host-route-proposal";
-pub const ROUTE_RESOLUTION_SCHEMA_VERSION: &str = "0.3.4-route-resolution";
+pub const HOST_ROUTE_PROPOSAL_SCHEMA_VERSION: &str = "0.3.5-host-route-proposal";
+pub const ROUTE_RESOLUTION_SCHEMA_VERSION: &str = "0.3.5-route-resolution";
 
 /// Shared foreground status used by preflight, routing, apply, runner and
 /// receipts. It is deliberately separate from task level and permission mode.

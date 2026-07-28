@@ -67,7 +67,7 @@ def emit_close_receipt(
     target.write_text(
         json.dumps(
             {
-                "schema_version": "0.3.4-memory-close-receipt",
+                "schema_version": "0.3.5-memory-close-receipt",
                 "created_at": _dt.datetime.now().isoformat(timespec="seconds"),
                 "host": host,
                 "session_id": str(hook_input.get("session_id") or ""),
@@ -308,7 +308,7 @@ def delivery_closure(receipt_dir: pathlib.Path) -> dict[str, Any]:
     executable = os.environ.get("AGS_CLI_BIN") or shutil.which("ags")
     if not executable:
         return {
-            "schema_version": "0.3.4-delivery-closure",
+            "schema_version": "0.3.5-delivery-closure",
             "valid": False,
             "checks": [
                 {
@@ -338,7 +338,7 @@ def delivery_closure(receipt_dir: pathlib.Path) -> dict[str, Any]:
         closure = json.loads(result.stdout)
     except json.JSONDecodeError:
         return {
-            "schema_version": "0.3.4-delivery-closure",
+            "schema_version": "0.3.5-delivery-closure",
             "valid": False,
             "checks": [
                 {

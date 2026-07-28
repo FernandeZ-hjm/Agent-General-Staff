@@ -1,76 +1,34 @@
 use crate::cli::ReleaseAction;
 use std::path::PathBuf;
-
-/// Shared dispatch: `release verify`
-fn cmd_release_verify(target: &str, format: &str) {
-    let variable = match target {
-        "stable" => "AGS_RELEASE_STABLE_ROOT",
-        "public" | "public-core" | "public-full" | "public-full-sanitized" => {
-            "AGS_RELEASE_PUBLIC_ROOT"
-        }
-        _ => unreachable!("clap guards target values"),
-    };
-    let Some(target_root) = std::env::var_os(variable).map(PathBuf::from) else {
-        eprintln!(
-            "release verify: {variable} must name the explicit target checkout; machine topology is not embedded in AGS"
-        );
-        std::process::exit(2);
-    };
-
-    let target_config = ags_verification::sync::TargetConfig {
-        root: target_root.clone(),
-        name: target.to_string(),
-        kind: match target {
-            "stable" => ags_verification::sync::ProjectKind::Stable,
-            "public" | "public-core" | "public-full" | "public-full-sanitized" => {
-                ags_verification::sync::ProjectKind::PublicCoreOnly
-            }
-            _ => unreachable!(),
-        },
-    };
-
-    let options = ags_verification::sync::CheckOptions {
-        source_root: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-        source_name: "private".to_string(),
-        targets: vec![target_config],
-        allowlist_path: None,
-    };
-
-    let report_format = match format {
-        "json" => ags_verification::sync::ReportFormat::Json,
-        _ => ags_verification::sync::ReportFormat::Text,
-    };
-
-    let ok = ags_verification::sync::run_cli(options, report_format);
-    if !ok {
-        std::process::exit(1);
-    }
-}
-fn render_release_package_plan_text(plan: &serde_json::Value) {
-    println!("Release Package Plan");
-    println!("====================");
-    println!("Schema:    {}", plan["schema_version"]);
-    println!("Profile:   {}", plan["profile"]);
-    println!("Dry run:   {}", plan["dry_run"]);
-    println!("Source:    {}", plan["source_root"]);
-    println!();
-    println!(
-        "Files:     {} total, {} included, {} excluded",
-        plan["summary"]["total_files"], plan["summary"]["included"], plan["summary"]["excluded"]
-    );
-    println!();
-    println!("Included:");
+fn render_release_package_plan_text(plan: &serde_json::Value) -> String {
+    let mut lines = vec![
+        "Release Package Plan".to_string(),
+        "====================".to_string(),
+        format!("Schema:    {}", plan["schema_version"]),
+        format!("Profile:   {}", plan["profile"]),
+        format!("Dry run:   {}", plan["dry_run"]),
+        format!("Source:    {}", plan["source_root"]),
+        String::new(),
+        format!(
+            "Files:     {} total, {} included, {} excluded",
+            plan["summary"]["total_files"],
+            plan["summary"]["included"],
+            plan["summary"]["excluded"]
+        ),
+        String::new(),
+        "Included:".to_string(),
+    ];
     if let Some(files) = plan["included_files"].as_array() {
         for file in files.iter().filter_map(|value| value.as_str()) {
-            println!("  + {}", file);
+            lines.push(format!("  + {file}"));
         }
     }
     if let Some(files) = plan["forbidden_included"].as_array() {
         if !files.is_empty() {
-            println!();
-            println!("Forbidden included:");
+            lines.push(String::new());
+            lines.push("Forbidden included:".to_string());
             for file in files.iter().filter_map(|value| value.as_str()) {
-                println!("  ! {}", file);
+                lines.push(format!("  ! {file}"));
             }
         }
     }
@@ -82,27 +40,28 @@ fn render_release_package_plan_text(plan: &serde_json::Value) {
     ] {
         if let Some(files) = plan[key].as_array() {
             if !files.is_empty() {
-                println!();
-                println!("{label}:");
+                lines.push(String::new());
+                lines.push(format!("{label}:"));
                 for file in files.iter().filter_map(|value| value.as_str()) {
-                    println!("  ! {file}");
+                    lines.push(format!("  ! {file}"));
                 }
             }
         }
     }
     if let Some(files) = plan["excluded_files"].as_array() {
         if !files.is_empty() {
-            println!();
-            println!("Excluded:");
+            lines.push(String::new());
+            lines.push("Excluded:".to_string());
             for entry in files {
                 let file = entry["file"].as_str().unwrap_or("");
                 let reason = entry["reason"].as_str().unwrap_or("");
-                println!("  - {}  ({})", file, reason);
+                lines.push(format!("  - {file}  ({reason})"));
             }
         }
     }
-    println!();
-    println!("Verdict: DRY-RUN — no files written. Ready for review.");
+    lines.push(String::new());
+    lines.push("Verdict: DRY-RUN — no files written. Ready for review.".to_string());
+    lines.join("\n")
 }
 /// Shared dispatch: `release package`
 fn cmd_release_package(profile: &str, dry_run: bool, format: &str) {
@@ -115,12 +74,7 @@ fn cmd_release_package(profile: &str, dry_run: bool, format: &str) {
     let (plan, has_forbidden_included) =
         ags_verification::release_package::release_package_plan(&source_root, profile, dry_run);
 
-    match format {
-        "json" => {
-            println!("{}", serde_json::to_string_pretty(&plan).unwrap());
-        }
-        _ => render_release_package_plan_text(&plan),
-    }
+    crate::output::emit(format, &plan, || render_release_package_plan_text(&plan));
 
     if has_forbidden_included {
         std::process::exit(1);
@@ -129,7 +83,6 @@ fn cmd_release_package(profile: &str, dry_run: bool, format: &str) {
 
 pub(crate) fn run(action: ReleaseAction) {
     match action {
-        ReleaseAction::Verify { target, format } => cmd_release_verify(&target, &format),
         ReleaseAction::Package {
             profile,
             dry_run,

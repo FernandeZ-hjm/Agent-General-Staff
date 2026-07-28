@@ -3,9 +3,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub const SCHEMA_VERSION: &str = "0.3.4-task-contract";
+pub const SCHEMA_VERSION: &str = "0.3.5-task-contract";
 
-pub const HANDOFF_CONTRACT_SCHEMA_VERSION: &str = "0.3.4-handoff-contract";
+pub const HANDOFF_CONTRACT_SCHEMA_VERSION: &str = "0.3.5-handoff-contract";
 
 /// Structured origin of a newly compiled task card.
 ///

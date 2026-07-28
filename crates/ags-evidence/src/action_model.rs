@@ -6,8 +6,8 @@ use super::*;
 // (setup --yes, skill --apply, init, update apply / repair-local)
 // emit an `ActionReceipt` so every mutation leaves machine-readable evidence.
 // `receipt_id` is prefixed `ar-` and `schema_version`
-// is `0.3.4-action-receipt`, so action receipts never collide with task-card
-// receipts (`receipt-` / `0.3.4-task-receipt`) and verifiers can dispatch by schema.
+// is `0.3.5-action-receipt`, so action receipts never collide with task-card
+// receipts (`receipt-` / `0.3.5-task-receipt`) and verifiers can dispatch by schema.
 //
 // Pure advised-only surfaces such as `ags agents govern` without `--apply` do
 // NOT emit receipts. `agents govern --apply` emits one because it writes only

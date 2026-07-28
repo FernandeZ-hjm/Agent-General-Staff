@@ -1,6 +1,5 @@
 //! Hidden kernel command action sub-enums.
 
-use super::parse_target;
 use clap::Subcommand;
 use std::path::PathBuf;
 
@@ -248,40 +247,6 @@ pub(crate) enum ComplianceAction {
         format: String,
     },
 }
-#[derive(Subcommand)]
-pub(crate) enum SyncAction {
-    /// Multi-project protocol drift checker (read-only).
-    ///
-    /// Compares protocol files between source and one or more targets
-    /// at the markdown section/rule level, distinguishing dangerous drift
-    /// from legal differences (e.g. public-full sanitized adjustments).
-    Check {
-        /// Source suite root (default: current directory)
-        #[arg(long, default_value = ".")]
-        source: PathBuf,
-
-        /// Target name=path pairs, e.g. "stable=/path/to/stable" "public=/path/to/public"
-        #[arg(long = "targets", value_name = "NAME=PATH", num_args = 1.., value_parser = parse_target)]
-        targets: Vec<(String, PathBuf)>,
-
-        /// Single target root.
-        #[arg(long = "target")]
-        target: Option<PathBuf>,
-
-        /// Name for --target (default: "target")
-        #[arg(long = "target-name", default_value = "target")]
-        target_name: String,
-
-        /// Path to a JSON allowlist file for legal difference classification.
-        #[arg(long)]
-        allowlist: Option<PathBuf>,
-
-        /// Output format: text (default) or json.
-        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
-        format: String,
-    },
-}
-
 // ── M2 Object Command Sub-enums ───────────────────────────────────────────
 #[derive(Subcommand)]
 pub(crate) enum ProjectAction {
@@ -433,21 +398,9 @@ pub(crate) enum HooksAction {
 }
 
 // ── Release actions ─────────────────────────────────────────────────────────
-/// Release verification operations — dry-run only, no apply to stable/public.
+/// Release packaging operations — dry-run only, no apply to stable/public.
 #[derive(Subcommand)]
 pub(crate) enum ReleaseAction {
-    /// Verify release readiness against a target.
-    ///
-    /// Checks drift, boundary, and allowlist compliance against the specified
-    /// target (stable or public-full sanitized). Read-only, no files are written.
-    Verify {
-        /// Target: stable or public-full
-        #[arg(long, default_value = "stable", value_parser = ["stable", "public", "public-core", "public-full", "public-full-sanitized"])]
-        target: String,
-        /// Output format: text (default) or json
-        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
-        format: String,
-    },
     /// Plan a release package — lists what files WOULD be included.
     ///
     /// Public profiles include the public Rust workspace and governance

@@ -16,6 +16,7 @@ mod verify;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use ags_host_integration::{claude_mcp_list_line, command_in_path};
 use serde::{Deserialize, Serialize};
 
 use apply::{add_claude_registration_checks, write_install_file};
@@ -30,7 +31,7 @@ use recommendations::{render_third_party_recommendations_text, third_party_recom
 
 pub use memory::{apply_host_memory_adapter, MergeOutcome};
 
-pub const PRIVATE_INSTALL_SCHEMA: &str = "0.3.4-private-install";
+pub const PRIVATE_INSTALL_SCHEMA: &str = "0.3.5-private-install";
 const AGS_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -432,30 +433,4 @@ fn project_protocol_files() -> &'static [&'static str] {
         "context-memory.md",
         "cursor-skill-index.md",
     ]
-}
-
-fn command_in_path(command: &str) -> Result<String, String> {
-    ags_platform::find_in_path(command)
-        .map(|path| path.display().to_string())
-        .ok_or_else(|| format!("{command} not found in PATH"))
-}
-
-fn claude_mcp_list_line(server: &str) -> Result<Option<String>, String> {
-    let output = std::process::Command::new("claude")
-        .args(["mcp", "list"])
-        .output()
-        .map_err(|error| error.to_string())?;
-    let combined = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    if output.status.success() {
-        Ok(combined
-            .lines()
-            .find(|line| line.trim_start().starts_with(&format!("{server}:")))
-            .map(|line| line.trim().to_string()))
-    } else {
-        Err(combined.trim().to_string())
-    }
 }

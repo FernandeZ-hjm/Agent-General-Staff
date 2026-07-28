@@ -47,10 +47,12 @@ pub(in crate::skill_body::console) fn host_dir_entry_visibility(
         ("entry".to_string(), base.join(name)),
         ("system".to_string(), base.join(".system").join(name)),
     ];
-    if matches!(host, "codex" | "omp") {
+    if ags_host_integration::platform_spec(host).is_some_and(|spec| spec.loads_shared_agent_skills)
+    {
         locations.push(("shared".to_string(), home.join(".agents/skills").join(name)));
     }
-    if host == "codex" {
+    if ags_host_integration::platform_spec(host).is_some_and(|spec| spec.loads_codex_plugin_skills)
+    {
         for root in codex_plugin_skill_dirs(home) {
             locations.push(("enabled-plugin".to_string(), root.join(name)));
         }

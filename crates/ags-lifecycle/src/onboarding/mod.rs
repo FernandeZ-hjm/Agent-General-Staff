@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub const ONBOARDING_PLAN_SCHEMA_VERSION: &str = "0.3.4-onboarding-plan";
+pub const ONBOARDING_PLAN_SCHEMA_VERSION: &str = "0.3.5-onboarding-plan";
 const EMBEDDED_PUBLIC_PROFILE: &str = include_str!("../../../../manifests/onboarding-public.yaml");
 
 mod assess;

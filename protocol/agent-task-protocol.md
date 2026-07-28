@@ -1,6 +1,6 @@
 # Agent Task Protocol
 
-> AGS 0.3.4 权威任务协议。宿主解释语义；AGS 校验结构化提案、权限与确定性能力准入。
+> AGS 0.3.5 权威任务协议。宿主解释语义；AGS 校验结构化提案、权限与确定性能力准入。
 
 ## 完整生命周期
 
@@ -100,7 +100,7 @@ Runner 不启动宿主、不执行项目任务、不运行事后验证、不写�
 
 ### 8. Receipt
 
-收据 writer、reader 与 verifier 只接受当前 `0.3.4-task-receipt` schema。`governance_evidence` 只保存 decision/lease/proposal/scope/snapshot/policy hash、skill selection 与 outcome event id，不保存原始请求。只有
+收据 writer、reader 与 verifier 只接受当前 `0.3.5-task-receipt` schema。`governance_evidence` 只保存 decision/lease/proposal/scope/snapshot/policy hash、skill selection 与 outcome event id，不保存原始请求。只有
 `ags task close <task-card> <delivery-report>` 返回 `valid: true` 后，交付报告才可进入最终
 receipt 或 Stop-hook 任务存档。
 

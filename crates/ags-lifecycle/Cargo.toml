@@ -7,6 +7,7 @@ description = "Deterministic AGS public onboarding assessment, plans, and closed
 
 [dependencies]
 ags-capability-governance = { path = "../ags-capability-governance" }
+ags-host-integration = { path = "../ags-host-integration" }
 ags-platform = { path = "../ags-platform" }
 ags-workspace-facts = { path = "../ags-workspace-facts" }
 serde = { version = "1", features = ["derive"] }

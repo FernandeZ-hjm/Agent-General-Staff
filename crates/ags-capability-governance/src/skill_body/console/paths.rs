@@ -18,11 +18,7 @@ pub(super) fn is_safe_path_component(name: &str) -> bool {
 }
 
 pub(super) fn supported_skill_hosts() -> Vec<&'static str> {
-    SUPPORTED_HOSTS
-        .iter()
-        .copied()
-        .filter(|host| host_skills_subdir(host).is_some())
-        .collect()
+    ags_host_integration::supported_skill_hosts().collect()
 }
 
 pub(super) fn resolve_source(repo_root: &Path, source: &str) -> PathBuf {

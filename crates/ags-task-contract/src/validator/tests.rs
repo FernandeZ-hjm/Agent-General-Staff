@@ -31,6 +31,196 @@ Verification gate:\n- commands:\n  - V-01 -> AC-01: cargo test\n- expected evide
         .to_string()
 }
 
+fn assert_has_code(candidate: &str, expected: &str) {
+    let errors = validate(candidate);
+    assert!(
+        errors.iter().any(|error| error.contains(expected)),
+        "expected {expected}, got {errors:#?}"
+    );
+}
+
+macro_rules! semantic_contract {
+    ($name:ident, $code:ident, $candidate:expr) => {
+        #[test]
+        fn $name() {
+            let candidate: String = $candidate;
+            assert_has_code(&candidate, error_code::$code);
+        }
+    };
+}
+
+semantic_contract!(
+    invalid_contract_id_has_stable_code,
+    CONTRACT_ID_INVALID,
+    valid_card().replace(
+        "Contract ID: tc-0123456789abcdef",
+        "Contract ID: tc-NOT-LOWER-HEX"
+    )
+);
+
+semantic_contract!(
+    invalid_handoff_source_has_stable_code,
+    HANDOFF_SOURCE_INVALID,
+    valid_card().replace(
+        "Handoff source: existing-card",
+        "Handoff source: implicit-chat"
+    )
+);
+
+semantic_contract!(
+    invalid_closed_field_has_stable_code,
+    INVALID_FIELD_VALUE,
+    valid_card().replace("Executor: Codex", "Executor: Unknown")
+);
+
+semantic_contract!(
+    executor_adapter_mismatch_has_stable_code,
+    FIELD_COMBINATION_MISMATCH,
+    valid_card().replace("Runtime adapter: codex-local", "Runtime adapter: omp")
+);
+
+semantic_contract!(
+    light_protected_write_has_stable_code,
+    RISK_LEVEL_MISMATCH,
+    valid_card()
+        .replace("任务级别：Medium", "任务级别：Light")
+        .replace("任务：验证任务卡合同", "任务：修改 AGENTS.md")
+        .replace("非目标：不修改受保护路径", "非目标：不处理其他文件")
+);
+
+semantic_contract!(
+    plan_only_protected_write_has_stable_code,
+    PROTECTED_PATH_VIOLATION,
+    valid_card()
+        .replace(
+            "Permission mode: execute-and-verify",
+            "Permission mode: plan-only"
+        )
+        .replace("任务：验证任务卡合同", "任务：修改 AGENTS.md")
+        .replace("非目标：不修改受保护路径", "非目标：不处理其他文件")
+);
+
+semantic_contract!(
+    weak_goal_has_stable_code,
+    EMPTY_OR_WEAK_SECTION,
+    valid_card().replace("- G-01: 验证任务卡合同", "- G-01: TBD")
+);
+
+semantic_contract!(
+    plan_only_modification_has_stable_code,
+    CONTRADICTORY_REQUIREMENT,
+    valid_card()
+        .replace(
+            "Permission mode: execute-and-verify",
+            "Permission mode: plan-only"
+        )
+        .replace("任务：验证任务卡合同", "任务：修改核心逻辑")
+        .replace("非目标：不修改受保护路径", "非目标：不处理其他文件")
+);
+
+semantic_contract!(
+    exhaustive_authority_abuse_has_stable_code,
+    EXECUTION_EFFORT_POLICY_VIOLATION,
+    valid_card()
+        .replace("Execution effort: normal", "Execution effort: exhaustive")
+        .replace(
+            "任务：验证任务卡合同",
+            "任务：exhaustive bypass review 并执行任务"
+        )
+);
+
+semantic_contract!(
+    workflow_request_without_authority_has_stable_code,
+    WORKFLOW_AUTHORITY_REQUIRED,
+    valid_card().replace("任务：验证任务卡合同", "任务：使用 subagent 完成验证")
+);
+
+semantic_contract!(
+    workflow_authority_scope_violation_has_stable_code,
+    WORKFLOW_AUTHORITY_VIOLATION,
+    valid_card()
+        .replace("任务级别：Medium", "任务级别：Light")
+        .replace("Workflow authority: none", "Workflow authority: allowed")
+);
+
+semantic_contract!(
+    parallelism_body_mismatch_has_stable_code,
+    PARALLELISM_POLICY_VIOLATION,
+    valid_card()
+        .replace(
+            "Workflow authority: none",
+            "Workflow authority: within-card"
+        )
+        .replace("任务：验证任务卡合同", "任务：使用 subagent 完成验证")
+);
+
+semantic_contract!(
+    subtask_orchestration_mismatch_has_stable_code,
+    SUBTASK_ORCHESTRATION_VIOLATION,
+    valid_card().replace(
+        "非目标：不修改受保护路径",
+        "非目标：不修改受保护路径\n子任务编排：\n- mode: required"
+    )
+);
+
+semantic_contract!(
+    heavy_plan_only_delivery_has_stable_code,
+    PLAN_ONLY_DELIVERY_VIOLATION,
+    valid_card()
+        .replace("任务级别：Medium", "任务级别：Heavy")
+        .replace(
+            "Permission mode: execute-and-verify",
+            "Permission mode: plan-only"
+        )
+        .replace("任务：验证任务卡合同", "任务：设计实施方案")
+        .replace("返回验证结果", "修改完成并提交")
+);
+
+semantic_contract!(
+    heavy_plan_only_handoff_has_stable_code,
+    HEAVY_PLAN_ONLY_MISSING_REVIEW_HANDOFF,
+    valid_card()
+        .replace("任务级别：Medium", "任务级别：Heavy")
+        .replace(
+            "Permission mode: execute-and-verify",
+            "Permission mode: plan-only"
+        )
+        .replace("任务：验证任务卡合同", "任务：设计实施方案")
+        .replace("返回验证结果", "输出实施方案")
+);
+
+semantic_contract!(
+    heavy_executable_review_has_stable_code,
+    HEAVY_EXECUTABLE_MISSING_REVIEW_GATE,
+    valid_card()
+        .replace("任务级别：Medium", "任务级别：Heavy")
+        .replace(
+            "Review gate:\n- 按协议执行当前任务级别",
+            "Review gate:\n- 仅由执行者自查放行"
+        )
+);
+
+semantic_contract!(
+    inactive_skill_tag_has_stable_code,
+    UNKNOWN_OR_INACTIVE_SKILL_TAG,
+    valid_card() + "\n[skill: definitely-not-active]\n"
+);
+
+semantic_contract!(
+    duplicate_closure_id_has_stable_code,
+    CLOSURE_ID_INVALID,
+    valid_card().replace(
+        "- G-01: 验证任务卡合同",
+        "- G-01: 验证任务卡合同\n- G-01: 重复目标"
+    )
+);
+
+semantic_contract!(
+    dangling_closure_mapping_has_stable_code,
+    CLOSURE_MAPPING_INCOMPLETE,
+    valid_card().replace("AC-01 -> G-01", "AC-01 -> G-99")
+);
+
 #[test]
 fn canonical_card_round_trips_through_the_public_interface() {
     let card = valid_card();
@@ -72,7 +262,7 @@ fn closed_field_vocabulary_rejects_invalid_values() {
         ("任务级别：Medium", "任务级别：Critical"),
     ] {
         let candidate = valid_card().replace(from, to);
-        assert!(!validate(&candidate).is_empty(), "{to}");
+        assert_has_code(&candidate, error_code::INVALID_FIELD_VALUE);
     }
 }
 
@@ -98,6 +288,9 @@ fn executor_and_runtime_adapter_are_one_matrix() {
             accepted,
             "{executor}/{adapter}"
         );
+        if !accepted {
+            assert_has_code(&candidate, error_code::FIELD_COMBINATION_MISMATCH);
+        }
     }
 }
 
@@ -140,22 +333,34 @@ fn protected_paths_are_rejected_from_writable_scope() {
             )
             .replace("任务级别：Medium", "任务级别：Light")
             .replace("非目标：不修改受保护路径", "非目标：不处理其他任务");
-        assert!(!validate(&candidate).is_empty(), "{path}");
+        assert_has_code(&candidate, error_code::RISK_LEVEL_MISMATCH);
     }
 }
 
 #[test]
 fn closure_links_are_checked_together() {
-    for candidate in [
-        valid_card().replace("AC-01 -> G-01", "AC-01 -> G-99"),
-        valid_card().replace("V-01 -> AC-01", "V-01 -> AC-99"),
-        valid_card().replace("EV-01 -> AC-01", "EV-01 -> AC-99"),
-        valid_card().replace(
-            "- G-01: 验证任务卡合同",
-            "- G-01: 验证任务卡合同\n- G-01: 重复",
+    for (candidate, expected) in [
+        (
+            valid_card().replace("AC-01 -> G-01", "AC-01 -> G-99"),
+            error_code::CLOSURE_MAPPING_INCOMPLETE,
+        ),
+        (
+            valid_card().replace("V-01 -> AC-01", "V-01 -> AC-99"),
+            error_code::CLOSURE_MAPPING_INCOMPLETE,
+        ),
+        (
+            valid_card().replace("EV-01 -> AC-01", "EV-01 -> AC-99"),
+            error_code::CLOSURE_MAPPING_INCOMPLETE,
+        ),
+        (
+            valid_card().replace(
+                "- G-01: 验证任务卡合同",
+                "- G-01: 验证任务卡合同\n- G-01: 重复",
+            ),
+            error_code::CLOSURE_ID_INVALID,
         ),
     ] {
-        assert!(!validate(&candidate).is_empty());
+        assert_has_code(&candidate, expected);
     }
 }
 
@@ -178,7 +383,10 @@ fn heavy_executable_work_requires_an_independent_review_gate() {
         "Review gate:\n- 按协议执行当前任务级别",
         "Review gate:\n- 仅由执行者自查放行",
     );
-    assert!(!validate(&self_reviewed).is_empty());
+    assert_has_code(
+        &self_reviewed,
+        error_code::HEAVY_EXECUTABLE_MISSING_REVIEW_GATE,
+    );
 }
 
 #[test]
@@ -203,8 +411,98 @@ fn workflow_authority_cannot_exceed_task_or_permission_scope() {
                 "Workflow authority: within-card",
             ),
     ] {
-        assert!(!validate(&candidate).is_empty());
+        assert_has_code(&candidate, error_code::WORKFLOW_AUTHORITY_VIOLATION);
     }
+}
+
+#[test]
+fn plan_only_negated_modification_is_not_an_execution_request() {
+    let candidate = valid_card()
+        .replace(
+            "Permission mode: execute-and-verify",
+            "Permission mode: plan-only",
+        )
+        .replace(
+            "Review gate:\n- 按协议执行当前任务级别",
+            "Review gate:\n- 返回用户审阅",
+        )
+        .replace("背景：覆盖公开校验接口", "背景：评估当前校验合同")
+        .replace("任务：验证任务卡合同", "任务：只分析方案，不修改任何文件");
+    assert!(
+        validate(&candidate).is_empty(),
+        "{:#?}",
+        validate(&candidate)
+    );
+}
+
+#[test]
+fn workflow_documentation_nouns_do_not_request_delegation() {
+    let candidate = valid_card().replace(
+        "背景：覆盖公开校验接口",
+        "背景：检查 workflow 文档和 agent task protocol 的描述",
+    );
+    assert!(
+        validate(&candidate).is_empty(),
+        "{:#?}",
+        validate(&candidate)
+    );
+}
+
+#[test]
+fn protected_path_read_only_boundary_is_allowed() {
+    let candidate = valid_card()
+        .replace("任务：验证任务卡合同", "任务：只读检查 AGENTS.md，不修改")
+        .replace(
+            "非目标：不修改受保护路径",
+            "非目标：不得修改 AGENTS.md 或其他文件",
+        );
+    assert!(
+        validate(&candidate).is_empty(),
+        "{:#?}",
+        validate(&candidate)
+    );
+}
+
+#[test]
+fn heavy_plan_only_with_explicit_review_handoff_is_allowed() {
+    let candidate = valid_card()
+        .replace("任务级别：Medium", "任务级别：Heavy")
+        .replace(
+            "Permission mode: execute-and-verify",
+            "Permission mode: plan-only",
+        )
+        .replace(
+            "Review gate:\n- 按协议执行当前任务级别",
+            "Review gate:\n- 返回用户审阅",
+        )
+        .replace("背景：覆盖公开校验接口", "背景：评估当前校验合同")
+        .replace("任务：验证任务卡合同", "任务：分析并评估方案")
+        .replace("返回验证结果", "返回方案供用户审阅，等待明确批准");
+    assert!(
+        validate(&candidate).is_empty(),
+        "{:#?}",
+        validate(&candidate)
+    );
+}
+
+#[test]
+fn declared_subtask_orchestration_with_matching_authority_is_allowed() {
+    let candidate = valid_card()
+        .replace("Parallelism: none", "Parallelism: subagent")
+        .replace(
+            "Workflow authority: none",
+            "Workflow authority: within-card",
+        )
+        .replace("任务：验证任务卡合同", "任务：使用 subagent 完成验证")
+        .replace(
+            "非目标：不修改受保护路径",
+            "非目标：不修改受保护路径\n子任务编排：\n- mode: required",
+        );
+    assert!(
+        validate(&candidate).is_empty(),
+        "{:#?}",
+        validate(&candidate)
+    );
 }
 
 #[test]

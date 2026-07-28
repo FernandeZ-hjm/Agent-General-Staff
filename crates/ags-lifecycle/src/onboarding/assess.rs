@@ -182,8 +182,9 @@ fn project_item(ctx: &AssessContext<'_>) -> OnboardingItem {
 }
 
 fn host_item(ctx: &AssessContext<'_>) -> OnboardingItem {
-    let supported = matches!(ctx.host, "claude-code" | "codex" | "omp");
-    if !supported {
+    let Some(spec) = ags_host_integration::platform_spec(ctx.host)
+        .filter(|spec| spec.native_memory_adapter.is_some())
+    else {
         return OnboardingItem {
             id: format!("host:{}", ctx.host),
             category: "host".to_string(),
@@ -197,17 +198,15 @@ fn host_item(ctx: &AssessContext<'_>) -> OnboardingItem {
             hook: None,
             action: None,
         };
-    }
-    let registrar = if ctx.host == "claude-code" {
-        "claude"
-    } else {
-        "codex"
     };
-    let host_present = if ctx.host == "omp" {
-        command_in_path("omp").is_some() || ctx.home.join(".omp").exists()
-    } else {
-        command_in_path(registrar).is_some() || ctx.home.join(format!(".{}", registrar)).exists()
-    };
+    let host_present = spec
+        .cli_names
+        .iter()
+        .any(|command| command_in_path(command).is_some())
+        || spec
+            .config_subdirs
+            .iter()
+            .any(|subdir| ctx.home.join(subdir).exists());
     let state = if ctx.mcp_connected || ctx.host_registered == Some(true) {
         ComponentState::ActiveReady
     } else if host_present {
@@ -215,17 +214,14 @@ fn host_item(ctx: &AssessContext<'_>) -> OnboardingItem {
     } else {
         ComponentState::Absent
     };
-    let action = if ctx.host == "omp"
-        || !host_present
-        || ctx.mcp_connected
-        || ctx.host_registered == Some(true)
-    {
+    let action = if !host_present || ctx.mcp_connected || ctx.host_registered == Some(true) {
         None
     } else {
-        Some(OnboardingAction::RegisterAgsMcp {
-            registrar: registrar.to_string(),
-            executable: normalized_path(ctx.ags_executable),
-        })
+        spec.mcp_registrar
+            .map(|registrar| OnboardingAction::RegisterAgsMcp {
+                registrar: registrar.to_string(),
+                executable: normalized_path(ctx.ags_executable),
+            })
     };
     OnboardingItem {
         id: format!("host:{}", ctx.host),
@@ -330,11 +326,8 @@ fn mcp_item(ctx: &AssessContext<'_>, capability: &ThirdPartyCapability) -> Onboa
             .license
             .as_deref()
             .is_some_and(|value| !value.is_empty());
-    let registrar = match ctx.host {
-        "claude-code" => Some("claude"),
-        "codex" => Some("codex"),
-        _ => None,
-    };
+    let registrar =
+        ags_host_integration::platform_spec(ctx.host).and_then(|spec| spec.mcp_registrar);
     let action = if registered || !dependency_ready || !integrity_ready {
         None
     } else if mcp.command == "npx" {
@@ -464,22 +457,10 @@ pub(super) fn skill_item(ctx: &AssessContext<'_>, skill: &ThirdPartyCapability) 
 }
 
 fn host_skill_body_paths(home: &Path, host: &str, skill_id: &str) -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    let native = match host {
-        "claude-code" => Some(".claude/skills"),
-        "codex" => Some(".codex/skills"),
-        "cursor" => Some(".cursor/skills"),
-        "omp" => Some(".omp/agent/skills"),
-        "codebuddy-code" => Some(".codebuddy/skills"),
-        _ => None,
-    };
-    if let Some(native) = native {
-        roots.push(home.join(native).join(skill_id));
-    }
-    if matches!(host, "codex" | "cursor" | "omp") {
-        roots.push(home.join(".agents/skills").join(skill_id));
-    }
-    roots
+    ags_host_integration::static_skill_roots(home, host)
+        .into_iter()
+        .map(|root| root.join(skill_id))
+        .collect()
 }
 
 fn hook_item(ctx: &AssessContext<'_>, capability: &ThirdPartyCapability) -> OnboardingItem {

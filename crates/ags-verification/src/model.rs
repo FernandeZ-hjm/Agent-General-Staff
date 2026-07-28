@@ -9,8 +9,6 @@ use std::path::PathBuf;
 pub enum Scope {
     /// Local-only checks: fmt, test, build, fixtures, YAML, preflight.
     Local,
-    /// Local + drift checks against stable and public targets.
-    Full,
     /// Self-contained checks for a public release source tree.
     Release,
     /// Private/stable source to explicit public target promotion checks.
@@ -22,11 +20,10 @@ impl Scope {
     pub fn from_str(s: &str) -> Result<Self, String> {
         match s {
             "local" => Ok(Scope::Local),
-            "full" => Ok(Scope::Full),
             "release" => Ok(Scope::Release),
             "promotion" => Ok(Scope::Promotion),
             other => Err(format!(
-                "invalid scope: '{}'. Expected one of: local, full, release, promotion",
+                "invalid scope: '{}'. Expected one of: local, release, promotion",
                 other
             )),
         }
@@ -37,7 +34,6 @@ impl std::fmt::Display for Scope {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Scope::Local => write!(f, "local"),
-            Scope::Full => write!(f, "full"),
             Scope::Release => write!(f, "release"),
             Scope::Promotion => write!(f, "promotion"),
         }

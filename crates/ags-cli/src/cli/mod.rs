@@ -125,12 +125,6 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         action: PolicyAction,
     },
-    /// Workflow sync operations
-    #[command(hide = true)]
-    Sync {
-        #[command(subcommand)]
-        action: SyncAction,
-    },
     /// 诊断 AGS 内核/runtime 与目标项目纳管链路. Diagnose the installed AGS
     /// kernel/runtime plus the target's AGS onboarding projection (agents /
     /// skills / hooks / MCP / project init / memory capsule / update drift /
@@ -217,7 +211,7 @@ pub(crate) enum Commands {
 
     // ── Cross-Agent capability layer ──────────────────────────────────
     /// 跨 Agent 能力可见性与入口同步底层/兼容层（前台主入口是 `ags skill`）.
-    /// Cross-Agent capability layer: inventory / install / sync / verify host
+    /// Cross-Agent capability layer: inventory / static snapshot / verify host
     /// visibility and entry plans (over the shared skill-governance console).
     Capability {
         #[command(subcommand)]
@@ -331,8 +325,8 @@ pub(crate) enum Commands {
     /// Run scoped verification checks — structured, machine-readable reports
     #[command(hide = true)]
     Verify {
-        /// Verification scope: local, full, release, or promotion
-        #[arg(long, default_value = "local", value_parser = ["local", "full", "release", "promotion"])]
+        /// Verification scope: local, release, or promotion
+        #[arg(long, default_value = "local", value_parser = ["local", "release", "promotion"])]
         scope: String,
         /// Verification profile. `private` verifies the local AGS runtime home.
         #[arg(long, value_parser = ["private"])]
@@ -349,15 +343,6 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         action: Option<VerifyAction>,
     },
-}
-
-// ── CLI argument helpers ──────────────────────────────────────────────────
-/// Parse "name=path" target specifications.
-pub(in crate::cli) fn parse_target(s: &str) -> Result<(String, PathBuf), String> {
-    let (name, path) = s.split_once('=').ok_or_else(|| {
-        format!("invalid target format: '{s}'. Expected NAME=PATH (e.g. stable=/path/to/stable)")
-    })?;
-    Ok((name.to_string(), PathBuf::from(path)))
 }
 
 // ── Shared dispatch functions (used by both M1 and M0 commands) ───────────

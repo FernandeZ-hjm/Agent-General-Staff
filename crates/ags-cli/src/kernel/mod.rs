@@ -10,7 +10,6 @@ pub(crate) mod policy;
 pub(crate) mod receipt;
 pub(crate) mod release;
 pub(crate) mod runner;
-pub(crate) mod sync;
 pub(crate) mod task;
 pub(crate) mod verify;
 

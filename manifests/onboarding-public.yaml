@@ -1,4 +1,4 @@
-schema_version: "0.3.4-public-onboarding"
+schema_version: "0.3.5-public-onboarding"
 profile: public
 description: >
   Public AGS onboarding only. This profile deliberately excludes private,

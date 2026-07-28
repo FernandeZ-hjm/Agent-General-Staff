@@ -34,10 +34,11 @@ fn inventory(hosts: &[String], format: &str) {
         hosts.iter().map(String::as_str).collect()
     };
     let result = console::build_inventory(&context, &requested);
-    match format {
-        "json" => println!("{}", console::render_inventory_json(&result)),
-        _ => println!("{}", console::render_inventory_text(&result)),
-    }
+    crate::output::emit_rendered(
+        format,
+        || console::render_inventory_json(&result),
+        || console::render_inventory_text(&result),
+    );
 }
 
 pub(crate) fn cmd_capability_verify(host: &str, strict: bool, format: &str) {
@@ -46,10 +47,11 @@ pub(crate) fn cmd_capability_verify(host: &str, strict: bool, format: &str) {
     let root = crate::context::capability_authority_root_or_exit("ags capability verify");
     let context = console::ConsoleContext::system(root);
     let result = console::verify_host(&context, host);
-    match format {
-        "json" => println!("{}", console::render_verify_json(&result)),
-        _ => println!("{}", console::render_verify_text(&result)),
-    }
+    crate::output::emit_rendered(
+        format,
+        || console::render_verify_json(&result),
+        || console::render_verify_text(&result),
+    );
     if strict && result.status != "ok" {
         std::process::exit(1);
     }
@@ -88,22 +90,19 @@ fn snapshot(host: &str, target: &Path, write: bool, format: &str) {
             std::process::exit(1);
         });
 
-    match format {
-        "json" => println!(
-            "{}",
-            serde_json::to_string_pretty(&built).unwrap_or_default()
-        ),
-        _ => {
-            println!("Static capability snapshot");
-            println!("Host: {}", built.host);
-            println!("Snapshot hash: {}", built.snapshot_hash);
-            println!("Active skills: {}", built.active_skills.len());
-            match written {
-                Some(path) => println!("Written: {}", path.display()),
-                None => println!("Dry-run: pass --write during an explicit update."),
-            }
-        }
-    }
+    crate::output::emit(format, &built, || {
+        [
+            "Static capability snapshot".to_string(),
+            format!("Host: {}", built.host),
+            format!("Snapshot hash: {}", built.snapshot_hash),
+            format!("Active skills: {}", built.active_skills.len()),
+            written.as_ref().map_or_else(
+                || "Dry-run: pass --write during an explicit update.".to_string(),
+                |path| format!("Written: {}", path.display()),
+            ),
+        ]
+        .join("\n")
+    });
 }
 
 pub(crate) fn run(action: CapabilityAction) {

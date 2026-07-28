@@ -9,10 +9,10 @@
 pub mod bootstrap;
 /// Suite health diagnostics.
 pub mod doctor;
+/// Exact public release payload authority and verification.
+pub mod release_manifest;
 /// Canonical public/private release-package planning.
 pub mod release_package;
-/// Private/stable/public protocol and release drift verification.
-pub mod sync;
 
 pub mod change_lane;
 pub use change_lane::{

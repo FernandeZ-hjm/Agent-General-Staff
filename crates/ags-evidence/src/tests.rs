@@ -154,7 +154,7 @@ fn verify_valid_receipt_passes_all_checks() {
     let task_hash = sha256_hex(task_content.as_bytes());
 
     let receipt = Receipt {
-        schema_version: "0.3.4-task-receipt".to_string(),
+        schema_version: "0.3.5-task-receipt".to_string(),
         receipt_id: format!("receipt-{}", &task_hash[..12]),
         timestamp: "unix-0".to_string(),
         task_card_hash: task_hash,
@@ -200,7 +200,7 @@ fn verify_detects_hash_mismatch() {
     let task_card = write_temp_file(&dir, "task.md", "original content\n");
 
     let receipt = Receipt {
-        schema_version: "0.3.4-task-receipt".to_string(),
+        schema_version: "0.3.5-task-receipt".to_string(),
         receipt_id: "receipt-abc123".to_string(),
         timestamp: "unix-0".to_string(),
         task_card_hash: "00deadbeef000000000000000000000000000000000000000000000000000000"
@@ -261,7 +261,7 @@ fn verify_handles_missing_schema_version() {
 #[test]
 fn compliance_check_allows_valid_receipt() {
     let receipt = Receipt {
-        schema_version: "0.3.4-task-receipt".to_string(),
+        schema_version: "0.3.5-task-receipt".to_string(),
         receipt_id: "receipt-abc123".to_string(),
         timestamp: "unix-0".to_string(),
         task_card_hash: "abc123".to_string(),
@@ -309,7 +309,7 @@ fn compliance_check_allows_valid_receipt() {
 #[test]
 fn compliance_check_rejects_stop_decision() {
     let receipt = Receipt {
-        schema_version: "0.3.4-task-receipt".to_string(),
+        schema_version: "0.3.5-task-receipt".to_string(),
         receipt_id: "receipt-stop1".to_string(),
         timestamp: "unix-0".to_string(),
         task_card_hash: "abc123".to_string(),
@@ -343,7 +343,7 @@ fn compliance_check_rejects_stop_decision() {
 #[test]
 fn compliance_check_rejects_failed_verification() {
     let receipt = Receipt {
-        schema_version: "0.3.4-task-receipt".to_string(),
+        schema_version: "0.3.5-task-receipt".to_string(),
         receipt_id: "receipt-fail1".to_string(),
         timestamp: "unix-0".to_string(),
         task_card_hash: "abc123".to_string(),
@@ -381,7 +381,7 @@ fn compliance_check_rejects_failed_verification() {
 fn compliance_check_includes_verify_checks() {
     // Even when verify passes, compliance should include all verify checks
     let receipt = Receipt {
-        schema_version: "0.3.4-task-receipt".to_string(),
+        schema_version: "0.3.5-task-receipt".to_string(),
         receipt_id: "receipt-combo1".to_string(),
         timestamp: "unix-0".to_string(),
         task_card_hash: "abc123".to_string(),
@@ -416,7 +416,7 @@ fn compliance_check_includes_verify_checks() {
 #[test]
 fn render_receipt_json_is_valid() {
     let receipt = Receipt {
-        schema_version: "0.3.4-task-receipt".to_string(),
+        schema_version: "0.3.5-task-receipt".to_string(),
         receipt_id: "receipt-test1".to_string(),
         timestamp: "unix-0".to_string(),
         task_card_hash: sha256_hex(b"test"),
@@ -434,21 +434,21 @@ fn render_receipt_json_is_valid() {
 
     let json = render_receipt_json(&receipt);
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed["schema_version"], "0.3.4-task-receipt");
+    assert_eq!(parsed["schema_version"], "0.3.5-task-receipt");
     assert_eq!(parsed["receipt_id"], "receipt-test1");
 }
 
 #[test]
 fn verify_result_json_includes_failed_checks() {
     let result = VerifyResult {
-        schema_version: "0.3.4-task-receipt".to_string(),
+        schema_version: "0.3.5-task-receipt".to_string(),
         receipt_id: "receipt-bad".to_string(),
         valid: false,
         checks: vec![
             CheckItem {
                 name: "schema_version".to_string(),
                 passed: false,
-                detail: "expected 0.3.4-task-receipt, got 1.0".to_string(),
+                detail: "expected 0.3.5-task-receipt, got 1.0".to_string(),
             },
             CheckItem {
                 name: "task_card_hash".to_string(),
@@ -472,7 +472,7 @@ fn verify_result_json_includes_failed_checks() {
 #[test]
 fn compliance_result_json_includes_specific_failures() {
     let result = ComplianceResult {
-        schema_version: "0.3.4-task-receipt".to_string(),
+        schema_version: "0.3.5-task-receipt".to_string(),
         receipt_id: "receipt-fail".to_string(),
         compliant: false,
         checks: vec![CheckItem {
@@ -527,7 +527,7 @@ fn emit_action_receipt_writes_file_and_returns_path() {
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(back.action, "setup-apply");
     assert_eq!(back.apply_status, "applied");
-    assert_eq!(back.schema_version, "0.3.4-action-receipt");
+    assert_eq!(back.schema_version, "0.3.5-action-receipt");
 }
 
 #[test]
@@ -547,7 +547,7 @@ fn build_action_receipt_derives_stable_prefix() {
         false,
     );
     assert!(r.receipt_id.starts_with("ar-skill-apply-"));
-    assert_eq!(r.schema_version, "0.3.4-action-receipt");
+    assert_eq!(r.schema_version, "0.3.5-action-receipt");
     assert!(!r.applied);
 }
 

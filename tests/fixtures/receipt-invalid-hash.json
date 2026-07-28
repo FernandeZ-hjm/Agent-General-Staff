@@ -1,5 +1,5 @@
 {
-  "schema_version": "0.3.4-task-receipt",
+  "schema_version": "0.3.5-task-receipt",
   "receipt_id": "receipt-00deadbeef00",
   "timestamp": "unix-0",
   "task_card_hash": "00deadbeef000000000000000000000000000000000000000000000000000000",

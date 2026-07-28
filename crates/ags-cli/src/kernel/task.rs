@@ -24,11 +24,11 @@ fn cmd_task_close(task_card: &str, delivery_report: &str, format: &str) {
         std::process::exit(1);
     });
     let result = ags_evidence::delivery_report::validate(&card, &report);
-    if format == "json" {
-        println!("{}", ags_evidence::delivery_report::render_json(&result));
-    } else {
-        println!("{}", ags_evidence::delivery_report::render_text(&result));
-    }
+    crate::output::emit_rendered(
+        format,
+        || ags_evidence::delivery_report::render_json(&result),
+        || ags_evidence::delivery_report::render_text(&result),
+    );
     if !result.valid {
         std::process::exit(1);
     }
@@ -188,31 +188,25 @@ fn cmd_task_compile(
     // Output
     if output == "card" {
         // Plain card output — directly pipeable to `ags task validate -`
-        match format {
-            "json" => {
-                // JSON card-only: wrap in a minimal object for machine consumers
-                let card_json = serde_json::json!({
-                    "compiled_task_card": final_report.compiled_task_card,
-                });
-                if let Ok(json) = serde_json::to_string_pretty(&card_json) {
-                    println!("{}", json);
-                }
-            }
-            _ => {
-                // Plain text card output — first line is ## 任务卡
-                print!("{}", ags_task_contract::render_card_text(&final_report));
-            }
+        if crate::output::is_json(format) {
+            let card_json = serde_json::json!({
+                "compiled_task_card": final_report.compiled_task_card,
+            });
+            println!(
+                "{}",
+                crate::output::pretty_json(&card_json).expect("serializable task card")
+            );
+        } else {
+            // Plain text card output — first line is ## 任务卡
+            print!("{}", ags_task_contract::render_card_text(&final_report));
         }
     } else {
         // Full report output
-        match format {
-            "json" => {
-                println!("{}", ags_task_contract::render_report_json(&final_report));
-            }
-            _ => {
-                println!("{}", ags_task_contract::render_report_text(&final_report));
-            }
-        }
+        crate::output::emit_rendered(
+            format,
+            || ags_task_contract::render_report_json(&final_report),
+            || ags_task_contract::render_report_text(&final_report),
+        );
     }
 
     // Exit code

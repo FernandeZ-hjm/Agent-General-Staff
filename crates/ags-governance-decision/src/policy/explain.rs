@@ -30,7 +30,7 @@ pub fn gate_check(input: &TaskPolicyInput) -> GateCheckOutput {
     let resolved = resolve_policy(input.clone());
     let decision = derive_decision(&resolved);
     GateCheckOutput {
-        schema_version: "0.3.4-execution-policy".to_string(),
+        schema_version: "0.3.5-execution-policy".to_string(),
         decision,
         resolved_policy: resolved,
     }
@@ -44,7 +44,7 @@ pub fn gate_check(input: &TaskPolicyInput) -> GateCheckOutput {
 /// `decision=stop` with error details, not just a raw exit code.
 pub fn gate_check_failed(error_kind: &str, errors: Vec<String>) -> GateErrorOutput {
     GateErrorOutput {
-        schema_version: "0.3.4-execution-policy".to_string(),
+        schema_version: "0.3.5-execution-policy".to_string(),
         decision: GateDecision::Stop,
         error_kind: error_kind.to_string(),
         errors,
@@ -346,7 +346,7 @@ pub fn explain_policy(input: &TaskPolicyInput) -> PolicyExplainOutput {
     }
 
     PolicyExplainOutput {
-        schema_version: "0.3.4-execution-policy".to_string(),
+        schema_version: "0.3.5-execution-policy".to_string(),
         task_summary: summary,
         explanations,
         safety_assertions: assertions,

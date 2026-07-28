@@ -1,7 +1,7 @@
 //! Report rendering for suite diagnostic reports.
 //!
 //! Supports both human-readable text output and machine-readable JSON output,
-//! following the same pattern as `workflow_sync_check::report`.
+//! shared by doctor and verification adapters.
 
 use super::types::*;
 

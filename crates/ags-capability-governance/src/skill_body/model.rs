@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: &str = "0.3.4-skill-inventory";
+pub const SCHEMA_VERSION: &str = "0.3.5-skill-inventory";
 
 /// Status of a discovered skill.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

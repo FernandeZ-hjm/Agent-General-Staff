@@ -18,7 +18,7 @@ fn is_public_release_profile(profile: &str) -> bool {
     profile == "public-full" || profile == "public-core"
 }
 fn public_release_forbidden_patterns() -> Vec<&'static str> {
-    crate::sync::manifest::PUBLIC_FORBIDDEN_PAYLOAD
+    crate::release_manifest::PUBLIC_FORBIDDEN_PAYLOAD
         .iter()
         .copied()
         .chain(["proposals/", "graphify-out/", ".claude/", ".codegraph/"])
@@ -108,13 +108,13 @@ pub fn release_package_plan(
     let mut runtime_asset_files = Vec::new();
 
     if is_public_release_profile(profile) {
-        let verification = crate::sync::manifest::verify_release_manifest(source_root);
+        let verification = crate::release_manifest::verify_release_manifest(source_root);
         included = verification.required_present;
         required_missing = verification.required_missing;
         extra_files = verification.extra_files;
         content_mismatches = verification.content_mismatches;
         authority_errors = verification.authority_errors;
-        match crate::sync::manifest::public_runtime_asset_files(source_root) {
+        match crate::release_manifest::public_runtime_asset_files(source_root) {
             Ok(files) => runtime_asset_files = files,
             Err(errors) => authority_errors.extend(errors),
         }
@@ -150,7 +150,7 @@ pub fn release_package_plan(
         .collect();
 
     let plan = serde_json::json!({
-        "schema_version": "0.3.4-release-plan",
+        "schema_version": "0.3.5-release-plan",
         "profile": profile,
         "dry_run": dry_run,
         "source_root": source_root.to_string_lossy(),

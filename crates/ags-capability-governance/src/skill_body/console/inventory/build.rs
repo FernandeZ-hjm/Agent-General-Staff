@@ -2,7 +2,10 @@ use super::*;
 
 pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventoryResult {
     let hosts: Vec<String> = if hosts.is_empty() {
-        SUPPORTED_HOSTS.iter().map(|s| s.to_string()).collect()
+        supported_skill_hosts()
+            .into_iter()
+            .map(str::to_string)
+            .collect()
     } else {
         hosts.iter().map(|s| s.to_string()).collect()
     };
@@ -242,7 +245,7 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
         } else {
             e.installed_clients
                 .iter()
-                .filter(|c| SUPPORTED_HOSTS.contains(&c.as_str()))
+                .filter(|candidate| host_skills_subdir(candidate).is_some())
                 .cloned()
                 .collect()
         };

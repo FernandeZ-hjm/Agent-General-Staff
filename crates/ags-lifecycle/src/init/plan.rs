@@ -437,3 +437,31 @@ pub(crate) fn project_file_status(file: &InitFile, append_candidates: &[InitFile
         "exists"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::append_content_present;
+    use std::path::Path;
+
+    #[test]
+    fn gitignore_managed_rules_are_idempotent_across_heading_changes() {
+        let managed = "# AGS managed\n.ags/\ntask-archive/\n";
+        let existing = "# Project ignores\ntarget/\n\n# Older AGS heading\ntask-archive/\n.ags/\n";
+
+        assert!(append_content_present(
+            Path::new(".gitignore"),
+            existing,
+            managed
+        ));
+        assert!(!append_content_present(
+            Path::new(".gitignore"),
+            "# Project ignores\ntarget/\n.ags/\n",
+            managed
+        ));
+        assert!(!append_content_present(
+            Path::new("AGENTS.md"),
+            ".ags/\ntask-archive/\n",
+            managed
+        ));
+    }
+}

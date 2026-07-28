@@ -1,4 +1,4 @@
-# AGS v0.3.4 Architecture
+# AGS v0.3.5 Architecture
 
 AGS is a multi-Agent development governance control plane. It admits typed
 requests, binds authority and policy, validates evidence, and preserves
@@ -25,15 +25,15 @@ reconstructs user intent from keywords.
 |---|---|---|---|
 | Platform | `ags-platform` | paths, filesystem, process lookup, hashes, atomic writes | governance policy |
 | Workspace facts | `ags-workspace-facts` | canonical project identity, discovery, configuration facts | host mutation |
-| Host integration | `ags-host-integration` | Codex, Claude Code, Cursor, OMP projections and probes | workspace instance identity |
+| Host integration | `ags-host-integration` | canonical host identity, skill roots, MCP probes/registrars, and native memory-adapter facts | workspace instance identity |
 | Capability governance | `ags-capability-governance` | inventory, exact resolution, static snapshot publication | session leases |
 | Task contract | `ags-task-contract` | task-card compile, validation, handoff contract | execution |
 | Governance decision | `ags-governance-decision` | proposal validation, policy and route contracts | I/O effects |
 | Session | `ags-session` | workspace daemon, client session identity, preflight binding source, one-shot action store | MCP JSON-RPC |
 | Evidence | `ags-evidence` | receipts, delivery evidence and integrity | decision authority |
-| Verification | `ags-verification` | doctor, local/release checks, sync and version-surface gates | lifecycle writes |
+| Verification | `ags-verification` | doctor, exact release manifest, local/release/promotion checks and version-surface gates | lifecycle writes |
 | Lifecycle | `ags-lifecycle` | setup, init, onboarding and explicit update | CLI parsing |
-| CLI | `ags-cli` | unchanged Clap surface and application-service dispatch | duplicated governance rules |
+| CLI | `ags-cli` | current Clap surface, application-service dispatch, and one text/JSON output seam | duplicated governance rules |
 | MCP | `ags-mcp` | JSON-RPC conversion, session connection and error mapping | workspace-global state |
 
 Source directories and Cargo package names use the same boundary names. The
@@ -42,6 +42,17 @@ former `bootstrap-dry-run`, `capability-registry`,
 `suite-doctor`, `task-card-validator`, and `workflow-sync-check` package
 manifests are retired. Their implementations live inside the owning modules
 above, so the workspace has no alternate authority or second product surface.
+
+Host facts are table-driven in `ags-host-integration`: native and shared skill
+roots, Codex plugin visibility, MCP probe format/source, live-runtime evidence,
+official registrar, and native memory-adapter identity are declared once.
+Consumers may add domain behavior, but may not rebuild host lists with string
+matches. OMP's inherited Codex registration source is configuration evidence,
+not live OMP runtime evidence.
+
+The CLI has one outer output seam for the closed `text | json` choice and JSON
+serialization failures. Domain modules still own their human-readable
+renderers; adapters do not reimplement format selection per command.
 
 ## Workspace service
 
@@ -67,14 +78,14 @@ canonical workspace path
 
 ## Public completion boundary
 
-Public completion requires more than a `PUBLIC_MANIFEST` comparison. Promotion
+Public completion requires more than an exact release-manifest comparison. Promotion
 must validate the canonical payload authority, exact tracked inventory and
 content hashes, public-safe source topology, compatibility contracts, release
 workflows, and absence of private runtime or third-party skill bodies.
 
 ## Current surface boundary
 
-The current 0.3.4 CLI, MCP schema and typed contracts are authoritative.
+The current 0.3.5 CLI, MCP schema and typed contracts are authoritative.
 Removed aliases, dynamic capability lifecycle commands and historical
 behavior fixtures are not hidden compatibility interfaces. Product version,
 wire/schema version and historical release notes remain separate version
