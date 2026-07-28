@@ -39,6 +39,21 @@ struct ClosureRow {
     detail: String,
 }
 
+#[derive(Debug, Default)]
+struct ClosureSummary {
+    contract_id: String,
+    task_card_hash: String,
+    launch_plan_hash: String,
+    delivery_report_hash: String,
+    task_status: String,
+    review_gate: String,
+    effective_execution_mode: String,
+    effective_execution_topology: String,
+    execution_mode_used: String,
+    execution_topology_used: String,
+    delegation_used: String,
+}
+
 pub fn validate(task_card: &str, launch_plan: &str, report: &str) -> DeliveryClosureResult {
     let task_card_hash = crate::sha256_hex(task_card.as_bytes());
     let delivery_report_hash = crate::sha256_hex(report.as_bytes());
@@ -54,17 +69,11 @@ pub fn validate(task_card: &str, launch_plan: &str, report: &str) -> DeliveryClo
             });
             return finish(
                 checks,
-                String::new(),
-                task_card_hash,
-                String::new(),
-                delivery_report_hash,
-                String::new(),
-                String::new(),
-                String::new(),
-                String::new(),
-                String::new(),
-                String::new(),
-                String::new(),
+                ClosureSummary {
+                    task_card_hash,
+                    delivery_report_hash,
+                    ..ClosureSummary::default()
+                },
             );
         }
     };
@@ -84,17 +93,12 @@ pub fn validate(task_card: &str, launch_plan: &str, report: &str) -> DeliveryClo
             });
             return finish(
                 checks,
-                contract.contract_id,
-                task_card_hash,
-                String::new(),
-                delivery_report_hash,
-                String::new(),
-                String::new(),
-                String::new(),
-                String::new(),
-                String::new(),
-                String::new(),
-                String::new(),
+                ClosureSummary {
+                    contract_id: contract.contract_id,
+                    task_card_hash,
+                    delivery_report_hash,
+                    ..ClosureSummary::default()
+                },
             );
         }
     };
@@ -290,7 +294,25 @@ pub fn validate(task_card: &str, launch_plan: &str, report: &str) -> DeliveryClo
 
     finish(
         checks,
-        contract.contract_id,
+        ClosureSummary {
+            contract_id: contract.contract_id,
+            task_card_hash,
+            launch_plan_hash,
+            delivery_report_hash,
+            task_status,
+            review_gate,
+            effective_execution_mode,
+            effective_execution_topology,
+            execution_mode_used,
+            execution_topology_used,
+            delegation_used,
+        },
+    )
+}
+
+fn finish(checks: Vec<ClosureCheck>, summary: ClosureSummary) -> DeliveryClosureResult {
+    let ClosureSummary {
+        contract_id,
         task_card_hash,
         launch_plan_hash,
         delivery_report_hash,
@@ -301,23 +323,7 @@ pub fn validate(task_card: &str, launch_plan: &str, report: &str) -> DeliveryClo
         execution_mode_used,
         execution_topology_used,
         delegation_used,
-    )
-}
-
-fn finish(
-    checks: Vec<ClosureCheck>,
-    contract_id: String,
-    task_card_hash: String,
-    launch_plan_hash: String,
-    delivery_report_hash: String,
-    task_status: String,
-    review_gate: String,
-    effective_execution_mode: String,
-    effective_execution_topology: String,
-    execution_mode_used: String,
-    execution_topology_used: String,
-    delegation_used: String,
-) -> DeliveryClosureResult {
+    } = summary;
     let receipt_id = crate::receipt_id(&task_card_hash, &launch_plan_hash);
     DeliveryClosureResult {
         schema_version: SCHEMA_VERSION.to_string(),

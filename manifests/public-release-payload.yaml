@@ -220,7 +220,7 @@ public_rewrites:
   - path: crates/ags-lifecycle/src/setup/apply.rs
     target_sha256: "sha256:a4d26ac9ecbdbdfddace724dd02bc7ec757157850ecc6d441bef7c93821008f4"
   - path: crates/ags-lifecycle/src/setup/memory/adapter.rs
-    target_sha256: "sha256:6e0a14fce3bce82b2cef695c8f0a98442b129e437f275fadfe9f255abd499955"
+    target_sha256: "sha256:3f475403a39d18bd7b570f3982f5059f0c098f25232d7ffc7c4ce7526dd68a96"
   - path: crates/ags-lifecycle/src/setup/memory/assets.rs
     target_sha256: "sha256:a0faed647e40d02f6ced08b0a4305ac2d94f23f444ed74944148ac50f4e6b5e1"
   - path: crates/ags-lifecycle/src/setup/memory/merge.rs
@@ -254,7 +254,7 @@ public_rewrites:
   - path: crates/ags-verification/src/bootstrap.rs
     target_sha256: "sha256:4907b9fc53e1f0ed0868c13e131e84767ed70c46d95ab612f0f76038e60a8dfb"
   - path: crates/ags-verification/src/doctor/checks/host_memory.rs
-    target_sha256: "sha256:bb8973e9e632d1226bc6b9a255ecb6aa3422c649fbf00742bffcfcfa6ffbbcc9"
+    target_sha256: "sha256:6da4e736040c4faa2954dd0d462f32747b9fdda0442f7d680c37f56891f5b6f7"
   - path: crates/ags-verification/src/doctor/checks/mod.rs
     target_sha256: "sha256:1390085b2d04e93202b377f4f0a5379207d40c46637e48e131cb958844479a58"
   - path: crates/ags-verification/src/doctor/checks/orchestration.rs

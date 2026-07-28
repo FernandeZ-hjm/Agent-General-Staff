@@ -369,7 +369,7 @@ fn distribution(values: &[f64]) -> Distribution {
     let mut ordered = values.to_vec();
     ordered.sort_by(f64::total_cmp);
     Distribution {
-        median: if ordered.len() % 2 == 0 {
+        median: if ordered.len().is_multiple_of(2) {
             let upper = ordered.len() / 2;
             (ordered[upper - 1] + ordered[upper]) / 2.0
         } else {

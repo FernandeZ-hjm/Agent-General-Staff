@@ -5,13 +5,11 @@ use super::*;
 // These diagnose the context-memory product mechanism restored as a first-class
 // `ags setup` deliverable: start/capture scripts installed, the Claude
 // SessionStart pipeline wired with read-only project-memory injection, the
-// Claude Stop pipeline wired with the project-memory capture step, the raw
-// guard preserved, task-memory refreshable, and the manual capsule
-// design-purpose block intact. All are
+// Claude Stop pipeline wired with the project-memory capture step (distinct
+// from Evolver method capture), the raw guard preserved, task-memory
+// refreshable, and the manual capsule design-purpose block intact. All are
 // advisory (Warn/Skip) so a
 // not-yet-bootstrapped machine reports the gap without blocking the gate.
-
-const RAW_GUARD_MARKER: &str = "host lifecycle --event stop-guard";
 
 /// Project slug from `config/agent-project-profile.yaml` `project.slug`,
 /// falling back to the repository directory name.
@@ -42,33 +40,6 @@ pub(super) fn project_slug(repo_root: &Path) -> String {
 pub(super) fn project_memory_dir(repo_root: &Path, home: &Path) -> PathBuf {
     home.join(".agents/memory/projects")
         .join(project_slug(repo_root))
-}
-
-/// Collect every hook command string from a settings.json event (nested
-/// `{hooks:[{command}]}` and flat `{command}` group forms). Returns `None` when
-/// the file is missing, unreadable, invalid JSON, or has no event array.
-pub(super) fn hook_commands(settings_path: &Path, event_name: &str) -> Option<Vec<String>> {
-    let raw = std::fs::read_to_string(settings_path).ok()?;
-    let parsed: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    let event = parsed.get("hooks")?.get(event_name)?.as_array()?;
-    let mut cmds = Vec::new();
-    for group in event {
-        if let Some(arr) = group.get("hooks").and_then(|h| h.as_array()) {
-            for h in arr {
-                if let Some(c) = h.get("command").and_then(|c| c.as_str()) {
-                    cmds.push(c.to_string());
-                }
-            }
-        }
-        if let Some(c) = group.get("command").and_then(|c| c.as_str()) {
-            cmds.push(c.to_string());
-        }
-    }
-    Some(cmds)
-}
-
-pub(super) fn stop_hook_commands(settings_path: &Path) -> Option<Vec<String>> {
-    hook_commands(settings_path, "Stop")
 }
 
 pub(super) fn newest_subdir_mtime(dir: &Path) -> Option<std::time::SystemTime> {
@@ -274,6 +245,11 @@ pub(super) fn host_skill_body_singleton_check_at(repo_root: &Path, home: &Path) 
 
 /// Check that the Rust raw-tool-call Stop guard is preserved in the Stop pipeline.
 pub fn raw_tool_call_stop_guard_present(repo_root: &Path) -> Finding {
+    let home = ags_platform::home_dir_or_temp();
+    raw_tool_call_stop_guard_present_at(repo_root, &home)
+}
+
+fn raw_tool_call_stop_guard_present_at(repo_root: &Path, home: &Path) -> Finding {
     let check = "raw_tool_call_stop_guard_present";
     if is_public_edition(repo_root) {
         return Finding::skip(
@@ -281,21 +257,23 @@ pub fn raw_tool_call_stop_guard_present(repo_root: &Path) -> Finding {
             "public edition does not require the raw-tool-call Stop guard",
         );
     }
-    match stop_hook_commands(&repo_root.join(".claude/settings.json")) {
-        Some(cmds) if cmds.iter().any(|c| c.contains(RAW_GUARD_MARKER)) => Finding::pass(
+
+    let lifecycle = ags_workspace_facts::compute_memory_lifecycle_at_for_host(
+        repo_root,
+        home,
+        &ags_workspace_facts::AgentType::ClaudeCode,
+    );
+    if lifecycle.stop_guard_wired {
+        Finding::pass(
             check,
-            "Rust host lifecycle stop-guard present in Stop pipeline",
-        ),
-        Some(_) => Finding::warn(
+            "Rust host lifecycle stop-guard present in the effective Claude Stop pipeline",
+        )
+    } else {
+        Finding::warn(
             check,
-            "Rust host lifecycle stop-guard missing from Stop pipeline",
-            "Restore `ags host lifecycle --event stop-guard` as the first Stop hook.",
-        ),
-        None => Finding::warn(
-            check,
-            "no readable Stop pipeline in .claude/settings.json",
-            "Restore .claude/settings.json with the Rust lifecycle guard as the first Stop hook.",
-        ),
+            "Rust host lifecycle stop-guard missing from the effective Claude Stop pipeline",
+            "Run `ags agents govern --agent claude-code --apply` to restore the global Host Adapter lifecycle.",
+        )
     }
 }
 
@@ -485,5 +463,47 @@ pub(super) fn lifecycle_to_finding(
             format!("memory lifecycle unknown status: {other}"),
             &ml.summary,
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_roots(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!(
+            "ags-doctor-host-memory-{tag}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let home = root.join("home");
+        let project = root.join("project");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        (root, home, project)
+    }
+
+    #[test]
+    fn global_claude_stop_guard_satisfies_effective_host_adapter() {
+        let (root, home, project) = test_roots("global-guard");
+        let settings = home.join(".claude/settings.json");
+        std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        std::fs::write(
+            settings,
+            r#"{"hooks":{"Stop":[{"command":"ags host lifecycle --event stop-guard --host claude-code --target ."}]}}"#,
+        )
+        .unwrap();
+
+        let finding = raw_tool_call_stop_guard_present_at(&project, &home);
+        assert!(finding.message.contains("present"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn missing_global_and_project_stop_guard_is_reported() {
+        let (root, home, project) = test_roots("missing-guard");
+        let finding = raw_tool_call_stop_guard_present_at(&project, &home);
+        assert!(finding.message.contains("missing"));
+        let _ = std::fs::remove_dir_all(root);
     }
 }

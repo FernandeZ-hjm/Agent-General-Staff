@@ -154,9 +154,10 @@ pub(in crate::setup) fn render_memory_capture_plan(
         .unwrap_or((false, false, false));
 
     let mut lines = vec!["Memory capture chain (project memory):".to_string()];
-    lines.push(format!(
+    lines.push(
         "  - Rust lifecycle command: ags host lifecycle (SessionStart / SessionEnd / Stop guard)"
-    ));
+            .to_string(),
+    );
     lines.push(format!(
         "  - OMP native extension: {}",
         omp_memory_lifecycle_path(home).display()
@@ -189,7 +190,7 @@ pub(in crate::setup) fn render_memory_capture_plan(
             );
         } else {
             lines.push(
-                "  - Action: install scripts + repair SessionStart injection and Stop pipeline (raw guard → project memory capture), backing up the prior settings.json."
+                "  - Action: install scripts + repair SessionStart injection and Stop pipeline (raw guard → project memory capture → Evolver method capture), backing up the prior settings.json."
                     .to_string(),
             );
         }
