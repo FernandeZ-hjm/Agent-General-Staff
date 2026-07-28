@@ -208,7 +208,6 @@ fn host_plan_card_closes_against_its_exact_delivery_report() {
     std::fs::write(&launch_plan_path, &launch_plan_output.stdout).unwrap();
     let launch_plan: Value = serde_json::from_slice(&launch_plan_output.stdout).unwrap();
     let launch_plan_hash = launch_plan["launch_plan_hash"].as_str().unwrap();
-    let receipt_id = ags_evidence::receipt_id(&task_card_hash, launch_plan_hash);
     let report = format!(
         "# 任务交付报告\n\
 \n\
@@ -219,7 +218,6 @@ launch-plan-hash: {launch_plan_hash}\n\
 execution-mode-used: single-writer\n\
 execution-topology-used: single\n\
 delegation-used: none\n\
-receipt-id: {receipt_id}\n\
 状态: completed\n\
 review-gate: n/a\n\
 \n\

@@ -217,7 +217,9 @@ mod tests {
 
         assert!(text.contains("copyable Markdown fenced block"));
         assert!(text.contains("````markdown\n# 任务交付报告"));
-        assert!(text.contains("Closure schema: 1.0"));
+        assert!(text.contains("Closure schema: 1.1"));
+        assert!(text.contains("launch-plan-hash:"));
+        assert!(text.contains("--receipt-out"));
         assert!(text.contains("ags task close"));
     }
 }

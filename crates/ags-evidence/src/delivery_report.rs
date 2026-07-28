@@ -128,7 +128,6 @@ pub fn validate(task_card: &str, launch_plan: &str, report: &str) -> DeliveryClo
     ));
     let effective_execution_mode = json_string(&plan, "effective_execution_mode");
     let effective_execution_topology = json_string(&plan, "effective_execution_topology");
-    let receipt_id = crate::receipt_id(&task_card_hash, &launch_plan_hash);
 
     let schema = inline_value(report, "Closure schema:");
     checks.push(equals_check(
@@ -158,14 +157,6 @@ pub fn validate(task_card: &str, launch_plan: &str, report: &str) -> DeliveryClo
         &launch_plan_hash,
         "delivery report launch-plan-hash",
     ));
-    let report_receipt_id = inline_value(report, "receipt-id:");
-    checks.push(equals_check(
-        "receipt-id-binding",
-        &report_receipt_id,
-        &receipt_id,
-        "delivery report receipt-id",
-    ));
-
     let task_status = inline_value(report, "状态:");
     let review_gate = inline_value(report, "review-gate:");
     let execution_mode_used = inline_value(report, "execution-mode-used:");
@@ -627,7 +618,6 @@ Verification gate:\n- commands:\n  - V-01 -> AC-01: cargo test\n- expected evide
         let hash = crate::sha256_hex(card.as_bytes());
         let plan: serde_json::Value = serde_json::from_str(plan).unwrap();
         let plan_hash = plan["launch_plan_hash"].as_str().unwrap();
-        let receipt_id = crate::receipt_id(&hash, plan_hash);
         format!(
             "# 任务交付报告\n\
 Closure schema: 1.1\n\
@@ -637,7 +627,6 @@ launch-plan-hash: {plan_hash}\n\
 execution-mode-used: single-writer\n\
 execution-topology-used: single\n\
 delegation-used: none\n\
-receipt-id: {receipt_id}\n\
 状态: completed\n\
 review-gate: passed\n\
 ## 目标闭环\n- G-01: done — 已完成\n\

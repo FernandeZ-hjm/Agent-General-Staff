@@ -5,19 +5,13 @@ use std::path::{Path, PathBuf};
 
 const DEFAULT_HOSTS: &[&str] = &["claude-code", "codex", "omp", "codebuddy-code", "cursor"];
 
-pub(crate) fn refresh_skill_snapshot(
-    authority_root: &Path,
+fn write_skill_snapshot(
     runtime_home: &Path,
     active_host: &str,
+    snapshot: &ags_capability_governance::HostCapabilitySnapshot,
 ) -> Result<PathBuf, String> {
-    let snapshot = ags_capability_governance::build_capability_snapshot_with_runtime_home(
-        authority_root,
-        active_host,
-        runtime_home,
-    )
-    .map_err(|error| format!("skill snapshot build failed: {error:?}"))?;
     let path = ags_capability_governance::snapshot_path(runtime_home, active_host);
-    let json = serde_json::to_string_pretty(&snapshot)
+    let json = serde_json::to_string_pretty(snapshot)
         .map_err(|error| format!("skill snapshot serialization failed: {error}"))?;
     ags_capability_governance::write_private_atomic(&path, (json + "\n").as_bytes())?;
     Ok(path)
@@ -83,7 +77,7 @@ fn snapshot(host: &str, target: &Path, write: bool, format: &str) {
         std::process::exit(1);
     });
     let written = write
-        .then(|| refresh_skill_snapshot(&root, &runtime_home, host))
+        .then(|| write_skill_snapshot(&runtime_home, host, &built))
         .transpose()
         .unwrap_or_else(|error| {
             eprintln!("ags capability snapshot: {error}");

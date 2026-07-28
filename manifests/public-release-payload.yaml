@@ -240,9 +240,9 @@ public_rewrites:
   - path: crates/ags-mcp/src/lib.rs
     target_sha256: "sha256:f94328d6f80e3cee5fb88934df1fffe221823f9f4421969c9cafc96ed3f0b11e"
   - path: crates/ags-mcp/src/prompts.rs
-    target_sha256: "sha256:21eb2ea216a5fd17eb1d0de64e458489266847c18fe060edf01ce0de8562e1f3"
+    target_sha256: "sha256:fb75347baae8e6affc5dca41e6e7f0daf22cbd05c31b1ae0abbc61d27dd7e9b3"
   - path: crates/ags-mcp/src/prompts/delivery_report.txt
-    target_sha256: "sha256:d8ec2a5968b3925402e10f6eb4c7c4f926d066f6b2f67657e799b7b504c93761"
+    target_sha256: "sha256:665eba33d71719144ce6cf9505cd3091abec45abeb586215e3fa8d123ce23f95"
   - path: crates/ags-mcp/src/prompts/global_kernel.txt
     target_sha256: "sha256:a94aa52708e10bf06e50d312848f00d65330f27793e6a83c5ce2943d2909a91e"
   - path: crates/ags-mcp/src/resources.rs
@@ -274,7 +274,7 @@ public_rewrites:
   - path: manifests/suite.yaml
     target_sha256: "sha256:91b6dbe4d7b64b0047408cfa5878601f1089fb84a2f0b2a2b932a94fcf93a9a1"
   - path: protocol/agent-task-protocol.md
-    target_sha256: "sha256:56f8fbe67d1400d611e0e1d51f6e8bed9e91b4a002d315b4033e7b1d89ea7ad1"
+    target_sha256: "sha256:3740fc41f7e497a857a5ac40c7b2717223ec228f7402edc4cfc0c8afa96af2a3"
   - path: protocol/context-memory.md
     target_sha256: "sha256:2112fdc2213036386a162716fef40a0ea109547e7580080591812afa7e1cd75b"
   - path: protocol/mcp-server.md

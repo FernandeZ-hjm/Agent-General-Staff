@@ -144,8 +144,8 @@ preflight、route、apply、CLI、Runner 与 receipt 共享 `GovernanceStatus`�
 
 ## 交付报告
 
-报告必须声明 `Closure schema: 1.0`，并精确回绑任务卡 `Contract ID`、
-`task-card-hash` 与派生 `receipt-id`。`目标闭环`、`验收闭环`、`验证闭环` 的
+报告必须声明 `Closure schema: 1.1`，并精确回绑任务卡 `Contract ID`、
+`task-card-hash`、`launch-plan-hash` 与实际使用权限。`目标闭环`、`验收闭环`、`验证闭环` 的
 `G-*` / `AC-*` / `V-*` 集合必须与任务卡完全一致；`completed` 要求全部闭环、
 review gate 已通过或不适用、`未闭环项` 为 `none`。`partial` / `blocked` 必须逐项列出
 未闭环 ID 和原因。
@@ -155,7 +155,11 @@ review gate 已通过或不适用、`未闭环项` 为 `none`。`partial` / `blo
 LaunchPlan、dry-run 或“准备执行”写成已经执行完成。
 
 ```bash
-ags task close <task-card> <delivery-report> --format json
+ags task close <task-card> <launch-plan> <delivery-report> \
+  --receipt-out <receipt.json> --format json
 ```
+
+receipt-id、receipt 与 session closure pointer 只由 Rust closure kernel
+生成；宿主技能和生命周期适配器不得重复实现 hash 或 receipt 逻辑。
 
 权威任务卡骨架为 `protocol/task-card-template.md`。

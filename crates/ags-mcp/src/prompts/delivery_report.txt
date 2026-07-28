@@ -6,10 +6,13 @@ outer four-backtick `markdown` fence and add no prose outside it.
 ````markdown
 # 任务交付报告
 
-Closure schema: 1.0
+Closure schema: 1.1
 Contract ID: <exact task-card Contract ID>
 task-card-hash: <exact LaunchPlan task_card_hash>
-receipt-id: receipt-<first 12 hash characters>
+launch-plan-hash: <exact LaunchPlan launch_plan_hash>
+execution-mode-used: plan-only | single-writer | fanout-in-card | fanout-cross-card
+execution-topology-used: single | parallel | worktree
+delegation-used: none | in-card | cross-card
 
 状态: completed | partial | blocked
 review-gate: pending-review | passed | n/a
@@ -48,6 +51,9 @@ review-gate: pending-review | passed | n/a
   `V-*` IDs (plus `review-gate` when pending), each with a reason; missing,
   extra, duplicate, or free-form rows fail closure.
 - Save the report, then run
-  `ags task close <task-card> <delivery-report> --format json`.
+  `ags task close <task-card> <launch-plan> <delivery-report> \
+  --receipt-out <receipt.json> --format json`.
+- The Rust closure kernel derives the receipt ID and writes the receipt. Do not
+  calculate hashes or generate receipts in the host adapter.
 - Do not claim completion or archive the receipt unless closure validation
   returns `valid: true`.
