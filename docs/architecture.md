@@ -1,4 +1,4 @@
-# AGS v0.3.6 Architecture
+# AGS v0.3.8 Architecture
 
 AGS is a multi-Agent development governance control plane. It admits typed
 requests, binds authority and policy, validates evidence, and preserves

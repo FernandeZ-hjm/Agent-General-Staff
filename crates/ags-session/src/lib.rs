@@ -139,7 +139,7 @@ impl CapabilityLoadFailure {
 #[derive(Debug, Clone)]
 pub struct ValidatedCapabilityCatalog {
     pub snapshot: ags_capability_governance::HostCapabilitySnapshot,
-    pub table: ags_capability_governance::ActiveSkillTable,
+    pub tables: ags_capability_governance::ActiveCapabilityTables,
     pub binding: CapabilityBinding,
 }
 

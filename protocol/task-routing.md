@@ -29,12 +29,12 @@ AGS 0.3.6 没有原始文本关键词路由。`ags_route_request` 不接受 `{re
 - `scope_hash`
 - `targets`
 
-`targets` 只有两种合法形态：
+`targets` 只有两类合法组合：
 
 1. 独占的 `DirectResponse`；
-2. 至多一个精确 `SkillTarget`，再加至多一个 `MachineCliTarget`。
+2. 至多一个精确 `SkillTarget`、一个精确 `McpTarget`，再加至多一个 `MachineCliTarget`。
 
-`SkillTarget` 只含 `skill_id`、可选 `entrypoint` 与 `snapshot_hash`。`MachineCliTarget` 只含闭集 `CliCapabilityId` 与 `TypedCliInput`。两者都不接受自然语言。
+`SkillTarget` 只含 `skill_id`、可选 `entrypoint` 与 `snapshot_hash`。`McpTarget` 只含 canonical `mcp_id`、可选已登记 `tool` 与 `snapshot_hash`。`MachineCliTarget` 只含闭集 `CliCapabilityId` 与 `TypedCliInput`。三者都不接受自然语言。
 
 `HostCapabilitySnapshot.catalog` 还会列出 `routing_surface=host_command` 的宿主
 前台命令技能。这些条目用于让宿主直接调用静态 `routing_hint`，不属于 proposal
@@ -44,22 +44,23 @@ route 返回 `skill_target_kind_mismatch`。
 ## 阶段与授权
 
 - `direct_response`：`solution_state=not_required`、`execution_authority=none`，直接交付并停止。
-- `solution_formation`：`solution_state=open`、无执行授权；可以选精确方法技能，但不能申请机器动作。
+- `solution_formation`：`solution_state=open`、无执行授权；可以选精确方法技能或只读 MCP，但不能申请机器动作。
 - `execution + direct_edit`：必须是已确认方案与同会话明确修改授权；返回宿主原生动作，不编译任务卡、不经 MCP 代写仓库、不重复规划。
 - `execution + task_card_handoff`：仅用于明确交接；编译仍要求 task-card request 与 confirmed handoff contract 双门槛。
 - 首个非空行是 `## 任务卡`：先 validate；合法卡进入 policy/gate/LaunchPlan，非法卡停止，绝不回落到需求路由或任务卡生成。
 
 “方案 OK”只确认设计，不单独授权修改或交接。已经确认的方案不得因为出现“架构”“实现”等词再次进入 brainstorming、writing-plans 或任务卡生成。
 
-## 精确技能解析
+## 精确能力解析
 
-宿主从 `HostCapabilitySnapshot.catalog` 读取薄 `SkillCard`，按完整语义选择精确技能。AGS Resolver 仅校验：
+宿主从 `HostCapabilitySnapshot.catalog` 与 `mcp_catalog` 读取薄卡片，按完整语义选择精确能力。AGS Resolver 仅校验：
 
 ```text
 skill_id + entrypoint + snapshot_hash → ActiveSkill
+mcp_id + tool + snapshot_hash → ActiveMcp
 ```
 
-缺失、歧义、entrypoint 不允许或快照 stale 均 fail closed；不做关键词、相似度、候选 fallback、旧分类迁移或自动替代。
+缺失、歧义、entrypoint/tool 不允许或快照 stale 均 fail closed；不做关键词、相似度、候选 fallback、旧分类迁移或自动替代。MCP 解析结果只要求宿主通过自身已连接的 MCP surface 调用；AGS 不持有第三方连接、不代理工具调用。
 
 ## DecisionLease 与显式 Apply
 

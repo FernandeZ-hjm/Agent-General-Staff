@@ -3,7 +3,7 @@
 use crate::skill_body::console::{
     build_inventory, inventory_snapshot_hash, CommandOutcome, CommandRunner, ConsoleContext,
     HealthStatus, HostVisibilityStatus, ManagedCapability, ManagedKind, ManagedStatus,
-    RegistryStatus, RouteExamples, RouteState,
+    MutationSurface, RegistryStatus, RouteExamples, RouteState, SystemCommandRunner,
 };
 use crate::*;
 use serde::Deserialize;
@@ -16,8 +16,8 @@ mod model;
 mod source;
 
 pub use build::{
-    build_capability_snapshot, build_capability_snapshot_with_roots,
-    build_capability_snapshot_with_roots_and_manifest, build_capability_snapshot_with_runtime_home,
-    write_capability_snapshot_with_roots,
+    build_capability_snapshot, build_capability_snapshot_with_live_roots,
+    build_capability_snapshot_with_roots, build_capability_snapshot_with_roots_and_manifest,
+    build_capability_snapshot_with_runtime_home, write_capability_snapshot_with_roots,
 };
 pub use source::hash_skill_source;

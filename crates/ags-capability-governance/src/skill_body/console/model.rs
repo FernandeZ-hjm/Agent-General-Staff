@@ -361,7 +361,7 @@ pub struct ManagedCapability {
     pub host_visibility: Vec<HostVisibility>,
     pub health_status: HealthStatus,
     pub risk_notes: Vec<String>,
-    /// Stable routing facts from the manifest (Skill Resolver input). `None`
+    /// Stable routing facts from the manifest (Capability Resolver input). `None`
     /// when the manifest declares no `routing:` block — production routing does
     /// NOT fall back to a built-in table.
     #[serde(default, skip_serializing_if = "Option::is_none")]

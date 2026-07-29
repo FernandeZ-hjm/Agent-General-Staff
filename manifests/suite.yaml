@@ -15,31 +15,31 @@
 schema_version: "2.0-skill"
 suite:
   name: "agent-general-staff"
-  version: "0.3.7"
+  version: "0.3.8"
   description: >
-    Agent General Staff 0.3.7 public edition — Rust-native governance control
+    Agent General Staff 0.3.8 public edition — Rust-native governance control
     plane for multi-agent development. It governs admission, authority, policy,
     evidence, capability state, and lifecycle; it is not an Agent scheduler.
     Optional third-party development skills require confirmed installation.
   required:
     - name: "ags-agents"
-      version: "0.3.7"
+      version: "0.3.8"
       source: "templates/command-skills/ags-agents"
       hash: "18dc3f7193e50e183281aad29bbf65ed5dc9a345ef3b5dc517826ff3cbc0d10a"
     - name: "ags-doctor"
-      version: "0.3.7"
+      version: "0.3.8"
       source: "templates/command-skills/ags-doctor"
       hash: "7fe8d8b01b23883330b679a29033b8772553d92555aefbe9a4c688a16a9fd765"
     - name: "ags-init"
-      version: "0.3.7"
+      version: "0.3.8"
       source: "templates/command-skills/ags-init"
       hash: "2cbd95fc477e1dd85dfa6969cb28737fb7c91106537bb0f22091c04c0a66a437"
     - name: "ags-setup"
-      version: "0.3.7"
+      version: "0.3.8"
       source: "templates/command-skills/ags-setup"
       hash: "3d84f929204573caca691bb6be6f0ed6de55fcdb0e6480e0d235cbfe08e71429"
     - name: "ags-skill"
-      version: "0.3.7"
+      version: "0.3.8"
       source: "templates/command-skills/ags-skill"
       hash: "9da6a45825980fdbb31d89a117147a0025d133a62953b3b37e1edbe0377c5b32"
   optional:

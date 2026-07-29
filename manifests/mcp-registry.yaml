@@ -42,7 +42,7 @@ suite_interfaces:
     package:
       manager: "cargo"
       name: "ags-mcp"
-      version: "0.3.7"
+      version: "0.3.8"
       repository: "this repository"
       license: "GPL-3.0-only"
     install:

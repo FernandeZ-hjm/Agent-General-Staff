@@ -5,14 +5,14 @@ use std::path::{Path, PathBuf};
 
 const DEFAULT_HOSTS: &[&str] = &["claude-code", "codex", "omp", "codebuddy-code", "cursor"];
 
-fn write_skill_snapshot(
+fn write_capability_snapshot(
     runtime_home: &Path,
     active_host: &str,
     snapshot: &ags_capability_governance::HostCapabilitySnapshot,
 ) -> Result<PathBuf, String> {
     let path = ags_capability_governance::snapshot_path(runtime_home, active_host);
     let json = serde_json::to_string_pretty(snapshot)
-        .map_err(|error| format!("skill snapshot serialization failed: {error}"))?;
+        .map_err(|error| format!("capability snapshot serialization failed: {error}"))?;
     ags_capability_governance::write_private_atomic(&path, (json + "\n").as_bytes())?;
     Ok(path)
 }
@@ -77,7 +77,7 @@ fn snapshot(host: &str, target: &Path, write: bool, format: &str) {
         std::process::exit(1);
     });
     let written = write
-        .then(|| write_skill_snapshot(&runtime_home, host, &built))
+        .then(|| write_capability_snapshot(&runtime_home, host, &built))
         .transpose()
         .unwrap_or_else(|error| {
             eprintln!("ags capability snapshot: {error}");
@@ -90,6 +90,7 @@ fn snapshot(host: &str, target: &Path, write: bool, format: &str) {
             format!("Host: {}", built.host),
             format!("Snapshot hash: {}", built.snapshot_hash),
             format!("Active skills: {}", built.active_skills.len()),
+            format!("Active MCPs: {}", built.active_mcps.len()),
             written.as_ref().map_or_else(
                 || "Dry-run: pass --write during an explicit update.".to_string(),
                 |path| format!("Written: {}", path.display()),

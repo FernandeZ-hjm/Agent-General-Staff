@@ -366,7 +366,7 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
     // 6. Synthesize route-target rows for internal entrypoints (playbook / MCP
     //    tool / CLI subcommand) declared under `route_targets:`. Routing-only:
     //    kind inherited from the parent, NO expected_hosts, NO host probe, NO
-    //    actions, never adopted/synced. Skill Resolver dereferences their
+    //    actions, never adopted/synced. Capability Resolver dereferences their
     //    availability + `primary` to the parent capability.
     for (name, routing) in &routing_meta.route_targets {
         // Registry route-target declarations are authoritative over stale

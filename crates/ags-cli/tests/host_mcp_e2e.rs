@@ -85,7 +85,8 @@ impl TestEnvironment {
             .env("AGS_RUNTIME_HOME", &self.runtime)
             .env("AGS_SOURCE_ROOT", &self.source_root)
             .env("AGS_WORKSPACE_IDLE_MS", "1000")
-            .env("AGS_THIRD_PARTY_MANIFEST_OFFLINE", "1");
+            .env("AGS_THIRD_PARTY_MANIFEST_OFFLINE", "1")
+            .env("PATH", "/usr/bin:/bin");
         command
     }
 
@@ -134,40 +135,119 @@ impl TestEnvironment {
         snapshot
     }
 
+    fn write_routable_mcp_snapshot(&self, host: &str) -> Value {
+        let original: ags_capability_governance::HostCapabilitySnapshot =
+            serde_json::from_value(self.write_snapshot(host)).unwrap();
+        let mcp = ags_capability_governance::McpCard {
+            mcp_id: "context7".to_string(),
+            display_name: "context7".to_string(),
+            summary: "Current library documentation".to_string(),
+            intent_tags: vec!["docs-lookup".to_string()],
+            positive_examples: vec!["查一下这个库的最新文档".to_string()],
+            negative_examples: vec!["修改当前仓库代码".to_string()],
+            tools: vec![
+                "get-library-docs".to_string(),
+                "resolve-library-id".to_string(),
+            ],
+            invoke_hint: "context7 MCP".to_string(),
+            route_state: "routable".to_string(),
+            mutation_surface: "read_only".to_string(),
+            availability: ags_capability_governance::AvailabilityState::Ready,
+            reason_codes: Vec::new(),
+            requires_auth: false,
+            auth_state: ags_capability_governance::AuthState::NotRequired,
+            health_status: "healthy".to_string(),
+        };
+        let active = ags_capability_governance::ActiveMcp {
+            mcp_id: mcp.mcp_id.clone(),
+            invoke_hint: mcp.invoke_hint.clone(),
+            allowed_tools: mcp.tools.clone(),
+            intent_tags: mcp.intent_tags.clone(),
+            mutation_surface: mcp.mutation_surface.clone(),
+        };
+        let refreshed = ags_capability_governance::HostCapabilitySnapshot::new(
+            original.host,
+            original.registry_hash,
+            original.runtime_hash,
+            original.catalog,
+            vec![mcp],
+            original.third_party_registry_url,
+            original.third_party_manifest_hash,
+            original.third_party_catalog,
+            original.active_skills,
+            vec![active],
+        )
+        .unwrap();
+        let path = ags_capability_governance::snapshot_path(&self.runtime, host);
+        fs::write(&path, serde_json::to_vec_pretty(&refreshed).unwrap()).unwrap();
+        serde_json::to_value(refreshed).unwrap()
+    }
+
     fn install_test_skill(&self, skill_id: &str) {
         let private_canonical = self.source_root.join("global-skills").join(skill_id);
         let public_canonical = self
             .source_root
             .join("templates/command-skills")
             .join(skill_id);
+        let external = !private_canonical.is_dir() && !public_canonical.is_dir();
         let canonical = if private_canonical.is_dir() {
             private_canonical
-        } else {
+        } else if public_canonical.is_dir() {
             public_canonical
+        } else {
+            self.home.join(".agents/skills").join(skill_id)
         };
-        for root in [
-            ".claude/skills",
-            ".codex/skills",
-            ".cursor/skills",
-            ".omp/agent/skills",
-        ] {
-            let skill_dir = self.home.join(root).join(skill_id);
-            fs::create_dir_all(skill_dir.parent().unwrap()).unwrap();
-            if canonical.is_dir() {
-                #[cfg(unix)]
-                std::os::unix::fs::symlink(&canonical, &skill_dir).unwrap();
-                #[cfg(windows)]
-                std::os::windows::fs::symlink_dir(&canonical, &skill_dir).unwrap();
-                continue;
-            }
-            fs::create_dir_all(&skill_dir).unwrap();
+        if external {
+            fs::create_dir_all(&canonical).unwrap();
             fs::write(
-                skill_dir.join("SKILL.md"),
+                canonical.join("SKILL.md"),
                 format!(
-                    "---\nname: {skill_id}\ndescription: Hermetic capability refresh fixture.\n---\n\n# {skill_id}\n"
+                    "---\nname: {skill_id}\ndescription: Hermetic external capability fixture.\n---\n\n# {skill_id}\n"
                 ),
             )
             .unwrap();
+            let registry: serde_yaml::Value = serde_yaml::from_slice(
+                &fs::read(self.source_root.join("manifests/skills-registry.yaml")).unwrap(),
+            )
+            .unwrap();
+            for target in registry["route_targets"]
+                .as_sequence()
+                .into_iter()
+                .flatten()
+                .filter(|target| {
+                    target["routing"]["parent"]["kind"].as_str() == Some("skill")
+                        && target["routing"]["parent"]["name"].as_str() == Some(skill_id)
+                        && target["routing"]["entrypoint"]["kind"].as_str() == Some("playbook")
+                })
+            {
+                let entrypoint = target["routing"]["entrypoint"]["name"].as_str().unwrap();
+                let playbook = canonical.join("playbooks").join(entrypoint);
+                fs::create_dir_all(&playbook).unwrap();
+                fs::write(
+                    playbook.join("PLAYBOOK.md"),
+                    format!("# Hermetic {entrypoint} fixture\n"),
+                )
+                .unwrap();
+            }
+        }
+        for (host, root) in [
+            ("claude-code", ".claude/skills"),
+            ("codex", ".codex/skills"),
+            ("cursor", ".cursor/skills"),
+            ("omp", ".omp/agent/skills"),
+        ] {
+            if external
+                && ags_host_integration::platform_spec(host)
+                    .is_some_and(|spec| spec.loads_shared_agent_skills)
+            {
+                continue;
+            }
+            let skill_dir = self.home.join(root).join(skill_id);
+            fs::create_dir_all(skill_dir.parent().unwrap()).unwrap();
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&canonical, &skill_dir).unwrap();
+            #[cfg(windows)]
+            std::os::windows::fs::symlink_dir(&canonical, &skill_dir).unwrap();
         }
     }
 
@@ -526,9 +606,66 @@ fn cursor_govern_writes_native_hooks_and_reaches_full_lifecycle() {
 }
 
 #[test]
+fn typed_mcp_route_resolves_to_host_native_dispatch_without_server_action() {
+    let environment = TestEnvironment::new();
+    let written = environment.write_routable_mcp_snapshot("codex");
+    let snapshot_hash = written["snapshot_hash"].as_str().unwrap();
+    let mut client = environment.connect(&environment.project_a);
+    client.initialize("codex");
+    let preflight = client.preflight("codex", &environment.project_a);
+    assert_eq!(preflight["capability_catalog"]["status"], "ready");
+    let snapshot = client.current_host_snapshot();
+    assert!(snapshot["active_mcps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|mcp| mcp["mcp_id"] == "context7"));
+
+    let route = client.route_targets(
+        4,
+        "sha256:mcp-route",
+        "none",
+        json!([{
+            "kind": "mcp",
+            "mcp_id": "context7",
+            "tool": "get-library-docs",
+            "snapshot_hash": snapshot_hash
+        }]),
+    );
+    assert_eq!(route["governance_status"], "HOST_EXECUTION_REQUIRED");
+    assert!(route["lease"].is_null());
+    assert_eq!(route["resolved_targets"][0]["kind"], "mcp");
+    assert_eq!(route["resolved_targets"][0]["mcp_id"], "context7");
+    assert_eq!(route["resolved_targets"][0]["tool"], "get-library-docs");
+    assert_eq!(
+        route["resolved_targets"][0]["mutation_surface"],
+        "read_only"
+    );
+
+    let rejected = client.route_targets(
+        5,
+        "sha256:mcp-unknown-tool",
+        "none",
+        json!([{
+            "kind": "mcp",
+            "mcp_id": "context7",
+            "tool": "delete-everything",
+            "snapshot_hash": snapshot_hash
+        }]),
+    );
+    assert_eq!(rejected["governance_status"], "BLOCKED_BY_POLICY");
+    assert!(rejected["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|error| error["code"] == "mcp_selection_rejected"));
+}
+
+#[test]
 fn hermetic_host_adapters_share_one_workspace_service_but_keep_sessions_and_leases_isolated() {
     let environment = TestEnvironment::new();
     environment.install_test_skill("ags-skill");
+    environment.install_test_skill("superpowers");
 
     let mut expected_hashes = Vec::new();
     for host in HOSTS {
@@ -604,6 +741,31 @@ fn hermetic_host_adapters_share_one_workspace_service_but_keep_sessions_and_leas
         .iter()
         .any(|error| error["code"] == "skill_target_kind_mismatch"));
 
+    let playbook_route = clients[0].route_targets(
+        5,
+        "sha256:superpowers-playbook-route",
+        "none",
+        json!([{
+            "kind": "skill",
+            "skill_id": "superpowers",
+            "entrypoint": "verification-before-completion",
+            "snapshot_hash": expected_hashes[0]
+        }]),
+    );
+    assert!(
+        playbook_route["errors"]
+            .as_array()
+            .is_none_or(|errors| errors.is_empty()),
+        "registered parent playbook route failed: {playbook_route}"
+    );
+    assert!(playbook_route["resolved_targets"]
+        .as_array()
+        .is_some_and(|targets| targets.iter().any(|target| {
+            target["kind"] == "skill"
+                && target["skill_id"] == "superpowers"
+                && target["entrypoint"] == "verification-before-completion"
+        })));
+
     let handoff = json!({
         "schema_version": "0.3.6-handoff-contract",
         "task_level": "Light",
@@ -616,7 +778,7 @@ fn hermetic_host_adapters_share_one_workspace_service_but_keep_sessions_and_leas
     })
     .to_string();
     let compile_route = clients[0].route_targets(
-        5,
+        6,
         "sha256:skill-plus-task-compile",
         "task_card_handoff",
         json!([
@@ -649,7 +811,7 @@ fn hermetic_host_adapters_share_one_workspace_service_but_keep_sessions_and_leas
         .iter()
         .find_map(|target| target["action_id"].as_str())
         .unwrap();
-    let applied = clients[0].apply(6, compile_lease, compile_action);
+    let applied = clients[0].apply(7, compile_lease, compile_action);
     assert!(applied["content"][0]["text"]
         .as_str()
         .is_some_and(|text| text.contains("0.3.6-task-contract")));

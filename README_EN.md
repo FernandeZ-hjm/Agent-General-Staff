@@ -12,9 +12,9 @@ verification, receipts, and memory closure. It does not schedule Agent teams
 and is not a task queue, parallel executor, or multi-Agent negotiation runtime.
 
 This repository is the public AGS distribution, licensed **GPL-3.0-only**. The
-current product version and latest release are **v0.3.7**.
+current product version and latest release are **v0.3.8**.
 
-## v0.3.7 governance flow
+## v0.3.8 governance flow
 
 ```text
 human request
@@ -66,7 +66,7 @@ ags mcp serve --transport stdio
 
 ## Twelve major modules
 
-The v0.3.7 runtime workspace exposes exactly twelve authoritative Cargo
+The v0.3.8 runtime workspace exposes exactly twelve authoritative Cargo
 packages:
 
 | Module | Responsibility |
@@ -87,7 +87,7 @@ packages:
 The former `bootstrap-dry-run`, `capability-registry`,
 `delivery-report-validator`, `execution-policy`, `runner`, `skill-governance`,
 `suite-doctor`, `task-card-validator`, and `workflow-sync-check`
-implementations have moved under their authoritative modules. v0.3.7 retains
+implementations have moved under their authoritative modules. v0.3.8 retains
 only commands, wire/schema types, and re-exports with current callers, not old
 aliases or a second package authority. See [WORKSPACE.md](WORKSPACE.md) and
 [docs/architecture.md](docs/architecture.md).
@@ -159,7 +159,7 @@ and apply never refresh it over the network.
 
 ## Stable command surface
 
-v0.3.7 supports only the current command surface below. Removed legacy
+v0.3.8 supports only the current command surface below. Removed legacy
 commands, aliases, and plan-only fake actions are not compatibility contracts.
 
 ```bash
@@ -210,19 +210,19 @@ assets, and remote CI for the exact public commit.
 ## License and release
 
 - License: **GPL-3.0-only**
-- Latest: **v0.3.7**
-- Current contract: v0.3.7 human/Machine CLI
+- Latest: **v0.3.8**
+- Current contract: v0.3.8 human/Machine CLI
 - History: v0.3.1 release notes remain historical, not current
 
 Release ordering is fixed:
 
 1. Push the public-safe source to GitHub `main` and wait for exact-commit CI.
-2. Align Cargo, npm, manifests, docs, and release notes to `0.3.7`.
-3. The maintainer explicitly pushes the annotated `v0.3.7` tag.
+2. Align Cargo, npm, manifests, docs, and release notes to `0.3.8`.
+3. The maintainer explicitly pushes the annotated `v0.3.8` tag.
 4. The tag workflow builds five platform assets, `SHA256SUMS`, and provenance.
 5. After the Release assets are complete, manually dispatch the npm OIDC
    trusted-publisher workflow and publish
-   `@agent-governance-suite/mcp@0.3.7` as latest.
+   `@agent-governance-suite/mcp@0.3.8` as latest.
 
 Daily CI, the synchronization guard, and the npm workflow never create tags.
 

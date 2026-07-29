@@ -87,7 +87,7 @@ pub(super) fn tool_route_request_with_source(
     let needs_capability_catalog = proposal.targets.iter().any(|target| {
         matches!(
             target,
-            ProposalTarget::Skill(_) | ProposalTarget::MachineCli(_)
+            ProposalTarget::Skill(_) | ProposalTarget::Mcp(_) | ProposalTarget::MachineCli(_)
         )
     });
     if needs_capability_catalog {
@@ -116,6 +116,10 @@ pub(super) fn tool_route_request_with_source(
     // exact skill selection fails.
     let skill_target = proposal.targets.iter().find_map(|target| match target {
         ProposalTarget::Skill(skill) => Some(skill),
+        _ => None,
+    });
+    let mcp_target = proposal.targets.iter().find_map(|target| match target {
+        ProposalTarget::Mcp(mcp) => Some(mcp),
         _ => None,
     });
     let current_snapshot = if needs_capability_catalog {
@@ -158,7 +162,7 @@ pub(super) fn tool_route_request_with_source(
         );
     }
     let snapshot = current_snapshot.snapshot;
-    let table = current_snapshot.table;
+    let tables = current_snapshot.tables;
     let registry_hash = snapshot.registry_hash.clone();
     let (selected_skill, snapshot_hash) = if let Some(skill) = skill_target {
         if skill.snapshot_hash != snapshot.snapshot_hash {
@@ -202,7 +206,7 @@ pub(super) fn tool_route_request_with_source(
             &skill.skill_id,
             skill.entrypoint.as_deref(),
             &snapshot.snapshot_hash,
-            &table,
+            &tables.skills,
         ) {
             Ok(selection) => selection,
             Err(error) => {
@@ -218,9 +222,45 @@ pub(super) fn tool_route_request_with_source(
                 );
             }
         };
-        (Some(selection), snapshot.snapshot_hash)
+        (Some(selection), snapshot.snapshot_hash.clone())
     } else {
-        (None, snapshot.snapshot_hash)
+        (None, snapshot.snapshot_hash.clone())
+    };
+    let selected_mcp = if let Some(mcp) = mcp_target {
+        if mcp.snapshot_hash != snapshot.snapshot_hash {
+            return blocked_route(
+                binding,
+                decision_id,
+                proposal_id,
+                ProposalError::new(
+                    "skill_snapshot_stale",
+                    "targets.snapshot_hash",
+                    "the proposal snapshot_hash does not match the current host snapshot",
+                ),
+            );
+        }
+        match ags_capability_governance::resolve_mcp(
+            &mcp.mcp_id,
+            mcp.tool.as_deref(),
+            &snapshot.snapshot_hash,
+            &tables.mcps,
+        ) {
+            Ok(selection) => Some(selection),
+            Err(error) => {
+                return blocked_route(
+                    binding,
+                    decision_id,
+                    proposal_id,
+                    ProposalError::new(
+                        "mcp_selection_rejected",
+                        "targets.mcp_id",
+                        format!("exact MCP selection rejected: {error:?}"),
+                    ),
+                );
+            }
+        }
+    } else {
+        None
     };
 
     let skill_outcome = selected_skill
@@ -272,6 +312,17 @@ pub(super) fn tool_route_request_with_source(
                     skill_id: selection.skill_id.clone(),
                     invoke_hint: selection.invoke_hint.clone(),
                     entrypoint: selection.entrypoint.clone(),
+                });
+            }
+            ProposalTarget::Mcp(_) => {
+                let selection = selected_mcp
+                    .as_ref()
+                    .expect("MCP target was resolved before host dispatch");
+                resolved_targets.push(ResolvedTarget::Mcp {
+                    mcp_id: selection.mcp_id.clone(),
+                    invoke_hint: selection.invoke_hint.clone(),
+                    tool: selection.tool.clone(),
+                    mutation_surface: selection.mutation_surface.clone(),
                 });
             }
             ProposalTarget::MachineCli(machine) => {
@@ -337,7 +388,9 @@ pub(super) fn tool_route_request_with_source(
         .values()
         .next()
         .map(|action| action.evidence.clone());
-    let status = if proposal.execution_authority == ExecutionAuthority::DirectEdit {
+    let status = if proposal.execution_authority == ExecutionAuthority::DirectEdit
+        || selected_mcp.is_some()
+    {
         GovernanceStatus::HostExecutionRequired
     } else {
         GovernanceStatus::Ok

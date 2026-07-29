@@ -59,7 +59,7 @@ pub(super) fn attach_capability_catalog(
                 serde_json::json!(GovernanceStatus::NeedsUserDecision),
             );
         }
-        let warning = "Host capability catalog is unavailable; DirectResponse remains available, but SkillTarget and MachineCli routing are blocked until the reported diagnostic is resolved and preflight is rerun.";
+        let warning = "Host capability catalog is unavailable; DirectResponse remains available, but SkillTarget, McpTarget and MachineCli routing are blocked until the reported diagnostic is resolved and preflight is rerun.";
         let warnings = object
             .entry("warnings".to_string())
             .or_insert_with(|| serde_json::json!([]));
@@ -106,7 +106,7 @@ pub(super) fn attach_capability_catalog(
         );
     }
 
-    let warning = "Host capability snapshot is stale; DirectResponse remains available, but SkillTarget and MachineCli routing are blocked until an explicit refresh and re-preflight.";
+    let warning = "Host capability snapshot is stale; DirectResponse remains available, but SkillTarget, McpTarget and MachineCli routing are blocked until an explicit refresh and re-preflight.";
     let warnings = object
         .entry("warnings".to_string())
         .or_insert_with(|| serde_json::json!([]));

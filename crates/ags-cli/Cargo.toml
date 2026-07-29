@@ -27,4 +27,5 @@ serde_json = "1"
 [dev-dependencies]
 ags-session = { path = "../ags-session" }
 libc = "0.2"
+serde_yaml = "0.9"
 tempfile = "3"

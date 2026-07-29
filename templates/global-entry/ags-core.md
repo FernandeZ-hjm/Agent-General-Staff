@@ -22,8 +22,10 @@ ags session preflight --for <agent> --target <repo>
 preflight 成功后读取 `ags://capabilities/current-host`。宿主保留完整对话并完成唯一一次
 自然语言解释，提交 typed `HostRouteProposal` 给只读 `ags_route_request`，再消费
 `RouteResolution`。不得把原始用户文本交给 AGS，也不得让 Compiler、Policy、Gate、
-Runner 或 Skill Resolver 解释自然语言。`DirectResponse` 独占；否则至多一个精确
-`SkillTarget` 与一个闭集 `MachineCliTarget`。只有 `ags_apply_action` 可消费连接内固定动作。
+Runner 或 Capability Resolver 解释自然语言。`DirectResponse` 独占；否则至多一个精确
+`SkillTarget`、一个精确 `McpTarget` 与一个闭集 `MachineCliTarget`。宿主加载 Skill
+正文并通过自身已连接的 MCP surface 调用准入服务器；AGS 不代理第三方 MCP。只有
+`ags_apply_action` 可消费连接内固定动作。
 
 ## 执行判断
 

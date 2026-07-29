@@ -1,5 +1,133 @@
 use super::*;
 use super::{availability::*, model::*};
+use crate::skill_body::console::{EntrypointKind, ManagedInventoryResult};
+
+#[derive(Debug, Default)]
+struct SkillEntrypointProjection {
+    entrypoints: Vec<String>,
+    intent_tags: Vec<String>,
+    positive_examples: Vec<String>,
+    negative_examples: Vec<String>,
+}
+
+#[derive(Default)]
+struct McpToolProjection {
+    tools: Vec<String>,
+    intent_tags: Vec<String>,
+    positive_examples: Vec<String>,
+    negative_examples: Vec<String>,
+}
+
+fn skill_entrypoint_projections(
+    inventory: &ManagedInventoryResult,
+) -> HashMap<String, SkillEntrypointProjection> {
+    let mut projections = HashMap::<String, SkillEntrypointProjection>::new();
+    for capability in inventory
+        .capabilities
+        .iter()
+        .filter(|capability| capability.is_route_target())
+    {
+        let Some(routing) = capability.routing.as_ref() else {
+            continue;
+        };
+        let (Some(parent), Some(entrypoint)) = (&routing.parent, &routing.entrypoint) else {
+            continue;
+        };
+        if parent.kind != ManagedKind::Skill
+            || entrypoint.kind != EntrypointKind::Playbook
+            || routing.route_state != RouteState::Routable
+        {
+            continue;
+        }
+        let projection = projections.entry(parent.name.clone()).or_default();
+        projection.entrypoints.push(entrypoint.name.clone());
+        projection.intent_tags.extend(routing.intent_tags.clone());
+        projection
+            .positive_examples
+            .extend(routing.examples.positive.clone());
+        projection
+            .negative_examples
+            .extend(routing.examples.negative.clone());
+    }
+    for projection in projections.values_mut() {
+        projection.entrypoints.sort();
+        projection.entrypoints.dedup();
+        projection.intent_tags.sort();
+        projection.intent_tags.dedup();
+        projection.positive_examples.sort();
+        projection.positive_examples.dedup();
+        projection.negative_examples.sort();
+        projection.negative_examples.dedup();
+    }
+    projections
+}
+
+fn mcp_tool_projections(inventory: &ManagedInventoryResult) -> HashMap<String, McpToolProjection> {
+    let mut projections = HashMap::<String, McpToolProjection>::new();
+    for capability in inventory
+        .capabilities
+        .iter()
+        .filter(|capability| capability.is_route_target())
+    {
+        let Some(routing) = capability.routing.as_ref() else {
+            continue;
+        };
+        let (Some(parent), Some(entrypoint)) = (&routing.parent, &routing.entrypoint) else {
+            continue;
+        };
+        if parent.kind != ManagedKind::Mcp
+            || entrypoint.kind != EntrypointKind::Tool
+            || routing.route_state != RouteState::Routable
+        {
+            continue;
+        }
+        let projection = projections.entry(parent.name.clone()).or_default();
+        projection.tools.push(entrypoint.name.clone());
+        projection.intent_tags.extend(routing.intent_tags.clone());
+        projection
+            .positive_examples
+            .extend(routing.examples.positive.clone());
+        projection
+            .negative_examples
+            .extend(routing.examples.negative.clone());
+    }
+    for projection in projections.values_mut() {
+        projection.tools.sort();
+        projection.tools.dedup();
+        projection.intent_tags.sort();
+        projection.intent_tags.dedup();
+        projection.positive_examples.sort();
+        projection.positive_examples.dedup();
+        projection.negative_examples.sort();
+        projection.negative_examples.dedup();
+    }
+    projections
+}
+
+fn route_state_name(state: RouteState) -> &'static str {
+    match state {
+        RouteState::Routable => "routable",
+        RouteState::NotRoutable => "not_routable",
+        RouteState::Retired => "retired",
+    }
+}
+
+fn mutation_surface_name(surface: MutationSurface) -> &'static str {
+    match surface {
+        MutationSurface::ReadOnly => "read_only",
+        MutationSurface::LocalWrite => "local_write",
+        MutationSurface::ExternalWrite => "external_write",
+    }
+}
+
+fn health_status_name(status: &HealthStatus) -> &'static str {
+    match status {
+        HealthStatus::Healthy => "healthy",
+        HealthStatus::Degraded => "degraded",
+        HealthStatus::Unknown => "unknown",
+        HealthStatus::Unhealthy => "unhealthy",
+    }
+}
 
 pub fn build_capability_snapshot(
     manifest_root: &Path,
@@ -14,7 +142,34 @@ pub fn build_capability_snapshot_with_runtime_home(
     runtime_home: &Path,
 ) -> Result<HostCapabilitySnapshot, SnapshotBuildError> {
     let host_home = ags_platform::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    build_capability_snapshot_with_roots(manifest_root, active_host, runtime_home, &host_home)
+    build_capability_snapshot_with_live_roots(manifest_root, active_host, runtime_home, &host_home)
+}
+
+/// Build an explicit-refresh snapshot with live, read-only host MCP discovery.
+///
+/// Runtime request paths never call this function. Setup/update and the
+/// explicit `capability snapshot --write` command use it to seal current host
+/// registration evidence into the static Skill/MCP indexes.
+pub fn build_capability_snapshot_with_live_roots(
+    manifest_root: &Path,
+    active_host: &str,
+    runtime_home: &Path,
+    host_home: &Path,
+) -> Result<HostCapabilitySnapshot, SnapshotBuildError> {
+    let third_party = crate::third_party_manifest::resolve_third_party_manifest(manifest_root)
+        .map_err(SnapshotBuildError::Manifest)?;
+    let context = ConsoleContext::new(
+        manifest_root.to_path_buf(),
+        host_home.to_path_buf(),
+        Box::new(SystemCommandRunner),
+    );
+    build_capability_snapshot_with_context_and_manifest(
+        manifest_root,
+        active_host,
+        runtime_home,
+        &context,
+        &third_party,
+    )
 }
 
 pub fn write_capability_snapshot_with_roots(
@@ -25,9 +180,9 @@ pub fn write_capability_snapshot_with_roots(
 ) -> Result<HostCapabilitySnapshot, String> {
     let snapshot =
         build_capability_snapshot_with_roots(manifest_root, active_host, runtime_home, host_home)
-            .map_err(|error| format!("skill snapshot build failed: {error:?}"))?;
+            .map_err(|error| format!("capability snapshot build failed: {error:?}"))?;
     let serialized = serde_json::to_string_pretty(&snapshot)
-        .map_err(|error| format!("skill snapshot serialization failed: {error}"))?;
+        .map_err(|error| format!("capability snapshot serialization failed: {error}"))?;
     write_private_atomic(
         &snapshot_path(runtime_home, active_host),
         (serialized + "\n").as_bytes(),
@@ -36,8 +191,9 @@ pub fn write_capability_snapshot_with_roots(
 }
 
 /// Build a snapshot with explicit machine roots and a no-process discovery
-/// runner. This is the production seam used by routing as well as the test seam:
-/// capability catalog generation never launches host CLIs.
+/// runner. This hermetic seam is used by tests and offline onboarding
+/// assessment. Explicit setup/update refreshes use
+/// [`build_capability_snapshot_with_live_roots`] instead.
 pub fn build_capability_snapshot_with_roots(
     manifest_root: &Path,
     active_host: &str,
@@ -70,6 +226,22 @@ pub fn build_capability_snapshot_with_roots_and_manifest(
         host_home.to_path_buf(),
         Box::new(NoProcessDiscovery),
     );
+    build_capability_snapshot_with_context_and_manifest(
+        manifest_root,
+        active_host,
+        runtime_home,
+        &context,
+        third_party,
+    )
+}
+
+fn build_capability_snapshot_with_context_and_manifest(
+    manifest_root: &Path,
+    active_host: &str,
+    runtime_home: &Path,
+    context: &ConsoleContext,
+    third_party: &crate::third_party_manifest::ManifestResolution,
+) -> Result<HostCapabilitySnapshot, SnapshotBuildError> {
     let inventory = build_inventory(&context, &[active_host]);
     let registry_document =
         load_registry_document(manifest_root).map_err(SnapshotBuildError::Registry)?;
@@ -82,6 +254,8 @@ pub fn build_capability_snapshot_with_roots_and_manifest(
         .iter()
         .map(|skill| (skill.name.as_str(), skill))
         .collect();
+    let entrypoint_projections = skill_entrypoint_projections(&inventory);
+    let mcp_projections = mcp_tool_projections(&inventory);
 
     let mut catalog = Vec::new();
     let mut active_skills = Vec::new();
@@ -98,7 +272,23 @@ pub fn build_capability_snapshot_with_roots_and_manifest(
                 || file_requires_auth,
             auth_states.skills.get(&capability.name).copied(),
         );
-        let card = skill_card(manifest_root, capability, registry, auth_state);
+        let mut card = skill_card(manifest_root, capability, registry, auth_state);
+        if let Some(projection) = entrypoint_projections.get(&capability.name) {
+            card.entrypoints.extend(projection.entrypoints.clone());
+            card.entrypoints.sort();
+            card.entrypoints.dedup();
+            card.intent_tags.extend(projection.intent_tags.clone());
+            card.intent_tags.sort();
+            card.intent_tags.dedup();
+            card.positive_examples
+                .extend(projection.positive_examples.clone());
+            card.positive_examples.sort();
+            card.positive_examples.dedup();
+            card.negative_examples
+                .extend(projection.negative_examples.clone());
+            card.negative_examples.sort();
+            card.negative_examples.dedup();
+        }
         if card.governance == GovernanceState::Active && card.availability.is_ready() {
             let invoke_hint = registry
                 .and_then(|item| item.routing.as_ref())
@@ -117,6 +307,111 @@ pub fn build_capability_snapshot_with_roots_and_manifest(
             });
         }
         catalog.push(card);
+    }
+
+    let mut mcp_catalog = Vec::new();
+    let mut active_mcps = Vec::new();
+    for capability in inventory.capabilities.iter().filter(|capability| {
+        capability.kind == ManagedKind::Mcp
+            && capability.managed_status != ManagedStatus::RouteTarget
+    }) {
+        let Some(routing) = capability.routing.as_ref() else {
+            continue;
+        };
+        let visible = capability.host_visibility.iter().any(|visibility| {
+            visibility.host == active_host
+                && visibility.supported
+                && visibility.status == HostVisibilityStatus::Visible
+        });
+        let auth_state = if routing.requires_auth {
+            if capability.health_status == HealthStatus::Healthy {
+                AuthState::Satisfied
+            } else {
+                AuthState::Unknown
+            }
+        } else {
+            AuthState::NotRequired
+        };
+        let mut reasons = Vec::new();
+        if routing.route_state != RouteState::Routable {
+            reasons.push("route_state_not_routable".to_string());
+        }
+        if !visible {
+            reasons.push("host_not_visible".to_string());
+        }
+        match capability.health_status {
+            HealthStatus::Healthy => {}
+            HealthStatus::Degraded => reasons.push("health_degraded".to_string()),
+            HealthStatus::Unknown => reasons.push("health_unknown".to_string()),
+            HealthStatus::Unhealthy => reasons.push("health_unhealthy".to_string()),
+        }
+        if routing.requires_auth && auth_state != AuthState::Satisfied {
+            reasons.push("auth_state_unknown".to_string());
+        }
+        reasons.sort();
+        reasons.dedup();
+        let availability = if reasons.is_empty() {
+            AvailabilityState::Ready
+        } else {
+            AvailabilityState::Unavailable {
+                reason_codes: reasons.clone(),
+            }
+        };
+        let projection = mcp_projections.get(&capability.name);
+        let mut tools = projection
+            .map(|projection| projection.tools.clone())
+            .unwrap_or_default();
+        tools.sort();
+        tools.dedup();
+        let mut intent_tags = routing.intent_tags.clone();
+        if let Some(projection) = projection {
+            intent_tags.extend(projection.intent_tags.clone());
+        }
+        intent_tags.sort();
+        intent_tags.dedup();
+        let mut positive_examples = routing.examples.positive.clone();
+        let mut negative_examples = routing.examples.negative.clone();
+        if let Some(projection) = projection {
+            positive_examples.extend(projection.positive_examples.clone());
+            negative_examples.extend(projection.negative_examples.clone());
+        }
+        positive_examples.sort();
+        positive_examples.dedup();
+        negative_examples.sort();
+        negative_examples.dedup();
+        let invoke_hint = if routing.invoke_hint.trim().is_empty() {
+            format!("{} MCP", capability.name)
+        } else {
+            routing.invoke_hint.clone()
+        };
+        let mutation_surface = mutation_surface_name(routing.mutation_surface).to_string();
+        let card = McpCard {
+            mcp_id: capability.name.clone(),
+            display_name: capability.name.clone(),
+            summary: invoke_hint.clone(),
+            intent_tags: intent_tags.clone(),
+            positive_examples,
+            negative_examples,
+            tools: tools.clone(),
+            invoke_hint: invoke_hint.clone(),
+            route_state: route_state_name(routing.route_state).to_string(),
+            mutation_surface: mutation_surface.clone(),
+            availability,
+            reason_codes: reasons,
+            requires_auth: routing.requires_auth,
+            auth_state,
+            health_status: health_status_name(&capability.health_status).to_string(),
+        };
+        if card.availability.is_ready() {
+            active_mcps.push(ActiveMcp {
+                mcp_id: card.mcp_id.clone(),
+                invoke_hint,
+                allowed_tools: tools,
+                intent_tags,
+                mutation_surface,
+            });
+        }
+        mcp_catalog.push(card);
     }
 
     let runtime_hash =
@@ -179,10 +474,82 @@ pub fn build_capability_snapshot_with_roots_and_manifest(
         sha256(&registry_bytes),
         runtime_hash,
         catalog,
+        mcp_catalog,
         third_party.source.clone(),
         third_party.content_hash.clone(),
         third_party_catalog,
         active_skills,
+        active_mcps,
     )
     .map_err(SnapshotBuildError::Resolve)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct ConnectedCodexMcpRunner;
+
+    impl CommandRunner for ConnectedCodexMcpRunner {
+        fn run(&self, _spec: &ags_host_integration::McpProbeSpec) -> CommandOutcome {
+            CommandOutcome::Ran {
+                success: true,
+                output:
+                    "Name Command Status\ncontext7 context7 enabled\ncodegraph codegraph enabled\n"
+                        .to_string(),
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_refresh_indexes_connected_mcp_servers_and_registered_tools() {
+        let manifest_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let base =
+            std::env::temp_dir().join(format!("ags-mcp-snapshot-refresh-{}", std::process::id()));
+        let runtime_home = base.join("runtime");
+        let host_home = base.join("home");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&runtime_home).unwrap();
+        std::fs::create_dir_all(&host_home).unwrap();
+        let third_party =
+            crate::third_party_manifest::resolve_third_party_manifest(&manifest_root).unwrap();
+        let context = ConsoleContext::new(
+            &manifest_root,
+            &host_home,
+            Box::new(ConnectedCodexMcpRunner),
+        );
+
+        let snapshot = build_capability_snapshot_with_context_and_manifest(
+            &manifest_root,
+            "codex",
+            &runtime_home,
+            &context,
+            &third_party,
+        )
+        .unwrap();
+
+        let context7 = snapshot
+            .mcp_catalog
+            .iter()
+            .find(|card| card.mcp_id == "context7")
+            .unwrap();
+        assert!(context7.availability.is_ready());
+        assert_eq!(
+            context7.tools,
+            vec![
+                "get-library-docs".to_string(),
+                "resolve-library-id".to_string()
+            ]
+        );
+        assert!(snapshot
+            .active_mcps
+            .iter()
+            .any(|mcp| mcp.mcp_id == "context7"));
+        assert!(!snapshot
+            .active_mcps
+            .iter()
+            .any(|mcp| mcp.mcp_id == "evomap"));
+
+        let _ = std::fs::remove_dir_all(base);
+    }
 }

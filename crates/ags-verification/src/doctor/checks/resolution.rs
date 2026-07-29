@@ -76,7 +76,7 @@ pub(super) fn scan_yaml_credentials(value: &YamlValue, path: &str, out: &mut Vec
 ///     key or assert a configured auth status. A violation is the one blocking
 ///     skill-resolution FAIL: runtime auth posture is runtime-derived only and
 ///     must never be tracked. Mirrors the credential grep in the verification gate.
-///  2. **ActiveSkillTable snapshot** — machine-local presence and freshness.
+///  2. **Capability snapshot** — machine-local Skill/MCP index presence and freshness.
 pub fn skill_resolution_drift_check(repo_root: &Path) -> Vec<Finding> {
     let mut findings = Vec::new();
 
@@ -118,7 +118,7 @@ pub fn skill_resolution_drift_check(repo_root: &Path) -> Vec<Finding> {
         ));
     }
 
-    // 2. Machine-local ActiveSkillTable snapshot. Missing or stale state is a
+    // 2. Machine-local Skill/MCP capability snapshot. Missing or stale state is a
     // governance precondition failure for Skill targets, never an advisory
     // deterministic active-skill snapshot.
     let runtime_home = ags_capability_governance::locate_runtime_home();
@@ -126,11 +126,11 @@ pub fn skill_resolution_drift_check(repo_root: &Path) -> Vec<Finding> {
     match ags_capability_governance::load_static_snapshot(&runtime_home, "codex") {
         Ok(_) => findings.push(Finding::info(
             "skill-active-table-snapshot",
-            format!("Codex ActiveSkillTable snapshot is current ({})", evidence.display()),
+            format!("Codex Skill/MCP capability snapshot is current ({})", evidence.display()),
         )),
         Err(_) if !evidence.is_file() => findings.push(Finding::warn(
             "skill-active-table-snapshot",
-            "machine-local Codex ActiveSkillTable snapshot is missing",
+            "machine-local Codex Skill/MCP capability snapshot is missing",
             format!(
                 "Run `ags capability snapshot --host codex --write` (expected at {}). DirectResponse and pure MachineCli routes remain available.",
                 evidence.display()

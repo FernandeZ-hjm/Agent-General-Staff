@@ -1,5 +1,25 @@
 # Agent Governance Suite Release Notes
 
+## Release 0.3.8
+
+0.3.8 restores one semantic invocation plane for independently installed
+Skills and host-connected MCP servers. It keeps the 0.3.6 governance and wire
+schemas and does not move natural-language interpretation into AGS.
+
+- `HostRouteProposal` now admits an exact `McpTarget` alongside `SkillTarget`
+  and closed `MachineCliTarget` values. AGS validates canonical server, optional
+  registered tool, and snapshot hash without keyword or similarity fallback.
+- Host capability snapshots now compile and seal MCP catalog and active-index
+  rows using explicit setup/update-time registration, health, and auth probes.
+  Normal preflight, resource reads, routing, and apply remain offline and
+  read-only.
+- An admitted MCP target returns host-native dispatch metadata with no
+  `DecisionLease`; AGS never proxies or invokes the third-party MCP server.
+- Setup threads the explicit host home through live capability discovery, while
+  hermetic and onboarding paths keep process discovery disabled.
+- Rust unit and stdio E2E coverage proves exact MCP/tool resolution, fail-closed
+  rejection of unknown tools, and `HOST_EXECUTION_REQUIRED` host dispatch.
+
 ## Release 0.3.7
 
 0.3.7 is a process-lifecycle hotfix for the `ags mcp restart` command introduced

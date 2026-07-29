@@ -106,7 +106,7 @@ impl WorkspaceState {
                 .map_err(|error| {
                     classify_snapshot_load_error(error, &self.runtime_home, &binding.host)
                 })?;
-        let table = snapshot
+        let tables = snapshot
             .validate_integrity(&binding.host)
             .map_err(|error| {
                 unavailable(
@@ -117,7 +117,7 @@ impl WorkspaceState {
         let catalog = ValidatedCapabilityCatalog {
             binding: self.capability_binding(&snapshot.snapshot_hash),
             snapshot,
-            table,
+            tables,
         };
         let mut catalogs = self.catalogs.write().map_err(|_| {
             unavailable(

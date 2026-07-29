@@ -132,7 +132,7 @@ pub fn list_tools() -> ToolListResult {
             ),
             tool_def(
                 TOOL_ROUTE_REQUEST,
-                "Read-only typed request governance. The host interprets conversation context and submits an exact proposal; AGS validates it and creates daemon-client-session-local action references.",
+                "Read-only typed request governance. The host interprets conversation context and submits exact Skill, MCP, direct-response, or machine targets; AGS validates them and creates daemon-client-session-local action references where required. Third-party MCP invocation remains host-native.",
                 serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -155,11 +155,12 @@ pub fn list_tools() -> ToolListResult {
                                 "targets": {
                                     "type": "array",
                                     "minItems": 0,
-                                    "maxItems": 2,
+                                    "maxItems": 3,
                                     "items": {
                                         "oneOf": [
                                             { "$ref": "#/$defs/DirectResponseTarget" },
                                             { "$ref": "#/$defs/SkillTarget" },
+                                            { "$ref": "#/$defs/McpTarget" },
                                             { "$ref": "#/$defs/MachineCliTarget" }
                                         ]
                                     }
@@ -180,6 +181,17 @@ pub fn list_tools() -> ToolListResult {
                                 "kind": { "const": "skill" },
                                 "skill_id": { "type": "string" },
                                 "entrypoint": { "type": "string" },
+                                "snapshot_hash": { "type": "string" }
+                            }
+                        },
+                        "McpTarget": {
+                            "type": "object",
+                            "required": ["kind", "mcp_id", "snapshot_hash"],
+                            "additionalProperties": false,
+                            "properties": {
+                                "kind": { "const": "mcp" },
+                                "mcp_id": { "type": "string" },
+                                "tool": { "type": "string" },
                                 "snapshot_hash": { "type": "string" }
                             }
                         },

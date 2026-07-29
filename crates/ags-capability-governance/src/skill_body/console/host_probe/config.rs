@@ -171,7 +171,10 @@ pub(in super::super) fn collect_routing(
         return;
     };
     if let Some(source) = item.get("source") {
-        let external = source.get("type").and_then(|v| v.as_str()) == Some("external_cli_skill");
+        let external = matches!(
+            source.get("type").and_then(|v| v.as_str()),
+            Some("external_cli_skill" | "external_shared_skill")
+        );
         let manager = source
             .get("manager")
             .and_then(|v| v.as_str())

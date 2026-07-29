@@ -1,8 +1,9 @@
 use ags_capability_governance::{
     build_capability_snapshot_with_runtime_home, load_static_snapshot,
-    resolve_capability_authority_root, resolve_skill, snapshot_path, ActiveSkill, ActiveSkillTable,
-    AuthState, AvailabilityState, CapabilitySnapshot, GovernanceState, ResolveError, SkillCard,
-    SkillSourceKind, SnapshotError, HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION,
+    resolve_capability_authority_root, resolve_mcp, resolve_skill, snapshot_path, ActiveMcp,
+    ActiveMcpTable, ActiveSkill, ActiveSkillTable, AuthState, AvailabilityState,
+    CapabilitySnapshot, GovernanceState, ResolveError, SkillCard, SkillSourceKind, SnapshotError,
+    HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION,
 };
 
 fn temp_path(name: &str) -> std::path::PathBuf {
@@ -108,6 +109,182 @@ fn resolves_an_exact_skill_and_entrypoint_without_reading_natural_language() {
 }
 
 #[test]
+fn resolves_an_exact_mcp_and_tool_without_reading_natural_language() {
+    let table = ActiveMcpTable::new(
+        "codex",
+        "sha256:snapshot",
+        vec![ActiveMcp {
+            mcp_id: "context7".to_string(),
+            invoke_hint: "context7 MCP".to_string(),
+            allowed_tools: vec![
+                "get-library-docs".to_string(),
+                "resolve-library-id".to_string(),
+            ],
+            intent_tags: vec!["docs-lookup".to_string()],
+            mutation_surface: "read_only".to_string(),
+        }],
+    )
+    .unwrap();
+    let selection = resolve_mcp(
+        "context7",
+        Some("get-library-docs"),
+        "sha256:snapshot",
+        &table,
+    )
+    .unwrap();
+
+    assert_eq!(selection.mcp_id, "context7");
+    assert_eq!(selection.tool.as_deref(), Some("get-library-docs"));
+    assert_eq!(selection.mutation_surface, "read_only");
+}
+
+#[cfg(unix)]
+#[test]
+fn snapshot_projects_registered_playbook_entrypoints_into_the_parent_skill() {
+    let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let base = temp_path("registered-parent-entrypoints");
+    let root = base.join("authority");
+    let runtime = base.join("runtime");
+    let home = base.join("home");
+    let visible_parent = home.join(".agents/skills/superpowers");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(root.join("manifests")).unwrap();
+    for manifest in [
+        "mcp-registry.yaml",
+        "skills-registry.yaml",
+        "suite.yaml",
+        "third-party-capabilities.yaml",
+    ] {
+        std::fs::copy(
+            source_root.join("manifests").join(manifest),
+            root.join("manifests").join(manifest),
+        )
+        .unwrap();
+    }
+    let registry: serde_yaml::Value = serde_yaml::from_str(
+        &std::fs::read_to_string(root.join("manifests/skills-registry.yaml")).unwrap(),
+    )
+    .unwrap();
+    let external_parent = registry["skills"]
+        .as_sequence()
+        .into_iter()
+        .flatten()
+        .find(|skill| skill["name"].as_str() == Some("superpowers"))
+        .is_some_and(|skill| skill["source"]["type"].as_str() == Some("external_shared_skill"));
+    let canonical_parent = if external_parent {
+        visible_parent.clone()
+    } else {
+        root.join("global-skills/superpowers")
+    };
+    std::fs::create_dir_all(&canonical_parent).unwrap();
+    std::fs::create_dir_all(&visible_parent).unwrap();
+    let fixture = "---\nname: superpowers\ndescription: Hermetic parent skill fixture.\nintent_tags: [completion-verification]\n---\n";
+    std::fs::write(canonical_parent.join("SKILL.md"), fixture).unwrap();
+    for target in registry
+        .get("route_targets")
+        .and_then(serde_yaml::Value::as_sequence)
+        .into_iter()
+        .flatten()
+    {
+        let routing = &target["routing"];
+        if routing["parent"]["kind"].as_str() != Some("skill")
+            || routing["parent"]["name"].as_str() != Some("superpowers")
+            || routing["entrypoint"]["kind"].as_str() != Some("playbook")
+        {
+            continue;
+        }
+        let entrypoint = routing["entrypoint"]["name"].as_str().unwrap();
+        let playbook = canonical_parent.join("playbooks").join(entrypoint);
+        std::fs::create_dir_all(&playbook).unwrap();
+        std::fs::write(
+            playbook.join("PLAYBOOK.md"),
+            format!("# Hermetic {entrypoint} fixture\n"),
+        )
+        .unwrap();
+    }
+    if !external_parent {
+        std::fs::remove_dir(&visible_parent).unwrap();
+        std::os::unix::fs::symlink(&canonical_parent, &visible_parent).unwrap();
+    }
+
+    let snapshot = ags_capability_governance::build_capability_snapshot_with_roots(
+        &root, "codex", &runtime, &home,
+    )
+    .unwrap();
+    let card = snapshot
+        .catalog
+        .iter()
+        .find(|card| card.skill_id == "superpowers")
+        .expect("superpowers card");
+    assert_eq!(
+        card.availability,
+        AvailabilityState::Ready,
+        "superpowers card was not ready: {card:?}"
+    );
+    let active = snapshot
+        .active_skills
+        .iter()
+        .find(|skill| skill.skill_id == "superpowers")
+        .expect("active superpowers skill");
+
+    for entrypoint in [
+        "verification-before-completion",
+        "test-driven-development",
+        "executing-plans",
+        "writing-plans",
+    ] {
+        assert!(
+            card.entrypoints
+                .iter()
+                .any(|candidate| candidate == entrypoint),
+            "catalog omitted {entrypoint}"
+        );
+        assert!(
+            active
+                .allowed_entrypoints
+                .iter()
+                .any(|candidate| candidate == entrypoint),
+            "active table omitted {entrypoint}"
+        );
+        assert_eq!(
+            resolve_skill(
+                "superpowers",
+                Some(entrypoint),
+                &snapshot.snapshot_hash,
+                &snapshot.validate_integrity("codex").unwrap().skills,
+            )
+            .unwrap()
+            .entrypoint
+            .as_deref(),
+            Some(entrypoint)
+        );
+    }
+    assert!(card
+        .intent_tags
+        .iter()
+        .any(|tag| tag == "completion-verification"));
+    assert!(card
+        .positive_examples
+        .iter()
+        .any(|example| example == "做完了验证一下"));
+    assert!(!active
+        .allowed_entrypoints
+        .iter()
+        .any(|entrypoint| entrypoint == "systematic-debugging"));
+    assert!(matches!(
+        resolve_skill(
+            "superpowers",
+            Some("systematic-debugging"),
+            &snapshot.snapshot_hash,
+            &snapshot.validate_integrity("codex").unwrap().skills,
+        ),
+        Err(ResolveError::EntrypointNotAllowed { .. })
+    ));
+
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
 fn missing_skill_and_wrong_entrypoint_fail_closed_without_fallback() {
     let table =
         ActiveSkillTable::new("codex", "sha256:snapshot", vec![architecture_skill()]).unwrap();
@@ -144,10 +321,12 @@ fn snapshot() -> CapabilitySnapshot {
         "sha256:registry-a",
         "sha256:runtime-a",
         vec![architecture_card()],
+        Vec::new(),
         "https://example.com/third-party-capabilities.yaml",
         "sha256:third-party",
         Vec::new(),
         vec![architecture_skill()],
+        Vec::new(),
     )
     .unwrap()
 }

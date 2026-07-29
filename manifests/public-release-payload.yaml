@@ -69,15 +69,15 @@ shared_files:
 # bytes. Promotion and release self-verification both reject overlay drift.
 public_overlay_files:
   - path: templates/command-skills/ags-agents/SKILL.md
-    target_sha256: "sha256:18dc3f7193e50e183281aad29bbf65ed5dc9a345ef3b5dc517826ff3cbc0d10a"
+    target_sha256: "sha256:18805d8509fa46f4d0e6752cbfcc3d34379d6d9ec74738dd76f8ac57f122857a"
   - path: templates/command-skills/ags-doctor/SKILL.md
-    target_sha256: "sha256:7fe8d8b01b23883330b679a29033b8772553d92555aefbe9a4c688a16a9fd765"
+    target_sha256: "sha256:7b0fad13ec6015181ddaa64d9e6f5d41760eeb6838c3eede93a5f92dbdd3d007"
   - path: templates/command-skills/ags-init/SKILL.md
-    target_sha256: "sha256:2cbd95fc477e1dd85dfa6969cb28737fb7c91106537bb0f22091c04c0a66a437"
+    target_sha256: "sha256:46a81a8e65b0725bd22a1aea6c935de348feef35810ab267c056880670894afb"
   - path: templates/command-skills/ags-setup/SKILL.md
-    target_sha256: "sha256:3d84f929204573caca691bb6be6f0ed6de55fcdb0e6480e0d235cbfe08e71429"
+    target_sha256: "sha256:938f5c860f469b29acee9af85a34a4dca4f4144a2191d1542202351759e05bcd"
   - path: templates/command-skills/ags-skill/SKILL.md
-    target_sha256: "sha256:9da6a45825980fdbb31d89a117147a0025d133a62953b3b37e1edbe0377c5b32"
+    target_sha256: "sha256:c8ac361c7965a074e4d4a27474eadf10f3cc1b26078354207f89517395d64507"
   - path: .gitattributes
     target_sha256: "sha256:b10eef5d65afea50c501f1497529255b5634d626c55f4f0397c5f7524dfb575e"
   - path: .gitignore
@@ -182,15 +182,15 @@ public_rewrites:
   - path: AGENTS.md
     target_sha256: "sha256:832665a12c0ccd08506f11ddeb3d0747ab5deee664e0fca00ff31b949218aa30"
   - path: AGENT_SUITE_PROTOCOL.md
-    target_sha256: "sha256:84fcde75e8521ffa760313aea28ba255535cd6ab293f2b99354bef8df29d2d28"
+    target_sha256: "sha256:c4d47b74b6de5e40ebd0eece723bfe103a74406143387f14b7815247dfed878b"
   - path: CLAUDE.md
     target_sha256: "sha256:7adbab7cd4ceda945d7f2646d60a204f2ca75da23b4c07694e45e597df393a74"
   - path: README.md
-    target_sha256: "sha256:18d843ab59118c643d4a00d5639e880e2f07482970b4af2e6e7123eba07cf204"
+    target_sha256: "sha256:6eea38773af8182a70d65f380fb26d257f4a809469ada0e01fa0a7c924f1e072"
   - path: README_EN.md
-    target_sha256: "sha256:4ae0e192f411d91aec6f428e3c714c60ca33f23e69c00fff05f5c3dcc63fd3b7"
+    target_sha256: "sha256:69e49926ef198884c05697bab9849834a366bc99c4d4771b882f0b5115c8b0b1"
   - path: WORKSPACE.md
-    target_sha256: "sha256:258961cc93ccaca66af23d0b7e8e01bd1bfcdff842597302464a0fa39bce7b4b"
+    target_sha256: "sha256:88101323d42c96f669de23e8c3b2d0f5cd130c954a56077eeb6ec53a31b24fc9"
   - path: crates/ags-capability-governance/src/lib.rs
     target_sha256: "sha256:d89d8fd298305de826e88a41c7491d709d36784a8e6b1e75a46b4aa0921e2c84"
   - path: crates/ags-cli/src/cli/kernel_actions.rs
@@ -264,21 +264,21 @@ public_rewrites:
   - path: docs/adr/0001-workspace-service-and-deep-modules.md
     target_sha256: "sha256:75706c232c6021d23338328ed3763502d87adf6ef6f2e9696c761f84f6ff6a5b"
   - path: docs/architecture.md
-    target_sha256: "sha256:6579c52a12f7d932148077dc0de8c667f13e8dfb4c8165346c484a59faa30358"
+    target_sha256: "sha256:08ad331c114cb42f12f6757a651919187a37906808f6a1618f491c62dc72931f"
   - path: governance/skill-sync.md
     target_sha256: "sha256:1e84280e2c0cfd7050bac89de35e216768d3a55496b89f8fdcc663173bde2570"
   - path: manifests/mcp-registry.yaml
-    target_sha256: "sha256:eb341e3e296f1c56852742b02787e3ac42231cfb9428ee4d729f88ee817359d6"
+    target_sha256: "sha256:ab71570a5e08a6bbd87e668ee3b1544f8dd374fb227fd8fbfc5b4f9d96822ed6"
   - path: manifests/skills-registry.yaml
-    target_sha256: "sha256:e90394e91ad76b22d8b33db777336f5a18bd0f583f535110d1596128106f1580"
+    target_sha256: "sha256:f5a7d690aa3998a09aa2827f54414fd38171f22c8454bafc7a3eddc0fc9fba56"
   - path: manifests/suite.yaml
-    target_sha256: "sha256:312a0b4a4c9bd0323a9ff4c6d87710ea56ca19798dc090b0f18f7f61bd7cc950"
+    target_sha256: "sha256:fa19c8e4fb33dc53a0dccf74b823cf2ec2001970a1b80716646c8e67b458d318"
   - path: protocol/agent-task-protocol.md
     target_sha256: "sha256:3740fc41f7e497a857a5ac40c7b2717223ec228f7402edc4cfc0c8afa96af2a3"
   - path: protocol/context-memory.md
     target_sha256: "sha256:2112fdc2213036386a162716fef40a0ea109547e7580080591812afa7e1cd75b"
   - path: protocol/mcp-server.md
-    target_sha256: "sha256:0c02a6bde8c837c766f69a6c5e74f4c7143a95a3e986fbd301761970589e28a0"
+    target_sha256: "sha256:77ddc7522d665421cbae1189976440d2322203145481ed7af935e07106363bf1"
   - path: protocol/runtime-adapters.md
     target_sha256: "sha256:384cc5dc277d4a3bcf28221372ebdfa75c8c5ad1a39b08051b4650c71756d988"
   - path: protocol/skill-governance.md

@@ -99,6 +99,31 @@ pub struct SkillCard {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct McpCard {
+    pub mcp_id: String,
+    pub display_name: String,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub intent_tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub positive_examples: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub negative_examples: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
+    pub invoke_hint: String,
+    pub route_state: String,
+    pub mutation_surface: String,
+    pub availability: AvailabilityState,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reason_codes: Vec<String>,
+    pub requires_auth: bool,
+    pub auth_state: AuthState,
+    pub health_status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ThirdPartyCapabilityCard {
     pub capability_id: String,
     pub kind: String,
@@ -140,6 +165,18 @@ pub struct ActiveSkill {
     pub source_hash: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActiveMcp {
+    pub mcp_id: String,
+    pub invoke_hint: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_tools: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub intent_tags: Vec<String>,
+    pub mutation_surface: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct ActiveSkillTable {
     pub active_host: String,
@@ -174,6 +211,56 @@ impl ActiveSkillTable {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ActiveMcpTable {
+    pub active_host: String,
+    snapshot_hash: String,
+    mcps: HashMap<String, ActiveMcp>,
+}
+
+impl ActiveMcpTable {
+    pub fn new(
+        active_host: impl Into<String>,
+        snapshot_hash: impl Into<String>,
+        active_mcps: Vec<ActiveMcp>,
+    ) -> Result<Self, ResolveError> {
+        let mut mcps = HashMap::with_capacity(active_mcps.len());
+        for mcp in active_mcps {
+            let mcp_id = mcp.mcp_id.clone();
+            if mcps.insert(mcp_id.clone(), mcp).is_some() {
+                return Err(ResolveError::DuplicateMcp { mcp_id });
+            }
+        }
+        Ok(Self {
+            active_host: active_host.into(),
+            snapshot_hash: snapshot_hash.into(),
+            mcps,
+        })
+    }
+
+    pub fn active_mcps(&self) -> Vec<ActiveMcp> {
+        let mut mcps: Vec<_> = self.mcps.values().cloned().collect();
+        sort_active_mcps(&mut mcps);
+        mcps
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ActiveCapabilityTables {
+    pub skills: ActiveSkillTable,
+    pub mcps: ActiveMcpTable,
+}
+
+impl ActiveCapabilityTables {
+    pub fn active_skills(&self) -> Vec<ActiveSkill> {
+        self.skills.active_skills()
+    }
+
+    pub fn active_mcps(&self) -> Vec<ActiveMcp> {
+        self.mcps.active_mcps()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillSelection {
     pub skill_id: String,
@@ -183,15 +270,32 @@ pub struct SkillSelection {
     pub snapshot_hash: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct McpSelection {
+    pub mcp_id: String,
+    pub invoke_hint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
+    pub mutation_surface: String,
+    pub snapshot_hash: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolveError {
     GovernancePrecondition(&'static str),
     DuplicateSkill {
         skill_id: String,
     },
+    DuplicateMcp {
+        mcp_id: String,
+    },
     EntrypointNotAllowed {
         skill_id: String,
         entrypoint: String,
+    },
+    ToolNotAllowed {
+        mcp_id: String,
+        tool: String,
     },
     SnapshotHashMismatch {
         expected: String,
@@ -235,6 +339,39 @@ pub fn resolve_skill(
     })
 }
 
+pub fn resolve_mcp(
+    mcp_id: &str,
+    tool: Option<&str>,
+    snapshot_hash: &str,
+    table: &ActiveMcpTable,
+) -> Result<McpSelection, ResolveError> {
+    if snapshot_hash != table.snapshot_hash {
+        return Err(ResolveError::SnapshotHashMismatch {
+            expected: table.snapshot_hash.clone(),
+            supplied: snapshot_hash.to_string(),
+        });
+    }
+    let active = table
+        .mcps
+        .get(mcp_id)
+        .ok_or(ResolveError::GovernancePrecondition("mcp_not_active"))?;
+    if let Some(tool) = tool {
+        if !active.allowed_tools.iter().any(|allowed| allowed == tool) {
+            return Err(ResolveError::ToolNotAllowed {
+                mcp_id: mcp_id.to_string(),
+                tool: tool.to_string(),
+            });
+        }
+    }
+    Ok(McpSelection {
+        mcp_id: active.mcp_id.clone(),
+        invoke_hint: active.invoke_hint.clone(),
+        tool: tool.map(str::to_string),
+        mutation_surface: active.mutation_surface.clone(),
+        snapshot_hash: snapshot_hash.to_string(),
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HostCapabilitySnapshot {
@@ -244,10 +381,12 @@ pub struct HostCapabilitySnapshot {
     pub runtime_hash: String,
     pub snapshot_hash: String,
     pub catalog: Vec<SkillCard>,
+    pub mcp_catalog: Vec<McpCard>,
     pub third_party_registry_url: String,
     pub third_party_manifest_hash: String,
     pub third_party_catalog: Vec<ThirdPartyCapabilityCard>,
     pub active_skills: Vec<ActiveSkill>,
+    pub active_mcps: Vec<ActiveMcp>,
 }
 
 pub type CapabilitySnapshot = HostCapabilitySnapshot;
@@ -266,16 +405,21 @@ impl HostCapabilitySnapshot {
         registry_hash: impl Into<String>,
         runtime_hash: impl Into<String>,
         mut catalog: Vec<SkillCard>,
+        mut mcp_catalog: Vec<McpCard>,
         third_party_registry_url: impl Into<String>,
         third_party_manifest_hash: impl Into<String>,
         mut third_party_catalog: Vec<ThirdPartyCapabilityCard>,
         mut active_skills: Vec<ActiveSkill>,
+        mut active_mcps: Vec<ActiveMcp>,
     ) -> Result<Self, ResolveError> {
         let host = host.into();
         sort_skill_cards(&mut catalog);
+        sort_mcp_cards(&mut mcp_catalog);
         sort_third_party_cards(&mut third_party_catalog);
         let table = ActiveSkillTable::new(host.clone(), "pending", active_skills)?;
         active_skills = table.active_skills();
+        let table = ActiveMcpTable::new(host.clone(), "pending", active_mcps)?;
+        active_mcps = table.active_mcps();
         let mut snapshot = Self {
             schema_version: HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION.to_string(),
             host,
@@ -283,10 +427,12 @@ impl HostCapabilitySnapshot {
             runtime_hash: runtime_hash.into(),
             snapshot_hash: String::new(),
             catalog,
+            mcp_catalog,
             third_party_registry_url: third_party_registry_url.into(),
             third_party_manifest_hash: third_party_manifest_hash.into(),
             third_party_catalog,
             active_skills,
+            active_mcps,
         };
         snapshot.snapshot_hash = snapshot_integrity_hash(&snapshot);
         Ok(snapshot)
@@ -300,7 +446,7 @@ impl HostCapabilitySnapshot {
     pub fn validate_integrity(
         &self,
         expected_host: &str,
-    ) -> Result<ActiveSkillTable, SnapshotError> {
+    ) -> Result<ActiveCapabilityTables, SnapshotError> {
         if self.schema_version != HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION
             || self.host != expected_host
         {
@@ -309,11 +455,18 @@ impl HostCapabilitySnapshot {
         if self.snapshot_hash != snapshot_integrity_hash(self) {
             return Err(SnapshotError::SnapshotIntegrityFailed);
         }
-        ActiveSkillTable::new(
+        let skills = ActiveSkillTable::new(
             self.host.clone(),
             self.snapshot_hash.clone(),
             self.active_skills.clone(),
         )
-        .map_err(SnapshotError::InvalidActiveTable)
+        .map_err(SnapshotError::InvalidActiveTable)?;
+        let mcps = ActiveMcpTable::new(
+            self.host.clone(),
+            self.snapshot_hash.clone(),
+            self.active_mcps.clone(),
+        )
+        .map_err(SnapshotError::InvalidActiveTable)?;
+        Ok(ActiveCapabilityTables { skills, mcps })
     }
 }

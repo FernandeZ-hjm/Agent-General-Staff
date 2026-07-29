@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "ags-capability-governance"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "ags-governance-decision",
  "ags-host-integration",
@@ -18,7 +18,7 @@ dependencies = [
 
 [[package]]
 name = "ags-cli"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "ags-capability-governance",
  "ags-evidence",
@@ -35,12 +35,13 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "serde_yaml",
  "tempfile",
 ]
 
 [[package]]
 name = "ags-evidence"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "ags-governance-decision",
  "ags-platform",
@@ -52,7 +53,7 @@ dependencies = [
 
 [[package]]
 name = "ags-governance-decision"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "serde",
  "serde_json",
@@ -61,7 +62,7 @@ dependencies = [
 
 [[package]]
 name = "ags-host-integration"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "ags-platform",
  "serde",
@@ -70,7 +71,7 @@ dependencies = [
 
 [[package]]
 name = "ags-lifecycle"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "ags-capability-governance",
  "ags-evidence",
@@ -85,7 +86,7 @@ dependencies = [
 
 [[package]]
 name = "ags-mcp"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "ags-capability-governance",
  "ags-evidence",
@@ -104,7 +105,7 @@ dependencies = [
 
 [[package]]
 name = "ags-platform"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "blake3",
  "sha2",
@@ -113,7 +114,7 @@ dependencies = [
 
 [[package]]
 name = "ags-session"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "ags-capability-governance",
  "ags-platform",
@@ -128,7 +129,7 @@ dependencies = [
 
 [[package]]
 name = "ags-task-contract"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "ags-capability-governance",
  "ags-governance-decision",
@@ -139,7 +140,7 @@ dependencies = [
 
 [[package]]
 name = "ags-verification"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "ags-capability-governance",
  "ags-governance-decision",
@@ -155,7 +156,7 @@ dependencies = [
 
 [[package]]
 name = "ags-workspace-facts"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "ags-governance-decision",
  "ags-host-integration",

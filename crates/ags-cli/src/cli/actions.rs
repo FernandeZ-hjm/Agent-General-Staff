@@ -87,7 +87,7 @@ pub(crate) enum CapabilityAction {
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
     },
-    /// Derive the machine-local ActiveSkillTable snapshot + attestation hash.
+    /// Derive the machine-local Skill/MCP capability snapshot + attestation hash.
     ///
     /// Captures the strict intersection of governed routable skills that are
     /// healthy and visible to one active host, plus a deterministic

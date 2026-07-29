@@ -10,4 +10,4 @@ description: "当用户提到 /ags agents、AGS Agents、AGS agents，或需要�
 
 它不是 MCP `SkillTarget`；宿主必须按静态 CLI hint 直接调用。
 
-此技能期望的 AGS 版本：0.3.7。
+此技能期望的 AGS 版本：0.3.8。

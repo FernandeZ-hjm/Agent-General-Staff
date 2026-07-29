@@ -420,17 +420,18 @@ fn p95_regressed(name: &str, baseline: f64, candidate: f64) -> bool {
 
 #[test]
 #[ignore = "development release gate; requires explicit stable and candidate release binaries"]
-fn stable_0_3_5_and_candidate_workspace_performance_stays_within_budget() {
+fn adjacent_stable_and_candidate_workspace_performance_stays_within_budget() {
     let baseline_bin = PathBuf::from(
-        std::env::var_os("AGS_STABLE_BIN").expect("set AGS_STABLE_BIN to the v0.3.5 binary"),
+        std::env::var_os("AGS_STABLE_BIN")
+            .expect("set AGS_STABLE_BIN to the previous stable release binary"),
     );
     let baseline_source = PathBuf::from(
         std::env::var_os("AGS_STABLE_SOURCE_ROOT")
-            .expect("set AGS_STABLE_SOURCE_ROOT to the v0.3.5 checkout"),
+            .expect("set AGS_STABLE_SOURCE_ROOT to the previous stable release checkout"),
     );
     let candidate_bin = PathBuf::from(
         std::env::var_os("AGS_CANDIDATE_BIN")
-            .expect("set AGS_CANDIDATE_BIN to the v0.3.6 release binary"),
+            .expect("set AGS_CANDIDATE_BIN to the current candidate release binary"),
     );
     let candidate_source = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -440,7 +441,7 @@ fn stable_0_3_5_and_candidate_workspace_performance_stays_within_budget() {
     let baseline = Bench::new(
         baseline_bin,
         baseline_source,
-        "0.3.5-host-route-proposal".to_string(),
+        "0.3.6-host-route-proposal".to_string(),
         "baseline",
     )
     .unwrap();

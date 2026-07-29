@@ -15,7 +15,7 @@ pub enum SnapshotBuildError {
 pub fn load_static_snapshot(
     runtime_home: &Path,
     active_host: &str,
-) -> Result<(HostCapabilitySnapshot, ActiveSkillTable), SnapshotLoadError> {
+) -> Result<(HostCapabilitySnapshot, ActiveCapabilityTables), SnapshotLoadError> {
     let content = std::fs::read_to_string(snapshot_path(runtime_home, active_host))
         .map_err(|_| SnapshotLoadError::SkillSnapshotStale)?;
     let snapshot: HostCapabilitySnapshot =

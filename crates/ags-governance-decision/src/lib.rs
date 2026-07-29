@@ -120,6 +120,15 @@ pub struct SkillTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct McpTarget {
+    pub mcp_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
+    pub snapshot_hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MachineCliTarget {
     pub capability: CliCapabilityId,
     pub input: TypedCliInput,
@@ -130,6 +139,7 @@ pub struct MachineCliTarget {
 pub enum ProposalTarget {
     DirectResponse {},
     Skill(SkillTarget),
+    Mcp(McpTarget),
     MachineCli(MachineCliTarget),
 }
 
@@ -239,11 +249,11 @@ pub fn validate_proposal(proposal: &HostRouteProposal) -> Result<(), Vec<Proposa
             "scope_hash must be a non-empty digest-like value",
         ));
     }
-    if proposal.targets.len() > 2 {
+    if proposal.targets.len() > 3 {
         errors.push(ProposalError::new(
             "invalid_target_count",
             "targets",
-            "targets may contain at most one skill and at most one machine action",
+            "targets may contain at most one skill, one MCP and one machine action",
         ));
     }
 
@@ -257,6 +267,11 @@ pub fn validate_proposal(proposal: &HostRouteProposal) -> Result<(), Vec<Proposa
         .iter()
         .filter(|target| matches!(target, ProposalTarget::Skill(_)))
         .count();
+    let mcp_count = proposal
+        .targets
+        .iter()
+        .filter(|target| matches!(target, ProposalTarget::Mcp(_)))
+        .count();
     let machine_count = proposal
         .targets
         .iter()
@@ -269,11 +284,11 @@ pub fn validate_proposal(proposal: &HostRouteProposal) -> Result<(), Vec<Proposa
             "direct_response must be the only target",
         ));
     }
-    if direct_count > 1 || skill_count > 1 || machine_count > 1 {
+    if direct_count > 1 || skill_count > 1 || mcp_count > 1 || machine_count > 1 {
         errors.push(ProposalError::new(
             "duplicate_target_kind",
             "targets",
-            "at most one direct response, one skill and one machine target are allowed",
+            "at most one direct response, one skill, one MCP and one machine target are allowed",
         ));
     }
 
@@ -303,6 +318,33 @@ pub fn validate_proposal(proposal: &HostRouteProposal) -> Result<(), Vec<Proposa
                         "invalid_skill_entrypoint",
                         "targets.entrypoint",
                         "entrypoint must be a stable identifier",
+                    ));
+                }
+            }
+            ProposalTarget::Mcp(mcp) => {
+                if !is_stable_identifier(&mcp.mcp_id) {
+                    errors.push(ProposalError::new(
+                        "invalid_mcp_id",
+                        "targets.mcp_id",
+                        "mcp_id must be a stable canonical identifier",
+                    ));
+                }
+                if !is_hash_like(&mcp.snapshot_hash) {
+                    errors.push(ProposalError::new(
+                        "invalid_snapshot_hash",
+                        "targets.snapshot_hash",
+                        "MCP targets must bind the host snapshot hash",
+                    ));
+                }
+                if mcp
+                    .tool
+                    .as_deref()
+                    .is_some_and(|tool| !is_stable_identifier(tool))
+                {
+                    errors.push(ProposalError::new(
+                        "invalid_mcp_tool",
+                        "targets.tool",
+                        "MCP tool must be a stable identifier",
                     ));
                 }
             }
@@ -406,6 +448,13 @@ pub enum ResolvedTarget {
         #[serde(skip_serializing_if = "Option::is_none")]
         entrypoint: Option<String>,
     },
+    Mcp {
+        mcp_id: String,
+        invoke_hint: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tool: Option<String>,
+        mutation_surface: String,
+    },
     HostNativeDirectEdit {
         action_id: String,
     },
@@ -482,4 +531,49 @@ pub fn sha256(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("sha256:{:x}", hasher.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn proposal(targets: Vec<ProposalTarget>) -> HostRouteProposal {
+        HostRouteProposal {
+            schema_version: HOST_ROUTE_PROPOSAL_SCHEMA_VERSION.to_string(),
+            request_fingerprint: "sha256:request".to_string(),
+            phase: ProposalPhase::Execution,
+            solution_state: SolutionState::Confirmed,
+            execution_authority: ExecutionAuthority::None,
+            scope_hash: "sha256:scope".to_string(),
+            targets,
+        }
+    }
+
+    #[test]
+    fn accepts_one_snapshot_bound_canonical_mcp_target() {
+        let proposal = proposal(vec![ProposalTarget::Mcp(McpTarget {
+            mcp_id: "context7".to_string(),
+            tool: Some("get-library-docs".to_string()),
+            snapshot_hash: "sha256:snapshot".to_string(),
+        })]);
+
+        assert!(validate_proposal(&proposal).is_ok());
+        let encoded = serde_json::to_value(proposal).unwrap();
+        assert_eq!(encoded["targets"][0]["kind"], "mcp");
+        assert_eq!(encoded["targets"][0]["mcp_id"], "context7");
+    }
+
+    #[test]
+    fn rejects_duplicate_mcp_targets() {
+        let target = ProposalTarget::Mcp(McpTarget {
+            mcp_id: "context7".to_string(),
+            tool: None,
+            snapshot_hash: "sha256:snapshot".to_string(),
+        });
+        let errors = validate_proposal(&proposal(vec![target.clone(), target])).unwrap_err();
+
+        assert!(errors
+            .iter()
+            .any(|error| error.code == "duplicate_target_kind"));
+    }
 }
