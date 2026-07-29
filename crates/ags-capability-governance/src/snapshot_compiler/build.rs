@@ -242,7 +242,7 @@ fn build_capability_snapshot_with_context_and_manifest(
     context: &ConsoleContext,
     third_party: &crate::third_party_manifest::ManifestResolution,
 ) -> Result<HostCapabilitySnapshot, SnapshotBuildError> {
-    let inventory = build_inventory(&context, &[active_host]);
+    let inventory = build_inventory(context, &[active_host]);
     let registry_document =
         load_registry_document(manifest_root).map_err(SnapshotBuildError::Registry)?;
     let registry_bytes = std::fs::read(manifest_root.join("manifests/skills-registry.yaml"))
