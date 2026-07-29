@@ -36,6 +36,15 @@ fn instance_identity_is_only_the_canonical_workspace_path() {
     assert!(!state.target_matches(&sibling));
 }
 
+#[cfg(windows)]
+#[test]
+fn current_process_start_identity_is_stable_without_a_shell() {
+    let first = current_process_start_identity().expect("current process identity");
+    let second = current_process_start_identity().expect("current process identity");
+    assert!(first.starts_with("filetime:"));
+    assert_eq!(first, second);
+}
+
 #[test]
 fn workspace_daemon_keeps_one_static_snapshot_for_its_lifetime() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");

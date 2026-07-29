@@ -303,22 +303,33 @@ fn process_start_identity(pid: u32) -> Option<String> {
     }
     #[cfg(windows)]
     {
-        // Get-Process already fails when the PID is absent. Avoid a preceding
-        // tasklist process on the latency-sensitive daemon startup path.
-        let output = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                &format!("(Get-Process -Id {pid}).StartTime.ToUniversalTime().Ticks"),
-            ])
-            .output()
-            .ok()?;
-        if !output.status.success() {
+        use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
+        use windows_sys::Win32::System::Threading::{
+            GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+
+        // SAFETY: OpenProcess returns either a null handle or an owned process
+        // handle. Every non-null handle is closed below, and GetProcessTimes is
+        // given valid pointers to initialized FILETIME storage.
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle.is_null() {
             return None;
         }
-        let started = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        (!started.is_empty()).then(|| format!("start-ticks:{started}"))
+        let mut creation = FILETIME::default();
+        let mut exit = FILETIME::default();
+        let mut kernel = FILETIME::default();
+        let mut user = FILETIME::default();
+        let success =
+            unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) };
+        unsafe {
+            CloseHandle(handle);
+        }
+        if success == 0 {
+            return None;
+        }
+        let started =
+            (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime);
+        Some(format!("filetime:{started}"))
     }
 }
 
