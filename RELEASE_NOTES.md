@@ -27,9 +27,10 @@ generation.
   separately; enabled-host local drift exits 1. Remote latest checks remain
   advisory and offline operation does not block.
 - Exact MCP conformance is independent of host inventory summaries: Codex uses
-  its native JSON detail command, while Cursor and CodeBuddy-Code use their
-  documented JSON configuration. Malformed, disabled, or stale registrations
-  still fail closed even when a host list reports AGS as merely available.
+  its native JSON detail command, while Cursor, CodeBuddy-Code, and OMP use
+  their documented JSON configuration. Malformed, disabled, or stale
+  registrations still fail closed even when a host list reports AGS as merely
+  available.
 - Claude-compatible clear Stop output omits the optional
   `hookSpecificOutput` field instead of serializing it as JSON `null`.
 

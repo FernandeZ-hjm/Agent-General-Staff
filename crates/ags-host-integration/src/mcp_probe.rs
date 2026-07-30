@@ -49,6 +49,14 @@ pub fn inspect_exact_mcp_registration_at(
                 (home.join(".codebuddy/mcp.json"), "user"),
             ],
         ),
+        "omp" => inspect_json_mcp_registration_at(
+            host,
+            server,
+            &[
+                (workspace.join(".omp/agent/mcp.json"), "workspace"),
+                (home.join(".omp/agent/mcp.json"), "user"),
+            ],
+        ),
         _ => Ok(None),
     }
 }
@@ -159,10 +167,10 @@ fn inspect_json_mcp_registration_at(
     server: &str,
     candidates: &[(std::path::PathBuf, &str)],
 ) -> Result<Option<McpServerRegistration>, String> {
-    let display_name = if host == "cursor" {
-        "Cursor"
-    } else {
-        "CodeBuddy"
+    let display_name = match host {
+        "cursor" => "Cursor",
+        "omp" => "OMP",
+        _ => "CodeBuddy",
     };
     let Some(report) = inspect_json_mcp_config_at(host, display_name, candidates) else {
         return Ok(None);
@@ -471,6 +479,19 @@ mod tests {
         assert_eq!(cursor.args, ["mcp", "serve", "--transport", "stdio"]);
         assert_eq!(cursor.transport.as_deref(), Some("stdio"));
         assert_eq!(cursor.scope.as_deref(), Some("user"));
+
+        std::fs::create_dir_all(home.join(".omp/agent")).unwrap();
+        std::fs::copy(
+            home.join(".cursor/mcp.json"),
+            home.join(".omp/agent/mcp.json"),
+        )
+        .unwrap();
+        let omp = inspect_exact_mcp_registration_at("omp", "ags", &workspace, &home)
+            .unwrap()
+            .unwrap();
+        assert_eq!(omp.command, cursor.command);
+        assert_eq!(omp.args, cursor.args);
+        assert_eq!(omp.scope.as_deref(), Some("user"));
 
         let codex = parse_codex_mcp_get(
             br#"{
