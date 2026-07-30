@@ -256,7 +256,7 @@ public_rewrites:
   - path: crates/ags-verification/src/doctor/checks/orchestration.rs
     target_sha256: "sha256:a25e45241ff2e437546ba3ee1704d97acab4f58a7a2d4bb4a12f8ac6c534803d"
   - path: crates/ags-verification/src/doctor/checks/runtime.rs
-    target_sha256: "sha256:dc26170c3c5e7eb2732bc21246bc06163e6c1c3feb79d0bf5a95bc9bccfa6bfe"
+    target_sha256: "sha256:186eb3a14ee3ff53f3c8ce44e94a2b9e2462911ad0d0e940e4eb1be6f8a96533"
   - path: docs/adr/0001-workspace-service-and-deep-modules.md
     target_sha256: "sha256:14f7c20eaa520b82e495af0ceeec97390e22553503abd494b580aa92355605fe"
   - path: docs/architecture.md
