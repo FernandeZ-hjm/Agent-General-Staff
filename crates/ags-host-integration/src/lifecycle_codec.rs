@@ -128,6 +128,8 @@ impl HostLifecycleCodec {
             LifecycleProjectionFamily::OmpExtension => {
                 let desired = self.desired_omp_body();
                 let current = body == desired;
+                let serialized_workspace = serde_json::to_string(&self.workspace.to_string_lossy())
+                    .unwrap_or_else(|_| "\"\"".to_string());
                 Ok(LifecycleCodecObservation {
                     desired_hash,
                     observed_hash: Some(ags_platform::sha256_hex(body.as_bytes())),
@@ -136,7 +138,7 @@ impl HostLifecycleCodec {
                         stop_guard: current,
                         session_end: current,
                     },
-                    canonical_target: body.contains(&self.workspace.to_string_lossy().to_string())
+                    canonical_target: body.contains(&serialized_workspace)
                         && text_drift_markers(body).is_empty(),
                     current,
                     detail: if current {
@@ -522,7 +524,9 @@ mod tests {
             (
                 "target",
                 body.replace(
-                    &format!("--target '{}'", codec.workspace().display()),
+                    serde_json::to_string(&format!("--target '{}'", codec.workspace().display()))
+                        .unwrap()
+                        .trim_matches('"'),
                     "--target .",
                 ),
             ),
