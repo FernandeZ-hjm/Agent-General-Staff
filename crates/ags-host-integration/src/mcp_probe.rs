@@ -81,7 +81,7 @@ fn inspect_json_mcp_config_at(
     candidates: &[(std::path::PathBuf, &str)],
 ) -> Option<crate::HostMcpReport> {
     let (path, scope) = candidates.iter().find(|(path, _)| path.is_file())?;
-    let bytes = match std::fs::read(&path) {
+    let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(error) => {
             return Some(crate::HostMcpReport {
