@@ -569,6 +569,7 @@ fn cursor_govern_writes_native_hooks_and_reaches_full_lifecycle() {
     )
     .unwrap();
     assert_eq!(hooks["version"], 1);
+    let canonical_project = environment.project_a.canonicalize().unwrap();
     for (native_event, rust_event) in [
         ("sessionStart", "session-start"),
         ("sessionEnd", "session-end"),
@@ -583,7 +584,7 @@ fn cursor_govern_writes_native_hooks_and_reaches_full_lifecycle() {
                 .is_some_and(|command| command.contains(&format!(
                     "host lifecycle --event {rust_event} --host cursor"
                 )) && command
-                    .contains(&environment.project_a.to_string_lossy().to_string()))));
+                    .contains(&canonical_project.to_string_lossy().to_string()))));
     }
 
     let verify = environment
