@@ -87,9 +87,7 @@ fn collect_mcp_reports(
         .iter()
         .filter_map(|platform| {
             let lifecycle = platform.lifecycle?;
-            if platform.mcp_probe.is_none() {
-                return None;
-            }
+            platform.mcp_probe?;
             let workspace_configured = lifecycle.workspace_config_path(repo_root).exists()
                 || lifecycle
                     .alternate_workspace_configs
@@ -280,7 +278,7 @@ fn managed_projection_current(repo_root: &Path) -> Finding {
                 "managed-projection-current",
                 "cannot resolve the canonical AGS projection authority",
                 "a current installed AGS projection authority",
-                format!("{error}"),
+                error.to_string(),
                 "Run Doctor from an installed AGS environment.",
             )
         }
@@ -323,7 +321,7 @@ fn capability_snapshot_current(
                 "capability-snapshot-current",
                 "canonical capability source cannot be resolved",
                 "a current capability authority root",
-                format!("{error}"),
+                error.to_string(),
                 "Restore the AGS runtime install manifest or set AGS_SOURCE_ROOT.",
             )
         }

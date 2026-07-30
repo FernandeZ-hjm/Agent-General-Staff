@@ -219,29 +219,6 @@ fn rust_source_files(root: &Path) -> Vec<std::path::PathBuf> {
     files
 }
 
-#[cfg(test)]
-mod language_boundary_tests {
-    use super::directly_launches_python;
-
-    #[test]
-    fn legacy_python_hook_text_is_not_a_process_launch() {
-        assert!(!directly_launches_python(
-            r#"const LEGACY: &str = "python3 context-memory-start.py";"#
-        ));
-    }
-
-    #[test]
-    fn direct_python_process_launch_is_rejected() {
-        let source = [
-            "std::process::Command::new(\"",
-            "python3",
-            "\").arg(\"legacy.py\");",
-        ]
-        .concat();
-        assert!(directly_launches_python(&source));
-    }
-}
-
 fn check_validator_mutation_guards(repo_root: &Path) -> CheckItem {
     match crate::mutation_guard::verify(repo_root) {
         Ok(evidence) => CheckItem::pass("semantic-mutation-guards", "release", &evidence),
@@ -442,4 +419,27 @@ pub(super) fn detect_template_leaks(content: &str, rel_path: &str) -> Vec<String
     }
 
     leaks
+}
+
+#[cfg(test)]
+mod language_boundary_tests {
+    use super::directly_launches_python;
+
+    #[test]
+    fn legacy_python_hook_text_is_not_a_process_launch() {
+        assert!(!directly_launches_python(
+            r#"const LEGACY: &str = "python3 context-memory-start.py";"#
+        ));
+    }
+
+    #[test]
+    fn direct_python_process_launch_is_rejected() {
+        let source = [
+            "std::process::Command::new(\"",
+            "python3",
+            "\").arg(\"legacy.py\");",
+        ]
+        .concat();
+        assert!(directly_launches_python(&source));
+    }
 }

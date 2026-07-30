@@ -1,5 +1,8 @@
 use super::*;
 
+// Doctor findings intentionally carry the complete expected/observed/remediation
+// payload; boxing this read-only boundary would only complicate every caller.
+#[allow(clippy::result_large_err)]
 pub(super) fn mcp_registry_entry_status(
     repo_root: &Path,
     mcp_name: &str,

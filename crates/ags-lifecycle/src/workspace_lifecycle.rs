@@ -515,7 +515,7 @@ impl LifecycleKernel {
             .lock()
             .map_err(|_| "lifecycle state lock poisoned".to_string())?;
         state.inflight_session_ends.remove(&key);
-        let result = result.map(|decision| {
+        let result = result.inspect(|decision| {
             if state.completed_session_ends.len() == MAX_COMPLETED_SESSION_ENDS {
                 state.completed_session_ends.pop_front();
             }
@@ -525,8 +525,7 @@ impl LifecycleKernel {
                 event_id: envelope.event_id.clone(),
                 decision: decision.clone(),
             });
-            remember_recent_decision(&mut state, envelope, &decision);
-            decision
+            remember_recent_decision(&mut state, envelope, decision);
         });
         self.session_end_ready.notify_all();
         result
@@ -746,7 +745,7 @@ mod tests {
             "schema_version": "0.3.6-launch-plan",
             "test_case": suffix,
         });
-        let launch_plan_hash = ags_platform::sha256_hex(&serde_json::to_vec(&launch_plan).unwrap());
+        let launch_plan_hash = ags_platform::sha256_hex(serde_json::to_vec(&launch_plan).unwrap());
         launch_plan["launch_plan_hash"] = serde_json::json!(launch_plan_hash.clone());
         std::fs::write(
             &launch_plan_path,
