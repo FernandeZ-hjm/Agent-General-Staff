@@ -31,7 +31,8 @@ pub use lifecycle_codec::{
 };
 pub use mcp_probe::{
     claude_mcp_list_line, claude_mcp_list_line_at, codex_mcp_list_line, command_in_path,
-    mcp_server_ids, mcp_server_line, mcp_server_line_at, parse_mcp_list, McpServerRegistration,
+    inspect_codebuddy_mcp_config_at, mcp_server_ids, mcp_server_line, mcp_server_line_at,
+    parse_mcp_list, McpServerRegistration,
 };
 pub use memory_lifecycle::{
     compute_memory_lifecycle_at_for_host, compute_memory_lifecycle_for_host, extract_profile_slug,

@@ -1,6 +1,6 @@
 # Agent Governance Suite Release Notes
 
-## Release 0.4.0 (candidate)
+## Release 0.4.0
 
 0.4.0 completes the canonical-workspace lifecycle architecture. The MCP
 `protocolVersion` remains `2024-11-05`; this release changes AGS product,
@@ -26,11 +26,11 @@ generation.
   canonical targets. Runtime health and local conformance are reported
   separately; enabled-host local drift exits 1. Remote latest checks remain
   advisory and offline operation does not block.
+- CodeBuddy-Code registration verification falls back to its documented
+  workspace or user JSON configuration when the optional standalone CLI is
+  unavailable; malformed, disabled, or stale registrations still fail closed.
 - Claude-compatible clear Stop output omits the optional
   `hookSpecificOutput` field instead of serializing it as JSON `null`.
-
-This checkout is a release candidate only. No tag, stable/public promotion,
-GitHub Release, or npm publication is implied by the source version.
 
 ## Release 0.3.8
 

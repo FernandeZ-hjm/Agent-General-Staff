@@ -110,7 +110,17 @@ fn collect_mcp_reports(
                 (
                     host,
                     scope.spawn(move || {
-                        ags_host_integration::inspect_host_mcp_at(&worker_host, repo_root)
+                        let report =
+                            ags_host_integration::inspect_host_mcp_at(&worker_host, repo_root);
+                        if worker_host == "codebuddy-code"
+                            && report.status
+                                == ags_host_integration::HostProbeStatus::HostUnavailable
+                        {
+                            ags_host_integration::inspect_codebuddy_mcp_config_at(repo_root, home)
+                                .unwrap_or(report)
+                        } else {
+                            report
+                        }
                     }),
                 )
             })

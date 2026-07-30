@@ -21,6 +21,99 @@ pub struct McpServerRegistration {
     pub evidence: String,
 }
 
+/// Inspect CodeBuddy's documented JSON registration when the optional
+/// standalone `codebuddy` CLI is unavailable.
+pub fn inspect_codebuddy_mcp_config_at(
+    workspace: &std::path::Path,
+    home: &std::path::Path,
+) -> Option<crate::HostMcpReport> {
+    let candidates = [
+        (workspace.join(".mcp.json"), "workspace"),
+        (home.join(".codebuddy/.mcp.json"), "user"),
+        (home.join(".codebuddy/mcp.json"), "user"),
+    ];
+    let (path, scope) = candidates.into_iter().find(|(path, _)| path.is_file())?;
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return Some(crate::HostMcpReport {
+                host: "codebuddy-code".to_string(),
+                status: HostProbeStatus::ConnectionFailed,
+                evidence_source: "CodeBuddy MCP config".to_string(),
+                servers: Vec::new(),
+                evidence: format!("cannot read {}: {error}", path.display()),
+            });
+        }
+    };
+    let value: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(value) => value,
+        Err(error) => {
+            return Some(crate::HostMcpReport {
+                host: "codebuddy-code".to_string(),
+                status: HostProbeStatus::ConnectionFailed,
+                evidence_source: "CodeBuddy MCP config".to_string(),
+                servers: Vec::new(),
+                evidence: format!("invalid JSON in {}: {error}", path.display()),
+            });
+        }
+    };
+    let servers = value
+        .get("mcpServers")
+        .and_then(serde_json::Value::as_object)
+        .into_iter()
+        .flat_map(|servers| servers.iter())
+        .map(|(name, entry)| {
+            let command = entry
+                .get("command")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
+            let args = entry
+                .get("args")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flat_map(|args| args.iter())
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            let active = !entry
+                .get("disabled")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+                && entry
+                    .get("enabled")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(true);
+            McpServerRegistration {
+                name: name.clone(),
+                active,
+                command,
+                args,
+                transport: Some(
+                    if entry
+                        .get("url")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some()
+                    {
+                        "http"
+                    } else {
+                        "stdio"
+                    }
+                    .to_string(),
+                ),
+                scope: Some(scope.to_string()),
+                evidence: format!("registered in {}", path.display()),
+            }
+        })
+        .collect();
+    Some(crate::HostMcpReport {
+        host: "codebuddy-code".to_string(),
+        status: HostProbeStatus::Ready,
+        evidence_source: "CodeBuddy MCP config".to_string(),
+        servers,
+        evidence: format!("read-only registration from {}", path.display()),
+    })
+}
+
 /// Resolve an executable through the platform PATH rules.
 pub fn command_in_path(command: &str) -> Result<String, String> {
     match ags_platform::find_in_path(command) {
@@ -201,6 +294,37 @@ pub fn mcp_server_ids(host: &str) -> Result<Vec<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codebuddy_config_is_a_strict_read_only_probe_fallback() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(home.join(".codebuddy")).unwrap();
+        std::fs::write(
+            home.join(".codebuddy/.mcp.json"),
+            serde_json::json!({
+                "mcpServers": {
+                    "ags": {
+                        "command": "/usr/local/bin/ags",
+                        "args": ["mcp", "serve", "--transport", "stdio"]
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let report = inspect_codebuddy_mcp_config_at(&workspace, &home).unwrap();
+        assert_eq!(report.status, HostProbeStatus::Ready);
+        assert_eq!(report.evidence_source, "CodeBuddy MCP config");
+        let registration = report.find("ags").unwrap();
+        assert!(registration.active);
+        assert_eq!(registration.command.as_deref(), Some("/usr/local/bin/ags"));
+        assert_eq!(registration.args, ["mcp", "serve", "--transport", "stdio"]);
+        assert_eq!(registration.transport.as_deref(), Some("stdio"));
+        assert_eq!(registration.scope.as_deref(), Some("user"));
+    }
 
     #[test]
     fn parsers_keep_registration_identity_and_active_state() {
