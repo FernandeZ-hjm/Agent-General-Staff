@@ -21,6 +21,38 @@ pub struct McpServerRegistration {
     pub evidence: String,
 }
 
+/// Inspect one registration through the host's exact, read-only configuration
+/// surface. Inventory probes remain responsible for listing every server; this
+/// path exists for conformance checks that must prove command and arguments.
+pub fn inspect_exact_mcp_registration_at(
+    host: &str,
+    server: &str,
+    workspace: &std::path::Path,
+    home: &std::path::Path,
+) -> Result<Option<McpServerRegistration>, String> {
+    match host {
+        "codex" => inspect_codex_mcp_registration_at(server, workspace),
+        "cursor" => inspect_json_mcp_registration_at(
+            host,
+            server,
+            &[
+                (workspace.join(".cursor/mcp.json"), "workspace"),
+                (home.join(".cursor/mcp.json"), "user"),
+            ],
+        ),
+        "codebuddy-code" => inspect_json_mcp_registration_at(
+            host,
+            server,
+            &[
+                (workspace.join(".mcp.json"), "workspace"),
+                (home.join(".codebuddy/.mcp.json"), "user"),
+                (home.join(".codebuddy/mcp.json"), "user"),
+            ],
+        ),
+        _ => Ok(None),
+    }
+}
+
 /// Inspect CodeBuddy's documented JSON registration when the optional
 /// standalone `codebuddy` CLI is unavailable.
 pub fn inspect_codebuddy_mcp_config_at(
@@ -32,14 +64,22 @@ pub fn inspect_codebuddy_mcp_config_at(
         (home.join(".codebuddy/.mcp.json"), "user"),
         (home.join(".codebuddy/mcp.json"), "user"),
     ];
-    let (path, scope) = candidates.into_iter().find(|(path, _)| path.is_file())?;
+    inspect_json_mcp_config_at("codebuddy-code", "CodeBuddy", &candidates)
+}
+
+fn inspect_json_mcp_config_at(
+    host: &str,
+    display_name: &str,
+    candidates: &[(std::path::PathBuf, &str)],
+) -> Option<crate::HostMcpReport> {
+    let (path, scope) = candidates.iter().find(|(path, _)| path.is_file())?;
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(error) => {
             return Some(crate::HostMcpReport {
-                host: "codebuddy-code".to_string(),
+                host: host.to_string(),
                 status: HostProbeStatus::ConnectionFailed,
-                evidence_source: "CodeBuddy MCP config".to_string(),
+                evidence_source: format!("{display_name} MCP config"),
                 servers: Vec::new(),
                 evidence: format!("cannot read {}: {error}", path.display()),
             });
@@ -49,9 +89,9 @@ pub fn inspect_codebuddy_mcp_config_at(
         Ok(value) => value,
         Err(error) => {
             return Some(crate::HostMcpReport {
-                host: "codebuddy-code".to_string(),
+                host: host.to_string(),
                 status: HostProbeStatus::ConnectionFailed,
-                evidence_source: "CodeBuddy MCP config".to_string(),
+                evidence_source: format!("{display_name} MCP config"),
                 servers: Vec::new(),
                 evidence: format!("invalid JSON in {}: {error}", path.display()),
             });
@@ -106,12 +146,90 @@ pub fn inspect_codebuddy_mcp_config_at(
         })
         .collect();
     Some(crate::HostMcpReport {
-        host: "codebuddy-code".to_string(),
+        host: host.to_string(),
         status: HostProbeStatus::Ready,
-        evidence_source: "CodeBuddy MCP config".to_string(),
+        evidence_source: format!("{display_name} MCP config"),
         servers,
         evidence: format!("read-only registration from {}", path.display()),
     })
+}
+
+fn inspect_json_mcp_registration_at(
+    host: &str,
+    server: &str,
+    candidates: &[(std::path::PathBuf, &str)],
+) -> Result<Option<McpServerRegistration>, String> {
+    let display_name = if host == "cursor" {
+        "Cursor"
+    } else {
+        "CodeBuddy"
+    };
+    let Some(report) = inspect_json_mcp_config_at(host, display_name, candidates) else {
+        return Ok(None);
+    };
+    if report.status != HostProbeStatus::Ready {
+        return Err(report.evidence);
+    }
+    Ok(report.find(server).cloned())
+}
+
+fn inspect_codex_mcp_registration_at(
+    server: &str,
+    workspace: &std::path::Path,
+) -> Result<Option<McpServerRegistration>, String> {
+    let Some(codex) = ags_platform::find_in_path("codex") else {
+        return Ok(None);
+    };
+    let output = std::process::Command::new(codex)
+        .args(["mcp", "get", server, "--json"])
+        .current_dir(workspace)
+        .output()
+        .map_err(|error| format!("cannot run `codex mcp get {server} --json`: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "`codex mcp get {server} --json` failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    parse_codex_mcp_get(&output.stdout)
+}
+
+fn parse_codex_mcp_get(bytes: &[u8]) -> Result<Option<McpServerRegistration>, String> {
+    let value: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|error| format!("invalid `codex mcp get --json` output: {error}"))?;
+    let Some(name) = value.get("name").and_then(serde_json::Value::as_str) else {
+        return Ok(None);
+    };
+    let transport = value
+        .get("transport")
+        .and_then(serde_json::Value::as_object);
+    let command = transport
+        .and_then(|transport| transport.get("command"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    let args = transport
+        .and_then(|transport| transport.get("args"))
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flat_map(|args| args.iter())
+        .filter_map(serde_json::Value::as_str)
+        .map(str::to_string)
+        .collect();
+    Ok(Some(McpServerRegistration {
+        name: name.to_string(),
+        active: value
+            .get("enabled")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+        command,
+        args,
+        transport: transport
+            .and_then(|transport| transport.get("type"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+        scope: None,
+        evidence: format!("verified by `codex mcp get {name} --json`"),
+    }))
 }
 
 /// Resolve an executable through the platform PATH rules.
@@ -324,6 +442,53 @@ mod tests {
         assert_eq!(registration.args, ["mcp", "serve", "--transport", "stdio"]);
         assert_eq!(registration.transport.as_deref(), Some("stdio"));
         assert_eq!(registration.scope.as_deref(), Some("user"));
+    }
+
+    #[test]
+    fn exact_cursor_and_codex_probes_preserve_native_registration_fields() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(home.join(".cursor")).unwrap();
+        std::fs::write(
+            home.join(".cursor/mcp.json"),
+            serde_json::json!({
+                "mcpServers": {
+                    "ags": {
+                        "command": "/usr/local/bin/ags",
+                        "args": ["mcp", "serve", "--transport", "stdio"]
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let cursor = inspect_exact_mcp_registration_at("cursor", "ags", &workspace, &home)
+            .unwrap()
+            .unwrap();
+        assert_eq!(cursor.command.as_deref(), Some("/usr/local/bin/ags"));
+        assert_eq!(cursor.args, ["mcp", "serve", "--transport", "stdio"]);
+        assert_eq!(cursor.transport.as_deref(), Some("stdio"));
+        assert_eq!(cursor.scope.as_deref(), Some("user"));
+
+        let codex = parse_codex_mcp_get(
+            br#"{
+                "name": "ags",
+                "enabled": true,
+                "transport": {
+                    "type": "stdio",
+                    "command": "/usr/local/bin/ags",
+                    "args": ["mcp", "serve", "--transport", "stdio"]
+                }
+            }"#,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(codex.active);
+        assert_eq!(codex.command.as_deref(), Some("/usr/local/bin/ags"));
+        assert_eq!(codex.args, ["mcp", "serve", "--transport", "stdio"]);
+        assert_eq!(codex.transport.as_deref(), Some("stdio"));
     }
 
     #[test]

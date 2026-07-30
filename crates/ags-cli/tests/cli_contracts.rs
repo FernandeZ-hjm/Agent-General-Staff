@@ -528,10 +528,8 @@ fn agents_govern_previews_workspace_owned_codebuddy_migration() {
         preview["managed_workspaces"][0]["adapter_ready_after_apply"],
         true
     );
-    assert!(preview["workspace_adapter"]
-        .as_str()
-        .unwrap()
-        .ends_with(".codebuddy/settings.local.json"));
+    assert!(Path::new(preview["workspace_adapter"].as_str().unwrap())
+        .ends_with(Path::new(".codebuddy").join("settings.local.json")));
     assert_eq!(
         Path::new(preview["current_workspace"].as_str().unwrap()),
         workspace.path().canonicalize().unwrap()

@@ -110,17 +110,40 @@ fn collect_mcp_reports(
                 (
                     host,
                     scope.spawn(move || {
-                        let report =
+                        let mut report =
                             ags_host_integration::inspect_host_mcp_at(&worker_host, repo_root);
                         if worker_host == "codebuddy-code"
                             && report.status
                                 == ags_host_integration::HostProbeStatus::HostUnavailable
                         {
-                            ags_host_integration::inspect_codebuddy_mcp_config_at(repo_root, home)
-                                .unwrap_or(report)
-                        } else {
-                            report
+                            report = ags_host_integration::inspect_codebuddy_mcp_config_at(
+                                repo_root, home,
+                            )
+                            .unwrap_or(report);
                         }
+                        match ags_host_integration::inspect_exact_mcp_registration_at(
+                            &worker_host,
+                            "ags",
+                            repo_root,
+                            home,
+                        ) {
+                            Ok(Some(exact)) => {
+                                report
+                                    .servers
+                                    .retain(|registration| registration.name != exact.name);
+                                report.servers.push(exact);
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                report
+                                    .servers
+                                    .retain(|registration| registration.name != "ags");
+                                report.status =
+                                    ags_host_integration::HostProbeStatus::ConnectionFailed;
+                                report.evidence = error;
+                            }
+                        }
+                        report
                     }),
                 )
             })
