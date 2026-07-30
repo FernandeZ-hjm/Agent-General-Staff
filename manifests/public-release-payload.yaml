@@ -220,7 +220,7 @@ public_rewrites:
   - path: crates/ags-lifecycle/src/setup/apply.rs
     target_sha256: "sha256:a4d26ac9ecbdbdfddace724dd02bc7ec757157850ecc6d441bef7c93821008f4"
   - path: crates/ags-lifecycle/src/setup/memory/adapter.rs
-    target_sha256: "sha256:3d686eeb3cc0c3ca00a690b89144a87a15a51564424650428534442887972a9e"
+    target_sha256: "sha256:8ff4144b1615ebf94a0e89603c7ebb28f8b5634f09f4da5b040c6752333d4215"
   - path: crates/ags-lifecycle/src/setup/memory/merge.rs
     target_sha256: "sha256:c8e7d0f2bff4e9190e9e2c57588c06ccfa0f43c1351ad5aa0605877c82c31ea8"
   - path: crates/ags-lifecycle/src/setup/memory/mod.rs

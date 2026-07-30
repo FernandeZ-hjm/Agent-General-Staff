@@ -539,6 +539,8 @@ mod tests {
 
         let canonical = target.canonicalize().unwrap();
         let canonical_arg = canonical.to_string_lossy().to_string();
+        let serialized_canonical_arg = serde_json::to_string(&canonical_arg).unwrap();
+        let escaped_canonical_arg = serialized_canonical_arg.trim_matches('"');
         let codex = read_json(&target.join(".codex/hooks.json"));
         assert!(codex
             .to_string()
@@ -553,7 +555,7 @@ mod tests {
         assert!(!codex
             .to_string()
             .contains("session-start --host claude-code"));
-        assert!(codex.to_string().contains(&canonical_arg));
+        assert!(codex.to_string().contains(escaped_canonical_arg));
         assert!(!codex.to_string().contains("--target ."));
 
         let cursor = read_json(&target.join(".cursor/hooks.json"));
@@ -564,6 +566,7 @@ mod tests {
                 .to_string()
                 .contains(&format!("host lifecycle --event {event} --host cursor")));
         }
+        assert!(cursor.to_string().contains(escaped_canonical_arg));
 
         let claude = read_json(&target.join(".claude/settings.local.json"));
         for event in ["session-start", "session-end", "stop-guard"] {
@@ -571,7 +574,7 @@ mod tests {
                 "host lifecycle --event {event} --host claude-code"
             )));
         }
-        assert!(claude.to_string().contains(&canonical_arg));
+        assert!(claude.to_string().contains(escaped_canonical_arg));
         assert!(!claude.to_string().contains("--target ."));
 
         let codebuddy = read_json(&target.join(".codebuddy/settings.local.json"));
@@ -580,7 +583,7 @@ mod tests {
                 "host lifecycle --event {event} --host codebuddy-code"
             )));
         }
-        assert!(codebuddy.to_string().contains(&canonical_arg));
+        assert!(codebuddy.to_string().contains(escaped_canonical_arg));
         assert!(!codebuddy.to_string().contains("--target ."));
 
         let omp = std::fs::read_to_string(target.join(".omp/extensions/ags-lifecycle.js")).unwrap();
@@ -592,7 +595,7 @@ mod tests {
             "protected capsule"
         );
 
-        assert!(omp.contains(canonical.to_string_lossy().as_ref()));
+        assert!(omp.contains(&serialized_canonical_arg));
         assert!(!omp.contains("ctx.cwd"));
 
         for host in ["claude-code", "codex", "cursor", "omp", "codebuddy-code"] {
