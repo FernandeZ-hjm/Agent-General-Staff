@@ -153,6 +153,7 @@ process.exit(0);
 
     let manifest = serde_json::json!({
         "schema_version": PRIVATE_INSTALL_SCHEMA,
+        "producer_version": env!("CARGO_PKG_VERSION"),
         "profile": "private",
         "source_root": source_root.to_string_lossy(),
         "target": target.to_string_lossy(),
@@ -295,8 +296,6 @@ Each command skill routes through AGS preflight before acting.\n",
             mode: None,
         },
     ];
-    files.extend(super::memory::memory_script_install_files(home));
-
     // AGS-owned global rule modules. Host-global AGENTS.md / CLAUDE.md stay
     // operator-controlled and may reference these concise, stable modules.
     for (name, description) in [

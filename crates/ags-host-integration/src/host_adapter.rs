@@ -6,6 +6,7 @@
 use crate::{parse_mcp_list, platform_spec, McpProbeProtocol, McpProbeSpec, McpServerRegistration};
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -21,16 +22,28 @@ pub enum HostProbeExecution {
 
 pub trait HostProbeRunner: Send + Sync {
     fn run(&self, spec: &McpProbeSpec) -> HostProbeExecution;
+
+    fn run_in(&self, spec: &McpProbeSpec, _current_dir: &Path) -> HostProbeExecution {
+        self.run(spec)
+    }
 }
 
 pub struct SystemHostProbeRunner;
 
 impl HostProbeRunner for SystemHostProbeRunner {
     fn run(&self, spec: &McpProbeSpec) -> HostProbeExecution {
-        match spec.protocol {
-            McpProbeProtocol::DirectCommand => run_direct(spec),
-            McpProbeProtocol::JsonlRpcCommand { command } => run_jsonl_rpc(spec, command),
-        }
+        run_system_probe(spec, None)
+    }
+
+    fn run_in(&self, spec: &McpProbeSpec, current_dir: &Path) -> HostProbeExecution {
+        run_system_probe(spec, Some(current_dir))
+    }
+}
+
+fn run_system_probe(spec: &McpProbeSpec, current_dir: Option<&Path>) -> HostProbeExecution {
+    match spec.protocol {
+        McpProbeProtocol::DirectCommand => run_direct(spec, current_dir),
+        McpProbeProtocol::JsonlRpcCommand { command } => run_jsonl_rpc(spec, command, current_dir),
     }
 }
 
@@ -72,6 +85,14 @@ impl<'a> HostAdapter<'a> {
     }
 
     pub fn inspect_mcp(&self, host: &str) -> HostMcpReport {
+        self.inspect_mcp_with(host, None)
+    }
+
+    pub fn inspect_mcp_at(&self, host: &str, current_dir: &Path) -> HostMcpReport {
+        self.inspect_mcp_with(host, Some(current_dir))
+    }
+
+    fn inspect_mcp_with(&self, host: &str, current_dir: Option<&Path>) -> HostMcpReport {
         let Some(spec) = platform_spec(host).and_then(|platform| platform.mcp_probe) else {
             return HostMcpReport {
                 host: host.to_string(),
@@ -83,7 +104,10 @@ impl<'a> HostAdapter<'a> {
             };
         };
 
-        match self.runner.run(&spec) {
+        let execution = current_dir
+            .map(|path| self.runner.run_in(&spec, path))
+            .unwrap_or_else(|| self.runner.run(&spec));
+        match execution {
             HostProbeExecution::Unavailable => HostMcpReport {
                 host: host.to_string(),
                 status: HostProbeStatus::HostUnavailable,
@@ -130,6 +154,10 @@ pub fn inspect_host_mcp(host: &str) -> HostMcpReport {
     HostAdapter::new(&SystemHostProbeRunner).inspect_mcp(host)
 }
 
+pub fn inspect_host_mcp_at(host: &str, current_dir: &Path) -> HostMcpReport {
+    HostAdapter::new(&SystemHostProbeRunner).inspect_mcp_at(host, current_dir)
+}
+
 fn authentication_required(output: &str) -> bool {
     let normalized = output.to_ascii_lowercase();
     normalized.contains("401")
@@ -138,12 +166,17 @@ fn authentication_required(output: &str) -> bool {
         || normalized.contains("auth required")
 }
 
-fn run_direct(spec: &McpProbeSpec) -> HostProbeExecution {
-    match Command::new(spec.program)
-        .args(spec.args)
-        .envs(spec.env.iter().copied())
-        .output()
-    {
+fn probe_command(spec: &McpProbeSpec, current_dir: Option<&Path>) -> Command {
+    let mut command = Command::new(spec.program);
+    command.args(spec.args).envs(spec.env.iter().copied());
+    if let Some(path) = current_dir {
+        command.current_dir(path);
+    }
+    command
+}
+
+fn run_direct(spec: &McpProbeSpec, current_dir: Option<&Path>) -> HostProbeExecution {
+    match probe_command(spec, current_dir).output() {
         Ok(output) => HostProbeExecution::Ran {
             success: output.status.success(),
             output: format!(
@@ -156,10 +189,12 @@ fn run_direct(spec: &McpProbeSpec) -> HostProbeExecution {
     }
 }
 
-fn run_jsonl_rpc(spec: &McpProbeSpec, command: &str) -> HostProbeExecution {
-    let mut child = match Command::new(spec.program)
-        .args(spec.args)
-        .envs(spec.env.iter().copied())
+fn run_jsonl_rpc(
+    spec: &McpProbeSpec,
+    command: &str,
+    current_dir: Option<&Path>,
+) -> HostProbeExecution {
+    let mut child = match probe_command(spec, current_dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -276,5 +311,39 @@ mod tests {
         }))
         .inspect_mcp("omp");
         assert_eq!(report.status, HostProbeStatus::AuthRequired);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn system_runner_binds_probe_to_the_requested_workspace() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let script = root.path().join("pwd-probe");
+        std::fs::write(&script, "#!/bin/sh\npwd\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let program = Box::leak(script.to_string_lossy().into_owned().into_boxed_str());
+        let spec = McpProbeSpec {
+            protocol: McpProbeProtocol::DirectCommand,
+            program,
+            args: &[],
+            env: &[],
+            format: crate::McpListFormat::Claude,
+            evidence_source: "test",
+            timeout_ms: 1_000,
+        };
+        let HostProbeExecution::Ran {
+            success: true,
+            output,
+        } = SystemHostProbeRunner.run_in(&spec, &workspace)
+        else {
+            panic!("probe did not run");
+        };
+        assert_eq!(
+            output.trim(),
+            workspace.canonicalize().unwrap().display().to_string()
+        );
     }
 }

@@ -11,10 +11,15 @@ use ags_platform::canonical_workspace_root;
 
 use super::capability_snapshot::WorkspaceState;
 use super::registry_ownership::{fresh_id, now_millis, ServicePaths, WorkspaceRegistry};
-use super::upgrade_recycle::{connect_or_start, reclaim_registry_after_failed_handshake};
-use super::WorkspaceSessionHandler;
+use super::upgrade_recycle::{
+    connect_existing_read_only_at, connect_or_start, reclaim_registry_after_failed_handshake,
+};
+use super::{
+    WorkspaceCommand, WorkspaceServiceInspection, WorkspaceSessionHandler,
+    WORKSPACE_DAEMON_STATUS_SCHEMA_VERSION,
+};
 
-pub(super) const WIRE_SCHEMA: &str = "ags-workspace-service/1";
+pub(super) const WIRE_SCHEMA: &str = "ags-workspace-service/2";
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -134,6 +139,79 @@ pub(super) fn run_stdio_adapter_impl() -> Result<(), String> {
     }
 }
 
+pub(super) fn dispatch_workspace_command_impl(
+    workspace: &Path,
+    kind: &str,
+    payload: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let workspace = canonical_workspace_root(workspace)?;
+    let (stream, registry) = connect_or_start(&workspace)?;
+    dispatch_workspace_command_on(stream, registry, workspace, kind, payload)
+}
+
+pub(super) fn inspect_existing_workspace_service_impl(
+    workspace: &Path,
+) -> Result<Option<WorkspaceServiceInspection>, String> {
+    let workspace = canonical_workspace_root(workspace)?;
+    let runtime_home = ags_capability_governance::locate_runtime_home();
+    inspect_existing_workspace_service_at(&runtime_home, &workspace)
+}
+
+pub(super) fn inspect_existing_workspace_service_at(
+    runtime_home: &Path,
+    workspace: &Path,
+) -> Result<Option<WorkspaceServiceInspection>, String> {
+    let Some((stream, registry)) = connect_existing_read_only_at(runtime_home, workspace)? else {
+        return Ok(None);
+    };
+    stream
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .and_then(|_| stream.set_write_timeout(Some(Duration::from_secs(1))))
+        .map_err(|error| format!("workspace daemon inspection timeout setup failed: {error}"))?;
+    let expected_identity = registry.instance_key.clone();
+    let value = dispatch_workspace_command_on(
+        stream,
+        registry,
+        workspace.to_path_buf(),
+        "status",
+        serde_json::Value::Null,
+    )?;
+    let inspection: WorkspaceServiceInspection = serde_json::from_value(value)
+        .map_err(|error| format!("workspace daemon inspection invalid: {error}"))?;
+    if inspection.schema_version != WORKSPACE_DAEMON_STATUS_SCHEMA_VERSION
+        || inspection.canonical_workspace != workspace.to_string_lossy()
+        || inspection.workspace_identity != expected_identity
+    {
+        return Err("workspace daemon inspection identity mismatch".to_string());
+    }
+    Ok(Some(inspection))
+}
+
+fn dispatch_workspace_command_on(
+    mut stream: TcpStream,
+    registry: WorkspaceRegistry,
+    workspace: PathBuf,
+    kind: &str,
+    payload: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let command = WorkspaceCommand {
+        kind: kind.to_string(),
+        payload,
+    };
+    let handshake = Handshake {
+        protocol: WIRE_SCHEMA.to_string(),
+        token: registry.token,
+        kind: "workspace-command".to_string(),
+        command: Some(
+            serde_json::to_string(&command)
+                .map_err(|error| format!("workspace command encode failed: {error}"))?,
+        ),
+        workspace,
+    };
+    write_json_line(&mut stream, &handshake)?;
+    read_json_line(&mut BufReader::new(stream))
+}
+
 fn connect_workspace_session(
     workspace: &Path,
 ) -> Result<(TcpStream, BufReader<TcpStream>), String> {
@@ -244,6 +322,16 @@ pub(super) fn handle_connection(
             },
         )?;
         shutdown.store(true, Ordering::Release);
+        return Ok(());
+    }
+    if handshake.kind == "workspace-command" {
+        let encoded = handshake
+            .command
+            .ok_or_else(|| "workspace command handshake has no payload".to_string())?;
+        let command: WorkspaceCommand = serde_json::from_str(&encoded)
+            .map_err(|error| format!("workspace command payload invalid: {error}"))?;
+        let result = handler.run_workspace_command(&command.kind, command.payload, state)?;
+        write_json_line(&mut writer, &result)?;
         return Ok(());
     }
     if handshake.kind != "session" {

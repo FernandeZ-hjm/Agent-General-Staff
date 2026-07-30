@@ -139,15 +139,4 @@ mod tests {
         assert_eq!(json["capability_plan"].as_array().unwrap().len(), 0);
         let _ = std::fs::remove_dir_all(home);
     }
-
-    #[test]
-    fn canonical_specs_include_tencent_advise_only_hosts() {
-        for host in AGENT_PLATFORM_SPECS
-            .iter()
-            .filter(|host| matches!(host.id, "workbuddy" | "codebuddy-code"))
-        {
-            assert!(!host.verify_supported);
-            assert!(host.mcp_host_command.contains("ags_preflight"));
-        }
-    }
 }

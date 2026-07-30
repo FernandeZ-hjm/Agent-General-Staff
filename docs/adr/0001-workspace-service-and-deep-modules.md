@@ -1,7 +1,8 @@
 # ADR 0001: Workspace Service and Deep Module Boundaries
 
 - Status: Accepted
-- Product version: 0.3.6
+- Introduced in: 0.3.1
+- Current implementation: 0.4.0
 
 ## Context
 
@@ -16,6 +17,12 @@ Use one service per canonical workspace and make MCP stdio a thin
 `connect-or-start` proxy. Keep sessions, preflight bindings, and actions
 client-local. Publish one static snapshot per host by
 validate-then-atomic-replace during explicit lifecycle updates.
+
+Workspace lifecycle uses the same service boundary. Host-native
+SessionStart, Stop/guard, and SessionEnd adapters only translate their native
+event schema into the shared lifecycle envelope. Memory reads, idempotency,
+receipt-bound closure, and lifecycle state belong to the workspace service;
+the host and user-level configuration do not own a second state machine.
 
 The request path never rebuilds or compares live capability observations.
 The daemon loads a host snapshot once, validates its sealed hashes, and reuses

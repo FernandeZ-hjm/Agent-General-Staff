@@ -9,8 +9,6 @@ use super::*;
 // `ags agents govern --apply` owns
 // native host adapters; doctor and preflight consume this same computation.
 
-pub(super) const OMP_MEMORY_EXTENSION: &str = "ags-memory-lifecycle.js";
-
 /// Read / write / archive / verify closure state for a project's memory store.
 ///
 /// `status` is a coarse one-word verdict; the booleans expose the underlying
@@ -129,70 +127,10 @@ fn slug_from_path(path: &Path) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-/// Collect hook command strings for one `.claude/settings.json` event, tolerating
-/// both nested `{hooks:[{command}]}` and flat `{command}` group forms. Returns an
-/// empty vec when the file is missing, unreadable, invalid JSON, or has no event.
-pub(super) fn settings_event_commands(settings_path: &Path, event: &str) -> Vec<String> {
-    let Ok(raw) = std::fs::read_to_string(settings_path) else {
-        return Vec::new();
-    };
-    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        return Vec::new();
-    };
-    let mut cmds = Vec::new();
-    if let Some(arr) = parsed
-        .get("hooks")
-        .and_then(|h| h.get(event))
-        .and_then(|e| e.as_array())
-    {
-        for group in arr {
-            if let Some(inner) = group.get("hooks").and_then(|h| h.as_array()) {
-                for h in inner {
-                    if let Some(c) = h.get("command").and_then(|c| c.as_str()) {
-                        cmds.push(c.to_string());
-                    }
-                }
-            }
-            if let Some(c) = group.get("command").and_then(|c| c.as_str()) {
-                cmds.push(c.to_string());
-            }
-        }
-    }
-    cmds
-}
-
 /// Compute the closure for the exact host requested by preflight.
 pub fn compute_memory_lifecycle_for_host(target: &Path, agent_type: &AgentType) -> MemoryLifecycle {
     let home = ags_platform::home_dir_or_temp();
     compute_memory_lifecycle_at_for_host(target, &home, agent_type)
-}
-
-pub(super) fn host_hook_commands(paths: &[PathBuf], event: &str) -> Vec<String> {
-    paths
-        .iter()
-        .flat_map(|path| settings_event_commands(path, event))
-        .collect()
-}
-
-fn command_matches(command: &str, event: &str, host: &str) -> bool {
-    command.contains(&format!("host lifecycle --event {event} --host {host}"))
-}
-
-pub(super) fn omp_extension_wired(paths: &[PathBuf]) -> bool {
-    paths.iter().any(|path| {
-        std::fs::read_to_string(path).is_ok_and(|body| {
-            body.contains("session_start")
-                && body.contains("systemPromptAppend")
-                && body.contains("agent_settled")
-                && body.contains("session_shutdown")
-                && body.contains("spawnSync")
-                && body.contains("\"host\"")
-                && body.contains("\"lifecycle\"")
-                && body.contains("\"session-start\"")
-                && body.contains("\"session-end\"")
-                && body.contains("\"stop-guard\"")
-        })
-    })
 }
 
 /// Testable host-specific lifecycle core. `home` redirects all machine-local
@@ -211,87 +149,31 @@ pub fn compute_memory_lifecycle_at_for_host(
         "oh-my-pi" => "omp",
         other => other,
     };
-    let protocol = platform_spec(normalized_host).and_then(|spec| spec.memory_protocol);
+    let lifecycle = HostLifecycleCodec::new(target, normalized_host);
     let (adapter, adapter_supported, read_wired, write_wired, stop_guard_wired, kernel_backed) =
-        match protocol {
-            Some(MemoryProtocol::ClaudeCommandHooks) => {
-                let paths = [
-                    home.join(".claude/settings.json"),
-                    target.join(".claude/settings.json"),
-                ];
-                let read = host_hook_commands(&paths, "SessionStart")
-                    .iter()
-                    .any(|command| command_matches(command, "session-start", normalized_host));
-                let write = host_hook_commands(&paths, "Stop")
-                    .iter()
-                    .any(|command| command_matches(command, "session-end", normalized_host));
-                let guard = host_hook_commands(&paths, "Stop")
-                    .iter()
-                    .any(|command| command_matches(command, "stop-guard", normalized_host));
+        match lifecycle {
+            Ok(codec) => {
+                let observation = std::fs::read_to_string(codec.path())
+                    .ok()
+                    .and_then(|body| codec.observe_body(&body).ok());
+                let events =
+                    observation
+                        .map(|value| value.events)
+                        .unwrap_or(LifecycleEventObservation {
+                            session_start: false,
+                            stop_guard: false,
+                            session_end: false,
+                        });
                 (
-                    "claude-command-hooks",
+                    codec.spec().adapter_id,
                     true,
-                    read,
-                    write,
-                    guard,
-                    read || write || guard,
+                    events.session_start,
+                    events.session_end,
+                    events.stop_guard,
+                    events.any(),
                 )
             }
-            Some(MemoryProtocol::CodexCommandHooks) => {
-                let paths = [
-                    home.join(".codex/hooks.json"),
-                    target.join(".codex/hooks.json"),
-                ];
-                let read = host_hook_commands(&paths, "SessionStart")
-                    .iter()
-                    .any(|command| command_matches(command, "session-start", normalized_host));
-                let write = host_hook_commands(&paths, "SessionEnd")
-                    .iter()
-                    .any(|command| command_matches(command, "session-end", normalized_host));
-                let guard = host_hook_commands(&paths, "Stop")
-                    .iter()
-                    .any(|command| command_matches(command, "stop-guard", normalized_host));
-                (
-                    "codex-command-hooks",
-                    true,
-                    read,
-                    write,
-                    guard,
-                    read || write || guard,
-                )
-            }
-            Some(MemoryProtocol::CursorCommandHooks) => {
-                let paths = [
-                    home.join(".cursor/hooks.json"),
-                    target.join(".cursor/hooks.json"),
-                ];
-                let read = host_hook_commands(&paths, "sessionStart")
-                    .iter()
-                    .any(|command| command_matches(command, "session-start", normalized_host));
-                let write = host_hook_commands(&paths, "sessionEnd")
-                    .iter()
-                    .any(|command| command_matches(command, "session-end", normalized_host));
-                let guard = host_hook_commands(&paths, "stop")
-                    .iter()
-                    .any(|command| command_matches(command, "stop-guard", normalized_host));
-                (
-                    "cursor-command-hooks",
-                    true,
-                    read,
-                    write,
-                    guard,
-                    read || write || guard,
-                )
-            }
-            Some(MemoryProtocol::OmpExtension) => {
-                let global = home
-                    .join(".omp/agent/extensions")
-                    .join(OMP_MEMORY_EXTENSION);
-                let project = target.join(".omp/extensions").join(OMP_MEMORY_EXTENSION);
-                let wired = omp_extension_wired(&[global, project]);
-                ("omp-extension", true, wired, wired, wired, wired)
-            }
-            None => ("unsupported", false, false, false, false, false),
+            Err(_) => ("unsupported", false, false, false, false, false),
         };
 
     let status = derive_memory_status(
@@ -346,84 +228,27 @@ mod tests {
         (home, target)
     }
 
-    fn write_json(path: &Path, value: serde_json::Value) {
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
-    }
-
     #[test]
-    fn codex_rejects_a_claude_host_command_and_requires_stop_guard() {
-        let (home, target) = test_roots("codex-host");
-        write_json(
-            &home.join(".codex/hooks.json"),
-            serde_json::json!({
-                "hooks": {
-                    "SessionStart": [{
-                        "command": "ags host lifecycle --event session-start --host claude-code --target ."
-                    }],
-                    "SessionEnd": [{
-                        "command": "ags host lifecycle --event session-end --host codex --target ."
-                    }],
-                    "Stop": [{
-                        "command": "ags host lifecycle --event stop-guard --host codex --target ."
-                    }]
-                }
-            }),
-        );
-        let wrong = compute_memory_lifecycle_at_for_host(&target, &home, &AgentType::Codex);
-        assert_eq!(wrong.status, "write-only");
-        assert!(!wrong.read_wired);
-
-        write_json(
-            &home.join(".codex/hooks.json"),
-            serde_json::json!({
-                "hooks": {
-                    "SessionStart": [{
-                        "command": "ags host lifecycle --event session-start --host codex --target ."
-                    }],
-                    "SessionEnd": [{
-                        "command": "ags host lifecycle --event session-end --host codex --target ."
-                    }],
-                    "Stop": [{
-                        "command": "ags host lifecycle --event stop-guard --host codex --target ."
-                    }]
-                }
-            }),
-        );
-        let ready = compute_memory_lifecycle_at_for_host(&target, &home, &AgentType::Codex);
-        assert_eq!(ready.status, "full");
-        assert!(ready.stop_guard_wired);
-    }
-
-    #[test]
-    fn cursor_native_lowercase_hooks_form_a_full_closure() {
-        let (home, target) = test_roots("cursor");
-        write_json(
-            &home.join(".cursor/hooks.json"),
-            serde_json::json!({
-                "version": 1,
-                "hooks": {
-                    "sessionStart": [{
-                        "type": "command",
-                        "command": "ags host lifecycle --event session-start --host cursor --target ."
-                    }],
-                    "sessionEnd": [{
-                        "type": "command",
-                        "command": "ags host lifecycle --event session-end --host cursor --target ."
-                    }],
-                    "stop": [{
-                        "type": "command",
-                        "command": "ags host lifecycle --event stop-guard --host cursor --target ."
-                    }]
-                }
-            }),
-        );
-
-        let lifecycle = compute_memory_lifecycle_at_for_host(&target, &home, &AgentType::Cursor);
-        assert_eq!(lifecycle.adapter, "cursor-command-hooks");
-        assert_eq!(lifecycle.status, "full");
-        assert!(lifecycle.read_wired);
-        assert!(lifecycle.write_wired);
-        assert!(lifecycle.stop_guard_wired);
+    fn memory_closure_consumes_the_canonical_codec_observation() {
+        let (home, target) = test_roots("codec");
+        for agent in [
+            AgentType::ClaudeCode,
+            AgentType::Codex,
+            AgentType::Cursor,
+            AgentType::Generic("codebuddy-code".to_string()),
+            AgentType::Generic("omp".to_string()),
+        ] {
+            let codec = HostLifecycleCodec::new(&target, agent.as_str()).unwrap();
+            let path = codec.path();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let body = match codec.spec().projection_family {
+                LifecycleProjectionFamily::OmpExtension => codec.desired_omp_body(),
+                _ => serde_json::json!({"hooks": codec.desired_owned_projection()}).to_string(),
+            };
+            std::fs::write(&path, body).unwrap();
+            let lifecycle = compute_memory_lifecycle_at_for_host(&target, &home, &agent);
+            assert_eq!(lifecycle.status, "full", "{}", lifecycle.host);
+            assert!(lifecycle.kernel_backed);
+        }
     }
 }

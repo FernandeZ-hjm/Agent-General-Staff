@@ -44,19 +44,25 @@ archived.
 
 ## Host Adapter Contract
 
-Codex, Claude Code, Cursor, and OMP use one Rust lifecycle contract. Their
-protocol descriptions only map native events to it:
+Codex, Claude Code, Cursor, CodeBuddy-Code, and OMP use one Rust lifecycle
+contract. Their protocol descriptions only map native events and output schemas
+to it:
 
 | Native host event | Rust lifecycle event |
 |---|---|
 | Session start | `session-start` |
-| Session end or settled task | `session-end` |
-| Output/tool-call guard | `stop-guard` |
+| True session close | `session-end` |
+| Per-turn output/tool-call guard | `stop-guard` |
 
 Cursor maps these to its lowercase `sessionStart`, `sessionEnd`, and `stop`
 command hooks. Its native response fields are `additional_context` and
 `followup_message`; the Rust lifecycle kernel selects that envelope from the
 platform protocol table.
+
+CodeBuddy-Code uses `SessionStart`, `Stop`, and `SessionEnd`; SessionStart
+consumes `hookSpecificOutput.additionalContext`, while a blocked Stop consumes
+native `continue: false` and `reason`. OMP maps true shutdown to SessionEnd;
+`agent_settled` is Stop Guard only.
 
 Host adapters do not parse task cards, infer completion from transcripts,
 compare hashes, generate receipts, or implement authority policy.

@@ -139,13 +139,16 @@ pub(crate) enum AgentsAction {
     },
     /// Plan host onboarding; --apply installs AGS-owned memory lifecycle wiring.
     ///
-    /// Default dry-run. `--apply` writes only AGS-owned Claude/Codex/Cursor
-    /// lifecycle hooks or the OMP extension. External MCP registrars remain
-    /// advice-only.
+    /// Default dry-run. `--apply` writes only AGS-owned Claude Code, Codex,
+    /// Cursor, CodeBuddy, or OMP workspace lifecycle adapters. External MCP
+    /// registrars remain advice-only.
     Govern {
         /// Limit to one host id (claude-code|codex|omp|cursor|workbuddy|codebuddy-code).
         #[arg(long)]
         agent: Option<String>,
+        /// Canonical workspace to inspect or receive the adapter.
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
         /// Install the selected supported host's AGS memory lifecycle adapter.
         #[arg(long)]
         apply: bool,

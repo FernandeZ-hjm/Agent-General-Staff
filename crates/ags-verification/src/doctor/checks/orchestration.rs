@@ -9,6 +9,9 @@ pub fn run_checks(report: &mut HealthReport, repo_root: &Path) {
     report.add(git_status_check(repo_root));
     report.add(project_integration_check(&identity));
     report.add(project_protocol_check(repo_root));
+    for finding in canonical_conformance_checks(repo_root) {
+        report.add(finding);
+    }
 
     // Source-policy checks apply only to the AGS suite itself. `ags doctor`
     // never treats Cargo or the suite workspace layout as requirements of a
@@ -24,16 +27,9 @@ pub fn run_checks(report: &mut HealthReport, repo_root: &Path) {
         report.add(mcp_registry_codegraph_active(repo_root));
     }
 
-    // ── AGS project-memory capture chain (advisory) ────────────────────
-    report.add(omp_lifecycle_extension_present());
     if identity.is_ags_suite {
         report.add(host_skill_body_singleton_check(repo_root));
     }
-    // Host-specific start/close wiring is covered by the composite lifecycle
-    // check below; focused checks are not duplicated in the default report.
-    report.add(raw_tool_call_stop_guard_present(repo_root));
     report.add(project_task_memory_status(repo_root));
     report.add(context_capsule_integrity(repo_root));
-    // ── Memory lifecycle closure (composite) ──────────────────────────
-    report.add(project_memory_lifecycle_closure(repo_root));
 }

@@ -3,7 +3,9 @@
 本文件是 Agent General Staff 公开版治理控制面协议概述。Canonical 协议文件位于本仓库
 `protocol/` 目录下，自包含，不依赖私有基础设施或私有仓库。
 
-Current product version: **0.3.8**.
+Current product version: **0.4.0**. Existing governance wire schemas remain
+versioned independently; lifecycle/install/release structures changed in this
+candidate use `0.4.0-*` identifiers.
 
 这是 Agent General Staff Public Edition 的当前 latest 产品版本。AGS 负责准入、
 授权、策略、验证、回执、能力快照和记忆闭环，不提供任务队列、Agent 调度器、
@@ -24,7 +26,7 @@ Current product version: **0.3.8**.
 - `ags init` — 对用户项目执行 AGS managed-block 接入
 - `ags mcp serve --transport stdio` — 启动公开版 AGS MCP 服务
 - `ags mcp status` / `ags mcp restart` — 查询或重启当前工作区服务
-- `ags host lifecycle` / `ags memory` — 统一四宿主的 Rust 记忆闭环
+- `ags host lifecycle` / `ags memory` — 统一五宿主的 Rust 记忆闭环
 - `ags bootstrap --dry-run` — 引导干运行模拟
 - `ags project detect` / `ags protocol status` / `ags agent instructions` — M2 Agent 感知能力（只读）
 - `ags project integrate --dry-run|--confirm` — 增量融合 AGS 托管入口块到用户项目入口文件，不覆盖用户自有内容

@@ -3,8 +3,121 @@ use super::{
     claude_ags_command_path, codex_ags_named_skill_agent_metadata_path, codex_ags_named_skill_path,
     retired_codex_ags_skill_dirs,
 };
-use super::{claude_mcp_list_line, command_in_path, sanitize_name, AGS_VERSION};
+use super::{claude_mcp_list_line_at, command_in_path, sanitize_name, AGS_VERSION};
 use std::path::Path;
+
+fn add_install_content_conformance(
+    report: &mut crate::setup::SetupReport,
+    target: &Path,
+    home: &Path,
+) {
+    let manifest_path = target.join("install-manifest.json");
+    let manifest = match std::fs::read_to_string(&manifest_path)
+        .map_err(|error| error.to_string())
+        .and_then(|body| {
+            serde_json::from_str::<serde_json::Value>(&body).map_err(|error| error.to_string())
+        }) {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            report.add(
+                crate::setup::SetupFinding::fail(
+                    "private-install-content-current",
+                    "installed AGS runtime cannot be compared with the canonical setup plan",
+                    format!("{}: {error}", manifest_path.display()),
+                )
+                .with_conformance(
+                    "readable current install manifest and exact AGS-owned runtime assets",
+                    "install manifest missing or invalid",
+                    "Run `ags setup --yes`, then rerun `ags doctor`.",
+                ),
+            );
+            return;
+        }
+    };
+    let source_root = manifest
+        .get("source_root")
+        .and_then(serde_json::Value::as_str)
+        .map(Path::new);
+    let producer = manifest
+        .get("producer_version")
+        .and_then(serde_json::Value::as_str);
+    let schema = manifest
+        .get("schema_version")
+        .and_then(serde_json::Value::as_str);
+    let mut drift = Vec::new();
+    if producer != Some(AGS_VERSION) {
+        drift.push(format!(
+            "producer_version={}",
+            producer.unwrap_or("<missing>")
+        ));
+    }
+    if schema != Some(super::PRIVATE_INSTALL_SCHEMA) {
+        drift.push(format!("schema_version={}", schema.unwrap_or("<missing>")));
+    }
+    let Some(source_root) = source_root else {
+        drift.push("source_root=<missing>".to_string());
+        report.add(install_content_finding(drift));
+        return;
+    };
+    if !source_root.is_dir() {
+        drift.push(format!(
+            "source_root={} is unavailable",
+            source_root.display()
+        ));
+        report.add(install_content_finding(drift));
+        return;
+    }
+    let plan = super::plan::private_install_plan(source_root, target, home);
+    for file in plan
+        .files
+        .iter()
+        .filter(|file| super::apply::codex_skill_thin_index_ancestor(&file.path).is_none())
+    {
+        match std::fs::read(&file.path) {
+            Ok(observed) if observed == file.content.as_bytes() => {}
+            Ok(_) => drift.push(format!("{}:content-drift", file.path.display())),
+            Err(_) => drift.push(format!("{}:missing", file.path.display())),
+        }
+    }
+    report.add(install_content_finding(drift));
+}
+
+fn install_content_finding(drift: Vec<String>) -> crate::setup::SetupFinding {
+    if drift.is_empty() {
+        return crate::setup::SetupFinding::pass(
+            "private-install-content-current",
+            "install manifest and AGS-owned runtime assets equal the current setup plan",
+        )
+        .with_conformance(
+            format!(
+                "{} / producer {} / exact plan content",
+                super::PRIVATE_INSTALL_SCHEMA,
+                AGS_VERSION
+            ),
+            "all AGS-owned runtime assets current",
+            "none",
+        );
+    }
+    let total = drift.len();
+    let mut observed = drift.into_iter().take(8).collect::<Vec<_>>().join(", ");
+    if total > 8 {
+        observed.push_str(&format!(", and {} more", total - 8));
+    }
+    crate::setup::SetupFinding::fail(
+        "private-install-content-current",
+        "installed AGS runtime differs from the current setup plan",
+        observed.clone(),
+    )
+    .with_conformance(
+        format!(
+            "{} / producer {} / exact AGS-owned plan content",
+            super::PRIVATE_INSTALL_SCHEMA,
+            AGS_VERSION
+        ),
+        observed,
+        "Run `ags setup --yes`, then rerun `ags doctor`.",
+    )
+}
 
 fn json_file_ok(path: &Path) -> Result<(), String> {
     let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
@@ -69,14 +182,20 @@ fn mcp_smoke_current_exe() -> Result<(), String> {
     if !stdout.contains("\"id\":1") || !stdout.contains("\"result\"") {
         return Err("initialize response missing".to_string());
     }
+    if !stdout.contains("\"protocolVersion\":\"2024-11-05\"")
+        || !stdout.contains(&format!("\"version\":\"{AGS_VERSION}\""))
+    {
+        return Err("initialize response protocol or server version mismatch".to_string());
+    }
     if !stdout.contains("\"id\":2") || !stdout.contains("AGS Initialization Gate") {
         return Err("preflight gate error response missing".to_string());
     }
     Ok(())
 }
-fn claude_mcp_get(server: &str) -> Result<String, String> {
+fn claude_mcp_get_at(server: &str, current_dir: &Path) -> Result<String, String> {
     let output = std::process::Command::new("claude")
         .args(["mcp", "get", server])
+        .current_dir(current_dir)
         .output()
         .map_err(|e| e.to_string())?;
     let combined = format!(
@@ -90,8 +209,8 @@ fn claude_mcp_get(server: &str) -> Result<String, String> {
         Err(combined.trim().to_string())
     }
 }
-fn add_codegraph_claude_checks(report: &mut crate::setup::SetupReport) {
-    match claude_mcp_list_line("codegraph") {
+fn add_codegraph_claude_checks(report: &mut crate::setup::SetupReport, home: &Path) {
+    match claude_mcp_list_line_at("codegraph", home) {
         Ok(Some(line)) if line.contains("Connected") => {
             report.add(crate::setup::SetupFinding::pass(
                 "private-install-claude-code-codegraph-global",
@@ -115,7 +234,7 @@ fn add_codegraph_claude_checks(report: &mut crate::setup::SetupReport) {
         )),
     }
 
-    match claude_mcp_get("codegraph") {
+    match claude_mcp_get_at("codegraph", home) {
         Ok(detail) if detail.contains("codegraph") && detail.contains("serve --mcp") => {
             report.add(crate::setup::SetupFinding::pass(
                 "private-install-claude-code-codegraph-command",
@@ -152,8 +271,10 @@ fn add_codegraph_claude_checks(report: &mut crate::setup::SetupReport) {
 pub(in crate::setup) fn private_install_health_report(
     target: &Path,
     home: &Path,
+    run_mcp_smoke: bool,
 ) -> crate::setup::SetupReport {
     let mut report = crate::setup::SetupReport::new("private-install-verify");
+    add_install_content_conformance(&mut report, target, home);
 
     let required = [
         "install-manifest.json",
@@ -315,7 +436,7 @@ pub(in crate::setup) fn private_install_health_report(
         }
     }
 
-    match claude_mcp_list_line("ags") {
+    match claude_mcp_list_line_at("ags", home) {
         Ok(Some(line)) if line.contains("Connected") => {
             report.add(crate::setup::SetupFinding::pass(
                 "private-install-claude-code-ags-global",
@@ -339,7 +460,7 @@ pub(in crate::setup) fn private_install_health_report(
         )),
     }
 
-    match (claude_mcp_get("ags"), command_in_path("ags")) {
+    match (claude_mcp_get_at("ags", home), command_in_path("ags")) {
         (Ok(detail), Ok(ags_path)) if detail.contains(&ags_path) => {
             report.add(crate::setup::SetupFinding::pass(
                 "private-install-claude-code-ags-command",
@@ -363,7 +484,7 @@ pub(in crate::setup) fn private_install_health_report(
         )),
     }
 
-    add_codegraph_claude_checks(&mut report);
+    add_codegraph_claude_checks(&mut report, home);
 
     for rel in [
         "install-manifest.json",
@@ -439,16 +560,23 @@ pub(in crate::setup) fn private_install_health_report(
         )),
     }
 
-    match mcp_smoke_current_exe() {
-        Ok(()) => report.add(crate::setup::SetupFinding::pass(
+    if run_mcp_smoke {
+        match mcp_smoke_current_exe() {
+            Ok(()) => report.add(crate::setup::SetupFinding::pass(
+                "private-install-mcp-smoke",
+                "ags mcp serve stdio smoke OK",
+            )),
+            Err(e) => report.add(crate::setup::SetupFinding::fail(
+                "private-install-mcp-smoke",
+                "ags mcp serve stdio smoke failed",
+                e,
+            )),
+        }
+    } else {
+        report.add(crate::setup::SetupFinding::skip(
             "private-install-mcp-smoke",
-            "ags mcp serve stdio smoke OK",
-        )),
-        Err(e) => report.add(crate::setup::SetupFinding::fail(
-            "private-install-mcp-smoke",
-            "ags mcp serve stdio smoke failed",
-            e,
-        )),
+            "live MCP smoke is excluded from read-only Doctor; daemon health is inspected without starting or restarting it",
+        ));
     }
 
     report
@@ -458,6 +586,7 @@ pub(in crate::setup) fn private_install_health_report(
 mod tests {
     use super::super::retired_codex_ags_skill_dirs;
     use super::super::templates::codex_ags_command_skill_specs;
+    use super::*;
 
     fn spec_names() -> Vec<&'static str> {
         codex_ags_command_skill_specs()
@@ -483,6 +612,37 @@ mod tests {
             ]
         );
         assert!(!spec_names().contains(&"ags-capability"));
+    }
+
+    #[test]
+    fn install_content_conformance_compares_current_plan_not_presence() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("runtime");
+        let home = root.path().join("home");
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .unwrap();
+        let plan = super::super::plan::private_install_plan(&source, &target, &home);
+        for file in plan.files.iter().filter(|file| {
+            super::super::apply::codex_skill_thin_index_ancestor(&file.path).is_none()
+        }) {
+            std::fs::create_dir_all(file.path.parent().unwrap()).unwrap();
+            std::fs::write(&file.path, &file.content).unwrap();
+        }
+        let mut current = crate::setup::SetupReport::new("current");
+        add_install_content_conformance(&mut current, &target, &home);
+        assert!(current.passed(), "{:?}", current.findings);
+
+        std::fs::write(target.join("mcp/ags.mcp.json"), "{}\n").unwrap();
+        let mut drifted = crate::setup::SetupReport::new("drifted");
+        add_install_content_conformance(&mut drifted, &target, &home);
+        assert_eq!(drifted.total_failed_checks(), 1);
+        assert!(drifted.findings[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("mcp/ags.mcp.json:content-drift"));
     }
 
     /// `ags-capability` is on the retired-Codex-skill list, so the verify gate

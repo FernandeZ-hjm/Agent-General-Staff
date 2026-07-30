@@ -43,6 +43,18 @@ impl WorkspaceState {
         canonical_workspace_root(target).is_ok_and(|target| target == self.root)
     }
 
+    pub fn loaded_snapshot_hashes(
+        &self,
+    ) -> Result<std::collections::BTreeMap<String, String>, String> {
+        Ok(self
+            .catalogs
+            .read()
+            .map_err(|_| "workspace catalog lock poisoned".to_string())?
+            .iter()
+            .map(|(host, catalog)| (host.clone(), catalog.snapshot.snapshot_hash.clone()))
+            .collect())
+    }
+
     pub fn read_catalog(
         &self,
         binding: &PreflightBinding,

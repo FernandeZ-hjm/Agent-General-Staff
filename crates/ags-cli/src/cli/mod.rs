@@ -353,4 +353,27 @@ pub(crate) enum Commands {
     },
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_lifecycle_accepts_every_platform_backed_adapter() {
+        for lifecycle in ags_host_integration::lifecycle_specs() {
+            let parsed = Cli::try_parse_from([
+                "ags",
+                "host",
+                "lifecycle",
+                "--event",
+                "session-start",
+                "--host",
+                lifecycle.host_id,
+            ]);
+            if let Err(error) = parsed {
+                panic!("{}: {error}", lifecycle.host_id);
+            }
+        }
+    }
+}
+
 // ── Shared dispatch functions (used by both M1 and M0 commands) ───────────

@@ -10,12 +10,14 @@ use serde_yaml::Value as YamlValue;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod conformance;
 mod host_memory;
 pub(super) mod orchestration;
 pub(super) mod resolution;
 mod runtime;
 mod workspace;
 
+use conformance::*;
 use host_memory::*;
 use resolution::*;
 use runtime::*;

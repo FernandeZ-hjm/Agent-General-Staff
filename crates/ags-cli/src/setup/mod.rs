@@ -13,11 +13,13 @@ use std::path::PathBuf;
 pub(crate) fn private_install_health_report(
     target: &std::path::Path,
     include_optional_extensions: bool,
+    run_mcp_smoke: bool,
 ) -> ags_verification::doctor::HealthReport {
     ags_lifecycle::setup::private_install_health_report(
         target,
         &home_dir(),
         include_optional_extensions,
+        run_mcp_smoke,
     )
 }
 
@@ -140,7 +142,7 @@ pub(crate) fn cmd_private_verify(profile: &str, target: Option<PathBuf>, format:
         std::process::exit(2);
     }
     let target = private_install_target(target);
-    let report = private_install_health_report(&target, false);
+    let report = private_install_health_report(&target, false, true);
     let output = serde_json::json!({
         "schema_version": ags_lifecycle::setup::PRIVATE_INSTALL_SCHEMA,
         "profile": profile,

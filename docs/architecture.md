@@ -1,4 +1,4 @@
-# AGS v0.3.8 Architecture
+# AGS v0.4.0 Architecture
 
 AGS is a multi-Agent development governance control plane. It admits typed
 requests, binds authority and policy, validates evidence, and preserves
@@ -62,19 +62,36 @@ canonical workspace path
        -> Codex client session
        -> Claude Code client session
        -> Cursor client session
+       -> CodeBuddy client session
        -> OMP client session
 ```
 
 - The instance key is the SHA-256 of the canonical workspace path only.
 - Host identity is a client attribute and never participates in the key.
 - Each host has one persisted static capability snapshot. The daemon loads and
-  validates it once; request paths never rebuild or compare live capability state.
-- Preflight binding and DecisionLease state are per client session.
+  validates it once for its lifetime. Explicit snapshot refresh followed by a
+  daemon restart publishes changed canonical sources; request-time scanning or
+  automatic cache invalidation is deliberately absent.
+- Lifecycle and reusable preflight state are keyed by workspace, host, and host
+  session. DecisionLease state remains connection-bound and is never reused.
+- Workspace-owned host adapters translate SessionStart, per-turn Stop Guard,
+  and true SessionEnd into one daemon lifecycle envelope.
 - A new preflight or route invalidates earlier actions in that session.
 - Shape-invalid apply input is rejected before consumption; after the governed
   effect boundary is crossed, failure still consumes the lease.
 - Disconnect does not stop the daemon. An empty daemon exits after its idle TTL.
 - Executable mismatch triggers authenticated stop-before-restart.
+- Hosts keep using `ags mcp serve --transport stdio`; no daemon command is added
+  to the public command surface.
+
+Version classes remain separate:
+
+- current source candidate: `0.4.0`; latest published release: `0.3.8`;
+- existing governance wire schemas remain on the 0.3.6 contract;
+- lifecycle, install, runtime-stage, and release-plan schemas whose structures
+  changed in this release use 0.4.0 identifiers;
+- MCP `protocolVersion` remains `2024-11-05`;
+- historical releases remain only in release notes, not runtime fixtures.
 
 ## Public completion boundary
 

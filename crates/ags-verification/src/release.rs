@@ -130,11 +130,7 @@ fn check_first_party_language_boundary(repo_root: &Path) -> CheckItem {
 
     for file in rust_source_files(&repo_root.join("crates")) {
         match std::fs::read_to_string(&file) {
-            Ok(body)
-                if body.contains(concat!("python", "3"))
-                    || body.contains(concat!("Command::new(\"", "python", "\")"))
-                    || body.contains(concat!("Command::new(\"", "python", "3\")")) =>
-            {
+            Ok(body) if directly_launches_python(&body) => {
                 violations.push(format!(
                     "{}: Rust core must not delegate first-party logic to Python",
                     file.strip_prefix(repo_root).unwrap_or(&file).display()
@@ -197,6 +193,12 @@ fn check_first_party_language_boundary(repo_root: &Path) -> CheckItem {
     }
 }
 
+fn directly_launches_python(body: &str) -> bool {
+    let compact = body.split_whitespace().collect::<String>();
+    compact.contains(concat!("Command::new(\"", "python", "\")"))
+        || compact.contains(concat!("Command::new(\"", "python", "3\")"))
+}
+
 fn rust_source_files(root: &Path) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
     let Ok(entries) = std::fs::read_dir(root) else {
@@ -215,6 +217,29 @@ fn rust_source_files(root: &Path) -> Vec<std::path::PathBuf> {
         }
     }
     files
+}
+
+#[cfg(test)]
+mod language_boundary_tests {
+    use super::directly_launches_python;
+
+    #[test]
+    fn legacy_python_hook_text_is_not_a_process_launch() {
+        assert!(!directly_launches_python(
+            r#"const LEGACY: &str = "python3 context-memory-start.py";"#
+        ));
+    }
+
+    #[test]
+    fn direct_python_process_launch_is_rejected() {
+        let source = [
+            "std::process::Command::new(\"",
+            "python3",
+            "\").arg(\"legacy.py\");",
+        ]
+        .concat();
+        assert!(directly_launches_python(&source));
+    }
 }
 
 fn check_validator_mutation_guards(repo_root: &Path) -> CheckItem {

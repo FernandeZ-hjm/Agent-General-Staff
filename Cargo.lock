@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "ags-capability-governance"
-version = "0.3.8"
+version = "0.4.0"
 dependencies = [
  "ags-governance-decision",
  "ags-host-integration",
@@ -18,7 +18,7 @@ dependencies = [
 
 [[package]]
 name = "ags-cli"
-version = "0.3.8"
+version = "0.4.0"
 dependencies = [
  "ags-capability-governance",
  "ags-evidence",
@@ -41,7 +41,7 @@ dependencies = [
 
 [[package]]
 name = "ags-evidence"
-version = "0.3.8"
+version = "0.4.0"
 dependencies = [
  "ags-governance-decision",
  "ags-platform",
@@ -53,7 +53,7 @@ dependencies = [
 
 [[package]]
 name = "ags-governance-decision"
-version = "0.3.8"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -62,16 +62,17 @@ dependencies = [
 
 [[package]]
 name = "ags-host-integration"
-version = "0.3.8"
+version = "0.4.0"
 dependencies = [
  "ags-platform",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
 name = "ags-lifecycle"
-version = "0.3.8"
+version = "0.4.0"
 dependencies = [
  "ags-capability-governance",
  "ags-evidence",
@@ -82,11 +83,12 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2",
+ "tempfile",
 ]
 
 [[package]]
 name = "ags-mcp"
-version = "0.3.8"
+version = "0.4.0"
 dependencies = [
  "ags-capability-governance",
  "ags-evidence",
@@ -105,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "ags-platform"
-version = "0.3.8"
+version = "0.4.0"
 dependencies = [
  "blake3",
  "sha2",
@@ -114,7 +116,7 @@ dependencies = [
 
 [[package]]
 name = "ags-session"
-version = "0.3.8"
+version = "0.4.0"
 dependencies = [
  "ags-capability-governance",
  "ags-platform",
@@ -129,7 +131,7 @@ dependencies = [
 
 [[package]]
 name = "ags-task-contract"
-version = "0.3.8"
+version = "0.4.0"
 dependencies = [
  "ags-capability-governance",
  "ags-governance-decision",
@@ -140,12 +142,14 @@ dependencies = [
 
 [[package]]
 name = "ags-verification"
-version = "0.3.8"
+version = "0.4.0"
 dependencies = [
  "ags-capability-governance",
  "ags-governance-decision",
+ "ags-host-integration",
  "ags-lifecycle",
  "ags-platform",
+ "ags-session",
  "ags-workspace-facts",
  "serde",
  "serde_json",
@@ -156,7 +160,7 @@ dependencies = [
 
 [[package]]
 name = "ags-workspace-facts"
-version = "0.3.8"
+version = "0.4.0"
 dependencies = [
  "ags-governance-decision",
  "ags-host-integration",

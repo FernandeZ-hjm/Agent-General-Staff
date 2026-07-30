@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
-pub const RELEASE_PLAN_SCHEMA_VERSION: &str = "0.3.6-release-plan";
+pub const RELEASE_PLAN_SCHEMA_VERSION: &str = "0.4.0-release-plan";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RuntimeStageResult {
@@ -151,15 +151,19 @@ pub fn release_package_plan(
         }
     }
 
-    let forbidden_included: Vec<String> = included
-        .iter()
-        .filter(|file| {
-            public_full_forbidden_patterns
-                .iter()
-                .any(|pat| matches_path_boundary(file, pat))
-        })
-        .cloned()
-        .collect();
+    let forbidden_included: Vec<String> = if is_public_release_profile(profile) {
+        included
+            .iter()
+            .filter(|file| {
+                public_full_forbidden_patterns
+                    .iter()
+                    .any(|pat| matches_path_boundary(file, pat))
+            })
+            .cloned()
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     let plan = serde_json::json!({
         "schema_version": RELEASE_PLAN_SCHEMA_VERSION,
@@ -334,7 +338,7 @@ pub fn stage_release_runtime(
     }
 
     Ok(RuntimeStageResult {
-        schema_version: "0.3.6-runtime-stage",
+        schema_version: "0.4.0-runtime-stage",
         source_root: source.display().to_string(),
         target_root: target.display().to_string(),
         staged_files: runtime_assets,
@@ -629,6 +633,28 @@ mod tests {
         assert!(is_public_release_profile("public-core"));
         assert!(is_public_release_profile("public-full"));
         assert!(!is_public_release_profile("private-full"));
+    }
+
+    #[test]
+    fn private_full_candidate_is_not_rejected_by_public_only_forbidden_patterns() {
+        let root = workspace_root();
+        let (plan, failed) = release_package_plan(&root, "private-full", true);
+        assert!(
+            !failed,
+            "private-full intentionally carries private authority assets: {plan}"
+        );
+        for field in [
+            "forbidden_included",
+            "required_missing",
+            "extra_files",
+            "content_mismatches",
+            "authority_errors",
+        ] {
+            assert_eq!(plan[field], serde_json::json!([]), "{field}");
+        }
+        assert!(plan["included_files"]
+            .as_array()
+            .is_some_and(|files| !files.is_empty()));
     }
 
     #[test]

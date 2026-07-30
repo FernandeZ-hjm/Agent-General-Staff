@@ -162,7 +162,6 @@ const APPROVED_PUBLIC_REWRITE_PATHS: &[&str] = &[
     "crates/ags-lifecycle/src/update/apply.rs",
     "crates/ags-lifecycle/src/setup/apply.rs",
     "crates/ags-lifecycle/src/setup/memory/adapter.rs",
-    "crates/ags-lifecycle/src/setup/memory/assets.rs",
     "crates/ags-lifecycle/src/setup/memory/merge.rs",
     "crates/ags-lifecycle/src/setup/memory/mod.rs",
     "crates/ags-lifecycle/src/setup/mod.rs",
@@ -178,7 +177,6 @@ const APPROVED_PUBLIC_REWRITE_PATHS: &[&str] = &[
     "crates/ags-mcp/src/resources/global_kernel.md",
     "crates/ags-mcp/src/tools/apply.rs",
     "crates/ags-verification/src/bootstrap.rs",
-    "crates/ags-verification/src/doctor/checks/host_memory.rs",
     "crates/ags-verification/src/doctor/checks/mod.rs",
     "crates/ags-verification/src/doctor/checks/orchestration.rs",
     "crates/ags-verification/src/doctor/checks/runtime.rs",
@@ -1222,6 +1220,27 @@ mod tests {
                     .iter()
                     .any(|path| path.starts_with(&format!("{root}/src/")) && path.ends_with(".rs")),
                 "public authority must include Rust sources for {root}"
+            );
+        }
+        for path in [
+            "crates/ags-host-integration/src/lifecycle_codec.rs",
+            "crates/ags-lifecycle/src/conformance.rs",
+            "crates/ags-lifecycle/src/lifecycle_projection.rs",
+            "crates/ags-lifecycle/src/workspace_lifecycle.rs",
+            "crates/ags-verification/src/doctor/checks/conformance.rs",
+        ] {
+            assert!(
+                files.contains(path),
+                "v0.4.0 public authority must include {path}"
+            );
+        }
+        for retired in [
+            "crates/ags-lifecycle/src/setup/memory/assets.rs",
+            "crates/ags-lifecycle/src/setup/memory/wire.rs",
+        ] {
+            assert!(
+                !files.contains(retired),
+                "retired lifecycle source must not remain required: {retired}"
             );
         }
         assert!(!files

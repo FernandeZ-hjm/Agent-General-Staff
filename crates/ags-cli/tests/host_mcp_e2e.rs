@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
-const HOSTS: &[&str] = &["codex", "claude-code", "cursor", "omp"];
+const HOSTS: &[&str] = &["codex", "claude-code", "cursor", "codebuddy-code", "omp"];
 
 struct TestDir(PathBuf);
 
@@ -234,6 +234,7 @@ impl TestEnvironment {
             ("claude-code", ".claude/skills"),
             ("codex", ".codex/skills"),
             ("cursor", ".cursor/skills"),
+            ("codebuddy-code", ".codebuddy/skills"),
             ("omp", ".omp/agent/skills"),
         ] {
             if external
@@ -338,6 +339,8 @@ impl McpClient {
             }),
         );
         assert_eq!(result["serverInfo"]["name"], "ags-mcp");
+        assert_eq!(result["protocolVersion"], "2024-11-05");
+        assert_eq!(result["serverInfo"]["version"], env!("CARGO_PKG_VERSION"));
     }
 
     fn preflight(&mut self, host: &str, project: &Path) -> Value {
@@ -421,7 +424,7 @@ impl McpClient {
         )
     }
 
-    fn reject_foreign_lease(&mut self, lease_id: &str, action_id: &str) {
+    fn reject_invalid_lease(&mut self, lease_id: &str, action_id: &str) {
         let response = self.request_envelope(
             5,
             "tools/call",
@@ -437,7 +440,7 @@ impl McpClient {
             response["error"]["message"]
                 .as_str()
                 .is_some_and(|message| message.contains("decision_lease_invalid_or_expired")),
-            "foreign DecisionLease was not rejected: {response}"
+            "invalid or expired DecisionLease was not rejected: {response}"
         );
     }
 
@@ -561,9 +564,10 @@ fn cursor_govern_writes_native_hooks_and_reaches_full_lifecycle() {
     let result: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(result["apply_status"], "memory-adapters-applied");
 
-    let hooks: Value =
-        serde_json::from_slice(&fs::read(environment.home.join(".cursor/hooks.json")).unwrap())
-            .unwrap();
+    let hooks: Value = serde_json::from_slice(
+        &fs::read(environment.project_a.join(".cursor/hooks.json")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(hooks["version"], 1);
     for (native_event, rust_event) in [
         ("sessionStart", "session-start"),
@@ -578,7 +582,8 @@ fn cursor_govern_writes_native_hooks_and_reaches_full_lifecycle() {
                 .as_str()
                 .is_some_and(|command| command.contains(&format!(
                     "host lifecycle --event {rust_event} --host cursor"
-                )))));
+                )) && command
+                    .contains(&environment.project_a.to_string_lossy().to_string()))));
     }
 
     let verify = environment
@@ -816,6 +821,29 @@ fn hermetic_host_adapters_share_one_workspace_service_but_keep_sessions_and_leas
         .as_str()
         .is_some_and(|text| text.contains("0.3.6-task-contract")));
 
+    let superseded_route = clients[0].route_project_verify();
+    let superseded_lease = superseded_route["lease"]["lease_id"].as_str().unwrap();
+    let superseded_action = superseded_route["resolved_targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|target| target["action_id"].as_str())
+        .unwrap();
+    let preflight_invalidated_route = clients[0].route_project_verify();
+    let preflight_invalidated_lease = preflight_invalidated_route["lease"]["lease_id"]
+        .as_str()
+        .unwrap();
+    let preflight_invalidated_action = preflight_invalidated_route["resolved_targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|target| target["action_id"].as_str())
+        .unwrap();
+    assert_ne!(superseded_action, preflight_invalidated_action);
+    clients[0].reject_invalid_lease(superseded_lease, superseded_action);
+    clients[0].preflight("codex", &environment.project_a);
+    clients[0].reject_invalid_lease(preflight_invalidated_lease, preflight_invalidated_action);
+
     let route = clients[0].route_project_verify();
     let lease_id = route["lease"]["lease_id"].as_str().unwrap();
     let action_id = route["resolved_targets"]
@@ -824,12 +852,16 @@ fn hermetic_host_adapters_share_one_workspace_service_but_keep_sessions_and_leas
         .iter()
         .find_map(|target| target["action_id"].as_str())
         .unwrap();
-    clients[1].reject_foreign_lease(lease_id, action_id);
+    clients[1].reject_invalid_lease(lease_id, action_id);
     drop(clients);
 
     let mut reconnected = environment.connect(&environment.project_a);
     reconnected.initialize("codex");
     let same_workspace = reconnected.preflight("codex", &environment.project_a);
+    assert!(!session_ids.iter().any(|session_id| {
+        same_workspace["workspace_service"]["session_id"].as_str() == Some(session_id)
+    }));
+    reconnected.reject_invalid_lease(lease_id, action_id);
     let workspace_a_capability_identity = same_workspace["capability_catalog"]
         ["workspace_identity"]
         .as_str()
@@ -897,7 +929,7 @@ fn hermetic_host_adapters_share_one_workspace_service_but_keep_sessions_and_leas
 }
 
 #[test]
-fn refreshed_snapshot_does_not_rebind_the_existing_workspace_session() {
+fn refreshed_snapshot_is_published_only_after_daemon_restart() {
     let environment = TestEnvironment::new();
     let initial = environment.write_snapshot("codex");
     let claude_initial = environment.write_snapshot("claude-code");
@@ -922,16 +954,10 @@ fn refreshed_snapshot_does_not_rebind_the_existing_workspace_session() {
         "capability mutation did not produce a new snapshot"
     );
 
-    let current = client.current_host_snapshot();
+    let still_loaded = client.current_host_snapshot();
     assert_eq!(
-        current["snapshot_hash"], initial["snapshot_hash"],
-        "a live workspace daemon must keep its first sealed host snapshot"
-    );
-    assert!(
-        current["catalog"].as_array().is_some_and(|cards| cards
-            .iter()
-            .all(|card| card["skill_id"].as_str() != Some("e2e-refresh-skill"))),
-        "a request-time resource read must not absorb a disk refresh"
+        still_loaded["snapshot_hash"], initial["snapshot_hash"],
+        "a running daemon must keep its once-loaded host snapshot immutable"
     );
 
     let claude_current = claude.current_host_snapshot();
@@ -941,17 +967,37 @@ fn refreshed_snapshot_does_not_rebind_the_existing_workspace_session() {
         "refreshing Codex invalidated the independent Claude host generation"
     );
 
-    let route = client.route_project_verify();
-    assert!(
-        route["lease"]["lease_id"].is_string(),
-        "the unchanged in-memory binding must remain routable after a disk refresh"
-    );
-
-    let repeated = client.preflight("codex", &environment.project_a);
+    drop(client);
+    let mut reconnected = environment.connect(&environment.project_a);
+    reconnected.initialize("codex");
+    let repeated = reconnected.preflight("codex", &environment.project_a);
     assert_eq!(
         repeated["capability_catalog"]["snapshot_hash"], initial["snapshot_hash"],
-        "repeated preflight must not refresh or rebind the live daemon"
+        "a reconnect to the same daemon must use the already loaded snapshot"
     );
+    drop(reconnected);
+    drop(claude);
+
+    let restart = environment
+        .command()
+        .args(["mcp", "restart", "--target"])
+        .arg(&environment.project_a)
+        .output()
+        .unwrap();
+    assert!(
+        restart.status.success(),
+        "{}",
+        String::from_utf8_lossy(&restart.stderr)
+    );
+
+    let mut after_restart = environment.connect(&environment.project_a);
+    after_restart.initialize("codex");
+    let published = after_restart.preflight("codex", &environment.project_a);
+    assert_eq!(
+        published["capability_catalog"]["snapshot_hash"], refreshed["snapshot_hash"],
+        "daemon restart must publish the refreshed canonical snapshot"
+    );
+    assert!(after_restart.route_project_verify()["lease"]["lease_id"].is_string());
 }
 
 #[test]
@@ -1170,4 +1216,634 @@ fn new_connection_replaces_daemon_when_executable_hash_changes() {
         "old workspace daemon still exists after the new daemon became ready"
     );
     drop(old_connection);
+}
+
+#[test]
+fn workspace_lifecycle_events_share_the_daemon_and_deduplicate_event_ids() {
+    let environment = TestEnvironment::new();
+    let memory_dir =
+        ags_host_integration::project_memory_dir_at(&environment.project_a, &environment.home);
+    fs::create_dir_all(&memory_dir).unwrap();
+    fs::write(
+        memory_dir.join("context-capsule.md"),
+        "capsule-from-workspace-daemon",
+    )
+    .unwrap();
+    fs::write(
+        memory_dir.join("task-memory.md"),
+        "task-memory-from-workspace-daemon",
+    )
+    .unwrap();
+
+    let invoke = |host: &str, event: &str, payload: Value| {
+        let mut child = environment
+            .command()
+            .args([
+                "host",
+                "lifecycle",
+                "--event",
+                event,
+                "--host",
+                host,
+                "--target",
+            ])
+            .arg(&environment.project_a)
+            .args(["--input", "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(payload.to_string().as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+
+    for lifecycle in ags_host_integration::lifecycle_specs() {
+        let session_id = format!("host-session-{}", lifecycle.host_id);
+        let start_event_id = format!("event-start-{}", lifecycle.host_id);
+        let started = invoke(
+            lifecycle.host_id,
+            "session-start",
+            json!({"session_id": &session_id, "event_id": start_event_id}),
+        );
+        assert_eq!(started["schema_version"], "0.4.0-workspace-lifecycle");
+        assert_eq!(started["host"], lifecycle.host_id);
+        let startup_context = match lifecycle.output {
+            ags_host_integration::LifecycleOutputProtocol::ClaudeCompatible
+            | ags_host_integration::LifecycleOutputProtocol::CodeBuddy => {
+                assert_eq!(
+                    started["hookSpecificOutput"]["hookEventName"],
+                    "SessionStart"
+                );
+                started["hookSpecificOutput"]["additionalContext"]
+                    .as_str()
+                    .unwrap()
+            }
+            ags_host_integration::LifecycleOutputProtocol::Cursor => {
+                assert!(started.get("additional_context").is_some());
+                assert!(started.get("hookSpecificOutput").is_none());
+                started["additional_context"].as_str().unwrap()
+            }
+        };
+        assert!(startup_context.contains("capsule-from-workspace-daemon"));
+        assert!(startup_context.contains("task-memory-from-workspace-daemon"));
+
+        let stop_event_id = format!("event-stop-{}", lifecycle.host_id);
+        let clear_payload = json!({"session_id": &session_id, "event_id": stop_event_id});
+        let clear = invoke(lifecycle.host_id, "stop-guard", clear_payload.clone());
+        let duplicate = invoke(lifecycle.host_id, "stop-guard", clear_payload);
+        assert_eq!(clear["status"], "clear");
+        assert!(clear.get("hookSpecificOutput").is_none());
+        assert!(clear.get("followup_message").is_none());
+        if lifecycle.output == ags_host_integration::LifecycleOutputProtocol::CodeBuddy {
+            assert_eq!(clear["continue"], true);
+            assert_eq!(clear["suppressOutput"], true);
+        }
+        assert_eq!(duplicate["duplicate"], true);
+
+        let blocked = invoke(
+            lifecycle.host_id,
+            "stop-guard",
+            json!({
+                "session_id": &session_id,
+                "event_id": format!("event-blocked-{}", lifecycle.host_id),
+                "last_assistant_message": "<invoke tool=\"unsafe\">"
+            }),
+        );
+        assert_eq!(blocked["status"], "blocked");
+        match lifecycle.output {
+            ags_host_integration::LifecycleOutputProtocol::ClaudeCompatible => {
+                assert_eq!(blocked["suppressOutput"], true);
+                assert_eq!(blocked["hookSpecificOutput"]["hookEventName"], "Stop");
+                assert!(blocked["hookSpecificOutput"]["additionalContext"].is_string());
+            }
+            ags_host_integration::LifecycleOutputProtocol::CodeBuddy => {
+                assert_eq!(blocked["continue"], false);
+                assert!(blocked["reason"].is_string());
+                assert!(blocked.get("hookSpecificOutput").is_none());
+            }
+            ags_host_integration::LifecycleOutputProtocol::Cursor => {
+                assert!(blocked["followup_message"].is_string());
+                assert!(blocked.get("hookSpecificOutput").is_none());
+            }
+        }
+
+        let end_event_id = format!("event-end-{}", lifecycle.host_id);
+        let end_payload = json!({"session_id": &session_id, "event_id": end_event_id});
+        let ended = invoke(lifecycle.host_id, "session-end", end_payload.clone());
+        let duplicate_end = invoke(lifecycle.host_id, "session-end", end_payload);
+        assert_eq!(ended["event"], "session-end");
+        assert_eq!(ended["host"], lifecycle.host_id);
+        assert_eq!(ended["status"], "skipped");
+        assert!(ended.get("hookSpecificOutput").is_none());
+        assert_eq!(duplicate_end["duplicate"], true);
+    }
+
+    let second_codex_session = invoke(
+        "codex",
+        "session-end",
+        json!({"session_id": "codex-second-session", "event_id": "codex-second-end"}),
+    );
+    assert_eq!(second_codex_session["status"], "skipped");
+    let already_ended = invoke(
+        "codex",
+        "session-end",
+        json!({"session_id": "codex-second-session", "event_id": "codex-late-end"}),
+    );
+    assert_eq!(already_ended["status"], "already-ended");
+    assert_eq!(
+        fs::read_dir(environment.project_a.join(".ags/state/lifecycle"))
+            .unwrap()
+            .count(),
+        HOSTS.len() + 1
+    );
+
+    let task_card = environment.project_a.join("lifecycle-e2e-task-card.md");
+    let launch_plan = environment.project_a.join("lifecycle-e2e-launch-plan.json");
+    let delivery_report = environment
+        .project_a
+        .join("lifecycle-e2e-delivery-report.md");
+    let receipt = environment.project_a.join("lifecycle-e2e-receipt.json");
+    fs::copy(
+        environment.source_root.join("tests/fixtures/valid-full.md"),
+        &task_card,
+    )
+    .unwrap();
+    let launch = environment
+        .command()
+        .arg("run")
+        .arg(&task_card)
+        .args(["--current-task-approval", "--format", "json"])
+        .current_dir(&environment.project_a)
+        .output()
+        .unwrap();
+    assert!(
+        launch.status.success(),
+        "launch plan failed: {}",
+        String::from_utf8_lossy(&launch.stderr)
+    );
+    fs::write(&launch_plan, &launch.stdout).unwrap();
+    let launch: Value = serde_json::from_slice(&launch.stdout).unwrap();
+    let task_card_hash = ags_evidence::sha256_hex(&fs::read(&task_card).unwrap());
+    let launch_plan_hash = launch["launch_plan_hash"].as_str().unwrap();
+    fs::write(
+        &delivery_report,
+        format!(
+            "# 任务交付报告\n\
+             \n\
+             Closure schema: 1.1\n\
+             Contract ID: tc-0123456789abcdef\n\
+             task-card-hash: {task_card_hash}\n\
+             launch-plan-hash: {launch_plan_hash}\n\
+             execution-mode-used: single-writer\n\
+             execution-topology-used: single\n\
+             delegation-used: none\n\
+             状态: completed\n\
+             review-gate: passed\n\
+             \n\
+             ## 目标闭环\n\
+             - G-01: done — lifecycle archive E2E completed\n\
+             \n\
+             ## 验收闭环\n\
+             - AC-01: pass — evidence: process boundary preserved closure\n\
+             \n\
+             ## 验证闭环\n\
+             - V-01: pass — host lifecycle process E2E\n\
+             \n\
+             ## 未闭环项\n\
+             - none\n"
+        ),
+    )
+    .unwrap();
+    let closed = environment
+        .command()
+        .args(["task", "close"])
+        .arg(&task_card)
+        .arg(&launch_plan)
+        .arg(&delivery_report)
+        .arg("--receipt-out")
+        .arg(&receipt)
+        .args(["--format", "json"])
+        .current_dir(&environment.project_a)
+        .output()
+        .unwrap();
+    assert!(
+        closed.status.success(),
+        "task close failed: {}",
+        String::from_utf8_lossy(&closed.stderr)
+    );
+    let closed: Value = serde_json::from_slice(&closed.stdout).unwrap();
+    assert_eq!(closed["valid"], true);
+    let receipt_id = closed["receipt_id"].as_str().unwrap();
+    let pointer_dir = environment.project_a.join(".ags/state/closure-pointers");
+    assert_eq!(fs::read_dir(&pointer_dir).unwrap().count(), 1);
+    let archive_dir = memory_dir.join("task-archive").join(receipt_id);
+    assert!(!archive_dir.exists());
+
+    let guard_before_close = invoke(
+        "claude-code",
+        "stop-guard",
+        json!({
+            "session_id": "verified-closure-session",
+            "event_id": "verified-closure-stop"
+        }),
+    );
+    assert_eq!(guard_before_close["status"], "clear");
+    assert_eq!(fs::read_dir(&pointer_dir).unwrap().count(), 1);
+    assert!(
+        !archive_dir.exists(),
+        "per-turn Stop must not archive or close the host session"
+    );
+
+    let archived = invoke(
+        "claude-code",
+        "session-end",
+        json!({
+            "session_id": "verified-closure-session",
+            "event_id": "verified-closure-end"
+        }),
+    );
+    assert_eq!(archived["status"], "archived");
+    assert_eq!(archived["archive"].as_array().unwrap().len(), 1);
+    assert!(archive_dir.join("task-card.md").is_file());
+    assert!(archive_dir.join("launch-plan.json").is_file());
+    assert!(archive_dir.join("delivery-report.md").is_file());
+    assert!(archive_dir.join("receipt.json").is_file());
+    assert_eq!(fs::read_dir(&pointer_dir).unwrap().count(), 0);
+
+    let status: Value = serde_json::from_slice(
+        &environment
+            .command()
+            .args(["mcp", "status", "--target"])
+            .arg(&environment.project_a)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(status["state"], "running");
+    assert_eq!(status["current_binary"], true);
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_proves_target_aware_workspace_conformance_and_rejects_fixed_state_drift() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    let environment = TestEnvironment::new();
+    let canonical_home = environment.home.canonicalize().unwrap();
+    let canonical_project_a = environment.project_a.canonicalize().unwrap();
+    let canonical_project_b = environment.project_b.canonicalize().unwrap();
+    let setup = environment
+        .command()
+        .env("HOME", &canonical_home)
+        .env("USERPROFILE", &canonical_home)
+        .args(["setup", "--target"])
+        .arg(&environment.runtime)
+        .args(["--yes", "--force", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        setup.status.success(),
+        "setup failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&setup.stdout),
+        String::from_utf8_lossy(&setup.stderr)
+    );
+
+    let refreshed_init = environment
+        .command()
+        .env("HOME", &canonical_home)
+        .env("USERPROFILE", &canonical_home)
+        .env("AGS_HOME", &environment.runtime)
+        .current_dir(&canonical_project_a)
+        .args(["init", "--target"])
+        .arg(&canonical_project_a)
+        .args(["--mode", "local", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        refreshed_init.status.success(),
+        "post-setup init failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&refreshed_init.stdout),
+        String::from_utf8_lossy(&refreshed_init.stderr)
+    );
+    let refreshed_projection = environment
+        .command()
+        .env("HOME", &canonical_home)
+        .env("USERPROFILE", &canonical_home)
+        .env("AGS_HOME", &environment.runtime)
+        .args(["update", "apply", "--lane", "projects", "--target"])
+        .arg(&environment.runtime)
+        .args(["--apply", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        refreshed_projection.status.success(),
+        "project refresh failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&refreshed_projection.stdout),
+        String::from_utf8_lossy(&refreshed_projection.stderr)
+    );
+
+    let fake_bin = environment._root.path().join("doctor-bin");
+    let old_bin = environment._root.path().join("old-bin");
+    fs::create_dir_all(&fake_bin).unwrap();
+    fs::create_dir_all(&old_bin).unwrap();
+    let current_ags = fake_bin.join("ags");
+    symlink(&environment.ags, &current_ags).unwrap();
+    let old_ags = old_bin.join("ags");
+    fs::copy(&environment.ags, &old_ags).unwrap();
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&old_ags)
+        .unwrap()
+        .write_all(b"\nold-e2e-binary")
+        .unwrap();
+
+    let fake_codegraph = fake_bin.join("codegraph");
+    fs::write(&fake_codegraph, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&fake_codegraph, fs::Permissions::from_mode(0o755)).unwrap();
+    let fake_node = fake_bin.join("node");
+    fs::write(&fake_node, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&fake_node, fs::Permissions::from_mode(0o755)).unwrap();
+    let probe_marker = environment._root.path().join("claude-probe-cwd");
+    let fake_claude = fake_bin.join("claude");
+    fs::write(
+        &fake_claude,
+        r#"#!/bin/sh
+set -eu
+if [ "$1" = "mcp" ] && [ "$2" = "list" ]; then
+  case "$PWD" in
+    "$FAKE_EXPECTED_WORKSPACE"|"$FAKE_NEUTRAL_HOME") ;;
+    *)
+      echo "claude mcp list ran from forbidden cwd $PWD" >&2
+      exit 42
+      ;;
+  esac
+  printf 'list:%s\n' "$PWD" >> "$FAKE_CLAUDE_CWD_MARKER"
+  printf 'ags: %s mcp serve --transport stdio - ✓ Connected [workspace]\n' "$FAKE_AGS_MCP_COMMAND"
+  printf 'codegraph: %s serve --mcp - ✓ Connected [user]\n' "$FAKE_CODEGRAPH_COMMAND"
+  exit 0
+fi
+if [ "$1" = "mcp" ] && [ "$2" = "get" ] && [ "$3" = "ags" ]; then
+  if [ "$PWD" != "$FAKE_NEUTRAL_HOME" ]; then
+    echo "claude mcp get ags ran from forbidden cwd $PWD" >&2
+    exit 43
+  fi
+  printf 'get:%s:ags\n' "$PWD" >> "$FAKE_CLAUDE_CWD_MARKER"
+  printf 'ags command: %s mcp serve --transport stdio\n' "$FAKE_AGS_MCP_COMMAND"
+  exit 0
+fi
+if [ "$1" = "mcp" ] && [ "$2" = "get" ] && [ "$3" = "codegraph" ]; then
+  if [ "$PWD" != "$FAKE_NEUTRAL_HOME" ]; then
+    echo "claude mcp get codegraph ran from forbidden cwd $PWD" >&2
+    exit 43
+  fi
+  printf 'get:%s:codegraph\n' "$PWD" >> "$FAKE_CLAUDE_CWD_MARKER"
+  printf 'codegraph command: %s serve --mcp\n' "$FAKE_CODEGRAPH_COMMAND"
+  exit 0
+fi
+echo "unsupported fake claude invocation: $*" >&2
+exit 2
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&fake_claude, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let path = format!("{}:/usr/bin:/bin", fake_bin.display());
+    let governed = environment
+        .command()
+        .current_dir(&canonical_project_a)
+        .args(["agents", "govern", "--agent", "claude-code", "--target"])
+        .arg(&canonical_project_a)
+        .args(["--apply", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        governed.status.success(),
+        "govern failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&governed.stdout),
+        String::from_utf8_lossy(&governed.stderr)
+    );
+
+    let write_claude_snapshot = || {
+        environment
+            .command()
+            .env("HOME", &canonical_home)
+            .env("USERPROFILE", &canonical_home)
+            .env("PATH", &path)
+            .env("FAKE_EXPECTED_WORKSPACE", &canonical_project_a)
+            .env("FAKE_NEUTRAL_HOME", &canonical_home)
+            .env("FAKE_CLAUDE_CWD_MARKER", &probe_marker)
+            .env("FAKE_AGS_MCP_COMMAND", &current_ags)
+            .env("FAKE_CODEGRAPH_COMMAND", &fake_codegraph)
+            .current_dir(&canonical_project_a)
+            .args([
+                "capability",
+                "snapshot",
+                "--host",
+                "claude-code",
+                "--target",
+            ])
+            .arg(&canonical_project_a)
+            .args(["--write", "--format", "json"])
+            .output()
+            .unwrap()
+    };
+    let snapshot = write_claude_snapshot();
+    assert!(
+        snapshot.status.success(),
+        "snapshot failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&snapshot.stdout),
+        String::from_utf8_lossy(&snapshot.stderr)
+    );
+
+    let mut client = environment.connect(&canonical_project_a);
+    client.initialize("claude-code");
+    let preflight = client.preflight("claude-code", &canonical_project_a);
+    assert_eq!(preflight["overall_status"], "ok");
+    assert_eq!(preflight["capability_catalog"]["status"], "ready");
+
+    let run_doctor = |registered_ags: &Path| {
+        environment
+            .command()
+            .env("HOME", &canonical_home)
+            .env("USERPROFILE", &canonical_home)
+            .env("AGS_HOME", &environment.runtime)
+            .env("AGS_REMOTE_LATEST_OFFLINE", "1")
+            .env("PATH", &path)
+            .env("FAKE_EXPECTED_WORKSPACE", &canonical_project_a)
+            .env("FAKE_NEUTRAL_HOME", &canonical_home)
+            .env("FAKE_CLAUDE_CWD_MARKER", &probe_marker)
+            .env("FAKE_AGS_MCP_COMMAND", registered_ags)
+            .env("FAKE_CODEGRAPH_COMMAND", &fake_codegraph)
+            .current_dir(&canonical_project_b)
+            .args(["doctor", "--target"])
+            .arg(&canonical_project_a)
+            .args(["--format", "json"])
+            .output()
+            .unwrap()
+    };
+    let finding_status = |report: &Value, check_name: &str| {
+        report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|finding| finding["check_name"] == check_name)
+            .unwrap_or_else(|| panic!("missing Doctor finding {check_name}: {report}"))["status"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+
+    let _ = fs::remove_file(&probe_marker);
+    let current = run_doctor(&current_ags);
+    assert!(
+        current.status.success(),
+        "current Doctor failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&current.stdout),
+        String::from_utf8_lossy(&current.stderr)
+    );
+    let current_report: Value = serde_json::from_slice(&current.stdout).unwrap();
+    assert!(
+        current_report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|finding| finding["status"] != "fail"),
+        "current local conformance contains failures: {current_report}"
+    );
+    for check in [
+        "lifecycle-adapter-claude-code-current",
+        "workspace-daemon-current",
+        "capability-snapshot-current",
+        "mcp-registration-current",
+    ] {
+        assert_eq!(finding_status(&current_report, check), "pass", "{check}");
+    }
+    let probe_cwds = fs::read_to_string(&probe_marker).unwrap();
+    assert!(
+        probe_cwds
+            .lines()
+            .any(|line| line == format!("list:{}", canonical_home.display())),
+        "global Claude MCP inspection did not use neutral HOME: {probe_cwds}"
+    );
+    assert!(
+        probe_cwds
+            .lines()
+            .any(|line| line == format!("list:{}", canonical_project_a.display())),
+        "workspace Claude MCP inspection ignored the explicit target: {probe_cwds}"
+    );
+    assert!(
+        !probe_cwds.contains(&canonical_project_b.to_string_lossy().to_string()),
+        "Claude MCP inspection inherited the Doctor caller cwd: {probe_cwds}"
+    );
+
+    environment.install_test_skill("doctor-snapshot-drift");
+    let source_stale = run_doctor(&current_ags);
+    assert_eq!(source_stale.status.code(), Some(1));
+    let source_stale_report: Value = serde_json::from_slice(&source_stale.stdout).unwrap();
+    assert_eq!(
+        finding_status(&source_stale_report, "capability-snapshot-current"),
+        "fail"
+    );
+
+    let refreshed_snapshot = write_claude_snapshot();
+    assert!(
+        refreshed_snapshot.status.success(),
+        "snapshot refresh failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&refreshed_snapshot.stdout),
+        String::from_utf8_lossy(&refreshed_snapshot.stderr)
+    );
+    let daemon_stale = run_doctor(&current_ags);
+    assert_eq!(daemon_stale.status.code(), Some(1));
+    let daemon_stale_report: Value = serde_json::from_slice(&daemon_stale.stdout).unwrap();
+    assert_eq!(
+        finding_status(&daemon_stale_report, "capability-snapshot-current"),
+        "fail"
+    );
+
+    drop(client);
+    let restart = environment
+        .command()
+        .args(["mcp", "restart", "--target"])
+        .arg(&canonical_project_a)
+        .output()
+        .unwrap();
+    assert!(
+        restart.status.success(),
+        "daemon restart failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&restart.stdout),
+        String::from_utf8_lossy(&restart.stderr)
+    );
+    let mut restarted_client = environment.connect(&canonical_project_a);
+    restarted_client.initialize("claude-code");
+    let restarted_preflight = restarted_client.preflight("claude-code", &canonical_project_a);
+    assert_eq!(restarted_preflight["overall_status"], "ok");
+    let snapshot_recovered = run_doctor(&current_ags);
+    assert!(
+        snapshot_recovered.status.success(),
+        "Doctor did not recover after snapshot refresh and daemon restart\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&snapshot_recovered.stdout),
+        String::from_utf8_lossy(&snapshot_recovered.stderr)
+    );
+
+    let runtime_asset = environment.runtime.join("mcp/ags.mcp.json");
+    let canonical_runtime_asset = fs::read(&runtime_asset).unwrap();
+    fs::write(&runtime_asset, "{}\n").unwrap();
+    let runtime_drift = run_doctor(&current_ags);
+    assert_eq!(runtime_drift.status.code(), Some(1));
+    let runtime_drift_report: Value = serde_json::from_slice(&runtime_drift.stdout).unwrap();
+    assert_eq!(
+        finding_status(&runtime_drift_report, "private-install-content-current"),
+        "fail"
+    );
+    fs::write(&runtime_asset, canonical_runtime_asset).unwrap();
+    let runtime_recovered = run_doctor(&current_ags);
+    assert!(
+        runtime_recovered.status.success(),
+        "Doctor did not recover after runtime asset restoration\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&runtime_recovered.stdout),
+        String::from_utf8_lossy(&runtime_recovered.stderr)
+    );
+
+    let settings_path = canonical_project_a.join(".claude/settings.local.json");
+    let canonical_settings = fs::read_to_string(&settings_path).unwrap();
+    let wrong_target_settings = canonical_settings.replace(
+        canonical_project_a.to_string_lossy().as_ref(),
+        canonical_project_b.to_string_lossy().as_ref(),
+    );
+    assert_ne!(wrong_target_settings, canonical_settings);
+    fs::write(&settings_path, wrong_target_settings).unwrap();
+    let wrong_target = run_doctor(&current_ags);
+    assert_eq!(wrong_target.status.code(), Some(1));
+    let wrong_target_report: Value = serde_json::from_slice(&wrong_target.stdout).unwrap();
+    assert_eq!(
+        finding_status(
+            &wrong_target_report,
+            "lifecycle-adapter-claude-code-current"
+        ),
+        "fail"
+    );
+
+    fs::write(&settings_path, canonical_settings).unwrap();
+    let old_registration = run_doctor(&old_ags);
+    assert_eq!(old_registration.status.code(), Some(1));
+    let old_registration_report: Value = serde_json::from_slice(&old_registration.stdout).unwrap();
+    assert_eq!(
+        finding_status(&old_registration_report, "mcp-registration-current"),
+        "fail"
+    );
+
+    drop(restarted_client);
 }

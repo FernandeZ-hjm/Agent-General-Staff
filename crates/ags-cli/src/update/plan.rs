@@ -116,12 +116,59 @@ pub(in crate::update) fn cmd_update_verify(target: Option<PathBuf>, strict: bool
         .find(|lane| lane.lane == ags_lifecycle::update::UpdateLane::Projects)
         .expect("projects lane is always present");
     let projects_drift = project_lane.drift.unwrap_or(true);
+    let lifecycle_workspace = std::env::current_dir()
+        .ok()
+        .and_then(|path| ags_platform::canonical_workspace_root(&path).ok())
+        .unwrap_or_else(|| PathBuf::from("."));
+    let lifecycle_observation = ags_lifecycle::lifecycle_projection::observe_workspace_lifecycle(
+        &lifecycle_workspace,
+        &ags_platform::home_dir_or_temp(),
+        &[],
+    );
+    let (lifecycle_checks, lifecycle_observation_error) = match lifecycle_observation {
+        Ok(observation) => (
+            ags_lifecycle::conformance::conformance_checks(&observation),
+            None,
+        ),
+        Err(error) => (Vec::new(), Some(error)),
+    };
+    let lifecycle_conformant = lifecycle_observation_error.is_none()
+        && !lifecycle_checks
+            .iter()
+            .any(|check| check.status == ags_lifecycle::conformance::ConformanceStatus::Fail);
+    let lifecycle_conformance = lifecycle_observation_error.as_ref().map_or_else(
+        || {
+            lifecycle_checks
+                .iter()
+                .map(|check| serde_json::json!({
+                    "check_name": check.check_name,
+                    "status": format!("{:?}", check.status).to_ascii_lowercase(),
+                    "expected": check.expected,
+                    "observed": check.observed,
+                    "remediation": check.remediation,
+                }))
+                .collect::<Vec<_>>()
+        },
+        |error| {
+            vec![serde_json::json!({
+                "check_name": "lifecycle-observation-current",
+                "status": "fail",
+                "expected": "a readable canonical workspace and lifecycle projection",
+                "observed": error,
+                "remediation": format!(
+                    "Run `ags agents govern --apply --target '{}'` after resolving the reported error.",
+                    lifecycle_workspace.display()
+                ),
+            })]
+        },
+    );
 
     let drift = ags_lifecycle::update::plan::VerificationFacts {
         runtime_present,
         auth_boundary_clean,
         skill_snapshot_current,
         projects_drift,
+        lifecycle_conformant,
     }
     .drift();
 
@@ -132,6 +179,9 @@ pub(in crate::update) fn cmd_update_verify(target: Option<PathBuf>, strict: bool
         "runtime_present": runtime_present,
         "drift": drift,
         "projects": update_lane_json(&project_lane),
+        "lifecycle_workspace": lifecycle_workspace.display().to_string(),
+        "lifecycle_conformant": lifecycle_conformant,
+        "lifecycle_conformance": lifecycle_conformance,
         "skill_resolver": {
             "active_host": "codex",
             "snapshot_path": snapshot_path.display().to_string(),
@@ -157,6 +207,14 @@ pub(in crate::update) fn cmd_update_verify(target: Option<PathBuf>, strict: bool
             format!(
                 "  projects: {}",
                 if projects_drift { "DRIFT" } else { "clean" }
+            ),
+            format!(
+                "  lifecycle: {}",
+                if lifecycle_conformant {
+                    "current"
+                } else {
+                    "DRIFT"
+                }
             ),
             format!(
                 "  skill snapshot: {} auth_boundary={}",

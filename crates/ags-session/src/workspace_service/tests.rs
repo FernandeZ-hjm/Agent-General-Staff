@@ -6,8 +6,8 @@ use crate::workspace_service::registry_ownership::{
     ServicePaths, WorkspaceOwner, WorkspaceRegistry, REGISTRY_SCHEMA,
 };
 use crate::workspace_service::transport_handshake::{
-    finish_workspace_session, handle_connection, read_json_line, write_json_line, Handshake,
-    HandshakeResult, WIRE_SCHEMA,
+    finish_workspace_session, handle_connection, inspect_existing_workspace_service_at,
+    read_json_line, write_json_line, Handshake, HandshakeResult, WIRE_SCHEMA,
 };
 use crate::workspace_service::upgrade_recycle::connect_registered;
 use crate::{CapabilityCatalogSource, PreflightBinding};
@@ -285,6 +285,81 @@ impl WorkspaceSessionHandler for CapturingHandler {
     ) {
         self.session_ids.lock().unwrap().push(session_id);
     }
+
+    fn run_workspace_command(
+        &self,
+        kind: &str,
+        _payload: serde_json::Value,
+        workspace: Arc<WorkspaceState>,
+    ) -> Result<serde_json::Value, String> {
+        if kind != "status" {
+            return Err(format!("unsupported workspace command `{kind}`"));
+        }
+        serde_json::to_value(WorkspaceServiceInspection {
+            schema_version: WORKSPACE_DAEMON_STATUS_SCHEMA_VERSION.to_string(),
+            canonical_workspace: workspace.root().to_string_lossy().to_string(),
+            workspace_identity: workspace.instance_key().to_string(),
+            loaded_snapshot_hashes: workspace.loaded_snapshot_hashes()?,
+        })
+        .map_err(|error| error.to_string())
+    }
+}
+
+#[test]
+fn existing_daemon_inspection_is_authenticated_and_never_mutates_registry() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    let runtime = root.path().join("runtime");
+    fs::create_dir_all(workspace.join(".git")).unwrap();
+    let workspace = canonical_workspace_root(&workspace).unwrap();
+    let state = Arc::new(WorkspaceState::new(workspace.clone(), runtime.clone()).unwrap());
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let registry = WorkspaceRegistry {
+        schema_version: REGISTRY_SCHEMA.to_string(),
+        workspace: workspace.clone(),
+        instance_key: workspace_key(&workspace),
+        endpoint: listener.local_addr().unwrap().to_string(),
+        token: "inspection-token".to_string(),
+        pid: std::process::id(),
+        executable_hash: current_executable_hash().unwrap(),
+        process_start_identity: current_process_start_identity().unwrap(),
+        daemon_nonce: "inspection-daemon-nonce".to_string(),
+    };
+    let paths = ServicePaths::new(&runtime, &workspace);
+    ensure_private_dir(&paths.dir).unwrap();
+    atomic_write_json(&paths.registry, &registry).unwrap();
+    let registry_before = fs::read(&paths.registry).unwrap();
+
+    let server_registry = registry.clone();
+    let server_state = Arc::clone(&state);
+    let server = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        handle_connection(
+            stream,
+            server_registry,
+            server_state,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(CapturingHandler::default()),
+        )
+        .unwrap();
+    });
+
+    let inspection = inspect_existing_workspace_service_at(&runtime, &workspace)
+        .unwrap()
+        .expect("running daemon inspection");
+    server.join().unwrap();
+    assert_eq!(inspection.canonical_workspace, workspace.to_string_lossy());
+    assert_eq!(inspection.workspace_identity, workspace_key(&workspace));
+    assert!(inspection.loaded_snapshot_hashes.is_empty());
+    assert_eq!(fs::read(&paths.registry).unwrap(), registry_before);
+    assert!(inspect_existing_workspace_service_at(&runtime, &workspace).is_err());
+    assert_eq!(fs::read(&paths.registry).unwrap(), registry_before);
+
+    fs::remove_file(&paths.registry).unwrap();
+    assert!(inspect_existing_workspace_service_at(&runtime, &workspace)
+        .unwrap()
+        .is_none());
+    assert!(!paths.registry.exists());
 }
 
 #[test]

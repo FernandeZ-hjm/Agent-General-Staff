@@ -6,9 +6,12 @@
 //! by a plan, after the caller has enforced explicit confirmation or an MCP
 //! DecisionLease.
 
+pub mod conformance;
 pub mod init;
+pub mod lifecycle_projection;
 pub mod setup;
 pub mod update;
+pub mod workspace_lifecycle;
 
 mod onboarding;
 

@@ -1,6 +1,7 @@
 # AGS MCP: Workspace Service and Host Adapter
 
-> AGS 0.3.8 MCP 是工作区治理服务与薄宿主适配器，不是自然语言 Agent。
+> AGS 0.4.0 MCP 是宿主初始化、只读治理解析、workspace lifecycle 和显式 apply
+> 的工作区治理服务与薄宿主适配器，不是自然语言 Agent。
 
 ## Architecture
 
@@ -20,7 +21,7 @@ Human request
 自然语言语义选择只在宿主发生。Compiler、Policy、Gate、Runner、Skill Resolver 和 MCP server 都不重新解释原始文本。
 
 daemon 的唯一实例键只包含工作区 canonical path，不包含 host。Codex、Claude Code、
-Cursor、OMP 等宿主只是同一工作区服务的客户端；每个客户端仍拥有独立
+Cursor、CodeBuddy、OMP 等宿主只是同一工作区服务的客户端；每个客户端仍拥有独立
 `session_id`、preflight binding、route generation 与 DecisionLease。stdio 进程仅转发
 JSON-RPC，不保存治理状态。客户端断开不会终止 daemon；无活动会话超过 idle window
 后才回收。新 adapter 发现 executable hash 变化时，必须先停止旧 daemon，再启动新
@@ -154,7 +155,7 @@ Onboarding lease 绑定 public profile 的完整 `plan_hash`、item、host 与 t
 
 ## Server Info
 
-`serverInfo` example: `{"name":"ags-mcp","version":"0.3.8"}`
+`serverInfo` example: `{"name":"ags-mcp","version":"0.4.0"}`
 
 ## Verification
 

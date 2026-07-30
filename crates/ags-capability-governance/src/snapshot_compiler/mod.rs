@@ -17,7 +17,8 @@ mod source;
 
 pub use build::{
     build_capability_snapshot, build_capability_snapshot_with_live_roots,
-    build_capability_snapshot_with_roots, build_capability_snapshot_with_roots_and_manifest,
-    build_capability_snapshot_with_runtime_home, write_capability_snapshot_with_roots,
+    build_capability_snapshot_with_live_roots_at, build_capability_snapshot_with_roots,
+    build_capability_snapshot_with_roots_and_manifest, build_capability_snapshot_with_runtime_home,
+    write_capability_snapshot_with_roots,
 };
 pub use source::hash_skill_source;

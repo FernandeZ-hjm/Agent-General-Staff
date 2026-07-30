@@ -11,9 +11,10 @@ pub(crate) fn run(action: AgentsAction) {
         AgentsAction::Scan { format } => scan::cmd_agents_scan(&format),
         AgentsAction::Govern {
             agent,
+            target,
             apply,
             format,
-        } => govern::cmd_agents_govern(agent.as_deref(), apply, &format),
+        } => govern::cmd_agents_govern(agent.as_deref(), &target, apply, &format),
         AgentsAction::Verify {
             host,
             strict,

@@ -1,5 +1,37 @@
 # Agent Governance Suite Release Notes
 
+## Release 0.4.0 (candidate)
+
+0.4.0 completes the canonical-workspace lifecycle architecture. The MCP
+`protocolVersion` remains `2024-11-05`; this release changes AGS product,
+runtime, registration, and freshness verification rather than the MCP wire
+generation.
+
+- Claude Code, Codex, Cursor, CodeBuddy-Code, and OMP now share one
+  host-neutral lifecycle event contract backed by the canonical workspace
+  daemon. Host adapters only translate native hook input/output.
+- Lifecycle projections are workspace-owned, bind an absolute canonical target,
+  and are recorded in a versioned local manifest. AGS no longer generates
+  machine-global lifecycle hooks.
+- Migration previews and backs up affected files, installs and verifies every
+  workspace adapter, then removes only AGS-owned user-level lifecycle entries.
+  User hooks and MCP configuration are preserved.
+- Stop is a per-turn guard only. SessionEnd performs verified closure archival;
+  OMP no longer closes the session from `agent_settled`.
+- The workspace daemon owns host-session state and event-id idempotency while
+  connection-bound DecisionLease isolation remains unchanged.
+- Doctor adds blocking local conformance checks for current runtime surfaces,
+  workspace daemon identity, managed projection, capability snapshots, MCP
+  registration, lifecycle versions, legacy commands, duplicate hooks, and
+  canonical targets. Runtime health and local conformance are reported
+  separately; enabled-host local drift exits 1. Remote latest checks remain
+  advisory and offline operation does not block.
+- Claude-compatible clear Stop output omits the optional
+  `hookSpecificOutput` field instead of serializing it as JSON `null`.
+
+This checkout is a release candidate only. No tag, stable/public promotion,
+GitHub Release, or npm publication is implied by the source version.
+
 ## Release 0.3.8
 
 0.3.8 restores one semantic invocation plane for independently installed

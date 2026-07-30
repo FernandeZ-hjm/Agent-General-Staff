@@ -1,28 +1,14 @@
-//! AGS context-memory product mechanism wiring for `ags setup`.
+//! Workspace-owned AGS lifecycle wiring shared by setup and host governance.
 //!
-//! Restores the project-memory injection/capture chain as a first-class product:
-//!   - installs the canonical start/guard/capture scripts to the host script dir,
-//!   - installs the OMP native lifecycle extension,
-//!   - structurally merges Claude Code, Codex, and Cursor command hooks without
-//!     replacing unrelated hooks,
-//!   - bootstraps the current workspace's memory capsule via the installed
-//!     the Rust memory initializer (create-if-missing; never overwrites the capsule).
+//! The lifecycle projection installs one three-event adapter in the canonical
+//! workspace, preserves unrelated host configuration, and bootstraps the Rust
+//! memory store without replacing an existing capsule.
 //!
-//! Command boundary: this lives in `ags setup` (host/workspace bootstrap).
-//! `ags init` only creates per-project memory files and never installs a host
-//! hook — the installed start/capture bridges are cwd-aware and resolve each
-//! project's memory by repository.
-
-use super::InstallFile;
-use std::path::{Path, PathBuf};
+//! `ags setup --register-claude` and `ags agents govern --apply` delegate to the
+//! same implementation. `ags init` only creates project state.
 
 mod adapter;
-mod assets;
-mod merge;
-mod wire;
 
-pub use adapter::apply_host_memory_adapter;
-pub use merge::MergeOutcome;
+pub use adapter::{apply_host_memory_adapter, lifecycle_migration_preview};
 
 pub(in crate::setup) use adapter::{add_workspace_memory_capture, render_memory_capture_plan};
-pub(in crate::setup) use assets::memory_script_install_files;

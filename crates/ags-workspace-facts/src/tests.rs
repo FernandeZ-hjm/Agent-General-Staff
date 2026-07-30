@@ -37,24 +37,18 @@ fn write_memory(home: &Path, slug: &str, archive: bool) {
     }
 }
 
-fn write_claude_hooks(project: &Path, start: bool, stop: bool) {
-    let mut hooks = serde_json::Map::new();
-    if start {
-        hooks.insert(
-            "SessionStart".into(),
-            serde_json::json!([{"hooks":[{"command":"ags host lifecycle --event session-start --host claude-code --target . --input -"}]}]),
-        );
+fn write_command_hooks(project: &Path, host: &str, start: bool, stop: bool) {
+    let codec = HostLifecycleCodec::new(project, host).unwrap();
+    let spec = codec.spec();
+    let mut hooks = codec.desired_owned_projection();
+    if !start {
+        hooks.remove(spec.native_events.session_start);
     }
-    if stop {
-        hooks.insert(
-            "Stop".into(),
-            serde_json::json!([{"hooks":[
-                {"command":"ags host lifecycle --event stop-guard --host claude-code --target . --input -"},
-                {"command":"ags host lifecycle --event session-end --host claude-code --target . --input -"}
-            ]}]),
-        );
+    if !stop {
+        hooks.remove(spec.native_events.stop_guard);
+        hooks.remove(spec.native_events.session_end);
     }
-    let path = project.join(".claude/settings.json");
+    let path = codec.path();
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(
         path,
@@ -80,7 +74,7 @@ fn memory_lifecycle_state_matrix() {
             write_memory(&home, tag, archive);
         }
         if start || stop {
-            write_claude_hooks(&project, start, stop);
+            write_command_hooks(&project, "claude-code", start, stop);
         }
         assert_eq!(
             compute_memory_lifecycle_at_for_host(&project, &home, &AgentType::ClaudeCode).status,
@@ -99,7 +93,7 @@ fn memory_lifecycle_is_host_specific_and_supports_codex_and_omp() {
     std::fs::create_dir_all(&project).unwrap();
     write_profile(&project, "hosts");
     write_memory(&home, "hosts", true);
-    write_claude_hooks(&project, true, true);
+    write_command_hooks(&project, "claude-code", true, true);
 
     assert_eq!(
         compute_memory_lifecycle_at_for_host(&project, &home, &AgentType::ClaudeCode).status,
@@ -110,32 +104,16 @@ fn memory_lifecycle_is_host_specific_and_supports_codex_and_omp() {
         "full"
     );
 
-    let codex = home.join(".codex/hooks.json");
-    std::fs::create_dir_all(codex.parent().unwrap()).unwrap();
-    std::fs::write(
-        codex,
-        r#"{"hooks":{"SessionStart":[{"hooks":[{"command":"ags host lifecycle --event session-start --host codex --target . --input -"}]}],"SessionEnd":[{"hooks":[{"command":"ags host lifecycle --event session-end --host codex --target . --input -"}]}],"Stop":[{"hooks":[{"command":"ags host lifecycle --event stop-guard --host codex --target . --input -"}]}]}}"#,
-    )
-    .unwrap();
+    write_command_hooks(&project, "codex", true, true);
     assert_eq!(
         compute_memory_lifecycle_at_for_host(&project, &home, &AgentType::Codex).status,
         "full"
     );
 
-    let extension = home.join(".omp/agent/extensions/ags-memory-lifecycle.js");
+    let omp_codec = HostLifecycleCodec::new(&project, "omp").unwrap();
+    let extension = omp_codec.path();
     std::fs::create_dir_all(extension.parent().unwrap()).unwrap();
-    std::fs::write(
-        extension,
-        r#"import { spawnSync } from "node:child_process";
-export default function (pi) {
-  pi.on("session_start", async () => {});
-  pi.on("before_agent_start", async () => ({ systemPromptAppend: "memory" }));
-  pi.on("agent_settled", async () => {});
-  pi.on("session_shutdown", async () => {});
-  spawnSync("ags", ["host", "lifecycle", "session-start", "session-end", "stop-guard", "--host", "omp"]);
-}"#,
-    )
-    .unwrap();
+    std::fs::write(extension, omp_codec.desired_omp_body()).unwrap();
     assert_eq!(
         compute_memory_lifecycle_at_for_host(&project, &home, &AgentType::from_str("omp").unwrap())
             .status,

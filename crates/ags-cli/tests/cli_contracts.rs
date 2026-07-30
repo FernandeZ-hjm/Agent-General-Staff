@@ -39,9 +39,13 @@ fn repo_root() -> PathBuf {
 }
 
 fn run_ags(args: &[&str]) -> Output {
+    run_ags_at(args, &repo_root())
+}
+
+fn run_ags_at(args: &[&str], cwd: &Path) -> Output {
     Command::new(env!("CARGO_BIN_EXE_ags"))
         .args(args)
-        .current_dir(repo_root())
+        .current_dir(cwd)
         .output()
         .expect("run compiled ags binary")
 }
@@ -155,6 +159,7 @@ fn task_card_pipeline_cli_contract() {
 #[test]
 fn host_plan_card_closes_against_its_exact_delivery_report() {
     let temp = TestDir::new("host-plan-closure");
+    std::fs::create_dir_all(temp.path().join(".git")).unwrap();
     let contract_path = temp.path().join("handoff.json");
     let task_card_path = temp.path().join("task-card.md");
     let launch_plan_path = temp.path().join("launch-plan.json");
@@ -236,17 +241,20 @@ review-gate: n/a\n\
     std::fs::write(&delivery_report_path, report).unwrap();
 
     let closed = parse_json(
-        &run_ags(&[
-            "task",
-            "close",
-            task_card_path.to_str().unwrap(),
-            launch_plan_path.to_str().unwrap(),
-            delivery_report_path.to_str().unwrap(),
-            "--receipt-out",
-            receipt_path.to_str().unwrap(),
-            "--format",
-            "json",
-        ]),
+        &run_ags_at(
+            &[
+                "task",
+                "close",
+                task_card_path.to_str().unwrap(),
+                launch_plan_path.to_str().unwrap(),
+                delivery_report_path.to_str().unwrap(),
+                "--receipt-out",
+                receipt_path.to_str().unwrap(),
+                "--format",
+                "json",
+            ],
+            temp.path(),
+        ),
         "task close",
     );
     assert_eq!(closed["valid"], true);
@@ -482,6 +490,11 @@ fn update_verify_validates_snapshot_against_installed_capability_authority() {
         "update verify must validate the snapshot against the installed capability authority, \
          not the current A checkout"
     );
+    assert_eq!(
+        report["lifecycle_workspace"],
+        root.canonicalize().unwrap().display().to_string(),
+        "update verify must observe the working workspace, not the installed source authority"
+    );
 }
 
 #[test]
@@ -489,6 +502,40 @@ fn agents_scan_cli_contract() {
     let output = run_ags_isolated(&["agents", "scan", "--format", "json"]);
     assert_success(&output, "agents scan");
     serde_json::from_slice::<Value>(&output.stdout).expect("agents scan JSON");
+}
+
+#[test]
+fn agents_govern_previews_workspace_owned_codebuddy_migration() {
+    let workspace = TestDir::new("agents-govern-target");
+    std::fs::create_dir_all(workspace.path().join(".git")).unwrap();
+    let workspace_arg = workspace.path().to_str().unwrap();
+    let output = run_ags_isolated(&[
+        "agents",
+        "govern",
+        "--agent",
+        "codebuddy-code",
+        "--target",
+        workspace_arg,
+        "--format",
+        "json",
+    ]);
+    let report = parse_json(&output, "agents govern CodeBuddy migration preview");
+    let preview = &report["hosts"][0]["lifecycle_migration_preview"];
+    assert_eq!(preview["host"], "codebuddy-code");
+    assert_eq!(preview["removal_ready_after_apply"], true);
+    assert_eq!(preview["managed_workspaces"][0]["adapter_ready_now"], false);
+    assert_eq!(
+        preview["managed_workspaces"][0]["adapter_ready_after_apply"],
+        true
+    );
+    assert!(preview["workspace_adapter"]
+        .as_str()
+        .unwrap()
+        .ends_with(".codebuddy/settings.local.json"));
+    assert_eq!(
+        Path::new(preview["current_workspace"].as_str().unwrap()),
+        workspace.path().canonicalize().unwrap()
+    );
 }
 
 #[test]
@@ -520,4 +567,83 @@ fn high_risk_cli_rejections_remain_fail_closed() {
         "json",
     ]);
     assert!(!receipt.status.success());
+}
+
+#[test]
+fn doctor_rejects_macbook_legacy_lifecycle_before_host_start() {
+    let fixture = TestDir::new("doctor-legacy-lifecycle");
+    let home = fixture.path().join("home");
+    let runtime = fixture.path().join("runtime");
+    let project = fixture.path().join("managed-workspace");
+    std::fs::create_dir_all(project.join(".git")).unwrap();
+    std::fs::create_dir_all(project.join(".claude")).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&runtime).unwrap();
+
+    let retired_interpreter = concat!("python", "3");
+    let retired_command =
+        format!("{retired_interpreter} \"$HOME/.agents/scripts/context-memory-start.py\"");
+    std::fs::write(
+        project.join(".claude/settings.local.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "hooks": {
+                "SessionStart": [{
+                    "hooks": [{
+                        "type": "command",
+                        "command": retired_command
+                    }]
+                }],
+                "Stop": [{
+                    "hooks": [{
+                        "type": "command",
+                        "command": "ags host lifecycle --event session-end --host claude-code --target ."
+                    }]
+                }]
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ags"))
+        .args(["doctor", "--target"])
+        .arg(&project)
+        .args(["--format", "json"])
+        .current_dir(repo_root())
+        .env("HOME", &home)
+        .env("AGS_HOME", &runtime)
+        .env_remove("AGS_RUNTIME_HOME")
+        .env("AGS_SOURCE_ROOT", repo_root())
+        .env("AGS_REMOTE_LATEST_OFFLINE", "1")
+        .env("AGS_THIRD_PARTY_MANIFEST_OFFLINE", "1")
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .expect("run doctor against legacy lifecycle fixture");
+    assert!(
+        !output.status.success(),
+        "Doctor must fail before Claude Code starts when legacy lifecycle wiring is effective"
+    );
+    assert!(
+        !runtime.join("workspace-services").exists(),
+        "read-only Doctor must not start or register a workspace daemon"
+    );
+
+    let report: Value =
+        serde_json::from_slice(&output.stdout).expect("Doctor failure still emits JSON");
+    let finding = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|finding| finding["check_name"] == "lifecycle-legacy-commands-absent")
+        .expect("legacy lifecycle conformance finding");
+    assert_eq!(finding["status"], "fail");
+    assert!(finding["observed"]
+        .as_str()
+        .unwrap()
+        .contains("context-memory-start.py"));
+    assert!(finding["observed"].as_str().unwrap().contains("--target ."));
+    assert!(finding["remediation"]
+        .as_str()
+        .unwrap()
+        .contains("Migrate managed workspaces"));
 }

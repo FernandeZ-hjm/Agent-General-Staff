@@ -141,30 +141,44 @@ The table currently includes:
 | Claude Code | `claude-code` | `claude-code` | native hooks call Rust |
 | Cursor | `cursor` | `cursor` | native lowercase hooks call Rust |
 | OMP | `omp` | `omp` | thin JS extension calls Rust |
+| CodeBuddy-Code | `codebuddy-code` | `codebuddy-code` | native workspace hooks call Rust |
 
 Adding a host means adding a protocol description and contract tests. It does
 not mean copying policy or lifecycle implementations.
 
 ## Lifecycle Contract
 
-All four hosts call:
+All five hosts call:
 
 ```bash
 ags host lifecycle --event session-start|session-end|stop-guard \
-  --host codex|claude-code|cursor|omp \
+  --host codex|claude-code|cursor|codebuddy-code|omp \
   --target <repo>
 ```
+
+The v0.4.0 generator writes only workspace-owned adapters and replaces
+`<repo>` with the canonical absolute workspace path. Claude Code uses
+`.claude/settings.local.json`, CodeBuddy-Code uses
+`.codebuddy/settings.local.json`, Codex and Cursor use their project hook
+files, and OMP uses `.omp/extensions/ags-memory-lifecycle.js`.
+
+`ags host lifecycle` is a compatibility-preserving CLI facade. It sends a
+`0.4.0-workspace-lifecycle` envelope to the canonical workspace daemon; it no
+longer owns memory reads, archive writes, or host-session state.
 
 - `session-start` returns bounded, read-only memory context.
 - `session-end` archives only a verified closure pointer.
 - `stop-guard` checks raw tool-call markup leakage.
 
-Claude-compatible hosts consume `hookSpecificOutput.additionalContext`. Cursor
-consumes `additional_context` on `sessionStart` and `followup_message` on
-`stop`; this response-envelope difference is declared in `AgentPlatformSpec`,
-not implemented as a second lifecycle kernel. Cursor registration evidence is
-read through `cursor-agent mcp list` with its file credential-store mode so the
-probe does not depend on the macOS login keychain.
+Claude Code consumes `hookSpecificOutput.additionalContext`; its clear Stop
+response omits an empty optional `hookSpecificOutput`. CodeBuddy-Code uses the
+same SessionStart context shape but maps a blocked Stop to its native
+`continue: false` plus `reason` response. Cursor consumes `additional_context`
+on `sessionStart` and `followup_message` on `stop`. These response-envelope
+differences are declared in `AgentPlatformSpec`, not implemented as additional
+lifecycle kernels. Cursor registration evidence is read through
+`cursor-agent mcp list` with its file credential-store mode so the probe does
+not depend on the macOS login keychain.
 
 OMP's JavaScript extension is intentionally thin: register events, pass JSON to
 the command, map the result. OMP itself is not patched.

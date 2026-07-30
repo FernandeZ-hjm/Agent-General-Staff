@@ -51,26 +51,14 @@ fn cmd_task_close(
             );
             std::process::exit(1);
         });
-        let closure_pointer = serde_json::json!({
-            "schema_version": "0.3.6-closure-pointer",
-            "receipt_id": receipt.receipt_id,
-            "receipt_path": receipt_out,
-            "task_card_hash": receipt.task_card_hash,
-            "launch_plan_hash": receipt.launch_plan_hash,
-            "delivery_report_hash": receipt.delivery_report_hash,
-        });
-        let pointer_path = std::env::current_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("."))
-            .join(".ags")
-            .join("state")
-            .join("closure-pointer.json");
-        let pointer_bytes = serde_json::to_vec_pretty(&closure_pointer)
-            .expect("closure pointer serialization is infallible");
-        ags_platform::atomic_write(&pointer_path, &pointer_bytes).unwrap_or_else(|error| {
-            eprintln!(
-                "task close: cannot atomically write closure pointer `{}` — {error}",
-                pointer_path.display()
-            );
+        let current_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        ags_lifecycle::workspace_lifecycle::write_closure_pointer(
+            &current_dir,
+            receipt_out,
+            &receipt,
+        )
+        .unwrap_or_else(|error| {
+            eprintln!("task close: cannot write canonical closure pointer — {error}");
             std::process::exit(1);
         });
     }

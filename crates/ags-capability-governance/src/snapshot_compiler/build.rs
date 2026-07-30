@@ -156,13 +156,55 @@ pub fn build_capability_snapshot_with_live_roots(
     runtime_home: &Path,
     host_home: &Path,
 ) -> Result<HostCapabilitySnapshot, SnapshotBuildError> {
+    build_capability_snapshot_with_live_roots_and_runner(
+        manifest_root,
+        active_host,
+        runtime_home,
+        host_home,
+        Box::new(SystemCommandRunner),
+    )
+}
+
+/// Rebuild a live snapshot while resolving workspace-scoped host registration
+/// from the workspace being inspected, not from the caller's current directory.
+pub fn build_capability_snapshot_with_live_roots_at(
+    manifest_root: &Path,
+    active_host: &str,
+    runtime_home: &Path,
+    host_home: &Path,
+    workspace: &Path,
+) -> Result<HostCapabilitySnapshot, SnapshotBuildError> {
+    build_capability_snapshot_with_live_roots_and_runner(
+        manifest_root,
+        active_host,
+        runtime_home,
+        host_home,
+        Box::new(WorkspaceCommandRunner {
+            current_dir: workspace.to_path_buf(),
+        }),
+    )
+}
+
+struct WorkspaceCommandRunner {
+    current_dir: PathBuf,
+}
+
+impl CommandRunner for WorkspaceCommandRunner {
+    fn run(&self, spec: &ags_host_integration::McpProbeSpec) -> CommandOutcome {
+        SystemCommandRunner.run_in(spec, &self.current_dir)
+    }
+}
+
+fn build_capability_snapshot_with_live_roots_and_runner(
+    manifest_root: &Path,
+    active_host: &str,
+    runtime_home: &Path,
+    host_home: &Path,
+    runner: Box<dyn CommandRunner>,
+) -> Result<HostCapabilitySnapshot, SnapshotBuildError> {
     let third_party = crate::third_party_manifest::resolve_third_party_manifest(manifest_root)
         .map_err(SnapshotBuildError::Manifest)?;
-    let context = ConsoleContext::new(
-        manifest_root.to_path_buf(),
-        host_home.to_path_buf(),
-        Box::new(SystemCommandRunner),
-    );
+    let context = ConsoleContext::new(manifest_root.to_path_buf(), host_home.to_path_buf(), runner);
     build_capability_snapshot_with_context_and_manifest(
         manifest_root,
         active_host,

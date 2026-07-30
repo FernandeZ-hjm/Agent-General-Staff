@@ -246,7 +246,8 @@ pub(crate) enum HostAction {
     Lifecycle {
         #[arg(long, value_parser = ["session-start", "session-end", "stop-guard"])]
         event: String,
-        #[arg(long, value_parser = ["codex", "claude-code", "cursor", "omp"])]
+        /// Host id resolved through the canonical platform registry.
+        #[arg(long)]
         host: String,
         #[arg(long, default_value = ".")]
         target: PathBuf,

@@ -1,11 +1,9 @@
 use crate::cli::HostAction;
 use serde_json::{json, Value};
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 const MAX_HOOK_INPUT_BYTES: usize = 1024 * 1024;
-const MAX_CAPSULE_CHARS: usize = 12_000;
-const MAX_TASK_MEMORY_CHARS: usize = 8_000;
 
 pub(crate) fn run(action: HostAction) {
     match action {
@@ -32,161 +30,91 @@ fn lifecycle(event: &str, host: &str, target: &Path, input: &str) -> Result<Valu
         return Err(format!("unsupported host `{host}`"));
     }
     let payload = read_payload(input)?;
-    match event {
-        "session-start" => session_start(host, target),
-        "session-end" => session_end(host, target, &payload),
-        "stop-guard" => Ok(stop_guard(host, &payload)),
-        _ => Err(format!("unsupported lifecycle event `{event}`")),
-    }
+    let envelope =
+        ags_lifecycle::workspace_lifecycle::LifecycleEnvelope::new(target, host, event, payload)?;
+    let result = ags_session::dispatch_workspace_command(
+        target,
+        "lifecycle",
+        serde_json::to_value(envelope)
+            .map_err(|error| format!("lifecycle envelope encode failed: {error}"))?,
+    )?;
+    let decision: ags_lifecycle::workspace_lifecycle::LifecycleDecision =
+        serde_json::from_value(result)
+            .map_err(|error| format!("lifecycle decision decode failed: {error}"))?;
+    format_lifecycle_decision(host, &decision)
 }
 
-fn session_start(host: &str, target: &Path) -> Result<Value, String> {
-    let memory_dir = memory_dir(target);
-    let capsule = bounded_read(&memory_dir.join("context-capsule.md"), MAX_CAPSULE_CHARS)?;
-    let task_memory = bounded_read(&memory_dir.join("task-memory.md"), MAX_TASK_MEMORY_CHARS)?;
-    let mut parts = vec![
-        "## AGS Project Memory Context".to_string(),
-        String::new(),
-        "Read-only startup context. This is a derived view; receipt-bound raw artifacts are authoritative.".to_string(),
-        format!("Repository: {}", target.display()),
-        format!("Memory store: {}", memory_dir.display()),
-    ];
-    if let Some(content) = capsule {
-        parts.extend([String::new(), "### context-capsule.md".to_string(), content]);
-    }
-    if let Some(content) = task_memory {
-        parts.extend([String::new(), "### task-memory.md".to_string(), content]);
-    }
-    let additional_context = (parts.len() > 5).then(|| parts.join("\n"));
+fn format_lifecycle_decision(
+    host: &str,
+    decision: &ags_lifecycle::workspace_lifecycle::LifecycleDecision,
+) -> Result<Value, String> {
     let mut response = json!({
-        "schema_version": "0.3.6-host-lifecycle",
-        "host": host,
-        "event": "session-start",
-        "status": if additional_context.is_some() { "ready" } else { "empty" },
+        "schema_version": decision.schema_version,
+        "workspace_identity": decision.workspace_identity,
+        "host": decision.host,
+        "host_session_id": decision.host_session_id,
+        "event": decision.event,
+        "event_id": decision.event_id,
+        "status": decision.status,
+        "duplicate": decision.duplicate,
     });
-    let context = additional_context.unwrap_or_default();
-    match lifecycle_output_protocol(host)? {
-        ags_host_integration::LifecycleOutputProtocol::ClaudeCompatible => {
+    if let Some(reason) = &decision.reason {
+        response["reason"] = json!(reason);
+    }
+    if let Some(archive) = &decision.archive {
+        response["archive"] = archive.clone();
+    }
+    match (decision.event.as_str(), lifecycle_output_protocol(host)?) {
+        (
+            "session-start",
+            ags_host_integration::LifecycleOutputProtocol::ClaudeCompatible
+            | ags_host_integration::LifecycleOutputProtocol::CodeBuddy,
+        ) => {
             response["suppressOutput"] = json!(true);
             response["hookSpecificOutput"] = json!({
                 "hookEventName": "SessionStart",
-                "additionalContext": context,
+                "additionalContext": decision.additional_context.clone().unwrap_or_default(),
             });
         }
-        ags_host_integration::LifecycleOutputProtocol::Cursor => {
-            response["additional_context"] = json!(context);
+        ("session-start", ags_host_integration::LifecycleOutputProtocol::Cursor) => {
+            response["additional_context"] =
+                json!(decision.additional_context.clone().unwrap_or_default());
         }
-    }
-    Ok(response)
-}
-
-fn session_end(host: &str, target: &Path, payload: &Value) -> Result<Value, String> {
-    let pointer_path = target.join(".ags/state/closure-pointer.json");
-    let (status, reason, archive) = if pointer_path.is_file() {
-        let pointer: Value = serde_json::from_slice(
-            &std::fs::read(&pointer_path)
-                .map_err(|error| format!("cannot read closure pointer: {error}"))?,
-        )
-        .map_err(|error| format!("invalid closure pointer JSON: {error}"))?;
-        let receipt_path = pointer
-            .get("receipt_path")
-            .and_then(Value::as_str)
-            .ok_or_else(|| "closure pointer has no receipt_path".to_string())?;
-        let result = ags_evidence::memory::archive(Path::new(receipt_path), &memory_dir(target))?;
-        (
-            if result.idempotent {
-                "already-archived"
-            } else {
-                "archived"
-            },
-            "verified closure pointer",
-            Some(serde_json::to_value(result).map_err(|error| error.to_string())?),
-        )
-    } else {
-        (
-            "skipped",
-            "no verified task-close closure pointer; transcript inference is forbidden",
-            None,
-        )
-    };
-    let receipt = json!({
-        "schema_version": "0.3.6-memory-close-receipt",
-        "host": host,
-        "event": "session-end",
-        "session_id": payload.get("session_id").and_then(Value::as_str).unwrap_or(""),
-        "status": status,
-        "reason": reason,
-        "archive": archive,
-    });
-    let record = target
-        .join(".ags/state/lifecycle")
-        .join(format!("{host}-session-end.json"));
-    let bytes = serde_json::to_vec_pretty(&receipt).map_err(|error| error.to_string())?;
-    ags_platform::atomic_write(&record, &bytes)?;
-    Ok(receipt)
-}
-
-fn stop_guard(host: &str, payload: &Value) -> Value {
-    let text = payload
-        .get("last_assistant_message")
-        .or_else(|| payload.get("lastAssistantMessage"))
-        .map(text_content)
-        .unwrap_or_default();
-    let normalized = text.to_ascii_lowercase();
-    let blocked = normalized.contains("<invoke ")
-        || normalized.contains("<parameter ")
-        || normalized.contains("</invoke>");
-    let message = "The previous assistant message leaked raw tool-call markup. Continue with a real tool call; do not expose tool markup.";
-    let mut response = json!({
-        "schema_version": "0.3.6-host-lifecycle",
-        "host": host,
-        "event": "stop-guard",
-        "status": if blocked { "blocked" } else { "clear" },
-    });
-    match lifecycle_output_protocol(host) {
-        Ok(ags_host_integration::LifecycleOutputProtocol::ClaudeCompatible) => {
+        ("stop-guard", ags_host_integration::LifecycleOutputProtocol::ClaudeCompatible) => {
+            let blocked = decision.status == "blocked";
             response["suppressOutput"] = json!(blocked);
-            response["hookSpecificOutput"] = if blocked {
-                json!({
-                    "hookEventName": "Stop",
-                    "additionalContext": message,
-                })
-            } else {
-                Value::Null
-            };
-        }
-        Ok(ags_host_integration::LifecycleOutputProtocol::Cursor) => {
             if blocked {
+                response["hookSpecificOutput"] = json!({
+                    "hookEventName": "Stop",
+                    "additionalContext": decision.additional_context.clone().unwrap_or_default(),
+                });
+            }
+        }
+        ("stop-guard", ags_host_integration::LifecycleOutputProtocol::CodeBuddy) => {
+            let blocked = decision.status == "blocked";
+            response["continue"] = json!(!blocked);
+            response["suppressOutput"] = json!(true);
+            if blocked {
+                response["reason"] = json!(decision.additional_context.clone().unwrap_or_default());
+            }
+        }
+        ("stop-guard", ags_host_integration::LifecycleOutputProtocol::Cursor) => {
+            if let Some(message) = &decision.additional_context {
                 response["followup_message"] = json!(message);
             }
         }
-        Err(_) => {}
+        ("session-end", _) => {}
+        (other, _) => return Err(format!("unsupported lifecycle event `{other}`")),
     }
-    response
+    Ok(response)
 }
 
 fn lifecycle_output_protocol(
     host: &str,
 ) -> Result<ags_host_integration::LifecycleOutputProtocol, String> {
     ags_host_integration::platform_spec(host)
-        .and_then(|spec| spec.lifecycle_output)
+        .and_then(|spec| spec.lifecycle.map(|lifecycle| lifecycle.output))
         .ok_or_else(|| format!("host `{host}` has no lifecycle output protocol"))
-}
-
-fn text_content(value: &Value) -> String {
-    match value {
-        Value::String(text) => text.clone(),
-        Value::Array(parts) => parts
-            .iter()
-            .filter_map(|part| {
-                part.as_str()
-                    .map(str::to_string)
-                    .or_else(|| part.get("text").and_then(Value::as_str).map(str::to_string))
-            })
-            .collect::<Vec<_>>()
-            .join("\n"),
-        _ => String::new(),
-    }
 }
 
 fn read_payload(path: &str) -> Result<Value, String> {
@@ -208,82 +136,148 @@ fn read_payload(path: &str) -> Result<Value, String> {
     serde_json::from_slice(&bytes).map_err(|error| format!("invalid hook JSON: {error}"))
 }
 
-fn bounded_read(path: &Path, limit: usize) -> Result<Option<String>, String> {
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return Ok(None);
-    };
-    let bounded = content.chars().take(limit).collect::<String>();
-    Ok(Some(if content.chars().count() > limit {
-        format!("{bounded}\n\n[truncated by AGS at {limit} characters]")
-    } else {
-        bounded
-    }))
-}
-
-fn memory_dir(target: &Path) -> PathBuf {
-    ags_host_integration::project_memory_dir_at(target, &ags_platform::home_dir_or_temp())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ags_host_integration::{lifecycle_specs, LifecycleOutputProtocol, AGENT_PLATFORM_SPECS};
+    use ags_lifecycle::workspace_lifecycle::LifecycleDecision;
 
-    #[test]
-    fn all_hosts_share_the_same_stop_guard_contract() {
-        let payload = json!({"last_assistant_message": "<invoke name='x'>"});
-        for host in ["codex", "claude-code", "cursor", "omp"] {
-            assert_eq!(stop_guard(host, &payload)["status"], "blocked");
-        }
-        assert!(stop_guard("cursor", &payload)["followup_message"]
-            .as_str()
-            .unwrap()
-            .contains("raw tool-call"));
-        assert!(
-            stop_guard("codex", &payload)["hookSpecificOutput"]["additionalContext"]
-                .as_str()
-                .unwrap()
-                .contains("raw tool-call")
-        );
-    }
-
-    #[test]
-    fn cursor_and_claude_compatible_hosts_use_their_native_output_envelopes() {
-        let root = tempfile::tempdir().unwrap();
-        let cursor = session_start("cursor", root.path()).unwrap();
-        assert!(cursor.get("additional_context").is_some());
-        assert!(cursor.get("hookSpecificOutput").is_none());
-
-        for host in ["codex", "claude-code", "omp"] {
-            let output = session_start(host, root.path()).unwrap();
-            assert!(output.get("additional_context").is_none());
-            assert_eq!(
-                output["hookSpecificOutput"]["hookEventName"],
-                "SessionStart"
-            );
+    fn decision(
+        host: &str,
+        event: &str,
+        status: &str,
+        additional_context: Option<&str>,
+    ) -> LifecycleDecision {
+        LifecycleDecision {
+            schema_version: "test-lifecycle-schema".to_string(),
+            workspace_identity: "workspace-identity".to_string(),
+            host: host.to_string(),
+            host_session_id: "host-session".to_string(),
+            event: event.to_string(),
+            event_id: "event-id".to_string(),
+            status: status.to_string(),
+            duplicate: false,
+            additional_context: additional_context.map(str::to_string),
+            reason: None,
+            archive: None,
         }
     }
 
     #[test]
-    fn all_hosts_share_start_and_safe_idempotent_session_end_contract() {
-        for host in ["codex", "claude-code", "cursor", "omp"] {
-            let root = tempfile::tempdir().unwrap();
-            let start = session_start(host, root.path()).unwrap();
-            assert_eq!(start["schema_version"], "0.3.6-host-lifecycle");
-            assert_eq!(start["host"], host);
-            assert_eq!(start["event"], "session-start");
+    fn production_formatter_emits_each_registered_hosts_native_start_schema() {
+        for lifecycle in lifecycle_specs() {
+            let output = format_lifecycle_decision(
+                lifecycle.host_id,
+                &decision(
+                    lifecycle.host_id,
+                    "session-start",
+                    "ready",
+                    Some("memory context"),
+                ),
+            )
+            .unwrap();
 
-            let payload = json!({
-                "session_id": format!("{host}-session"),
-                "messages": [{"role": "user", "content": "## 任务卡"}]
-            });
-            let first = session_end(host, root.path(), &payload).unwrap();
-            let second = session_end(host, root.path(), &payload).unwrap();
-            assert_eq!(first, second);
-            assert_eq!(first["status"], "skipped");
-            assert!(first["reason"]
-                .as_str()
-                .unwrap()
-                .contains("inference is forbidden"));
+            assert_eq!(output["host"], lifecycle.host_id, "{lifecycle:?}");
+            assert_eq!(output["schema_version"], "test-lifecycle-schema");
+            match lifecycle.output {
+                LifecycleOutputProtocol::ClaudeCompatible | LifecycleOutputProtocol::CodeBuddy => {
+                    assert_eq!(output["suppressOutput"], true, "{lifecycle:?}");
+                    assert_eq!(
+                        output["hookSpecificOutput"]["hookEventName"], "SessionStart",
+                        "{lifecycle:?}"
+                    );
+                    assert_eq!(
+                        output["hookSpecificOutput"]["additionalContext"], "memory context",
+                        "{lifecycle:?}"
+                    );
+                    assert!(output.get("additional_context").is_none(), "{lifecycle:?}");
+                }
+                LifecycleOutputProtocol::Cursor => {
+                    assert_eq!(
+                        output["additional_context"], "memory context",
+                        "{lifecycle:?}"
+                    );
+                    assert!(output.get("hookSpecificOutput").is_none(), "{lifecycle:?}");
+                }
+            }
         }
+    }
+
+    #[test]
+    fn production_formatter_omits_clear_stop_objects_and_preserves_blocking_context() {
+        for lifecycle in lifecycle_specs() {
+            let clear = format_lifecycle_decision(
+                lifecycle.host_id,
+                &decision(lifecycle.host_id, "stop-guard", "clear", None),
+            )
+            .unwrap();
+            assert_eq!(clear["status"], "clear", "{lifecycle:?}");
+            assert!(clear.get("hookSpecificOutput").is_none(), "{lifecycle:?}");
+            assert!(clear.get("followup_message").is_none(), "{lifecycle:?}");
+            if lifecycle.output == LifecycleOutputProtocol::CodeBuddy {
+                assert_eq!(clear["continue"], true, "{lifecycle:?}");
+                assert_eq!(clear["suppressOutput"], true, "{lifecycle:?}");
+            }
+
+            let blocked = format_lifecycle_decision(
+                lifecycle.host_id,
+                &decision(
+                    lifecycle.host_id,
+                    "stop-guard",
+                    "blocked",
+                    Some("blocking context"),
+                ),
+            )
+            .unwrap();
+            match lifecycle.output {
+                LifecycleOutputProtocol::ClaudeCompatible => {
+                    assert_eq!(blocked["suppressOutput"], true, "{lifecycle:?}");
+                    assert_eq!(
+                        blocked["hookSpecificOutput"]["hookEventName"], "Stop",
+                        "{lifecycle:?}"
+                    );
+                    assert_eq!(
+                        blocked["hookSpecificOutput"]["additionalContext"], "blocking context",
+                        "{lifecycle:?}"
+                    );
+                }
+                LifecycleOutputProtocol::CodeBuddy => {
+                    assert_eq!(blocked["continue"], false, "{lifecycle:?}");
+                    assert_eq!(blocked["reason"], "blocking context", "{lifecycle:?}");
+                    assert!(blocked.get("hookSpecificOutput").is_none(), "{lifecycle:?}");
+                }
+                LifecycleOutputProtocol::Cursor => {
+                    assert_eq!(
+                        blocked["followup_message"], "blocking context",
+                        "{lifecycle:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn production_formatter_rejects_hosts_without_lifecycle_and_unknown_events() {
+        let unsupported = AGENT_PLATFORM_SPECS
+            .iter()
+            .find(|spec| spec.lifecycle.is_none())
+            .expect("registry contains an advisory-only host");
+        assert!(format_lifecycle_decision(
+            unsupported.id,
+            &decision(unsupported.id, "session-start", "ready", None)
+        )
+        .unwrap_err()
+        .contains("no lifecycle output protocol"));
+
+        let supported = AGENT_PLATFORM_SPECS
+            .iter()
+            .find(|spec| spec.lifecycle.is_some())
+            .unwrap();
+        assert!(format_lifecycle_decision(
+            supported.id,
+            &decision(supported.id, "round-ended", "clear", None)
+        )
+        .unwrap_err()
+        .contains("unsupported lifecycle event"));
     }
 }

@@ -13,30 +13,6 @@ fn compose_doctor_report(
     report
 }
 
-fn capability_routing_report(target: &Path) -> ags_verification::doctor::HealthReport {
-    let mut report = ags_verification::doctor::HealthReport::new("capability-routing");
-    let explicit = std::env::var_os("AGS_SOURCE_ROOT").map(std::path::PathBuf::from);
-    match crate::context::resolve_capability_authority_root(
-        target,
-        &ags_capability_governance::locate_runtime_home(),
-        explicit,
-    ) {
-        Ok(authority_root) => {
-            let ctx = ags_capability_governance::skill_body::console::ConsoleContext::system(
-                authority_root,
-            );
-            let verify = ags_capability_governance::skill_body::console::verify_host(&ctx, "codex");
-            report.add(ags_verification::doctor::third_party_capability_routing_finding(&verify));
-        }
-        Err(detail) => report.add(ags_verification::doctor::Finding::fail(
-            "third-party-capability-routing",
-            "capability authority root could not be resolved",
-            detail,
-        )),
-    }
-    report
-}
-
 fn host_entry_semantic_report(core_path: &Path) -> ags_verification::doctor::HealthReport {
     let mut report = ags_verification::doctor::HealthReport::new("host-entry-semantics");
     let core = match std::fs::read_to_string(core_path) {
@@ -132,16 +108,22 @@ fn host_entry_semantic_report(core_path: &Path) -> ags_verification::doctor::Hea
 
 /// Dispatch the current `doctor` command.
 pub(crate) fn cmd_doctor(format: &str, repair: bool, dry_run: bool, target: &Path) {
+    let canonical_target = ags_platform::canonical_workspace_root(target)
+        .or_else(|_| {
+            target
+                .canonicalize()
+                .map_err(|error| format!("cannot canonicalize Doctor target: {error}"))
+        })
+        .unwrap_or_else(|_| target.to_path_buf());
+    let target = canonical_target.as_path();
     if !repair {
         // Read-only diagnosis. Doctor is the global-pipeline diagnostic authority;
         // it also surfaces the managed-projects registry (global scan).
         let runtime_home = default_private_runtime_home();
-        let kernel = crate::setup::private_install_health_report(&runtime_home, false);
+        let kernel = crate::setup::private_install_health_report(&runtime_home, false, false);
         let project = ags_verification::doctor::run(target);
-        let capability = capability_routing_report(target);
         let host_entry = host_entry_semantic_report(&home_dir().join(".agents/rules/ags-core.md"));
         let mut report = compose_doctor_report(kernel, project);
-        report.findings.extend(capability.findings);
         report.findings.extend(host_entry.findings);
         let reg = managed_projects::load(&managed_projects::registry_path(
             &default_private_runtime_home(),

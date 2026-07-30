@@ -16,7 +16,7 @@ mod verify;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use ags_host_integration::{claude_mcp_list_line, command_in_path};
+use ags_host_integration::{claude_mcp_list_line_at, command_in_path};
 use serde::{Deserialize, Serialize};
 
 use apply::{add_claude_registration_checks, write_install_file};
@@ -29,9 +29,9 @@ use plan::{
 };
 use recommendations::{render_third_party_recommendations_text, third_party_recommendations_json};
 
-pub use memory::{apply_host_memory_adapter, MergeOutcome};
+pub use memory::{apply_host_memory_adapter, lifecycle_migration_preview};
 
-pub const PRIVATE_INSTALL_SCHEMA: &str = "0.3.6-private-install";
+pub const PRIVATE_INSTALL_SCHEMA: &str = "0.4.0-private-install";
 const AGS_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -90,6 +90,12 @@ pub struct SetupFinding {
     pub severity: SetupSeverity,
     pub message: String,
     pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remediation: Option<String>,
 }
 
 impl SetupFinding {
@@ -100,6 +106,9 @@ impl SetupFinding {
             severity: SetupSeverity::Info,
             message: message.into(),
             detail: None,
+            expected: None,
+            observed: None,
+            remediation: None,
         }
     }
 
@@ -114,6 +123,9 @@ impl SetupFinding {
             severity: SetupSeverity::Fail,
             message: message.into(),
             detail: Some(detail.into()),
+            expected: None,
+            observed: None,
+            remediation: None,
         }
     }
 
@@ -128,6 +140,9 @@ impl SetupFinding {
             severity: SetupSeverity::Warn,
             message: message.into(),
             detail: Some(detail.into()),
+            expected: None,
+            observed: None,
+            remediation: None,
         }
     }
 
@@ -142,7 +157,22 @@ impl SetupFinding {
             severity: SetupSeverity::Info,
             message: reason.into(),
             detail: None,
+            expected: None,
+            observed: None,
+            remediation: None,
         }
+    }
+
+    pub fn with_conformance(
+        mut self,
+        expected: impl Into<String>,
+        observed: impl Into<String>,
+        remediation: impl Into<String>,
+    ) -> Self {
+        self.expected = Some(expected.into());
+        self.observed = Some(observed.into());
+        self.remediation = Some(remediation.into());
+        self
     }
 }
 
@@ -345,8 +375,9 @@ pub fn private_install_health_report(
     target: &Path,
     home: &Path,
     _include_optional_extensions: bool,
+    run_mcp_smoke: bool,
 ) -> crate::setup::SetupReport {
-    verify::private_install_health_report(target, home)
+    verify::private_install_health_report(target, home, run_mcp_smoke)
 }
 
 pub fn render_memory_capture_plan(

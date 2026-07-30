@@ -1,8 +1,14 @@
 import { spawnSync } from "node:child_process";
 
 let startupContext;
+const canonicalWorkspace = __AGS_CANONICAL_WORKSPACE__;
 
 function lifecycle(event, ctx, payload = {}) {
+  const contextSessionId = ctx.sessionManager?.getSessionId?.();
+  const lifecyclePayload = {
+    ...payload,
+    session_id: contextSessionId || payload.session_id || "",
+  };
   const result = spawnSync(
     "ags",
     [
@@ -13,10 +19,10 @@ function lifecycle(event, ctx, payload = {}) {
       "--host",
       "omp",
       "--target",
-      ctx.cwd,
+      canonicalWorkspace,
     ],
     {
-      input: JSON.stringify(payload),
+      input: JSON.stringify(lifecyclePayload),
       encoding: "utf8",
       timeout: 3000,
     },
@@ -46,16 +52,9 @@ export default function agsMemoryLifecycle(pi) {
     const guardContext = lifecycle("stop-guard", ctx, event)
       ?.hookSpecificOutput?.additionalContext;
     if (guardContext) startupContext = guardContext;
-    lifecycle("session-end", ctx, {
-      ...event,
-      session_id: ctx.sessionManager?.getSessionId?.() ?? "",
-    });
   });
 
   pi.on("session_shutdown", async (event, ctx) => {
-    lifecycle("session-end", ctx, {
-      ...event,
-      session_id: ctx.sessionManager?.getSessionId?.() ?? "",
-    });
+    lifecycle("session-end", ctx, event);
   });
 }

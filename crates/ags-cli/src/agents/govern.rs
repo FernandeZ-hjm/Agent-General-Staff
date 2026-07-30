@@ -5,7 +5,12 @@ use ags_host_integration::{agents_governance_chain, ags_mcp_tool_surface};
 /// `ags agents govern` — plan AGS MCP onboarding and, only with `--apply`,
 /// install the selected host's AGS-owned native memory lifecycle adapter.
 /// External MCP registrars remain advice-only.
-pub(in crate::agents) fn cmd_agents_govern(agent: Option<&str>, apply: bool, format: &str) {
+pub(in crate::agents) fn cmd_agents_govern(
+    agent: Option<&str>,
+    workspace: &std::path::Path,
+    apply: bool,
+    format: &str,
+) {
     let home = home_dir();
     let plan = cross_platform_init_plan(&home, &|c| ags_platform::is_on_path(c));
     let targets: Vec<&AgentPlatformStatus> = plan
@@ -18,25 +23,32 @@ pub(in crate::agents) fn cmd_agents_govern(agent: Option<&str>, apply: bool, for
         .collect();
     let chain = agents_governance_chain();
     let tool_surface = ags_mcp_tool_surface();
+    let workspace = ags_platform::canonical_workspace_root(workspace).unwrap_or_else(|error| {
+        eprintln!("ags agents govern: {error}");
+        std::process::exit(1);
+    });
     let mut apply_report = ags_verification::doctor::HealthReport::new("agents-govern-apply");
     if apply {
-        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         for target in &targets {
             if ags_host_integration::platform_spec(&target.id)
-                .and_then(|spec| spec.memory_protocol)
+                .and_then(|spec| spec.lifecycle)
                 .is_some()
             {
                 ags_lifecycle::setup::apply_host_memory_adapter(
                     &mut apply_report,
                     &home,
-                    &cwd,
+                    &workspace,
                     &target.id,
                 );
             } else if agent.is_some() {
+                let supported = ags_host_integration::lifecycle_specs()
+                    .map(|spec| spec.host_id)
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 apply_report.add(ags_verification::doctor::Finding::fail(
                     "agents-memory-lifecycle-unsupported",
                     format!("no native memory lifecycle adapter for {}", target.id),
-                    "Supported adapters: claude-code, codex, cursor, omp.",
+                    format!("Supported adapters: {supported}."),
                 ));
             }
         }
@@ -50,8 +62,14 @@ pub(in crate::agents) fn cmd_agents_govern(agent: Option<&str>, apply: bool, for
             .collect::<Vec<_>>()
             .join(",");
         let verification_command = match agent {
-            Some(host) => format!("ags agents govern --agent {host} --apply"),
-            None => "ags agents govern --apply".to_string(),
+            Some(host) => format!(
+                "ags agents govern --agent {host} --target '{}' --apply",
+                workspace.display()
+            ),
+            None => format!(
+                "ags agents govern --target '{}' --apply",
+                workspace.display()
+            ),
         };
         let advised = targets
             .iter()
@@ -97,6 +115,8 @@ pub(in crate::agents) fn cmd_agents_govern(agent: Option<&str>, apply: bool, for
     let host_plans: Vec<_> = targets
         .iter()
         .map(|p| {
+            let migration_preview =
+                ags_lifecycle::setup::lifecycle_migration_preview(&home, &workspace, &p.id).ok();
             serde_json::json!({
                 "host": p.id,
                 "display": p.display,
@@ -105,11 +125,13 @@ pub(in crate::agents) fn cmd_agents_govern(agent: Option<&str>, apply: bool, for
                 "registers_server": "ags",
                 "mandatory_first_tool": "ags_preflight",
                 "mcp_tools": tool_surface,
+                "lifecycle_migration_preview": migration_preview,
             })
         })
         .collect();
     let output = serde_json::json!({
         "command": "agents govern",
+        "target": workspace,
         "mode": if apply { "apply" } else { "dry-run" },
         "apply_requested": apply,
         "apply_status": if apply { if apply_report.passed() { "memory-adapters-applied" } else { "memory-adapter-apply-failed" } } else { "advised-only" },
@@ -123,7 +145,7 @@ pub(in crate::agents) fn cmd_agents_govern(agent: Option<&str>, apply: bool, for
         "hosts": host_plans,
         "memory_adapter_report": if apply { serde_json::to_value(&apply_report).expect("serializable doctor report") } else { serde_json::Value::Null },
         "receipt": receipt_path.as_ref().map(|path| path.display().to_string()),
-        "note": "MCP registration remains advice-only. --apply writes only AGS-owned Claude/Codex/Cursor hooks or the OMP extension for the selected supported host.",
+        "note": "MCP registration remains advice-only. --apply writes only AGS-owned workspace lifecycle adapters for Claude Code, Codex, Cursor, CodeBuddy, or OMP.",
     });
     crate::output::emit(format, &output, || {
         let mut lines = vec![format!(
@@ -144,6 +166,17 @@ pub(in crate::agents) fn cmd_agents_govern(agent: Option<&str>, apply: bool, for
             lines.push("      server: ags".into());
             lines.push("      mandatory first tool: ags_preflight".into());
             lines.push(format!("      tools: {}", tool_surface.join(", ")));
+            if let Ok(preview) =
+                ags_lifecycle::setup::lifecycle_migration_preview(&home, &workspace, &p.id)
+            {
+                lines.push(format!(
+                    "      lifecycle: {} managed workspace(s), global AGS entry={}, removal ready after apply={}",
+                    preview.managed_workspaces.len(),
+                    preview.global_ags_owned_entry_present,
+                    preview.removal_ready_after_apply
+                ));
+                lines.push(format!("      backup if removed: {}", preview.backup_path));
+            }
         }
         lines.push(
             "\nGovernance chain (success = host can call ags_preflight, then flow through):".into(),
@@ -160,7 +193,7 @@ pub(in crate::agents) fn cmd_agents_govern(agent: Option<&str>, apply: bool, for
                 lines.push(ags_evidence::render_action_receipt_summary_line(path));
             }
         }
-        lines.push("\nNOTE: MCP registration is advice-only. --apply changes only AGS-owned native memory lifecycle wiring.".into());
+        lines.push("\nNOTE: MCP registration is advice-only. The dry-run includes managed-workspace migration readiness; --apply changes only AGS-owned native memory lifecycle wiring.".into());
         lines.join("\n")
     });
     if apply && !apply_report.passed() {

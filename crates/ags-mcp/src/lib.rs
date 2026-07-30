@@ -33,7 +33,9 @@ mod server;
 mod tools;
 
 pub use ags_session::{
-    restart_workspace_service, run_stdio_adapter, workspace_service_status, WorkspaceServiceStatus,
+    inspect_existing_workspace_service, restart_workspace_service, run_stdio_adapter,
+    workspace_service_status, WorkspaceServiceInspection, WorkspaceServiceStatus,
+    WORKSPACE_DAEMON_STATUS_SCHEMA_VERSION,
 };
 
 use std::io::BufReader;
@@ -41,7 +43,20 @@ use std::net::TcpStream;
 use std::path::Path;
 use std::sync::Arc;
 
-struct McpSessionHandler;
+struct McpSessionHandler {
+    lifecycle: ags_lifecycle::workspace_lifecycle::LifecycleKernel,
+}
+
+impl McpSessionHandler {
+    fn new(workspace: &Path) -> Result<Self, String> {
+        Ok(Self {
+            lifecycle: ags_lifecycle::workspace_lifecycle::LifecycleKernel::new(
+                workspace.to_path_buf(),
+                ags_platform::home_dir_or_temp(),
+            )?,
+        })
+    }
+}
 
 impl ags_session::WorkspaceSessionHandler for McpSessionHandler {
     fn run(
@@ -60,8 +75,34 @@ impl ags_session::WorkspaceSessionHandler for McpSessionHandler {
             startup_executable_hash,
         );
     }
+
+    fn run_workspace_command(
+        &self,
+        kind: &str,
+        payload: serde_json::Value,
+        workspace: Arc<ags_session::WorkspaceState>,
+    ) -> Result<serde_json::Value, String> {
+        if kind == "status" {
+            return serde_json::to_value(ags_session::WorkspaceServiceInspection {
+                schema_version: ags_session::WORKSPACE_DAEMON_STATUS_SCHEMA_VERSION.to_string(),
+                canonical_workspace: workspace.root().to_string_lossy().to_string(),
+                workspace_identity: workspace.instance_key().to_string(),
+                loaded_snapshot_hashes: workspace.loaded_snapshot_hashes()?,
+            })
+            .map_err(|error| format!("workspace daemon status encode failed: {error}"));
+        }
+        if kind != "lifecycle" {
+            return Err(format!("unsupported workspace command `{kind}`"));
+        }
+        let envelope: ags_lifecycle::workspace_lifecycle::LifecycleEnvelope =
+            serde_json::from_value(payload)
+                .map_err(|error| format!("workspace lifecycle envelope invalid: {error}"))?;
+        let decision = self.lifecycle.process(envelope)?;
+        serde_json::to_value(decision)
+            .map_err(|error| format!("workspace lifecycle decision encode failed: {error}"))
+    }
 }
 
 pub fn run_workspace_daemon(workspace: &Path) -> Result<(), String> {
-    ags_session::run_workspace_daemon(workspace, Arc::new(McpSessionHandler))
+    ags_session::run_workspace_daemon(workspace, Arc::new(McpSessionHandler::new(workspace)?))
 }

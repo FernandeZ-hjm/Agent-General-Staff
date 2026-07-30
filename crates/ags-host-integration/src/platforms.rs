@@ -20,29 +20,122 @@ pub enum McpProbeProtocol {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MemoryProtocol {
-    ClaudeCommandHooks,
-    CodexCommandHooks,
+pub enum LifecycleOutputProtocol {
+    ClaudeCompatible,
+    CodeBuddy,
+    Cursor,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LifecycleProjectionFamily {
+    CommandHooks,
     CursorCommandHooks,
     OmpExtension,
 }
 
-impl MemoryProtocol {
-    pub fn adapter_id(self) -> &'static str {
-        match self {
-            Self::ClaudeCommandHooks => "claude-command-hooks",
-            Self::CodexCommandHooks => "codex-command-hooks",
-            Self::CursorCommandHooks => "cursor-command-hooks",
-            Self::OmpExtension => "omp-extension",
-        }
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LifecycleNativeEvents {
+    pub session_start: &'static str,
+    pub stop_guard: &'static str,
+    pub session_end: &'static str,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LifecycleOutputProtocol {
-    ClaudeCompatible,
-    Cursor,
+pub struct HostLifecycleSpec {
+    pub host_id: &'static str,
+    pub adapter_id: &'static str,
+    pub workspace_config: &'static str,
+    pub alternate_workspace_configs: &'static [&'static str],
+    pub global_config: &'static str,
+    pub projection_family: LifecycleProjectionFamily,
+    pub native_events: LifecycleNativeEvents,
+    pub output: LifecycleOutputProtocol,
 }
+
+impl HostLifecycleSpec {
+    pub fn workspace_config_path(self, workspace: &Path) -> PathBuf {
+        workspace.join(self.workspace_config)
+    }
+
+    pub fn global_config_path(self, home: &Path) -> PathBuf {
+        home.join(self.global_config)
+    }
+}
+
+const CLAUDE_LIFECYCLE: HostLifecycleSpec = HostLifecycleSpec {
+    host_id: "claude-code",
+    adapter_id: "claude-command-hooks",
+    workspace_config: ".claude/settings.local.json",
+    alternate_workspace_configs: &[".claude/settings.json"],
+    global_config: ".claude/settings.json",
+    projection_family: LifecycleProjectionFamily::CommandHooks,
+    native_events: LifecycleNativeEvents {
+        session_start: "SessionStart",
+        stop_guard: "Stop",
+        session_end: "SessionEnd",
+    },
+    output: LifecycleOutputProtocol::ClaudeCompatible,
+};
+
+const CODEX_LIFECYCLE: HostLifecycleSpec = HostLifecycleSpec {
+    host_id: "codex",
+    adapter_id: "codex-command-hooks",
+    workspace_config: ".codex/hooks.json",
+    alternate_workspace_configs: &[],
+    global_config: ".codex/hooks.json",
+    projection_family: LifecycleProjectionFamily::CommandHooks,
+    native_events: LifecycleNativeEvents {
+        session_start: "SessionStart",
+        stop_guard: "Stop",
+        session_end: "SessionEnd",
+    },
+    output: LifecycleOutputProtocol::ClaudeCompatible,
+};
+
+const CURSOR_LIFECYCLE: HostLifecycleSpec = HostLifecycleSpec {
+    host_id: "cursor",
+    adapter_id: "cursor-command-hooks",
+    workspace_config: ".cursor/hooks.json",
+    alternate_workspace_configs: &[],
+    global_config: ".cursor/hooks.json",
+    projection_family: LifecycleProjectionFamily::CursorCommandHooks,
+    native_events: LifecycleNativeEvents {
+        session_start: "sessionStart",
+        stop_guard: "stop",
+        session_end: "sessionEnd",
+    },
+    output: LifecycleOutputProtocol::Cursor,
+};
+
+const CODEBUDDY_LIFECYCLE: HostLifecycleSpec = HostLifecycleSpec {
+    host_id: "codebuddy-code",
+    adapter_id: "codebuddy-command-hooks",
+    workspace_config: ".codebuddy/settings.local.json",
+    alternate_workspace_configs: &[],
+    global_config: ".codebuddy/settings.json",
+    projection_family: LifecycleProjectionFamily::CommandHooks,
+    native_events: LifecycleNativeEvents {
+        session_start: "SessionStart",
+        stop_guard: "Stop",
+        session_end: "SessionEnd",
+    },
+    output: LifecycleOutputProtocol::CodeBuddy,
+};
+
+const OMP_LIFECYCLE: HostLifecycleSpec = HostLifecycleSpec {
+    host_id: "omp",
+    adapter_id: "omp-extension",
+    workspace_config: ".omp/extensions/ags-lifecycle.js",
+    alternate_workspace_configs: &[],
+    global_config: ".omp/agent/extensions/ags-memory-lifecycle.js",
+    projection_family: LifecycleProjectionFamily::OmpExtension,
+    native_events: LifecycleNativeEvents {
+        session_start: "session_start",
+        stop_guard: "agent_settled",
+        session_end: "session_shutdown",
+    },
+    output: LifecycleOutputProtocol::ClaudeCompatible,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct McpProbeSpec {
@@ -68,8 +161,7 @@ pub struct AgentPlatformSpec {
     pub loads_codex_plugin_skills: bool,
     pub mcp_probe: Option<McpProbeSpec>,
     pub mcp_registrar: Option<&'static str>,
-    pub memory_protocol: Option<MemoryProtocol>,
-    pub lifecycle_output: Option<LifecycleOutputProtocol>,
+    pub lifecycle: Option<HostLifecycleSpec>,
     pub verify_supported: bool,
 }
 
@@ -94,8 +186,7 @@ pub const AGENT_PLATFORM_SPECS: &[AgentPlatformSpec] = &[
             timeout_ms: 10_000,
         }),
         mcp_registrar: Some("claude"),
-        memory_protocol: Some(MemoryProtocol::ClaudeCommandHooks),
-        lifecycle_output: Some(LifecycleOutputProtocol::ClaudeCompatible),
+        lifecycle: Some(CLAUDE_LIFECYCLE),
         verify_supported: true,
     },
     AgentPlatformSpec {
@@ -118,8 +209,7 @@ pub const AGENT_PLATFORM_SPECS: &[AgentPlatformSpec] = &[
             timeout_ms: 10_000,
         }),
         mcp_registrar: Some("codex"),
-        memory_protocol: Some(MemoryProtocol::CodexCommandHooks),
-        lifecycle_output: Some(LifecycleOutputProtocol::ClaudeCompatible),
+        lifecycle: Some(CODEX_LIFECYCLE),
         verify_supported: true,
     },
     AgentPlatformSpec {
@@ -144,8 +234,7 @@ pub const AGENT_PLATFORM_SPECS: &[AgentPlatformSpec] = &[
             timeout_ms: 10_000,
         }),
         mcp_registrar: None,
-        memory_protocol: Some(MemoryProtocol::OmpExtension),
-        lifecycle_output: Some(LifecycleOutputProtocol::ClaudeCompatible),
+        lifecycle: Some(OMP_LIFECYCLE),
         verify_supported: true,
     },
     AgentPlatformSpec {
@@ -168,8 +257,7 @@ pub const AGENT_PLATFORM_SPECS: &[AgentPlatformSpec] = &[
             timeout_ms: 10_000,
         }),
         mcp_registrar: None,
-        memory_protocol: Some(MemoryProtocol::CursorCommandHooks),
-        lifecycle_output: Some(LifecycleOutputProtocol::Cursor),
+        lifecycle: Some(CURSOR_LIFECYCLE),
         verify_supported: true,
     },
     AgentPlatformSpec {
@@ -184,8 +272,7 @@ pub const AGENT_PLATFORM_SPECS: &[AgentPlatformSpec] = &[
         loads_codex_plugin_skills: false,
         mcp_probe: None,
         mcp_registrar: None,
-        memory_protocol: None,
-        lifecycle_output: None,
+        lifecycle: None,
         verify_supported: false,
     },
     AgentPlatformSpec {
@@ -194,20 +281,33 @@ pub const AGENT_PLATFORM_SPECS: &[AgentPlatformSpec] = &[
         cli_names: &["codebuddy", "codebuddy-code"],
         config_subdirs: &[".codebuddy"],
         app_bundles: &["CodeBuddy CN.app", "CodeBuddy Code.app", "CodeBuddy.app"],
-        mcp_host_command: "register AGS MCP in CodeBuddy-Code host config (exposes ags_preflight / ags_agent_instructions / ags_task_validate / ags_policy_resolve); AGS never runs the registrar",
+        mcp_host_command: "configure AGS in <project>/.mcp.json (or ~/.codebuddy/.mcp.json for user scope); verify with `codebuddy mcp list`",
         native_skill_subdir: Some(".codebuddy/skills"),
         loads_shared_agent_skills: false,
         loads_codex_plugin_skills: false,
-        mcp_probe: None,
+        mcp_probe: Some(McpProbeSpec {
+            protocol: McpProbeProtocol::DirectCommand,
+            program: "codebuddy",
+            args: &["mcp", "list"],
+            env: &[],
+            format: McpListFormat::Claude,
+            evidence_source: "`codebuddy mcp list`",
+            timeout_ms: 10_000,
+        }),
         mcp_registrar: None,
-        memory_protocol: None,
-        lifecycle_output: None,
-        verify_supported: false,
+        lifecycle: Some(CODEBUDDY_LIFECYCLE),
+        verify_supported: true,
     },
 ];
 
 pub fn platform_spec(id: &str) -> Option<&'static AgentPlatformSpec> {
     AGENT_PLATFORM_SPECS.iter().find(|spec| spec.id == id)
+}
+
+pub fn lifecycle_specs() -> impl Iterator<Item = HostLifecycleSpec> {
+    AGENT_PLATFORM_SPECS
+        .iter()
+        .filter_map(|platform| platform.lifecycle)
 }
 
 pub fn supported_skill_hosts() -> impl Iterator<Item = &'static str> {
@@ -367,7 +467,10 @@ mod tests {
             }
         );
         assert!(omp.mcp_registrar.is_none());
-        assert_eq!(omp.memory_protocol, Some(MemoryProtocol::OmpExtension));
+        assert_eq!(
+            omp.lifecycle.unwrap().projection_family,
+            LifecycleProjectionFamily::OmpExtension
+        );
     }
 
     #[test]
@@ -390,12 +493,12 @@ mod tests {
     fn cursor_uses_native_command_hooks_and_cursor_output_protocol() {
         let cursor = platform_spec("cursor").unwrap();
         assert_eq!(
-            cursor.memory_protocol,
-            Some(MemoryProtocol::CursorCommandHooks)
+            cursor.lifecycle.unwrap().projection_family,
+            LifecycleProjectionFamily::CursorCommandHooks
         );
         assert_eq!(
-            cursor.lifecycle_output,
-            Some(LifecycleOutputProtocol::Cursor)
+            cursor.lifecycle.unwrap().output,
+            LifecycleOutputProtocol::Cursor
         );
         assert!(cursor.verify_supported);
         let probe = cursor.mcp_probe.unwrap();
@@ -426,5 +529,31 @@ mod tests {
                 .detected
         );
         let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn codebuddy_uses_workspace_hooks_with_its_own_output_protocol() {
+        let workbuddy = platform_spec("workbuddy").unwrap();
+        let codebuddy = platform_spec("codebuddy-code").unwrap();
+        assert!(workbuddy.lifecycle.is_none());
+        assert!(!workbuddy.verify_supported);
+        assert_eq!(
+            codebuddy.lifecycle.unwrap().projection_family,
+            LifecycleProjectionFamily::CommandHooks
+        );
+        assert_eq!(
+            codebuddy.lifecycle.unwrap().output,
+            LifecycleOutputProtocol::CodeBuddy
+        );
+        assert_eq!(
+            codebuddy.lifecycle.unwrap().workspace_config,
+            ".codebuddy/settings.local.json"
+        );
+        let probe = codebuddy.mcp_probe.unwrap();
+        assert_eq!(probe.program, "codebuddy");
+        assert_eq!(probe.args, ["mcp", "list"]);
+        assert_eq!(probe.format, McpListFormat::Claude);
+        assert!(codebuddy.verify_supported);
+        assert!(codebuddy.mcp_host_command.contains("codebuddy mcp list"));
     }
 }

@@ -313,11 +313,17 @@ pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
         ("RELEASE_NOTES.md", format!("## Release {VERSION}")),
         (
             "WORKSPACE.md",
-            format!("Current product release: **v{VERSION}**."),
+            format!("Current source candidate: **v{VERSION}**."),
         ),
-        ("README.md", "latest release".to_string()),
-        ("README.md", format!("**v{VERSION}**")),
-        ("README_EN.md", format!("are **v{VERSION}**.")),
+        ("README.md", format!("当前源码发布候选是 **v{VERSION}**")),
+        (
+            "README_EN.md",
+            format!("current source candidate is **v{VERSION}**"),
+        ),
+        (
+            "docs/architecture.md",
+            format!("# AGS v{VERSION} Architecture"),
+        ),
         ("packages/ags-mcp/README.md", format!("`v{VERSION}` GitHub")),
         ("SECURITY.md", supported_series),
         (
@@ -409,7 +415,19 @@ pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
         ),
         (
             "crates/ags-lifecycle/src/setup/mod.rs",
-            "0.3.6-private-install",
+            "0.4.0-private-install",
+        ),
+        (
+            "crates/ags-lifecycle/src/workspace_lifecycle.rs",
+            "0.4.0-workspace-lifecycle",
+        ),
+        (
+            "crates/ags-lifecycle/src/workspace_lifecycle.rs",
+            "0.4.0-closure-pointer",
+        ),
+        (
+            "crates/ags-lifecycle/src/lifecycle_projection.rs",
+            "0.4.0-workspace-lifecycle-manifest",
         ),
         (
             "crates/ags-capability-governance/src/authority.rs",
@@ -437,8 +455,21 @@ pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
         ),
         (
             "crates/ags-verification/src/release_package.rs",
-            "0.3.6-release-plan",
+            "0.4.0-release-plan",
         ),
+        (
+            "crates/ags-verification/src/release_package.rs",
+            "0.4.0-runtime-stage",
+        ),
+        (
+            "crates/ags-session/src/workspace_service.rs",
+            "0.4.0-workspace-daemon-status",
+        ),
+        (
+            "crates/ags-session/src/workspace_service/upgrade_recycle.rs",
+            "0.4.0-workspace-service-status",
+        ),
+        ("crates/ags-mcp/src/protocol.rs", "2024-11-05"),
         (
             "crates/ags-evidence/src/receipt_model.rs",
             "0.3.6-task-receipt",
@@ -465,6 +496,14 @@ pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
             "{registry_source} is missing stable protocol marker ags-workspace-registry/1"
         )),
         Err(_) => errors.push(format!("{registry_source} is missing or unreadable")),
+    }
+    let wire_source = "crates/ags-session/src/workspace_service/transport_handshake.rs";
+    match std::fs::read_to_string(repo_root.join(wire_source)) {
+        Ok(content) if content.contains("ags-workspace-service/2") => {}
+        Ok(_) => errors.push(format!(
+            "{wire_source} is missing current protocol marker ags-workspace-service/2"
+        )),
+        Err(_) => errors.push(format!("{wire_source} is missing or unreadable")),
     }
 
     if errors.is_empty() {

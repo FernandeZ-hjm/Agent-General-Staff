@@ -4,7 +4,8 @@
 //! loading, transport authentication, and upgrade/recycle mechanics remain
 //! internal implementation modules.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::io::BufReader;
 use std::net::TcpStream;
 use std::path::Path;
@@ -16,6 +17,8 @@ mod transport_handshake;
 mod upgrade_recycle;
 
 pub use capability_snapshot::WorkspaceState;
+
+pub const WORKSPACE_DAEMON_STATUS_SCHEMA_VERSION: &str = "0.4.0-workspace-daemon-status";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceServiceStatus {
@@ -29,6 +32,18 @@ pub struct WorkspaceServiceStatus {
     pub current_binary: bool,
 }
 
+/// Authenticated, read-only state reported by an already-running workspace
+/// daemon. Unlike normal command dispatch, inspection never starts, upgrades,
+/// retires, or recycles a daemon.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceServiceInspection {
+    pub schema_version: String,
+    pub canonical_workspace: String,
+    pub workspace_identity: String,
+    pub loaded_snapshot_hashes: BTreeMap<String, String>,
+}
+
 /// Callback implemented by the protocol adapter for one authenticated client.
 pub trait WorkspaceSessionHandler: Send + Sync + 'static {
     fn run(
@@ -39,6 +54,25 @@ pub trait WorkspaceSessionHandler: Send + Sync + 'static {
         session_id: String,
         startup_executable_hash: String,
     );
+
+    /// Handle one authenticated, workspace-scoped command without opening an
+    /// MCP client session. Domain adapters own command semantics and state;
+    /// `ags-session` owns only authentication and transport.
+    fn run_workspace_command(
+        &self,
+        kind: &str,
+        payload: serde_json::Value,
+        workspace: Arc<WorkspaceState>,
+    ) -> Result<serde_json::Value, String> {
+        let _ = (payload, workspace);
+        Err(format!("unsupported workspace command `{kind}`"))
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct WorkspaceCommand {
+    pub kind: String,
+    pub payload: serde_json::Value,
 }
 
 pub fn run_stdio_adapter() -> Result<(), String> {
@@ -56,8 +90,22 @@ pub fn workspace_service_status(workspace: &Path) -> Result<WorkspaceServiceStat
     upgrade_recycle::workspace_service_status_impl(workspace)
 }
 
+pub fn inspect_existing_workspace_service(
+    workspace: &Path,
+) -> Result<Option<WorkspaceServiceInspection>, String> {
+    transport_handshake::inspect_existing_workspace_service_impl(workspace)
+}
+
 pub fn restart_workspace_service(workspace: &Path) -> Result<WorkspaceServiceStatus, String> {
     upgrade_recycle::restart_workspace_service_impl(workspace)
+}
+
+pub fn dispatch_workspace_command(
+    workspace: &Path,
+    kind: &str,
+    payload: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    transport_handshake::dispatch_workspace_command_impl(workspace, kind, payload)
 }
 
 #[cfg(test)]

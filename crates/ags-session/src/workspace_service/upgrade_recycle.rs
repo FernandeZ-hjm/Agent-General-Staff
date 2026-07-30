@@ -41,7 +41,7 @@ pub(super) fn workspace_service_status_impl(
     let current_hash = current_executable_hash()?;
     let Some(registry) = read_registry(&paths.registry)? else {
         return Ok(WorkspaceServiceStatus {
-            schema_version: "0.3.6-workspace-service-status".to_string(),
+            schema_version: "0.4.0-workspace-service-status".to_string(),
             workspace: workspace.display().to_string(),
             state: "stopped".to_string(),
             pid: None,
@@ -54,7 +54,7 @@ pub(super) fn workspace_service_status_impl(
     let alive = registry_matches_process(&registry);
     let reachable = alive && TcpStream::connect(&registry.endpoint).is_ok();
     Ok(WorkspaceServiceStatus {
-        schema_version: "0.3.6-workspace-service-status".to_string(),
+        schema_version: "0.4.0-workspace-service-status".to_string(),
         workspace: workspace.display().to_string(),
         state: if reachable { "running" } else { "stale" }.to_string(),
         pid: Some(registry.pid),
@@ -380,6 +380,31 @@ pub(super) fn connect_registered(
         }
         Err(error) => Err(format!(
             "workspace daemon pid {} is alive but endpoint {} is unreachable: {error}",
+            registry.pid, registry.endpoint
+        )),
+    }
+}
+
+/// Connect only to the daemon named by the existing registry. This inspection
+/// path deliberately performs no stale cleanup, upgrade, shutdown, or spawn.
+pub(super) fn connect_existing_read_only_at(
+    runtime_home: &Path,
+    workspace: &Path,
+) -> Result<Option<(TcpStream, WorkspaceRegistry)>, String> {
+    let paths = ServicePaths::new(runtime_home, workspace);
+    let Some(registry) = read_registry(&paths.registry)? else {
+        return Ok(None);
+    };
+    if registry.workspace != workspace || registry.instance_key != workspace_key(workspace) {
+        return Err("workspace daemon registry identity mismatch".to_string());
+    }
+    if registry.schema_version != REGISTRY_SCHEMA {
+        return Err("workspace daemon registry schema mismatch".to_string());
+    }
+    match TcpStream::connect(&registry.endpoint) {
+        Ok(stream) => Ok(Some((stream, registry))),
+        Err(error) => Err(format!(
+            "workspace daemon pid {} is registered but endpoint {} is unreachable: {error}",
             registry.pid, registry.endpoint
         )),
     }

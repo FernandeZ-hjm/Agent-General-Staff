@@ -10,10 +10,10 @@ Agent Governance Suite（AGS）是一个**多 Agent 开发治理控制面**。�
 授权、策略、能力快照、验证、回执和记忆闭环，但不负责调度 Agent 团队，也不是任务
 队列、并行执行器或多 Agent 协商运行时。
 
-本仓是 AGS 的公开发行版，采用 **GPL-3.0-only**。当前产品版本和 latest release
-是 **v0.3.8**。
+本仓是 AGS 的公开发行版，采用 **GPL-3.0-only**。
+当前源码发布候选是 **v0.4.0**；latest published release 仍是 **v0.3.8**。
 
-## v0.3.8 核心链路
+## v0.4.0 核心链路
 
 ```text
 用户请求
@@ -25,7 +25,7 @@ Agent Governance Suite（AGS）是一个**多 Agent 开发治理控制面**。�
   -> evidence / delivery closure
 ```
 
-- 自然语言只由 Codex、Claude Code、Cursor、OMP 等宿主解释。
+- 自然语言只由 Codex、Claude Code、Cursor、CodeBuddy-Code、OMP 等宿主解释。
 - `ags_route_request` 严格只读，不接收 raw request，也不做关键词或相似度回退。
 - `ags_apply_action` 是唯一 effectful MCP 工具，只消费服务端保存的一次性固定动作。
 - DirectResponse 与受治理目标互斥；否则最多一个精确 SkillTarget 和一个闭集
@@ -43,6 +43,7 @@ canonical workspace
        -> Codex client session
        -> Claude Code client session
        -> Cursor client session
+       -> CodeBuddy client session
        -> OMP client session
 ```
 
@@ -58,13 +59,13 @@ ags mcp serve --transport stdio
 
 ## 十二个主要 module
 
-v0.3.8 的 runtime workspace 只暴露十二个权威 Cargo package：
+v0.4.0 的 runtime workspace 只暴露十二个权威 Cargo package：
 
 | Module | 职责 |
 |---|---|
 | `ags-platform` | 跨平台路径、文件、进程、哈希和原子写入 |
 | `ags-workspace-facts` | canonical workspace、项目发现、协议审计和 preflight facts |
-| `ags-host-integration` | Codex、Claude Code、Cursor、OMP 宿主集成事实 |
+| `ags-host-integration` | Codex、Claude Code、Cursor、CodeBuddy-Code、OMP 宿主集成事实 |
 | `ags-capability-governance` | capability catalog、skill-body governance、精确解析和 snapshot |
 | `ags-task-contract` | 任务卡编译/校验、handoff contract、非执行型 launch preparation |
 | `ags-governance-decision` | typed proposal、policy、route 和 decision contracts |
@@ -78,7 +79,7 @@ v0.3.8 的 runtime workspace 只暴露十二个权威 Cargo package：
 原 `bootstrap-dry-run`、`capability-registry`、
 `delivery-report-validator`、`execution-policy`、`runner`、
 `skill-governance`、`suite-doctor`、`task-card-validator`、
-`workflow-sync-check` 的实现已收口到对应权威 module。0.3.8 只保留当前实际调用的
+`workflow-sync-check` 的实现已收口到对应权威 module。0.4.0 只保留当前实际调用的
 命令、wire/schema 和必要 re-export，不再保留旧命令或第二套 package authority。详见
 [WORKSPACE.md](WORKSPACE.md) 和 [docs/architecture.md](docs/architecture.md)。
 
@@ -86,11 +87,12 @@ v0.3.8 的 runtime workspace 只暴露十二个权威 Cargo package：
 
 | 宿主 | MCP / daemon | Skill/命令入口 | 原生记忆闭环 | 当前验证 |
 |---|---|---|---|---|
-| Codex | 支持 | 全局/项目 skills | SessionStart / SessionEnd adapter | 原生 MCP 登记探针 + MCP 进程 E2E |
-| Claude Code | 支持 | `/ags` 与 skills | SessionStart / Stop adapter | 原生 MCP 连接探针 + MCP 进程 E2E |
-| OMP | 支持；可复用 Codex 配置 | native/shared skills | OMP lifecycle extension | 原生 RPC 可发现性探针 + MCP 进程 E2E |
+| Codex | 支持 | 全局/项目 skills | SessionStart / Stop Guard / SessionEnd adapter | 原生 MCP 登记探针 + lifecycle/MCP 进程 E2E |
+| Claude Code | 支持 | `/ags` 与 skills | SessionStart / Stop Guard / SessionEnd adapter | 原生 MCP 连接探针 + lifecycle/MCP 进程 E2E |
+| OMP | 支持；可复用 Codex 配置 | native/shared skills | 三事件 OMP lifecycle extension | 原生 RPC 可发现性探针 + lifecycle/MCP 进程 E2E |
 | Cursor | 支持 | host/project skill projection | 原生 sessionStart / sessionEnd / stop hooks | `cursor-agent mcp list` 原生只读探针 + lifecycle/MCP 进程 E2E |
-| CodeBuddy-Code / WorkBuddy | MCP 接入 | setup 生成配置片段 | 尚无完整原生记忆闭环声明 | 初始化与静态/可见性验证 |
+| CodeBuddy-Code | 支持 | setup 生成配置片段 | SessionStart / Stop Guard / SessionEnd adapter | 原生 hook schema + lifecycle/MCP 进程 E2E |
+| WorkBuddy | MCP 接入 | setup 生成配置片段 | 尚未声明 lifecycle 支持 | 初始化与静态/可见性验证 |
 
 这里的 E2E 会启动真实 `ags` stdio adapter 和 workspace daemon，覆盖同工作区共享、
 跨项目隔离、重连、foreign lease 拒绝、snapshot rebind、idle recycle 和升级；它不是
@@ -105,8 +107,14 @@ hooks，也可通过 `cursor-agent mcp list` 只读验证注册；写入 Cursor 
   验证已经发生。
 - 没有任务队列、Agent scheduler、资源配额或多 Agent 协商。
 - MCP/CLI 等外部注册通常是 advice-only；AGS 不替用户执行第三方安装命令。
-- Codex、Claude Code、Cursor 与 OMP 共享同一 Rust lifecycle contract；宿主侧只做事件映射。
+- Codex、Claude Code、Cursor、CodeBuddy-Code 与 OMP 共享同一 Rust lifecycle
+  contract；宿主侧只做原生事件和输出 Schema 映射。
 - 公开版不携带私人 skill bodies、真实 memory/receipt/archive 或机器私有 runtime。
+
+`ags doctor` 同时检查运行健康和本地 current-version conformance。已启用宿主的
+runtime、daemon、MCP、snapshot 或 workspace lifecycle 投影发生漂移时退出 1；远端
+latest 检查仅提供建议，离线不阻断。迁移时先验证完整的工作区 adapter，再只删除
+AGS-owned 用户级 lifecycle Hook，用户自己的 Hook 和 MCP 配置保持不变。
 
 ## 安装
 
@@ -139,7 +147,7 @@ setup、preflight、resource read、route 和 apply 都不联网刷新。
 
 ## 稳定命令面
 
-v0.3.8 只承诺下列当前命令面。已删除的旧命令、alias 和 plan-only 假动作不再作为兼容合同。
+v0.4.0 只承诺下列当前命令面。已删除的旧命令、alias 和 plan-only 假动作不再作为兼容合同。
 
 ```bash
 ags setup --help
@@ -184,18 +192,19 @@ git diff --check
 ## 许可证与发布
 
 - 许可证：**GPL-3.0-only**
-- latest：**v0.3.8**
-- 当前合同：v0.3.8 human/Machine CLI
+- source candidate：**v0.4.0**
+- latest published：**v0.3.8**
+- 当前合同：v0.4.0 human/Machine CLI
 - 历史：v0.3.1 release notes 保留，不作为 current version
 
 发布顺序不可倒置：
 
 1. public-safe 源码进入 GitHub `main`，等待 exact commit CI 全绿；
-2. Cargo、npm、manifest、文档和 release notes 统一为 `0.3.8`；
-3. 维护者显式推送 annotated `v0.3.8` tag；
+2. Cargo、npm、manifest、文档和 release notes 统一为 `0.4.0`；
+3. 维护者显式推送 annotated `v0.4.0` tag；
 4. tag workflow 构建五个平台资产、`SHA256SUMS` 和 provenance；
 5. Release 资产齐全后，手动 dispatch npm OIDC trusted-publisher workflow，
-   发布 `@agent-governance-suite/mcp@0.3.8` 为 latest。
+   发布 `@agent-governance-suite/mcp@0.4.0` 为 latest。
 
 日常 CI、同步 guard 和 npm workflow 都不会替维护者创建 tag。
 

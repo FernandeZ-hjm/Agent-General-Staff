@@ -18,6 +18,7 @@ pub struct VerificationFacts {
     pub auth_boundary_clean: bool,
     pub skill_snapshot_current: bool,
     pub projects_drift: bool,
+    pub lifecycle_conformant: bool,
 }
 
 impl VerificationFacts {
@@ -26,6 +27,7 @@ impl VerificationFacts {
             || !self.auth_boundary_clean
             || !self.skill_snapshot_current
             || self.projects_drift
+            || !self.lifecycle_conformant
     }
 }
 
@@ -40,6 +42,7 @@ mod tests {
             auth_boundary_clean: true,
             skill_snapshot_current: true,
             projects_drift: false,
+            lifecycle_conformant: true,
         };
         assert!(!clean.drift());
         assert!(VerificationFacts {
@@ -59,6 +62,11 @@ mod tests {
         .drift());
         assert!(VerificationFacts {
             projects_drift: true,
+            ..clean
+        }
+        .drift());
+        assert!(VerificationFacts {
+            lifecycle_conformant: false,
             ..clean
         }
         .drift());
