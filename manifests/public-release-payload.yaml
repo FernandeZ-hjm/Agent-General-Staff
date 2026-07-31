@@ -226,13 +226,13 @@ public_rewrites:
   - path: crates/ags-lifecycle/src/setup/mod.rs
     target_sha256: "sha256:f4e6984de783d740f29382ea257ab458bd97f771144b1008260f5fe8879deb28"
   - path: crates/ags-lifecycle/src/setup/plan.rs
-    target_sha256: "sha256:c343f3a93770b342f2a6e5cd576944db9323c7ce4b5f84dce58519affd97a47a"
+    target_sha256: "sha256:58053e89d675506b310e47f62e9fd9f0d076a7002e9ac6da6c51fddf824bed2e"
   - path: crates/ags-lifecycle/src/setup/plan/tests.rs
     target_sha256: "sha256:113295be8495426f6f1bd835a0f3e782f2334b6066adb012116d0c60548283dd"
   - path: crates/ags-lifecycle/src/setup/templates.rs
     target_sha256: "sha256:1945f4b0b5070a1ac7553cc38f26a1aa5b397c11a4cdd3212ff0916edf0fa604"
   - path: crates/ags-lifecycle/src/setup/verify.rs
-    target_sha256: "sha256:dd3d34d561b9f8a0463c22237d1555dc9d79ecfb3bc7ea92c936ef0d9633a53d"
+    target_sha256: "sha256:63ad072a1c830d4b2cf90a22d45daa8d585d42fa23378394722ce68b9d9e8dc5"
   - path: crates/ags-mcp/src/lib.rs
     target_sha256: "sha256:a92d28857b363e5e75d244ca9340227274ed8027cd1fd6df6aa7024acaa7caae"
   - path: crates/ags-mcp/src/prompts.rs
@@ -262,7 +262,7 @@ public_rewrites:
   - path: governance/skill-sync.md
     target_sha256: "sha256:1e84280e2c0cfd7050bac89de35e216768d3a55496b89f8fdcc663173bde2570"
   - path: manifests/mcp-registry.yaml
-    target_sha256: "sha256:3536d20b0c483873a9f5d822fbe273d98d0e9ad7df57b8b836306472c1d8cec6"
+    target_sha256: "sha256:121140c81e68922475e711bad8e253888254abf2d9e4e2198c09193b9b2d414d"
   - path: manifests/skills-registry.yaml
     target_sha256: "sha256:f5a7d690aa3998a09aa2827f54414fd38171f22c8454bafc7a3eddc0fc9fba56"
   - path: manifests/suite.yaml
