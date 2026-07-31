@@ -26,7 +26,8 @@ pub(in crate::setup) fn private_install_plan(
     home: &Path,
 ) -> PrivateInstallPlan {
     let approved = super::approved_lifecycle_hosts(target).unwrap_or_default();
-    private_install_plan_with_hosts(source_root, target, home, &approved)
+    let selection_source = super::lifecycle_selection_source(target);
+    private_install_plan_with_hosts(source_root, target, home, &approved, &selection_source)
 }
 
 pub(in crate::setup) fn private_install_plan_with_hosts(
@@ -34,6 +35,7 @@ pub(in crate::setup) fn private_install_plan_with_hosts(
     target: &Path,
     home: &Path,
     approved_lifecycle_hosts: &[String],
+    lifecycle_selection_source: &str,
 ) -> PrivateInstallPlan {
     let ags_mcp_json = r#"{
   "mcpServers": {
@@ -160,7 +162,7 @@ profiles:
         },
         "lifecycle": {
             "approved_hosts": approved_lifecycle_hosts,
-            "selection_source": "setup"
+            "selection_source": lifecycle_selection_source
         },
         "host_snippets": serde_json::json!([
             "hosts/codex.config.snippet.toml",

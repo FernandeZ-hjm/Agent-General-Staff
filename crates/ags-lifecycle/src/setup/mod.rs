@@ -65,6 +65,20 @@ pub fn approved_lifecycle_hosts(target: &Path) -> Result<Vec<String>, String> {
     Ok(approved.into_iter().collect())
 }
 
+pub(in crate::setup) fn lifecycle_selection_source(target: &Path) -> String {
+    std::fs::read_to_string(target.join("install-manifest.json"))
+        .ok()
+        .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
+        .and_then(|value| {
+            value
+                .pointer("/lifecycle/selection_source")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .filter(|source| matches!(source.as_str(), "setup" | "agents-govern"))
+        .unwrap_or_else(|| "setup".to_string())
+}
+
 pub fn add_approved_lifecycle_hosts(
     target: &Path,
     hosts: &[String],
@@ -404,6 +418,7 @@ pub fn apply_private(request: PrivateApplyRequest<'_>) -> PrivateApplyResult {
             request.target,
             request.home,
             hosts,
+            "setup",
         ),
         None => private_install_plan(request.source_root, request.target, request.home),
     };

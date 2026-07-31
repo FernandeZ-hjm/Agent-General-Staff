@@ -214,7 +214,7 @@ public_rewrites:
   - path: crates/ags-lifecycle/src/init/managed_projects.rs
     target_sha256: "sha256:aed58d361e361ad1eefd30da8098fb726d67490581713a64e6dc3e20ffc9361d"
   - path: crates/ags-lifecycle/src/init/plan.rs
-    target_sha256: "sha256:3fb10811b5816e9bdc71db34b0415b069b3f4ef6e1afbfb388475a12801c2880"
+    target_sha256: "sha256:ebd8c6b21c43647172945cd1ae7c92bdb7515fc5f96cbad895a32377ec326de6"
   - path: crates/ags-lifecycle/src/update/apply.rs
     target_sha256: "sha256:c733d12569259a7ddfd6e9c17474f653b262916bc399875e25e428feb3912f5c"
   - path: crates/ags-lifecycle/src/setup/apply.rs
@@ -224,9 +224,9 @@ public_rewrites:
   - path: crates/ags-lifecycle/src/setup/memory/mod.rs
     target_sha256: "sha256:f0ce89f8d72dfc85ffd127b4e791bd4ad6968b21241dce5eba58520952733d59"
   - path: crates/ags-lifecycle/src/setup/mod.rs
-    target_sha256: "sha256:15644a0f3e629e903851a5d553d207da3eaa860e0e0fa1957c9ef12acbca5350"
+    target_sha256: "sha256:f4e6984de783d740f29382ea257ab458bd97f771144b1008260f5fe8879deb28"
   - path: crates/ags-lifecycle/src/setup/plan.rs
-    target_sha256: "sha256:acc5798896173a6e31b71c8ba8e5987cc08a6b5fb32e0c3d8f54b0db0144b578"
+    target_sha256: "sha256:c343f3a93770b342f2a6e5cd576944db9323c7ce4b5f84dce58519affd97a47a"
   - path: crates/ags-lifecycle/src/setup/plan/tests.rs
     target_sha256: "sha256:113295be8495426f6f1bd835a0f3e782f2334b6066adb012116d0c60548283dd"
   - path: crates/ags-lifecycle/src/setup/templates.rs

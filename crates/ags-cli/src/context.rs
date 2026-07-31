@@ -72,6 +72,9 @@ pub(crate) fn guard_path(path: &Path) -> PathBuf {
     normalized
 }
 pub(crate) fn default_private_runtime_home() -> PathBuf {
+    if let Some(path) = std::env::var_os("AGS_RUNTIME_HOME") {
+        return PathBuf::from(path);
+    }
     if let Some(path) = std::env::var_os("AGS_HOME") {
         return PathBuf::from(path);
     }

@@ -9,6 +9,21 @@ use std::time::{Duration, Instant};
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 const HOSTS: &[&str] = &["codex", "claude-code", "cursor", "codebuddy-code", "omp"];
 
+#[cfg(windows)]
+fn copy_directory(source: &Path, target: &Path) {
+    fs::create_dir_all(target).unwrap();
+    for entry in fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+        if source_path.is_dir() {
+            copy_directory(&source_path, &target_path);
+        } else {
+            fs::copy(&source_path, &target_path).unwrap();
+        }
+    }
+}
+
 struct TestDir(PathBuf);
 
 impl TestDir {
@@ -59,6 +74,21 @@ impl TestEnvironment {
         for path in [&home, &runtime, &project_a, &project_b] {
             fs::create_dir_all(path).unwrap();
         }
+        fs::write(
+            runtime.join("install-manifest.json"),
+            serde_json::to_vec_pretty(&json!({
+                "schema_version": "0.4.1-private-install",
+                "producer_version": env!("CARGO_PKG_VERSION"),
+                "source_root": source_root.to_string_lossy(),
+                "target": runtime.to_string_lossy(),
+                "lifecycle": {
+                    "approved_hosts": [],
+                    "selection_source": "setup"
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
         let environment = Self {
             _root: root,
             home,
@@ -249,7 +279,7 @@ impl TestEnvironment {
             #[cfg(unix)]
             std::os::unix::fs::symlink(&canonical, &skill_dir).unwrap();
             #[cfg(windows)]
-            std::os::windows::fs::symlink_dir(&canonical, &skill_dir).unwrap();
+            copy_directory(&canonical, &skill_dir);
         }
     }
 

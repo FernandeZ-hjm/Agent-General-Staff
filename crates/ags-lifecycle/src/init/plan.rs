@@ -49,6 +49,9 @@ fn home_dir() -> PathBuf {
 }
 
 fn default_private_runtime_home() -> PathBuf {
+    if let Some(path) = std::env::var_os("AGS_RUNTIME_HOME") {
+        return PathBuf::from(path);
+    }
     if let Some(path) = std::env::var_os("AGS_HOME") {
         return PathBuf::from(path);
     }

@@ -7,6 +7,8 @@ use crate::{parse_mcp_list, platform_spec, McpProbeProtocol, McpProbeSpec, McpSe
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
+#[cfg(windows)]
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -166,9 +168,51 @@ fn authentication_required(output: &str) -> bool {
         || normalized.contains("auth required")
 }
 
+#[cfg(windows)]
+fn quote_cmd_arg(value: &str) -> String {
+    format!(
+        "\"{}\"",
+        value
+            .replace('%', "%%")
+            .replace('^', "^^")
+            .replace('"', "\"\"")
+    )
+}
+
 fn probe_command(spec: &McpProbeSpec, current_dir: Option<&Path>) -> Command {
-    let mut command = Command::new(spec.program);
-    command.args(spec.args).envs(spec.env.iter().copied());
+    #[cfg(windows)]
+    let mut command = {
+        let program =
+            ags_platform::find_in_path(spec.program).unwrap_or_else(|| PathBuf::from(spec.program));
+        let is_batch = program
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
+            });
+        if is_batch {
+            let invocation = std::iter::once(program.to_string_lossy().into_owned())
+                .chain(spec.args.iter().map(|arg| (*arg).to_string()))
+                .map(|arg| quote_cmd_arg(&arg))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let mut command =
+                Command::new(std::env::var_os("COMSPEC").unwrap_or_else(|| "cmd.exe".into()));
+            command.args(["/D", "/S", "/C"]).arg(invocation);
+            command
+        } else {
+            let mut command = Command::new(program);
+            command.args(spec.args);
+            command
+        }
+    };
+    #[cfg(not(windows))]
+    let mut command = {
+        let mut command = Command::new(spec.program);
+        command.args(spec.args);
+        command
+    };
+    command.envs(spec.env.iter().copied());
     if let Some(path) = current_dir {
         command.current_dir(path);
     }
