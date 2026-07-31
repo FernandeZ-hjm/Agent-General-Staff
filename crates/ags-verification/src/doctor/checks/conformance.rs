@@ -577,7 +577,7 @@ fn mcp_registration_matches(
     }
     let registered = server.command.as_deref().and_then(|command| {
         let path = PathBuf::from(command);
-        if path.is_absolute() && path.file_name().is_some_and(|name| name == "ags") {
+        if path.is_absolute() && path.file_stem().is_some_and(|name| name == "ags") {
             Some(path)
         } else if command == "ags" {
             ags_platform::find_in_path("ags")
