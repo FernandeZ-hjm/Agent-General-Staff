@@ -24,6 +24,18 @@ fn copy_directory(source: &Path, target: &Path) {
     }
 }
 
+fn shell_visible_path(path: &Path) -> String {
+    let path = path.to_string_lossy();
+    #[cfg(windows)]
+    {
+        path.strip_prefix(r"\\?\").unwrap_or(&path).to_string()
+    }
+    #[cfg(not(windows))]
+    {
+        path.into_owned()
+    }
+}
+
 struct TestDir(PathBuf);
 
 impl TestDir {
@@ -1819,6 +1831,8 @@ exit 2
     } else {
         format!("{}:/usr/bin:/bin", fake_bin.display())
     };
+    let expected_workspace_for_shell = shell_visible_path(&canonical_project_a);
+    let neutral_home_for_shell = shell_visible_path(&canonical_home);
     let governed = environment
         .command()
         .current_dir(&canonical_project_a)
@@ -1840,8 +1854,8 @@ exit 2
             .env("HOME", &canonical_home)
             .env("USERPROFILE", &canonical_home)
             .env("PATH", &path)
-            .env("FAKE_EXPECTED_WORKSPACE", &canonical_project_a)
-            .env("FAKE_NEUTRAL_HOME", &canonical_home)
+            .env("FAKE_EXPECTED_WORKSPACE", &expected_workspace_for_shell)
+            .env("FAKE_NEUTRAL_HOME", &neutral_home_for_shell)
             .env("FAKE_CLAUDE_CWD_MARKER", &probe_marker)
             .env("FAKE_AGS_MCP_COMMAND", &current_ags)
             .env("FAKE_CODEGRAPH_COMMAND", &fake_codegraph)
@@ -1880,8 +1894,8 @@ exit 2
             .env("AGS_HOME", &environment.runtime)
             .env("AGS_REMOTE_LATEST_OFFLINE", "1")
             .env("PATH", &path)
-            .env("FAKE_EXPECTED_WORKSPACE", &canonical_project_a)
-            .env("FAKE_NEUTRAL_HOME", &canonical_home)
+            .env("FAKE_EXPECTED_WORKSPACE", &expected_workspace_for_shell)
+            .env("FAKE_NEUTRAL_HOME", &neutral_home_for_shell)
             .env("FAKE_CLAUDE_CWD_MARKER", &probe_marker)
             .env("FAKE_AGS_MCP_COMMAND", registered_ags)
             .env("FAKE_CODEGRAPH_COMMAND", &fake_codegraph)
