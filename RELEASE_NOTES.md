@@ -1,5 +1,30 @@
 # Agent Governance Suite Release Notes
 
+## Release 0.4.1
+
+0.4.1 closes the setup-to-workspace lifecycle gap without adding another
+lifecycle implementation. Setup records the explicitly approved host set in
+the existing install manifest; project initialization and private managed
+project refresh both reuse the existing `LifecycleProjection` interface.
+
+- `ags setup` reports detected, approved, and pending lifecycle hosts.
+  First-time write mode requires `--lifecycle-hosts <ids|detected|none>`;
+  upgrades preserve the prior approval unless it is explicitly changed.
+- `ags init` installs the approved workspace adapters, records the lifecycle
+  manifest, and includes their paths in the existing local overlay.
+- Local mode no longer generates project `.gitignore` rules or machine-global
+  ignores. Pure AGS output can leave the Git index while mixed project files
+  and user hooks remain tracked and unchanged.
+- Private managed-project refresh reuses the same projection path. Public
+  initialization remains current-workspace only and excludes private
+  Evolver/fleet state.
+- Doctor compares approved hosts with current workspace projections while
+  retaining all v0.4.0 daemon, snapshot, MCP, legacy-command, duplicate-hook,
+  and canonical-target checks.
+- The MCP wire protocol version is unchanged; this release tightens AGS
+  registration and freshness conformance rather than introducing a new MCP
+  protocol generation.
+
 ## Release 0.4.0
 
 0.4.0 completes the canonical-workspace lifecycle architecture. The MCP

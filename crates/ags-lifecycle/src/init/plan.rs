@@ -190,19 +190,6 @@ pub(crate) fn project_init_plan_with_protocol(
     });
 
     files.push(InitFile {
-        path: canonical.join(".gitignore"),
-        description: "ignore AGS/GEP local runtime data".to_string(),
-        content: "# AGS/GEP local runtime data\nassets/gep/\n/capability-snapshot/\n/skill-registry/\n/decision-leases/\n/auth-state/\n/receipts/\n/.ags/\n".to_string(),
-        mode: None,
-    });
-    append_files.push(InitFile {
-        path: canonical.join(".gitignore"),
-        description: "append AGS/GEP local runtime ignore rules".to_string(),
-        content: "\n# AGS/GEP local runtime data\nassets/gep/\n/capability-snapshot/\n/skill-registry/\n/decision-leases/\n/auth-state/\n/receipts/\n/.ags/\n".to_string(),
-        mode: None,
-    });
-
-    files.push(InitFile {
         path: canonical.join("AGENT_SUITE_PROTOCOL.md"),
         description: "project-local AGS protocol pointer".to_string(),
         content: format!("# AGENT_SUITE_PROTOCOL.md\n\nThis project is integrated with Agent Governance Suite {AGS_VERSION}.\n\nCanonical governance entry points:\n\n- `AGENTS.md`\n- `CLAUDE.md`\n- `protocol/agent-task-protocol.md`\n- `protocol/task-routing.md`\n- `protocol/cursor-skill-index.md`\n- `config/agent-project-profile.yaml`\n\nHosts must call AGS preflight before AGS-governed work.\n"),
@@ -374,23 +361,8 @@ pub(crate) fn project_init_plan(target: &Path, slug: Option<String>) -> ProjectI
     project_init_plan_with_protocol(target, slug, project_template_protocol_dir())
 }
 
-pub(crate) fn append_content_present(path: &Path, existing: &str, append: &str) -> bool {
-    if existing.contains(append.trim()) {
-        return true;
-    }
-    if path.file_name().and_then(|name| name.to_str()) != Some(".gitignore") {
-        return false;
-    }
-    let existing_rules = existing
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .collect::<std::collections::BTreeSet<_>>();
-    append
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .all(|rule| existing_rules.contains(rule))
+pub(crate) fn append_content_present(existing: &str, append: &str) -> bool {
+    existing.contains(append.trim())
 }
 
 pub(crate) fn project_file_status(file: &InitFile, append_candidates: &[InitFile]) -> &'static str {
@@ -403,8 +375,7 @@ pub(crate) fn project_file_status(file: &InitFile, append_candidates: &[InitFile
     {
         if let Ok(existing) = std::fs::read_to_string(&file.path) {
             if append_candidates.iter().any(|candidate| {
-                candidate.path == file.path
-                    && append_content_present(&file.path, &existing, &candidate.content)
+                candidate.path == file.path && append_content_present(&existing, &candidate.content)
             }) || existing.contains("Agent Governance Suite")
                 || existing.contains(&format!("AGS {AGS_VERSION}"))
             {
@@ -417,33 +388,5 @@ pub(crate) fn project_file_status(file: &InitFile, append_candidates: &[InitFile
         }
     } else {
         "exists"
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::append_content_present;
-    use std::path::Path;
-
-    #[test]
-    fn gitignore_managed_rules_are_idempotent_across_heading_changes() {
-        let managed = "# AGS managed\n.ags/\ntask-archive/\n";
-        let existing = "# Project ignores\ntarget/\n\n# Older AGS heading\ntask-archive/\n.ags/\n";
-
-        assert!(append_content_present(
-            Path::new(".gitignore"),
-            existing,
-            managed
-        ));
-        assert!(!append_content_present(
-            Path::new(".gitignore"),
-            "# Project ignores\ntarget/\n.ags/\n",
-            managed
-        ));
-        assert!(!append_content_present(
-            Path::new("AGENTS.md"),
-            ".ags/\ntask-archive/\n",
-            managed
-        ));
     }
 }

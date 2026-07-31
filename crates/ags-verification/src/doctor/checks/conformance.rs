@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 struct SystemObservation {
     lifecycle: Result<ags_lifecycle::lifecycle_projection::WorkspaceLifecycleObservation, String>,
     enabled_hosts: Vec<String>,
+    approved_hosts: Result<Vec<String>, String>,
     mcp_reports: BTreeMap<String, ags_host_integration::HostMcpReport>,
     daemon_status: Option<Result<ags_session::WorkspaceServiceStatus, String>>,
     daemon: Option<Result<Option<ags_session::WorkspaceServiceInspection>, String>>,
@@ -12,7 +13,10 @@ struct SystemObservation {
 impl SystemObservation {
     fn collect(repo_root: &Path, home: &Path) -> Self {
         let mcp_reports = collect_mcp_reports(repo_root, home);
-        let required_hosts = mcp_reports
+        let approved_hosts = ags_lifecycle::setup::approved_lifecycle_hosts(
+            &ags_capability_governance::locate_runtime_home(),
+        );
+        let mut required_hosts = mcp_reports
             .iter()
             // A disabled or stale AGS registration still enables conformance
             // inspection. Filtering to `active` would let the exact drift that
@@ -20,6 +24,11 @@ impl SystemObservation {
             .filter(|(_, report)| report.find("ags").is_some())
             .map(|(host, _)| host.clone())
             .collect::<Vec<_>>();
+        if let Ok(approved) = &approved_hosts {
+            required_hosts.extend(approved.iter().cloned());
+            required_hosts.sort();
+            required_hosts.dedup();
+        }
         let lifecycle = ags_lifecycle::lifecycle_projection::observe_workspace_lifecycle(
             repo_root,
             home,
@@ -36,6 +45,7 @@ impl SystemObservation {
         Self {
             lifecycle,
             enabled_hosts,
+            approved_hosts,
             mcp_reports,
             daemon_status,
             daemon,
@@ -62,13 +72,95 @@ pub(super) fn canonical_conformance_checks(repo_root: &Path) -> Vec<Finding> {
             ),
         )],
     };
+    findings.push(lifecycle_host_approval_current(&observation));
+    findings.push(local_overlay_tracking_current(repo_root, &observation));
     findings.push(lifecycle_executable_current(&observation));
     findings.push(workspace_daemon_current(repo_root, &observation));
-    findings.push(managed_projection_current(repo_root));
+    findings.push(managed_projection_current(repo_root, &observation));
     findings.push(capability_snapshot_current(repo_root, &home, &observation));
     findings.push(mcp_registration_current(repo_root, &observation));
     findings.push(remote_latest_advisory());
     findings
+}
+
+fn lifecycle_host_approval_current(observation: &SystemObservation) -> Finding {
+    let approved = match &observation.approved_hosts {
+        Ok(hosts) => hosts,
+        Err(error) => {
+            return conformance_fail(
+                "lifecycle-host-approval-current",
+                "installed lifecycle host approval is invalid",
+                "supported host ids in the current install manifest",
+                error,
+                "Run `ags setup`, review detected hosts, then apply with `--lifecycle-hosts <ids|detected|none>`.",
+            )
+        }
+    };
+    let enabled = observation
+        .lifecycle
+        .as_ref()
+        .map(|lifecycle| lifecycle.effective_hosts.as_slice())
+        .unwrap_or_default();
+    let missing = approved
+        .iter()
+        .filter(|host| {
+            !observation.lifecycle.as_ref().is_ok_and(|lifecycle| {
+                lifecycle.projections.iter().any(|projection| {
+                    projection.host.as_str() == host.as_str() && projection.current
+                })
+            })
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    conformance_verdict(
+        missing.is_empty(),
+        "lifecycle-host-approval-current",
+        "approved lifecycle hosts are enabled in this workspace",
+        format!("approved hosts present exactly once: {approved:?}"),
+        if missing.is_empty() {
+            format!("enabled={enabled:?}")
+        } else {
+            format!("enabled={enabled:?}; missing={missing:?}")
+        },
+        "Run `ags init --target <workspace>` or `ags agents govern --agent <host> --target <workspace> --apply`.",
+    )
+}
+
+fn local_overlay_tracking_current(repo_root: &Path, observation: &SystemObservation) -> Finding {
+    if !ags_lifecycle::init::overlay::local_overlay_active(repo_root) {
+        return Finding::skip(
+            "local-overlay-pure-files-untracked",
+            "workspace does not declare the AGS local overlay",
+        );
+    }
+    let indexed = ags_lifecycle::init::overlay::git_tracked_set(repo_root);
+    let tracked = observation
+        .approved_hosts
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|host| {
+            let projection =
+                ags_lifecycle::lifecycle_projection::LifecycleProjection::new(repo_root, host)
+                    .ok()?;
+            let path = projection.path();
+            let pure = projection
+                .render(None)
+                .ok()
+                .is_some_and(|rendered| std::fs::read_to_string(&path).ok() == Some(rendered));
+            let relative = path.strip_prefix(repo_root).ok()?;
+            let relative = relative.to_string_lossy().replace('\\', "/");
+            (pure && indexed.contains(&relative)).then_some(relative)
+        })
+        .collect::<Vec<_>>();
+    conformance_verdict(
+        tracked.is_empty(),
+        "local-overlay-pure-files-untracked",
+        "pure AGS lifecycle adapters are absent from the Git index",
+        "no pure AGS adapter tracked in local mode",
+        format!("tracked={tracked:?}"),
+        "Run `ags init --mode local --target <workspace>`.",
+    )
 }
 
 fn collect_mcp_reports(
@@ -257,7 +349,7 @@ fn workspace_daemon_current(repo_root: &Path, observation: &SystemObservation) -
     }
 }
 
-fn managed_projection_current(repo_root: &Path) -> Finding {
+fn managed_projection_current(repo_root: &Path, observation: &SystemObservation) -> Finding {
     let identity = ags_workspace_facts::detect_project(repo_root);
     if identity.is_ags_suite {
         return Finding::pass(
@@ -284,7 +376,14 @@ fn managed_projection_current(repo_root: &Path) -> Finding {
         }
     };
     let slug = ags_host_integration::resolve_project_slug(repo_root);
-    let refresh = ags_lifecycle::init::refresh_managed_project(repo_root, &slug, &source, false);
+    let approved_hosts = observation.approved_hosts.as_deref().unwrap_or_default();
+    let refresh = ags_lifecycle::init::refresh_managed_project(
+        repo_root,
+        &slug,
+        &source,
+        approved_hosts,
+        false,
+    );
     conformance_verdict(
         !refresh.drift,
         "managed-projection-current",

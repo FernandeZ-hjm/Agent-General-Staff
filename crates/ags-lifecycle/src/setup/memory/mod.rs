@@ -5,7 +5,8 @@
 //! memory store without replacing an existing capsule.
 //!
 //! `ags setup --register-claude` and `ags agents govern --apply` delegate to the
-//! same implementation. `ags init` only creates project state.
+//! same implementation. `ags init` consumes the approved host set through the
+//! lower-level lifecycle projection and does not duplicate this orchestration.
 
 mod adapter;
 

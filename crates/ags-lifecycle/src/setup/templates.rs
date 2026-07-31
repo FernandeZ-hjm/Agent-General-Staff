@@ -40,7 +40,7 @@ if ! command -v ags >/dev/null 2>&1; then
   exit 127
 fi
 
-ags setup --yes --force --register-claude
+ags setup --yes --force --register-claude --lifecycle-hosts detected
 ags verify --profile private
 
 claude mcp list
@@ -89,7 +89,7 @@ pub(in crate::setup) fn codex_ags_command_skill_specs() -> &'static [(
             "AGS Setup",
             "初始化本机 AGS 环境",
             "用 $ags-setup 初始化本机 AGS 环境。",
-            "初始化本机 AGS 环境：运行 `ags setup --yes --force --register-claude`，然后用 `ags verify --profile private` 校验",
+            "初始化本机 AGS 环境：先运行 `ags setup` 查看宿主，再运行 `ags setup --yes --force --register-claude --lifecycle-hosts <ids|detected|none>`，然后用 `ags verify --profile private` 校验",
         ),
         (
             "ags-agents",

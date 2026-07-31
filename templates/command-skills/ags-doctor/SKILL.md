@@ -32,7 +32,8 @@ Doctor 同时报告两层结果：
 
 - runtime health：当前 CLI、daemon、宿主连接是否能运行；
 - local conformance：runtime、MCP 注册、capability snapshot 和工作区 lifecycle
-  adapter 是否等于当前版本的 canonical 生成结果。
+  adapter 是否等于当前版本的 canonical 生成结果，包括批准宿主集合与实际工作区
+  投影是否一致。
 
 已启用宿主存在本地漂移时退出 1；未启用的可选宿主显示 `skip`。远端 latest
 只提供建议，离线不阻断。Doctor 只读，不自动迁移或重启；按 finding 给出的明确
@@ -44,4 +45,4 @@ Doctor 同时报告两层结果：
 
 不要绕过 AGS 做临时初始化。只有用户明确要求任务卡/交接、handoff contract 已独立确认，且不存在未决或重开的 solution work 时，才可生成可执行任务卡；缺少任一条件都不得生成。
 
-此技能期望的 AGS 产品版本：0.4.0。
+此技能期望的 AGS 产品版本：0.4.1。

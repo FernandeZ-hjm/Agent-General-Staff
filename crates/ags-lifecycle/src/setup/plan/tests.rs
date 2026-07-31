@@ -215,7 +215,9 @@ fn claude_ags_command_mentions_preflight_and_current_version() {
     let content = claude_ags_command_content();
     assert!(content.contains("ags_preflight"));
     assert!(content.contains("ags session preflight --for claude-code --target ."));
-    assert!(content.contains("ags setup --yes --force --register-claude"));
+    assert!(
+        content.contains("ags setup --yes --force --register-claude --lifecycle-hosts detected")
+    );
     assert!(content.contains("ags init --target ."));
     assert!(content.contains("/ags setup"));
     assert!(content.contains("/ags init"));

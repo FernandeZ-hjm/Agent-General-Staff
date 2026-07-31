@@ -23,18 +23,20 @@ ags session preflight --for codex --target .
 `SkillTarget`。不要把 `ags-setup` 提交给 `ags_route_request`，也不要通过刷新
 capability snapshot 尝试让它进入 `ActiveSkillTable`。
 
-初始化或升级本机 AGS runtime：
+初始化或升级本机 AGS runtime。首次安装先查看检测结果并确认要批准的宿主：
 
 ```bash
-ags setup --yes --force
+ags setup
+ags setup --yes --force --lifecycle-hosts <host1,host2|detected|none>
 ags verify --scope local
 ags agents scan
 ```
 
-需要先看计划时，不加 `--yes`。不要把 setup 当成公开版发布命令。
+已有安装未改变宿主选择时可继续运行 `ags setup --yes --force`。不要把 setup
+当成公开版发布命令。
 
 ## 安全边界
 
 不要绕过 AGS 做临时初始化。只有用户明确要求任务卡/交接、handoff contract 已独立确认，且不存在未决或重开的 solution work 时，才可生成可执行任务卡；缺少任一条件都不得生成。
 
-此技能期望的 AGS 产品版本：0.4.0。
+此技能期望的 AGS 产品版本：0.4.1。

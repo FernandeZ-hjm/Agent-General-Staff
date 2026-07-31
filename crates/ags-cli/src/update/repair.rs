@@ -39,6 +39,7 @@ pub(in crate::update) fn cmd_update_repair_local(
         force,
         include_optional_extensions: false,
         register_claude: false,
+        approved_lifecycle_hosts: None,
     });
     let passed = outcome.report.passed();
     let exit_code = outcome.report.exit_code();

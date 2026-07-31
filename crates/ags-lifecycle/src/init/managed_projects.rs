@@ -204,7 +204,7 @@ pub(crate) fn desired_project_file_content(
             } else {
                 merge_managed_project_block(text, &append.content)?
             }
-        } else if super::plan::append_content_present(&file.path, text, &append.content) {
+        } else if super::plan::append_content_present(text, &append.content) {
             text.to_string()
         } else {
             format!("{}{}", text, append.content)
@@ -226,6 +226,7 @@ pub fn refresh_managed_project(
     target: &Path,
     slug: &str,
     source_root: &Path,
+    approved_hosts: &[String],
     apply: bool,
 ) -> ManagedProjectRefresh {
     let canonical = guard_path(target);
@@ -265,18 +266,35 @@ pub fn refresh_managed_project(
         }
     }
 
+    let mut lifecycle_pending = Vec::new();
+    for host in approved_hosts {
+        match crate::lifecycle_projection::LifecycleProjection::new(&canonical, host) {
+            Ok(projection) if projection.observe().current => {
+                unchanged.push(projection.path().display().to_string())
+            }
+            Ok(projection) => {
+                lifecycle_pending.push((host.clone(), projection.path()));
+            }
+            Err(error) => blocked.push(error),
+        }
+    }
     let changed_files: Vec<String> = pending
         .iter()
         .map(|write| write.path.display().to_string())
+        .chain(
+            lifecycle_pending
+                .iter()
+                .map(|(_, path)| path.display().to_string()),
+        )
         .collect();
-    let drift = !pending.is_empty() || !blocked.is_empty();
+    let drift = !pending.is_empty() || !lifecycle_pending.is_empty() || !blocked.is_empty();
     if !apply || !blocked.is_empty() {
         return ManagedProjectRefresh {
             target: canonical.display().to_string(),
             slug: slug.to_string(),
             status: if !blocked.is_empty() {
                 "blocked"
-            } else if pending.is_empty() {
+            } else if pending.is_empty() && lifecycle_pending.is_empty() {
                 "clean"
             } else {
                 "planned"
@@ -330,11 +348,34 @@ pub fn refresh_managed_project(
         }
         applied.push(write);
     }
+    for (host, _) in &lifecycle_pending {
+        if let Err(error) = crate::lifecycle_projection::LifecycleProjection::new(&canonical, host)
+            .and_then(|projection| projection.install().map(|_| ()))
+        {
+            blocked.push(format!("{host} lifecycle projection failed: {error}"));
+        }
+    }
+    if blocked.is_empty() && !lifecycle_pending.is_empty() {
+        if let Err(error) = crate::lifecycle_projection::record_lifecycle_manifest(&canonical) {
+            blocked.push(format!("lifecycle manifest update failed: {error}"));
+        }
+    }
+    if !blocked.is_empty() {
+        return ManagedProjectRefresh {
+            target: canonical.display().to_string(),
+            slug: slug.to_string(),
+            status: "failed".to_string(),
+            drift: true,
+            changed_files,
+            unchanged_files: unchanged,
+            blocked_reasons: blocked,
+        };
+    }
 
     ManagedProjectRefresh {
         target: canonical.display().to_string(),
         slug: slug.to_string(),
-        status: if pending.is_empty() {
+        status: if pending.is_empty() && lifecycle_pending.is_empty() {
             "clean"
         } else {
             "applied"

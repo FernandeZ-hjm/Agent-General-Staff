@@ -52,6 +52,29 @@ pub(in crate::agents) fn cmd_agents_govern(
                 ));
             }
         }
+        if apply_report.passed() {
+            let runtime_home = ags_capability_governance::locate_runtime_home();
+            let approved = targets
+                .iter()
+                .filter(|target| {
+                    ags_host_integration::platform_spec(&target.id)
+                        .and_then(|spec| spec.lifecycle)
+                        .is_some()
+                })
+                .map(|target| target.id.clone())
+                .collect::<Vec<_>>();
+            match ags_lifecycle::setup::add_approved_lifecycle_hosts(&runtime_home, &approved) {
+                Ok(hosts) => apply_report.add(ags_verification::doctor::Finding::pass(
+                    "lifecycle-host-approval-current",
+                    format!("approved lifecycle hosts: {}", hosts.join(", ")),
+                )),
+                Err(error) => apply_report.add(ags_verification::doctor::Finding::fail(
+                    "lifecycle-host-approval-current",
+                    "could not persist lifecycle host approval",
+                    error,
+                )),
+            }
+        }
     }
     let mut receipt_path = None;
     if apply {

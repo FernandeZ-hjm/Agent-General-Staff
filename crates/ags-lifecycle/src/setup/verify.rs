@@ -285,7 +285,6 @@ pub(in crate::setup) fn private_install_health_report(
         "hosts/workbuddy.mcp.snippet.json",
         "hosts/codebuddy-code.mcp.snippet.json",
         "manifests/runtime-profiles.yaml",
-        "hooks/claude-code-executor-stop.js",
         "hooks/codex-planner-recall.json",
         "bin/ags-mcp-stdio.sh",
     ];
@@ -520,7 +519,6 @@ pub(in crate::setup) fn private_install_health_report(
         "hosts/workbuddy.mcp.snippet.json",
         "hosts/codebuddy-code.mcp.snippet.json",
         "manifests/runtime-profiles.yaml",
-        "hooks/claude-code-executor-stop.js",
         "hooks/codex-planner-recall.json",
     ] {
         let path = target.join(rel);
@@ -537,27 +535,6 @@ pub(in crate::setup) fn private_install_health_report(
                 )),
             }
         }
-    }
-
-    match std::process::Command::new("node")
-        .arg("--check")
-        .arg(target.join("hooks/claude-code-executor-stop.js"))
-        .output()
-    {
-        Ok(output) if output.status.success() => report.add(crate::setup::SetupFinding::pass(
-            "private-install-node-check",
-            "node --check EvoMap hook OK",
-        )),
-        Ok(output) => report.add(crate::setup::SetupFinding::fail(
-            "private-install-node-check",
-            "node --check EvoMap hook failed",
-            String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        )),
-        Err(e) => report.add(crate::setup::SetupFinding::warn(
-            "private-install-node-check",
-            "node unavailable; skipped EvoMap hook syntax check",
-            e.to_string(),
-        )),
     }
 
     if run_mcp_smoke {

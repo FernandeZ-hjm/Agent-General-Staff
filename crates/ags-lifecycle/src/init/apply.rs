@@ -26,7 +26,7 @@ pub(crate) fn write_project_init_file(
             .find(|candidate| candidate.path == file.path)
         {
             match std::fs::read_to_string(&file.path) {
-                Ok(existing) if append_content_present(&file.path, &existing, &append.content) => {
+                Ok(existing) if append_content_present(&existing, &append.content) => {
                     return InitFinding::pass(
                         format!(
                             "project-init-{}",

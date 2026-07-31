@@ -39,6 +39,10 @@ pub(crate) enum Commands {
         /// Register AGS MCP servers in Claude Code user config after setup.
         #[arg(long)]
         register_claude: bool,
+        /// Approved workspace lifecycle hosts: comma-separated ids, `detected`,
+        /// or `none`. Required on first write-mode setup.
+        #[arg(long)]
+        lifecycle_hosts: Option<String>,
         /// Print plan only, even if --yes is omitted.
         #[arg(long)]
         dry_run: bool,

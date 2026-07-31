@@ -31,13 +31,20 @@ fn emit_registration_receipt(
 
 pub(crate) fn run(target: &Path, slug: Option<String>, dry_run: bool, format: &str, mode: &str) {
     let now = unix_timestamp();
+    let runtime_home = default_private_runtime_home();
+    let approved_lifecycle_hosts = ags_lifecycle::setup::approved_lifecycle_hosts(&runtime_home)
+        .unwrap_or_else(|error| {
+            eprintln!("ags init: {error}");
+            std::process::exit(1);
+        });
     let request = ags_lifecycle::init::InitRequest {
         target: target.to_path_buf(),
-        runtime_home: default_private_runtime_home(),
+        runtime_home,
         now,
         slug,
         dry_run,
         mode: mode.to_string(),
+        approved_lifecycle_hosts,
     };
     match ags_lifecycle::init::execute(request) {
         Ok(mut output) => {

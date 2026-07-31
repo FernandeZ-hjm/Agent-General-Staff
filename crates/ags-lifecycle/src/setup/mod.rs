@@ -25,14 +25,78 @@ use global_entry::{
     write_ags_global_entry,
 };
 use plan::{
-    cleanup_install_dir, private_install_plan, render_private_plan_json, render_private_plan_text,
+    cleanup_install_dir, private_install_plan, private_install_plan_with_hosts,
+    render_private_plan_json, render_private_plan_text,
 };
 use recommendations::{render_third_party_recommendations_text, third_party_recommendations_json};
 
 pub use memory::{apply_host_memory_adapter, lifecycle_migration_preview};
 
-pub const PRIVATE_INSTALL_SCHEMA: &str = "0.4.0-private-install";
+pub const PRIVATE_INSTALL_SCHEMA: &str = "0.4.1-private-install";
 const AGS_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub fn approved_lifecycle_hosts(target: &Path) -> Result<Vec<String>, String> {
+    let path = target.join("install-manifest.json");
+    let body = match std::fs::read_to_string(&path) {
+        Ok(body) => body,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
+    };
+    let value: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|error| format!("invalid {}: {error}", path.display()))?;
+    let hosts = value
+        .pointer("/lifecycle/approved_hosts")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let supported = ags_host_integration::lifecycle_specs()
+        .map(|spec| spec.host_id)
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut approved = std::collections::BTreeSet::new();
+    for host in hosts {
+        let host = host
+            .as_str()
+            .ok_or_else(|| "lifecycle.approved_hosts must contain strings".to_string())?;
+        if !supported.contains(host) {
+            return Err(format!("unsupported approved lifecycle host `{host}`"));
+        }
+        approved.insert(host.to_string());
+    }
+    Ok(approved.into_iter().collect())
+}
+
+pub fn add_approved_lifecycle_hosts(
+    target: &Path,
+    hosts: &[String],
+) -> Result<Vec<String>, String> {
+    let path = target.join("install-manifest.json");
+    let body = std::fs::read_to_string(&path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let mut value: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|error| format!("invalid {}: {error}", path.display()))?;
+    let mut approved = approved_lifecycle_hosts(target)?
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    let supported = ags_host_integration::lifecycle_specs()
+        .map(|spec| spec.host_id)
+        .collect::<std::collections::BTreeSet<_>>();
+    for host in hosts {
+        if !supported.contains(host.as_str()) {
+            return Err(format!("unsupported lifecycle host `{host}`"));
+        }
+        approved.insert(host.clone());
+    }
+    let approved = approved.into_iter().collect::<Vec<_>>();
+    value["lifecycle"] = serde_json::json!({
+        "approved_hosts": approved,
+        "selection_source": "agents-govern"
+    });
+    let mut rendered = serde_json::to_vec_pretty(&value).map_err(|error| error.to_string())?;
+    rendered.push(b'\n');
+    ags_platform::atomic_write(&path, &rendered)
+        .map_err(|error| format!("cannot update {}: {error}", path.display()))?;
+    Ok(approved)
+}
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub enum SetupSeverity {
@@ -326,6 +390,7 @@ pub struct PrivateApplyRequest<'a> {
     pub force: bool,
     pub include_optional_extensions: bool,
     pub register_claude: bool,
+    pub approved_lifecycle_hosts: Option<&'a [String]>,
 }
 
 /// Apply one already-authorized private-runtime setup transaction.
@@ -333,7 +398,15 @@ pub struct PrivateApplyRequest<'a> {
 /// The caller owns target protection and confirmation. This function owns the
 /// mutation sequence and returns evidence instead of rendering or exiting.
 pub fn apply_private(request: PrivateApplyRequest<'_>) -> PrivateApplyResult {
-    let plan = private_install_plan(request.source_root, request.target, request.home);
+    let plan = match request.approved_lifecycle_hosts {
+        Some(hosts) => private_install_plan_with_hosts(
+            request.source_root,
+            request.target,
+            request.home,
+            hosts,
+        ),
+        None => private_install_plan(request.source_root, request.target, request.home),
+    };
     let plan_text = render_private_plan_text(&plan);
     let mut report = crate::setup::SetupReport::new("private-install-apply");
 

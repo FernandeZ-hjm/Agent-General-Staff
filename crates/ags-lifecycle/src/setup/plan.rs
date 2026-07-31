@@ -16,6 +16,7 @@ pub(in crate::setup) struct PrivateInstallPlan {
     pub(crate) profile: String,
     pub(crate) source_root: PathBuf,
     pub(crate) target: PathBuf,
+    pub(crate) approved_lifecycle_hosts: Vec<String>,
     pub(crate) files: Vec<InstallFile>,
     pub(crate) cleanup_paths: Vec<PathBuf>,
 }
@@ -23,6 +24,16 @@ pub(in crate::setup) fn private_install_plan(
     source_root: &Path,
     target: &Path,
     home: &Path,
+) -> PrivateInstallPlan {
+    let approved = super::approved_lifecycle_hosts(target).unwrap_or_default();
+    private_install_plan_with_hosts(source_root, target, home, &approved)
+}
+
+pub(in crate::setup) fn private_install_plan_with_hosts(
+    source_root: &Path,
+    target: &Path,
+    home: &Path,
+    approved_lifecycle_hosts: &[String],
 ) -> PrivateInstallPlan {
     let ags_mcp_json = r#"{
   "mcpServers": {
@@ -74,14 +85,6 @@ args = ["serve", "--mcp"]
       "command": "codegraph",
       "args": ["serve", "--mcp"]
     }
-  },
-  "hooks": {
-    "Stop": [
-      {
-        "command": "node __TARGET__/hooks/claude-code-executor-stop.js",
-        "timeout": 8
-      }
-    ]
   }
 }
 "#
@@ -131,13 +134,6 @@ profiles:
 "#
     .to_string();
 
-    let claude_hook = r#"#!/usr/bin/env node
-// AGS public edition no-op Stop hook.
-// Private runtime hooks are not bundled in the public release.
-process.exit(0);
-"#
-    .to_string();
-
     let codex_hook = r#"{
   "schema_version": "2.7-public-hook-placeholder",
   "hooks": [],
@@ -161,6 +157,10 @@ process.exit(0);
             "server": "ags",
             "command": "ags mcp serve --transport stdio",
             "mandatory_first_tool": "ags_preflight"
+        },
+        "lifecycle": {
+            "approved_hosts": approved_lifecycle_hosts,
+            "selection_source": "setup"
         },
         "host_snippets": serde_json::json!([
             "hosts/codex.config.snippet.toml",
@@ -237,7 +237,7 @@ Each command skill routes through AGS preflight before acting.\n",
         },
         InstallFile {
             path: target.join("hosts/claude-code.mcp.snippet.json"),
-            description: "Claude Code MCP and EvoMap Stop hook snippet".to_string(),
+            description: "Claude Code MCP registration snippet".to_string(),
             content: claude_snippet,
             mode: None,
         },
@@ -270,12 +270,6 @@ Each command skill routes through AGS preflight before acting.\n",
             description: "private runtime profile with local-safe defaults".to_string(),
             content: profile,
             mode: None,
-        },
-        InstallFile {
-            path: target.join("hooks/claude-code-executor-stop.js"),
-            description: "Claude Code EvoMap method-capture Stop hook".to_string(),
-            content: claude_hook,
-            mode: Some(0o755),
         },
         InstallFile {
             path: target.join("hooks/codex-planner-recall.json"),
@@ -358,6 +352,7 @@ Each command skill routes through AGS preflight before acting.\n",
         profile: "private".to_string(),
         source_root: source_root.to_path_buf(),
         target: target.to_path_buf(),
+        approved_lifecycle_hosts: approved_lifecycle_hosts.to_vec(),
         files,
         cleanup_paths: retired_codex_ags_skill_dirs(home)
             .into_iter()
@@ -406,6 +401,7 @@ pub(in crate::setup) fn render_private_plan_json(plan: &PrivateInstallPlan) -> S
         "source_root": plan.source_root.to_string_lossy(),
         "target": plan.target.to_string_lossy(),
         "write_mode": "plan-only",
+        "approved_lifecycle_hosts": plan.approved_lifecycle_hosts,
         "files": files,
         "cleanup_paths": cleanup_paths,
         "host_config_policy": "MCP snippets are generated only; Claude Code /ags command and Codex AGS command skills are installed on apply",
@@ -421,6 +417,14 @@ pub(in crate::setup) fn render_private_plan_text(plan: &PrivateInstallPlan) -> S
         format!("Profile: {}", plan.profile),
         format!("Source:  {}", plan.source_root.display()),
         format!("Target:  {}", plan.target.display()),
+        format!(
+            "Lifecycle hosts: {}",
+            if plan.approved_lifecycle_hosts.is_empty() {
+                "none".to_string()
+            } else {
+                plan.approved_lifecycle_hosts.join(", ")
+            }
+        ),
         "Mode:    plan-only".to_string(),
         String::new(),
         "Files:".to_string(),

@@ -156,11 +156,15 @@ ags host lifecycle --event session-start|session-end|stop-guard \
   --target <repo>
 ```
 
-The v0.4.0 generator writes only workspace-owned adapters and replaces
+The v0.4.1 generator writes only workspace-owned adapters and replaces
 `<repo>` with the canonical absolute workspace path. Claude Code uses
 `.claude/settings.local.json`, CodeBuddy-Code uses
 `.codebuddy/settings.local.json`, Codex and Cursor use their project hook
-files, and OMP uses `.omp/extensions/ags-memory-lifecycle.js`.
+files, and OMP uses `.omp/extensions/ags-lifecycle.js`.
+
+Setup records the explicitly approved lifecycle hosts in the existing install
+manifest. Init consumes that set through `LifecycleProjection`; host detection,
+approval, and observed workspace state remain separate facts.
 
 `ags host lifecycle` is a compatibility-preserving CLI facade. It sends a
 `0.4.0-workspace-lifecycle` envelope to the canonical workspace daemon; it no

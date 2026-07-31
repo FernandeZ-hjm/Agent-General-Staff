@@ -577,6 +577,17 @@ fn doctor_rejects_macbook_legacy_lifecycle_before_host_start() {
     std::fs::create_dir_all(project.join(".claude")).unwrap();
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&runtime).unwrap();
+    std::fs::write(
+        runtime.join("install-manifest.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "lifecycle": {
+                "approved_hosts": ["claude-code"],
+                "selection_source": "setup"
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
 
     let retired_interpreter = concat!("python", "3");
     let retired_command =
@@ -644,4 +655,15 @@ fn doctor_rejects_macbook_legacy_lifecycle_before_host_start() {
         .as_str()
         .unwrap()
         .contains("Migrate managed workspaces"));
+    let approval = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|finding| finding["check_name"] == "lifecycle-host-approval-current")
+        .expect("approved host conformance finding");
+    assert_eq!(approval["status"], "fail");
+    assert!(approval["observed"]
+        .as_str()
+        .unwrap()
+        .contains("claude-code"));
 }

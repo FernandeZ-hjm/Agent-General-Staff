@@ -61,11 +61,11 @@ ags agents verify --host <host>
   MCP 注册始终 advice-only。
 - `verify` 同时复核 capability route 与该宿主的原生 memory adapter；严格模式要求两者都闭合。
 - OMP 会发现 `.omp/agent/skills` 和 `.agents/skills`，记忆闭环由目标工作区的
-  `.omp/extensions/ags-memory-lifecycle.js` 承载。其 MCP 注册仍由 OMP 自身配置
+  `.omp/extensions/ags-lifecycle.js` 承载。其 MCP 注册仍由 OMP 自身配置
   决定；未运行真实宿主 probe 时不得断言连接已建立。
 
 ## 安全边界
 
 不要绕过 AGS 做临时初始化。不要把 AGS MCP 当作普通第三方 MCP；它是 host initialization adapter。只有用户明确要求任务卡/交接、handoff contract 已独立确认，且不存在未决或重开的 solution work 时，才可生成可执行任务卡；缺少任一条件都不得生成。
 
-此技能期望的 AGS 产品版本：0.4.0。
+此技能期望的 AGS 产品版本：0.4.1。

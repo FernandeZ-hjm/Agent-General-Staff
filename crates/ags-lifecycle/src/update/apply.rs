@@ -159,6 +159,7 @@ pub fn inspect_projects(source_root: &Path, runtime_home: &Path, apply: bool) ->
         }
     };
     let (existing, stale) = managed_projects::partition_existing(&registry);
+    let approved_hosts = crate::setup::approved_lifecycle_hosts(runtime_home).unwrap_or_default();
     let reports = existing
         .iter()
         .map(|project| {
@@ -166,6 +167,7 @@ pub fn inspect_projects(source_root: &Path, runtime_home: &Path, apply: bool) ->
                 Path::new(&project.path),
                 &project.slug,
                 source_root,
+                &approved_hosts,
                 apply,
             );
             ProjectUpdate {
@@ -244,6 +246,7 @@ pub fn execute(request: &ApplyRequest) -> ApplyOutcome {
             force: request.force,
             include_optional_extensions: request.include_optional_extensions,
             register_claude: false,
+            approved_lifecycle_hosts: None,
         });
         let runtime = RuntimeUpdate {
             report: result.report,

@@ -85,8 +85,9 @@ impl TestEnvironment {
             .env("AGS_RUNTIME_HOME", &self.runtime)
             .env("AGS_SOURCE_ROOT", &self.source_root)
             .env("AGS_WORKSPACE_IDLE_MS", "1000")
-            .env("AGS_THIRD_PARTY_MANIFEST_OFFLINE", "1")
-            .env("PATH", "/usr/bin:/bin");
+            .env("AGS_THIRD_PARTY_MANIFEST_OFFLINE", "1");
+        #[cfg(not(windows))]
+        command.env("PATH", "/usr/bin:/bin");
         command
     }
 
@@ -609,6 +610,101 @@ fn cursor_govern_writes_native_hooks_and_reaches_full_lifecycle() {
         "cursor-command-hooks"
     );
     assert_eq!(verification["memory_lifecycle"]["status"], "full");
+}
+
+#[test]
+fn init_projects_the_approved_host_subset_and_preserves_user_hooks() {
+    let environment = TestEnvironment::new();
+    let workspace = environment._root.path().join("workspace with spaces");
+    fs::create_dir_all(&workspace).unwrap();
+    assert!(Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(&workspace)
+        .status()
+        .unwrap()
+        .success());
+    fs::create_dir_all(workspace.join(".claude")).unwrap();
+    fs::write(
+        workspace.join(".claude/settings.local.json"),
+        serde_json::to_vec_pretty(&json!({
+            "hooks": {
+                "Notification": [{
+                    "hooks": [{"type": "command", "command": "user-owned-hook"}]
+                }]
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        environment.runtime.join("install-manifest.json"),
+        serde_json::to_vec_pretty(&json!({
+            "schema_version": "0.4.1-private-install",
+            "source_root": environment.source_root,
+            "lifecycle": {
+                "approved_hosts": HOSTS,
+                "selection_source": "setup"
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let output = environment
+        .command()
+        .args(["init", "--target"])
+        .arg(&workspace)
+        .args(["--mode", "local", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["schema_version"], "0.4.1-project-init");
+    assert_eq!(
+        result["lifecycle"]["projected_hosts"]
+            .as_array()
+            .unwrap()
+            .len(),
+        HOSTS.len()
+    );
+
+    for host in HOSTS {
+        let path = ags_lifecycle::lifecycle_projection::workspace_adapter_path(&workspace, host)
+            .expect("supported lifecycle host");
+        assert!(
+            path.is_file(),
+            "{host} adapter missing at {}",
+            path.display()
+        );
+    }
+    let manifest = ags_lifecycle::lifecycle_projection::load_lifecycle_manifest(
+        &ags_lifecycle::lifecycle_projection::lifecycle_manifest_path(&workspace),
+    )
+    .unwrap();
+    assert_eq!(manifest.enabled_hosts.len(), HOSTS.len());
+
+    let claude: Value =
+        serde_json::from_slice(&fs::read(workspace.join(".claude/settings.local.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        claude["hooks"]["Notification"][0]["hooks"][0]["command"],
+        "user-owned-hook"
+    );
+    let exclude = fs::read_to_string(workspace.join(".git/info/exclude")).unwrap();
+    for host in HOSTS {
+        let adapter =
+            ags_lifecycle::lifecycle_projection::workspace_adapter_path(&workspace, host).unwrap();
+        let relative = adapter.strip_prefix(&workspace).unwrap().to_string_lossy();
+        assert!(
+            exclude.contains(&format!("/{relative}").replace('\\', "/")),
+            "{host} adapter missing from local overlay"
+        );
+    }
 }
 
 #[test]
@@ -1497,9 +1593,9 @@ fn workspace_lifecycle_events_share_the_daemon_and_deduplicate_event_ids() {
     assert_eq!(status["current_binary"], true);
 }
 
-#[cfg(unix)]
 #[test]
 fn doctor_proves_target_aware_workspace_conformance_and_rejects_fixed_state_drift() {
+    #[cfg(unix)]
     use std::os::unix::fs::{symlink, PermissionsExt};
 
     let environment = TestEnvironment::new();
@@ -1512,7 +1608,14 @@ fn doctor_proves_target_aware_workspace_conformance_and_rejects_fixed_state_drif
         .env("USERPROFILE", &canonical_home)
         .args(["setup", "--target"])
         .arg(&environment.runtime)
-        .args(["--yes", "--force", "--format", "json"])
+        .args([
+            "--yes",
+            "--force",
+            "--lifecycle-hosts",
+            "claude-code",
+            "--format",
+            "json",
+        ])
         .output()
         .unwrap();
     assert!(
@@ -1560,9 +1663,13 @@ fn doctor_proves_target_aware_workspace_conformance_and_rejects_fixed_state_drif
     let old_bin = environment._root.path().join("old-bin");
     fs::create_dir_all(&fake_bin).unwrap();
     fs::create_dir_all(&old_bin).unwrap();
-    let current_ags = fake_bin.join("ags");
+    let executable_name = if cfg!(windows) { "ags.exe" } else { "ags" };
+    let current_ags = fake_bin.join(executable_name);
+    #[cfg(unix)]
     symlink(&environment.ags, &current_ags).unwrap();
-    let old_ags = old_bin.join("ags");
+    #[cfg(windows)]
+    fs::copy(&environment.ags, &current_ags).unwrap();
+    let old_ags = old_bin.join(executable_name);
     fs::copy(&environment.ags, &old_ags).unwrap();
     fs::OpenOptions::new()
         .append(true)
@@ -1571,17 +1678,67 @@ fn doctor_proves_target_aware_workspace_conformance_and_rejects_fixed_state_drif
         .write_all(b"\nold-e2e-binary")
         .unwrap();
 
-    let fake_codegraph = fake_bin.join("codegraph");
-    fs::write(&fake_codegraph, "#!/bin/sh\nexit 0\n").unwrap();
+    let fake_codegraph = fake_bin.join(if cfg!(windows) {
+        "codegraph.cmd"
+    } else {
+        "codegraph"
+    });
+    fs::write(
+        &fake_codegraph,
+        if cfg!(windows) {
+            "@echo off\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\nexit 0\n"
+        },
+    )
+    .unwrap();
+    #[cfg(unix)]
     fs::set_permissions(&fake_codegraph, fs::Permissions::from_mode(0o755)).unwrap();
-    let fake_node = fake_bin.join("node");
-    fs::write(&fake_node, "#!/bin/sh\nexit 0\n").unwrap();
+    let fake_node = fake_bin.join(if cfg!(windows) { "node.cmd" } else { "node" });
+    fs::write(
+        &fake_node,
+        if cfg!(windows) {
+            "@echo off\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\nexit 0\n"
+        },
+    )
+    .unwrap();
+    #[cfg(unix)]
     fs::set_permissions(&fake_node, fs::Permissions::from_mode(0o755)).unwrap();
     let probe_marker = environment._root.path().join("claude-probe-cwd");
-    let fake_claude = fake_bin.join("claude");
+    let fake_claude = fake_bin.join(if cfg!(windows) {
+        "claude.cmd"
+    } else {
+        "claude"
+    });
     fs::write(
         &fake_claude,
-        r#"#!/bin/sh
+        if cfg!(windows) {
+            r#"@echo off
+if "%1 %2"=="mcp list" (
+  if not "%CD%"=="%FAKE_EXPECTED_WORKSPACE%" if not "%CD%"=="%FAKE_NEUTRAL_HOME%" exit /b 42
+  echo list:%CD%>>"%FAKE_CLAUDE_CWD_MARKER%"
+  echo ags: %FAKE_AGS_MCP_COMMAND% mcp serve --transport stdio - Connected [workspace]
+  echo codegraph: %FAKE_CODEGRAPH_COMMAND% serve --mcp - Connected [user]
+  exit /b 0
+)
+if "%1 %2 %3"=="mcp get ags" (
+  if not "%CD%"=="%FAKE_NEUTRAL_HOME%" exit /b 43
+  echo get:%CD%:ags>>"%FAKE_CLAUDE_CWD_MARKER%"
+  echo ags command: %FAKE_AGS_MCP_COMMAND% mcp serve --transport stdio
+  exit /b 0
+)
+if "%1 %2 %3"=="mcp get codegraph" (
+  if not "%CD%"=="%FAKE_NEUTRAL_HOME%" exit /b 43
+  echo get:%CD%:codegraph>>"%FAKE_CLAUDE_CWD_MARKER%"
+  echo codegraph command: %FAKE_CODEGRAPH_COMMAND% serve --mcp
+  exit /b 0
+)
+exit /b 2
+"#
+        } else {
+            r#"#!/bin/sh
 set -eu
 if [ "$1" = "mcp" ] && [ "$2" = "list" ]; then
   case "$PWD" in
@@ -1616,12 +1773,22 @@ if [ "$1" = "mcp" ] && [ "$2" = "get" ] && [ "$3" = "codegraph" ]; then
 fi
 echo "unsupported fake claude invocation: $*" >&2
 exit 2
-"#,
+"#
+        },
     )
     .unwrap();
+    #[cfg(unix)]
     fs::set_permissions(&fake_claude, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let path = format!("{}:/usr/bin:/bin", fake_bin.display());
+    let path = if cfg!(windows) {
+        format!(
+            "{};{}",
+            fake_bin.display(),
+            std::env::var("PATH").unwrap_or_default()
+        )
+    } else {
+        format!("{}:/usr/bin:/bin", fake_bin.display())
+    };
     let governed = environment
         .command()
         .current_dir(&canonical_project_a)

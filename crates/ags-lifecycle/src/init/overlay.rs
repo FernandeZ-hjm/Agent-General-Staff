@@ -29,9 +29,13 @@ impl OverlayMode {
 /// inside the target repository. Memory-capsule files (under `$HOME`) and any
 /// path outside the target are skipped. Result is sorted and de-duplicated.
 fn overlay_exclude_entries(target: &Path, files: &[InitFile]) -> Vec<String> {
-    let mut entries: Vec<String> = Vec::new();
-    for file in files {
-        if let Ok(rel) = file.path.strip_prefix(target) {
+    overlay_exclude_paths(target, files.iter().map(|file| file.path.as_path()))
+}
+
+fn overlay_exclude_paths<'a>(target: &Path, paths: impl Iterator<Item = &'a Path>) -> Vec<String> {
+    let mut entries = Vec::new();
+    for path in paths {
+        if let Ok(rel) = path.strip_prefix(target) {
             let rel = rel
                 .components()
                 .map(|c| c.as_os_str().to_string_lossy().into_owned())
@@ -193,7 +197,14 @@ fn git_info_exclude_path(target: &Path) -> Option<PathBuf> {
         target.join(path)
     })
 }
-fn git_tracked_set(target: &Path) -> std::collections::HashSet<String> {
+
+pub fn local_overlay_active(target: &Path) -> bool {
+    git_info_exclude_path(target)
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .is_some_and(|body| body.contains("AGS local governance overlay"))
+}
+
+pub fn git_tracked_set(target: &Path) -> std::collections::HashSet<String> {
     let mut set = std::collections::HashSet::new();
     if let Ok(out) = git_command(target).args(["ls-files"]).output() {
         if out.status.success() {
@@ -218,7 +229,22 @@ pub struct OverlayPlan {
 /// Resolve the local overlay plan for the given target and AGS install files.
 /// Read-only: it queries git state but performs no writes.
 pub fn compute_overlay_plan(target: &Path, files: &[InitFile], mode: OverlayMode) -> OverlayPlan {
-    let entries = overlay_exclude_entries(target, files);
+    compute_overlay_plan_with_paths(target, files, &[], mode)
+}
+
+pub fn compute_overlay_plan_with_paths(
+    target: &Path,
+    files: &[InitFile],
+    extra_paths: &[PathBuf],
+    mode: OverlayMode,
+) -> OverlayPlan {
+    let mut entries = overlay_exclude_entries(target, files);
+    entries.extend(overlay_exclude_paths(
+        target,
+        extra_paths.iter().map(PathBuf::as_path),
+    ));
+    entries.sort();
+    entries.dedup();
     let mut warnings = Vec::new();
     let is_git_repo = git_is_repo(target);
 
@@ -358,6 +384,56 @@ pub fn apply_overlay(plan: &OverlayPlan) -> Vec<super::InitFinding> {
     }
     findings
 }
+
+pub fn untrack_pure_overlay_files(
+    target: &Path,
+    candidates: &[(PathBuf, Vec<u8>)],
+) -> Vec<super::InitFinding> {
+    use super::InitFinding as Finding;
+    let mut findings = Vec::new();
+    let tracked = git_tracked_set(target);
+    for (path, expected) in candidates {
+        let Ok(relative) = path.strip_prefix(target) else {
+            continue;
+        };
+        if !tracked.contains(&relative.to_string_lossy().replace('\\', "/")) {
+            continue;
+        }
+        let observed = std::fs::read(path).ok();
+        if observed.as_deref() != Some(expected.as_slice()) {
+            findings.push(Finding::warn(
+                "overlay-mixed-ownership",
+                format!(
+                    "tracked file kept because it is not pure AGS output: {}",
+                    path.display()
+                ),
+                "preserved project-owned or mixed content",
+            ));
+            continue;
+        }
+        match git_command(target)
+            .args(["rm", "--cached", "--ignore-unmatch", "--"])
+            .arg(relative)
+            .output()
+        {
+            Ok(output) if output.status.success() => findings.push(Finding::pass(
+                "overlay-untrack-pure",
+                format!("removed pure AGS output from Git index: {}", path.display()),
+            )),
+            Ok(output) => findings.push(Finding::fail(
+                "overlay-untrack-pure",
+                format!("could not remove {} from Git index", path.display()),
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            )),
+            Err(error) => findings.push(Finding::fail(
+                "overlay-untrack-pure",
+                format!("could not inspect Git index for {}", path.display()),
+                error.to_string(),
+            )),
+        }
+    }
+    findings
+}
 pub fn render_overlay_text(plan: &OverlayPlan) -> String {
     let mut lines = vec![
         "Overlay:".to_string(),
@@ -397,7 +473,7 @@ pub fn overlay_json(plan: &OverlayPlan) -> serde_json::Value {
 mod overlay_tests {
     use super::{
         apply_overlay, compute_overlay_plan, merge_overlay_exclude, overlay_exclude_entries,
-        InitFile, OverlayMode, OVERLAY_BLOCK_BEGIN, OVERLAY_BLOCK_END,
+        untrack_pure_overlay_files, InitFile, OverlayMode, OVERLAY_BLOCK_BEGIN, OVERLAY_BLOCK_END,
     };
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -459,85 +535,49 @@ mod overlay_tests {
     }
 
     #[test]
-    fn merge_overlay_exclude_preserves_user_lines_when_begin_has_no_end() {
-        // A truncated managed block: BEGIN with no matching END. User ignore
-        // lines after the orphan BEGIN must NOT be swallowed (the old bug).
-        let malformed = format!(
-            "secret.key\n{}\n/AGENTS.md\nkeep-me.txt\nbuild/\n",
-            OVERLAY_BLOCK_BEGIN
-        );
+    fn malformed_overlay_markers_preserve_user_content_and_remain_idempotent() {
+        let cases = [
+            (
+                format!(
+                    "secret.key\n{}\n/AGENTS.md\nkeep-me.txt\nbuild/\n",
+                    OVERLAY_BLOCK_BEGIN
+                ),
+                vec!["secret.key", "/AGENTS.md", "keep-me.txt", "build/"],
+            ),
+            (
+                format!("a.txt\n{}\nb.txt\n", OVERLAY_BLOCK_END),
+                vec!["a.txt", "b.txt"],
+            ),
+            (
+                format!(
+                    "before\n{}\nouter-user\n{}\ninner-user-should-stay\n{}\nafter\n",
+                    OVERLAY_BLOCK_BEGIN, OVERLAY_BLOCK_BEGIN, OVERLAY_BLOCK_END
+                ),
+                vec!["before", "outer-user", "inner-user-should-stay", "after"],
+            ),
+        ];
         let entries = vec!["/WORKSPACE.md".to_string()];
-        let merged = merge_overlay_exclude(&malformed, &entries);
 
-        assert!(
-            merged.had_malformed_markers,
-            "orphan BEGIN must be flagged as malformed"
-        );
-        for line in ["secret.key", "/AGENTS.md", "keep-me.txt", "build/"] {
-            assert!(
-                merged.content.contains(line),
-                "user line {line:?} must be preserved, got:\n{}",
-                merged.content
+        for (malformed, preserved_lines) in cases {
+            let merged = merge_overlay_exclude(&malformed, &entries);
+            assert!(merged.had_malformed_markers);
+            for line in preserved_lines {
+                assert!(
+                    merged.content.contains(line),
+                    "line {line:?} must be preserved, got:\n{}",
+                    merged.content
+                );
+            }
+            assert!(merged.content.contains("/WORKSPACE.md"));
+            assert!(merged.content.contains(OVERLAY_BLOCK_END));
+
+            let again = merge_overlay_exclude(&merged.content, &entries);
+            assert_eq!(
+                merged.content, again.content,
+                "malformed-input merge must remain idempotent"
             );
+            assert_eq!(again.content.matches("/WORKSPACE.md").count(), 1);
         }
-        // A fresh well-formed block is appended rather than replacing in place.
-        assert!(merged.content.contains("/WORKSPACE.md"));
-        assert!(merged.content.contains(OVERLAY_BLOCK_END));
-
-        // Re-running must neither delete content nor grow unbounded.
-        let again = merge_overlay_exclude(&merged.content, &entries);
-        assert_eq!(
-            merged.content, again.content,
-            "malformed-input merge must still be idempotent"
-        );
-        assert_eq!(again.content.matches(OVERLAY_BLOCK_END).count(), 1);
-    }
-
-    #[test]
-    fn merge_overlay_exclude_preserves_lines_around_stray_end() {
-        // A stray END with no preceding BEGIN must be kept as ordinary content.
-        let stray = format!("a.txt\n{}\nb.txt\n", OVERLAY_BLOCK_END);
-        let merged = merge_overlay_exclude(&stray, &["/AGENTS.md".to_string()]);
-        assert!(merged.had_malformed_markers);
-        assert!(merged.content.contains("a.txt"));
-        assert!(merged.content.contains("b.txt"));
-        assert!(merged.content.contains("/AGENTS.md"));
-    }
-
-    #[test]
-    fn merge_overlay_exclude_preserves_user_lines_when_begin_is_nested() {
-        // Nested BEGIN markers make the existing marker structure malformed.
-        // Once malformed, AGS must preserve all original lines and only append
-        // a fresh managed block; it must not treat the inner BEGIN..END as a
-        // removable well-formed block.
-        let malformed = format!(
-            "before\n{}\nouter-user\n{}\ninner-user-should-stay\n{}\nafter\n",
-            OVERLAY_BLOCK_BEGIN, OVERLAY_BLOCK_BEGIN, OVERLAY_BLOCK_END
-        );
-        let entries = vec!["/WORKSPACE.md".to_string()];
-        let merged = merge_overlay_exclude(&malformed, &entries);
-
-        assert!(merged.had_malformed_markers);
-        for line in [
-            "before",
-            "outer-user",
-            "inner-user-should-stay",
-            "after",
-            "/WORKSPACE.md",
-        ] {
-            assert!(
-                merged.content.contains(line),
-                "line {line:?} must be preserved or appended, got:\n{}",
-                merged.content
-            );
-        }
-
-        let again = merge_overlay_exclude(&merged.content, &entries);
-        assert_eq!(
-            merged.content, again.content,
-            "nested malformed merge must be idempotent"
-        );
-        assert_eq!(again.content.matches("/WORKSPACE.md").count(), 1);
     }
 
     fn unique_repo(name: &str) -> PathBuf {
@@ -567,9 +607,20 @@ mod overlay_tests {
             mk(target.join("WORKSPACE.md")),
             mk(target.join("AGENTS.md")),
         ];
+        assert!(std::process::Command::new("git")
+            .current_dir(&target)
+            .args(["add", "-f", "WORKSPACE.md"])
+            .status()
+            .unwrap()
+            .success());
 
         let plan = compute_overlay_plan(&target, &files, OverlayMode::Local);
         assert!(plan.is_git_repo);
+        let untracked =
+            untrack_pure_overlay_files(&target, &[(target.join("WORKSPACE.md"), b"ags".to_vec())]);
+        assert!(untracked
+            .iter()
+            .any(|finding| finding.check_name == "overlay-untrack-pure"));
         let _ = apply_overlay(&plan);
 
         let exclude = plan.exclude_path.clone().unwrap();

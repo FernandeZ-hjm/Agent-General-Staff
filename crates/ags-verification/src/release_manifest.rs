@@ -162,7 +162,6 @@ const APPROVED_PUBLIC_REWRITE_PATHS: &[&str] = &[
     "crates/ags-lifecycle/src/update/apply.rs",
     "crates/ags-lifecycle/src/setup/apply.rs",
     "crates/ags-lifecycle/src/setup/memory/adapter.rs",
-    "crates/ags-lifecycle/src/setup/memory/merge.rs",
     "crates/ags-lifecycle/src/setup/memory/mod.rs",
     "crates/ags-lifecycle/src/setup/mod.rs",
     "crates/ags-lifecycle/src/setup/plan.rs",
@@ -1231,7 +1230,7 @@ mod tests {
         ] {
             assert!(
                 files.contains(path),
-                "v0.4.0 public authority must include {path}"
+                "v0.4.1 public authority must include {path}"
             );
         }
         for retired in [

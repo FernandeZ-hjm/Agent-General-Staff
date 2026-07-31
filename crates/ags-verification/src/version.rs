@@ -411,11 +411,11 @@ pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
         ),
         (
             "crates/ags-lifecycle/src/init/model.rs",
-            "0.3.6-project-init",
+            "0.4.1-project-init",
         ),
         (
             "crates/ags-lifecycle/src/setup/mod.rs",
-            "0.4.0-private-install",
+            "0.4.1-private-install",
         ),
         (
             "crates/ags-lifecycle/src/workspace_lifecycle.rs",
