@@ -2031,9 +2031,15 @@ exit 2
 
     let settings_path = canonical_project_a.join(".claude/settings.local.json");
     let canonical_settings = fs::read_to_string(&settings_path).unwrap();
+    let json_path = |path: &Path| {
+        serde_json::to_string(&path.to_string_lossy())
+            .unwrap()
+            .trim_matches('"')
+            .to_string()
+    };
     let wrong_target_settings = canonical_settings.replace(
-        canonical_project_a.to_string_lossy().as_ref(),
-        canonical_project_b.to_string_lossy().as_ref(),
+        &json_path(&canonical_project_a),
+        &json_path(&canonical_project_b),
     );
     assert_ne!(wrong_target_settings, canonical_settings);
     fs::write(&settings_path, wrong_target_settings).unwrap();
