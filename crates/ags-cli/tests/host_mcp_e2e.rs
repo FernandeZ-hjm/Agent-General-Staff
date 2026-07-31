@@ -1947,13 +1947,13 @@ exit 2
     assert!(
         probe_cwds
             .lines()
-            .any(|line| line == format!("list:{}", canonical_home.display())),
+            .any(|line| line == format!("list:{neutral_home_for_shell}")),
         "global Claude MCP inspection did not use neutral HOME: {probe_cwds}"
     );
     assert!(
         probe_cwds
             .lines()
-            .any(|line| line == format!("list:{}", canonical_project_a.display())),
+            .any(|line| line == format!("list:{expected_workspace_for_shell}")),
         "workspace Claude MCP inspection ignored the explicit target: {probe_cwds}"
     );
     assert!(
