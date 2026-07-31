@@ -174,7 +174,7 @@ pub fn command_for_program(program: &str) -> Command {
         if batch {
             let mut command =
                 Command::new(std::env::var_os("COMSPEC").unwrap_or_else(|| "cmd.exe".into()));
-            command.args(["/D", "/C"]).arg(resolved);
+            command.args(["/D", "/C", "call"]).arg(resolved);
             return command;
         }
         Command::new(resolved)

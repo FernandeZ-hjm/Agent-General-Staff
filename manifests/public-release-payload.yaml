@@ -266,7 +266,7 @@ public_rewrites:
   - path: manifests/skills-registry.yaml
     target_sha256: "sha256:f5a7d690aa3998a09aa2827f54414fd38171f22c8454bafc7a3eddc0fc9fba56"
   - path: manifests/suite.yaml
-    target_sha256: "sha256:3061ab95857e53d8a64198a1adc89b7cc66e3a2aef673c35f6140305a2c1f53c"
+    target_sha256: "sha256:9ca158ca00af66b9deed02a98f623ee85d4f9ea1d93461e67de910bfe3e0e98f"
   - path: protocol/agent-task-protocol.md
     target_sha256: "sha256:3740fc41f7e497a857a5ac40c7b2717223ec228f7402edc4cfc0c8afa96af2a3"
   - path: protocol/context-memory.md

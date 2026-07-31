@@ -1,154 +1,70 @@
-# Suite Manifest — Agent Governance Suite skill manifest
+# Suite Manifest — Agent General Staff public edition
 #
-# Schema version: 1.0
+# Schema version: 2.0-skill
 #
-# required: suite-managed engineering skills installed by the private suite.
-# optional: curated third-party / integration skill packs, not installed by default.
-# personal: user-profile skills; never sync to public-full sanitized releases.
+# Full-blood public governance runtime.  Includes task-card validation,
+# compilation, execution policy resolution, gate check, protocol drift
+# checking, suite health diagnostics, bootstrap, project discovery,
+# session preflight, scoped verification, runner, receipt/compliance,
+# skill governance, capability registry, memory capsule, and stop-hook
+# archive.
+#
+# Third-party skills are optional and NEVER auto-installed by AGS.
+# Inspect reviewed static capability metadata with `ags skill inventory`.
 
-schema_version: "1.0"
+schema_version: "2.0-skill"
 suite:
-  name: "agent-governance-suite"
+  name: "agent-general-staff"
   version: "0.4.1"
+  description: >
+    Agent General Staff 0.4.1 public edition — Rust-native governance control
+    plane for multi-agent development. It governs admission, authority, policy,
+    evidence, capability state, and lifecycle; it is not an Agent scheduler.
+    Optional third-party development skills require confirmed installation.
   required:
-    # Third-party engineering skills track upstream names directly. AGS routes
-    # them through manifests/skills-registry.yaml instead of preserving retired
-    # local aliases or local-enriched wrapper bodies.
     - name: "ags-agents"
       version: "0.4.1"
-      source: "global-skills/ags-agents"
+      source: "templates/command-skills/ags-agents"
       hash: "7581b198d63c1d1f61b49b8e14fb3e9ec894fa303d476cdf31ac6423febfa8e6"
     - name: "ags-doctor"
       version: "0.4.1"
-      source: "global-skills/ags-doctor"
+      source: "templates/command-skills/ags-doctor"
       hash: "9415595bbfc04a000fc92ca8b074bcb1753f3f5d9d676c1de60eefdcd619a999"
     - name: "ags-init"
       version: "0.4.1"
-      source: "global-skills/ags-init"
-      hash: "485aede35ee2a7a5f9a79afcc1e18b9184ccd421d49f4c175f5fc8861a5d94ba"
+      source: "templates/command-skills/ags-init"
+      hash: "dd38b6a0e89b2bd9195e4354a1872cf89a5d3f902225857a63be6f9f9e470b4e"
     - name: "ags-setup"
       version: "0.4.1"
-      source: "global-skills/ags-setup"
+      source: "templates/command-skills/ags-setup"
       hash: "deced1523aacda2a1fee229e80969a2340bbe6cc65a09aa7295c70f502caee31"
     - name: "ags-skill"
       version: "0.4.1"
-      source: "global-skills/ags-skill"
+      source: "templates/command-skills/ags-skill"
       hash: "c468335daabf711672fc24720f0fc0f9c55a8d62cdff884acde7fa26c364f786"
-    - name: "claude-delivery-report"
-      version: "migrated-1.0"
-      source: "global-skills/claude-delivery-report"
-      hash: "2688fefbf443a278a52a0a501542a4bdfe0ed2ff978c19daed3199f91812054a"
-    - name: "diagnosing-bugs"
-      version: "mattpocock-main-6eeb81b"
-      source: "global-skills/diagnosing-bugs"
-      hash: "adac6537acc097096a2bc828df982690c32b90a14753558426789f7fef49f641"
-    - name: "codebase-design"
-      version: "mattpocock-main-6eeb81b"
-      source: "global-skills/codebase-design"
-      hash: "b8e79eab9db26b23ad8f9c12d41564f8b88c847da31c682f2fd7b1b20670f19e"
-    - name: "domain-modeling"
-      version: "mattpocock-main-6eeb81b"
-      source: "global-skills/domain-modeling"
-      hash: "90c268bd9f147030f6b87c7d5dbe206f8788ef664c9e352a2a023686adb06719"
-    - name: "webapp-testing"
-      version: "migrated-1.0"
-      source: "global-skills/webapp-testing"
-      hash: "abfaf4cc6cf572346e22fed42dc0cfaacd2f64c5d9667f44a94b02ea0d3b1342"
-    - name: "grill-with-docs"
-      version: "mattpocock-main-6eeb81b"
-      source: "global-skills/grill-with-docs"
-      hash: "885e12183bfa4d5be6ab96acad9dba267fd8dbcac246528c13d1f22c5a34324d"
-    - name: "grilling"
-      version: "mattpocock-main-6eeb81b"
-      source: "global-skills/grilling"
-      hash: "a7fb0448b4915b62560d65ea925c0a38d45790385b03e45cd72fbf3eefecbc05"
-    - name: "to-prd"
-      version: "mattpocock-main-6eeb81b"
-      source: "global-skills/to-prd"
-      hash: "9c65a948dc60e3b79fe882cd9cddeb8ff481ebbc91afb07337ec016a947700d5"
-    - name: "to-issues"
-      version: "mattpocock-main-6eeb81b"
-      source: "global-skills/to-issues"
-      hash: "b031c9168690bd4f87c133192d41dc3803c18422ef552b921a225e3780fccc01"
-    - name: "triage"
-      version: "mattpocock-main-6eeb81b"
-      source: "global-skills/triage"
-      hash: "e672409aa06ea03d545c2046c35f6cb6c3732277a6882648053d68a9dd83269c"
-    - name: "handoff"
-      version: "mattpocock-main-6eeb81b"
-      source: "global-skills/handoff"
-      hash: "5110be24f2fd96d77672b1e74bf242d2dd05b857b0c015b6d2ac7f3288e73008"
-    - name: "improve-codebase-architecture"
-      version: "mattpocock-main-6eeb81b"
-      source: "global-skills/improve-codebase-architecture"
-      hash: "09e3285c463826d135e1243e60ad3402cfb4a8d92452bd3656be6562d19427b6"
-    - name: "prototype"
-      version: "mattpocock-main-6eeb81b"
-      source: "global-skills/prototype"
-      hash: "600e4885efe31d6f23138e98e85c5dbb234b37bac148954aee85947cad926ac3"
-    - name: "resolving-merge-conflicts"
-      version: "mattpocock-main-6eeb81b"
-      source: "global-skills/resolving-merge-conflicts"
-      hash: "3d324de7f21cf829bcda483b2957d066f2b9659816403e941dd090c9c127d80f"
-    - name: "review"
-      version: "mattpocock-main-6eeb81b"
-      source: "global-skills/review"
-      hash: "2149d1a04cb7be374bec96f323024b4d71e84f3dfc4749155ef71dd9b600c2bc"
-    - name: "decision-mapping"
-      version: "mattpocock-main-6eeb81b"
-      source: "global-skills/decision-mapping"
-      hash: "aad3058b79250e548de2fcabf2dd665d870582cf99ca1679f8b4fe522af748b4"
-    - name: "database-migration"
-      version: "migrated-1.0"
-      source: "global-skills/database-migration"
-      hash: "9944dd75ebfbdb6e458b1a10d27c59d005956ea3306a3dad8c22042217f5e284"
-    - name: "supply-chain-risk-auditor"
-      version: "migrated-1.0"
-      source: "global-skills/supply-chain-risk-auditor"
-      hash: "f4d6e4181110652413e88be9437d01052a52e65dff83d53c45114e610ebe28e7"
-    - name: "graphify"
-      version: "migrated-1.0"
-      source: "global-skills/graphify"
-      hash: "048a1ed95e7af30e09c2ff44afa7074511f0382abc750144b21b84f8dfb24382"
-    - name: "superpowers"
-      version: "5.1.3-bundled-router"
-      source: "global-skills/superpowers"
-      hash: "1c58ba7afce70d04f8525d021c54fec2e2beedfac59a4234ade872334f35ad37"
   optional:
-    - name: "guizang-ppt-skill"
-      version: "migrated-1.0"
-      source: "skill-packs/optional/guizang-ppt-skill"
-      hash: "deaf760abf6f9b8ffc8a992f25b4b69492ad7d8fc16453420db5d00d51fcf9ad"
-    - name: "claude-mem"
-      version: "13.6.2-wrapper"
-      source: "skill-packs/optional/claude-mem"
-      hash: "ece828905787438a924ab65500fee35b8386b1b6e44be67eccd28cb2527f2a01"
-  personal:
-    "khazix-writer":
-      version: "migrated-1.0"
-      source: "skill-packs/personal/khazix-writer"
-      hash: "b7b07f86a3857e811341c3d0ffb4aef98e27e1953020fd51dd79e3cecf90856d"
-    "obsidian-vault":
-      version: "mattpocock-main-6eeb81b"
-      source: "skill-packs/personal/obsidian-vault"
-      hash: "ea7c7356f50cb4305decb441d9e7df58a148e3426759e92317e47e9089c806be"
-    "产经破壁机-撰稿":
-      version: "migrated-1.0"
-      source: "skill-packs/personal/产经破壁机-撰稿"
-      hash: "ca893d6b3c957c3c4c3fc54f39d57c7ce844daf437e1d953c1ffe667adc9c26a"
-    "产经破壁机-选题策划":
-      version: "migrated-1.0"
-      source: "skill-packs/personal/产经破壁机-选题策划"
-      hash: "018fc26700930bc68f0648fa07d482dbc4f5f2e2a971cd17800ca01a0087868e"
-    "六爻问卦":
-      version: "migrated-1.0"
-      source: "skill-packs/personal/六爻问卦"
-      hash: "de87fa152f59aa91902dfdc6348a37f4c0a83a19e65f97561b39dce8b8313ae0"
-    "深度科技评论":
-      version: "migrated-1.0"
-      source: "skill-packs/personal/深度科技评论"
-      hash: "18c6cfcd41ceba402b85f90368ee551d3700fc98ca30a4a313f4e8e70f3627d7"
-    "辐射塔罗牌":
-      version: "migrated-1.0"
-      source: "skill-packs/personal/辐射塔罗牌"
-      hash: "14ed92ffca849657856d850aa4bdb9f775e357bb5c3bf3624808f148ecf2d58d"
+    # The host submits a typed HostRouteProposal. Skill Resolver validates exact
+    # SkillTarget identifiers against the machine-local HostCapabilitySnapshot;
+    # it does not interpret natural language or select fallbacks. Internal
+    # Superpowers playbooks remain entrypoints of the host-visible parent skill.
+    # ags-capability is also retired as a Codex front-stage command skill; the
+    # public `ags capability ...` CLI remains available for Cross-Agent
+    # visibility/sync and is not exposed as a `$ags-capability` skill.
+    # ── Manual skills (external recommendation-only sources; never auto-installed) ──
+    - name: diagnosing-bugs
+      source: "https://github.com/mattpocock/skills/tree/main/skills/engineering/diagnosing-bugs"
+      version: "latest"
+      description: "Root cause diagnosis with evidence chain"
+    - name: grill-with-docs
+      source: "https://github.com/mattpocock/skills/tree/main/skills/engineering/grill-with-docs"
+      version: "latest"
+      description: "Requirements alignment grounded in project docs"
+    - name: prototype
+      source: "https://github.com/mattpocock/skills/tree/main/skills/engineering/prototype"
+      version: "latest"
+      description: "Throwaway prototype workflow for uncertain designs"
+    - name: webapp-testing
+      source: "https://github.com/anthropics/skills/tree/main/webapp-testing"
+      version: "latest"
+      description: "Playwright-based web application testing"
+  personal: {}
