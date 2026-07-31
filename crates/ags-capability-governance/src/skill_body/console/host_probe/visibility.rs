@@ -522,44 +522,65 @@ pub(in super::super) fn skill_path_visibility(
             return v(HostVisibilityStatus::Degraded, evidence);
         };
         if !meta.file_type().is_symlink() {
-            evidence.push(format!(
-                "host entry is not a thin-index symlink to the AGS canonical body: {}",
-                skill_dir.display()
-            ));
-            return v(HostVisibilityStatus::Degraded, evidence);
-        }
-        let real_entry = match std::fs::canonicalize(&skill_dir) {
-            Ok(p) => p,
-            Err(e) => {
+            #[cfg(windows)]
+            {
+                let projection_hash = crate::snapshot_compiler::hash_skill_source(&skill_dir).ok();
+                let canonical_hash = crate::snapshot_compiler::hash_skill_source(canonical).ok();
+                if projection_hash.is_some() && projection_hash == canonical_hash {
+                    evidence.push(format!(
+                        "Windows host projection exactly matches the AGS canonical body: {}",
+                        skill_dir.display()
+                    ));
+                } else {
+                    evidence.push(format!(
+                        "Windows host projection differs from the AGS canonical body: {}",
+                        skill_dir.display()
+                    ));
+                    return v(HostVisibilityStatus::Degraded, evidence);
+                }
+            }
+            #[cfg(not(windows))]
+            {
                 evidence.push(format!(
-                    "host thin index target is not canonicalizable: {} ({e})",
+                    "host entry is not a thin-index symlink to the AGS canonical body: {}",
                     skill_dir.display()
                 ));
                 return v(HostVisibilityStatus::Degraded, evidence);
             }
-        };
-        let real_canonical = match std::fs::canonicalize(canonical) {
-            Ok(p) => p,
-            Err(e) => {
+        } else {
+            let real_entry = match std::fs::canonicalize(&skill_dir) {
+                Ok(p) => p,
+                Err(e) => {
+                    evidence.push(format!(
+                        "host thin index target is not canonicalizable: {} ({e})",
+                        skill_dir.display()
+                    ));
+                    return v(HostVisibilityStatus::Degraded, evidence);
+                }
+            };
+            let real_canonical = match std::fs::canonicalize(canonical) {
+                Ok(p) => p,
+                Err(e) => {
+                    evidence.push(format!(
+                        "AGS canonical source is not canonicalizable: {} ({e})",
+                        canonical.display()
+                    ));
+                    return v(HostVisibilityStatus::Degraded, evidence);
+                }
+            };
+            let Some(match_kind) = thin_index_target_match(&real_entry, &real_canonical) else {
                 evidence.push(format!(
-                    "AGS canonical source is not canonicalizable: {} ({e})",
-                    canonical.display()
+                    "host thin index points to {}, expected AGS canonical {}",
+                    real_entry.display(),
+                    real_canonical.display()
                 ));
                 return v(HostVisibilityStatus::Degraded, evidence);
-            }
-        };
-        let Some(match_kind) = thin_index_target_match(&real_entry, &real_canonical) else {
+            };
             evidence.push(format!(
-                "host thin index points to {}, expected AGS canonical {}",
-                real_entry.display(),
-                real_canonical.display()
+                "thin index resolves to {match_kind}: {}",
+                real_entry.display()
             ));
-            return v(HostVisibilityStatus::Degraded, evidence);
-        };
-        evidence.push(format!(
-            "thin index resolves to {match_kind}: {}",
-            real_entry.display()
-        ));
+        }
     }
     if !skill_md.is_file() {
         evidence.push(format!(

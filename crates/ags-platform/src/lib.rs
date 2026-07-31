@@ -11,6 +11,7 @@
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use sha2::{Digest, Sha256};
 
@@ -153,6 +154,35 @@ fn set_private_file(_path: &Path) {
 pub fn find_in_path(cmd: &str) -> Option<PathBuf> {
     let path_var = std::env::var_os("PATH");
     find_in_path_within(cmd, path_var.as_deref())
+}
+
+/// Build a native process command, resolving Windows PATHEXT launchers.
+///
+/// `CreateProcess` cannot execute `.cmd` or `.bat` files directly, so those
+/// launchers use the system command interpreter. Callers append arguments to
+/// the returned command exactly as they would for a native executable.
+pub fn command_for_program(program: &str) -> Command {
+    #[cfg(windows)]
+    {
+        let resolved = find_in_path(program).unwrap_or_else(|| PathBuf::from(program));
+        let batch = resolved
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
+            });
+        if batch {
+            let mut command =
+                Command::new(std::env::var_os("COMSPEC").unwrap_or_else(|| "cmd.exe".into()));
+            command.args(["/D", "/C"]).arg(resolved);
+            return command;
+        }
+        Command::new(resolved)
+    }
+    #[cfg(not(windows))]
+    {
+        Command::new(program)
+    }
 }
 
 /// Whether an executable named `cmd` is resolvable on `PATH`.

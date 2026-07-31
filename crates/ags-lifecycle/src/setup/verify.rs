@@ -193,7 +193,7 @@ fn mcp_smoke_current_exe() -> Result<(), String> {
     Ok(())
 }
 fn claude_mcp_get_at(server: &str, current_dir: &Path) -> Result<String, String> {
-    let output = std::process::Command::new("claude")
+    let output = ags_platform::command_for_program("claude")
         .args(["mcp", "get", server])
         .current_dir(current_dir)
         .output()

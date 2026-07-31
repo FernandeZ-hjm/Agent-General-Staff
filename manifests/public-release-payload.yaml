@@ -232,7 +232,7 @@ public_rewrites:
   - path: crates/ags-lifecycle/src/setup/templates.rs
     target_sha256: "sha256:1945f4b0b5070a1ac7553cc38f26a1aa5b397c11a4cdd3212ff0916edf0fa604"
   - path: crates/ags-lifecycle/src/setup/verify.rs
-    target_sha256: "sha256:9368c50a06d6c504e8fb215d0511c341b30282d40ca8f076daeb18abe525bef7"
+    target_sha256: "sha256:dd3d34d561b9f8a0463c22237d1555dc9d79ecfb3bc7ea92c936ef0d9633a53d"
   - path: crates/ags-mcp/src/lib.rs
     target_sha256: "sha256:a92d28857b363e5e75d244ca9340227274ed8027cd1fd6df6aa7024acaa7caae"
   - path: crates/ags-mcp/src/prompts.rs
