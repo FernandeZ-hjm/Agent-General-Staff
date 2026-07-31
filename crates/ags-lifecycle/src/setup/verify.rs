@@ -460,7 +460,13 @@ pub(in crate::setup) fn private_install_health_report(
     }
 
     match (claude_mcp_get_at("ags", home), command_in_path("ags")) {
-        (Ok(detail), Ok(ags_path)) if detail.contains(&ags_path) => {
+        (Ok(detail), Ok(ags_path))
+            if detail.contains(&ags_path)
+                || (cfg!(windows)
+                    && detail
+                        .to_ascii_lowercase()
+                        .contains(&ags_path.to_ascii_lowercase())) =>
+        {
             report.add(crate::setup::SetupFinding::pass(
                 "private-install-claude-code-ags-command",
                 "Claude Code ags MCP uses installed AGS binary",

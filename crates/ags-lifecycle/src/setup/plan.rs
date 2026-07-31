@@ -37,6 +37,11 @@ pub(in crate::setup) fn private_install_plan_with_hosts(
     approved_lifecycle_hosts: &[String],
     lifecycle_selection_source: &str,
 ) -> PrivateInstallPlan {
+    let serialized_target = serde_json::to_string(&target.to_string_lossy()).unwrap_or_default();
+    let config_target = serialized_target
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or_default();
     let ags_mcp_json = r#"{
   "mcpServers": {
     "ags": {
@@ -57,7 +62,7 @@ pub(in crate::setup) fn private_install_plan_with_hosts(
   }
 }
 "#
-    .replace("__TARGET__", &target.to_string_lossy());
+    .replace("__TARGET__", config_target);
 
     let codex_snippet = r#"# AGS MCP host initialization adapter
 # Merge this snippet into ~/.codex/config.toml after review.
@@ -72,7 +77,7 @@ AGS_RUNTIME_HOME = "__TARGET__"
 command = "codegraph"
 args = ["serve", "--mcp"]
 "#
-    .replace("__TARGET__", &target.to_string_lossy());
+    .replace("__TARGET__", config_target);
 
     let claude_snippet = r#"{
   "mcpServers": {
@@ -90,7 +95,7 @@ args = ["serve", "--mcp"]
   }
 }
 "#
-    .replace("__TARGET__", &target.to_string_lossy());
+    .replace("__TARGET__", config_target);
 
     // Tencent Agent is the platform family; WorkBuddy and CodeBuddy-Code are
     // host clients. These snippets are host-platform MCP registrations for AGS,
