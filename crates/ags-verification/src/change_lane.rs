@@ -79,7 +79,7 @@ pub enum VerificationProfile {
     Standard,
     /// Standard plus governance-protocol checks.
     Protocol,
-    /// Protocol plus release boundary checks (= release scope).
+    /// Protocol plus the separately composed release scope.
     Release,
 }
 

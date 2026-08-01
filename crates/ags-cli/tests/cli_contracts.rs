@@ -91,6 +91,82 @@ fn retired_sync_and_full_scope_are_absent_from_the_cli_surface() {
     }
 }
 
+#[test]
+fn local_verify_routes_integrated_projects_away_from_suite_checks() {
+    let root = repo_root();
+    let fixture = TestDir::new("verify-integrated-project");
+    let project = fixture.path().join("business-project");
+    let home = fixture.path().join("home");
+    std::fs::create_dir_all(project.join(".git")).unwrap();
+    std::fs::create_dir_all(project.join("config")).unwrap();
+    copy_tree(&root.join("protocol"), &project.join("protocol"));
+    for entry in [
+        "AGENTS.md",
+        "CLAUDE.md",
+        "WORKSPACE.md",
+        "AGENT_SUITE_PROTOCOL.md",
+    ] {
+        std::fs::copy(root.join(entry), project.join(entry)).unwrap();
+    }
+    std::fs::write(
+        project.join("config/agent-project-profile.yaml"),
+        "schema_version: 1\nproject:\n  name: Business Project\n  slug: business-project\n",
+    )
+    .unwrap();
+    let memory = home.join(".agents/memory/projects/business-project");
+    std::fs::create_dir_all(&memory).unwrap();
+    std::fs::write(memory.join("context-capsule.md"), "# Context Capsule\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ags"))
+        .args([
+            "verify",
+            "--scope",
+            "local",
+            "--target",
+            project.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .current_dir(fixture.path())
+        .env("HOME", &home)
+        .env("AGS_HOME", home.join(".ags/private-runtime"))
+        .output()
+        .expect("verify integrated business project");
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "verify did not emit JSON: {error}\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
+    let ids = report["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|item| item["id"].as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        output.status.success(),
+        "integrated project verification failed: {}",
+        serde_json::to_string_pretty(&report).unwrap()
+    );
+    assert!(ids.contains(&"session-preflight"));
+    for suite_only in [
+        "cargo-fmt",
+        "cargo-test",
+        "cargo-build-release",
+        "fixture-valid-full",
+        "fixture-invalid-compact-rejected",
+        "runtime-profile-templates",
+    ] {
+        assert!(
+            !ids.contains(&suite_only),
+            "integrated project ran suite-only check {suite_only}: {ids:?}"
+        );
+    }
+}
+
 fn copy_tree(source: &Path, destination: &Path) {
     std::fs::create_dir_all(destination).expect("create copied fixture directory");
     for entry in std::fs::read_dir(source).expect("read copied fixture directory") {
@@ -502,6 +578,73 @@ fn agents_scan_cli_contract() {
     let output = run_ags_isolated(&["agents", "scan", "--format", "json"]);
     assert_success(&output, "agents scan");
     serde_json::from_slice::<Value>(&output.stdout).expect("agents scan JSON");
+}
+
+#[cfg(unix)]
+#[test]
+fn capability_snapshot_target_controls_workspace_scoped_host_probe() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = repo_root();
+    let fixture = TestDir::new("capability-snapshot-target");
+    let workspace = fixture.path().join("workspace");
+    let caller = fixture.path().join("caller");
+    let runtime = fixture.path().join("runtime");
+    let host_home = fixture.path().join("host-home");
+    let bin = fixture.path().join("bin");
+    for path in [&workspace, &caller, &runtime, &host_home, &bin] {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    std::fs::create_dir_all(workspace.join(".git")).unwrap();
+
+    let codex = bin.join("codex");
+    std::fs::write(
+        &codex,
+        format!(
+            "#!/bin/sh\nprintf 'Name Command Args Status\\n'\nif [ \"$PWD\" = '{}' ]; then\n  printf 'ags ags mcp serve enabled\\n'\nfi\n",
+            workspace.display()
+        ),
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&codex).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&codex, permissions).unwrap();
+
+    let run_snapshot = |cwd: &Path| {
+        Command::new(env!("CARGO_BIN_EXE_ags"))
+            .args([
+                "capability",
+                "snapshot",
+                "--host",
+                "codex",
+                "--target",
+                workspace.to_str().unwrap(),
+                "--format",
+                "json",
+            ])
+            .current_dir(cwd)
+            .env("HOME", &host_home)
+            .env("AGS_HOME", &runtime)
+            .env_remove("AGS_RUNTIME_HOME")
+            .env("AGS_SOURCE_ROOT", &root)
+            .env("AGS_THIRD_PARTY_MANIFEST_OFFLINE", "1")
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .output()
+            .expect("build workspace-scoped capability snapshot")
+    };
+
+    let from_caller = parse_json(
+        &run_snapshot(&caller),
+        "capability snapshot from unrelated caller directory",
+    );
+    let from_workspace = parse_json(
+        &run_snapshot(&workspace),
+        "capability snapshot from target workspace",
+    );
+    assert_eq!(
+        from_caller["snapshot_hash"], from_workspace["snapshot_hash"],
+        "--target must make the host probe independent of the caller's current directory"
+    );
 }
 
 #[test]

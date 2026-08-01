@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "ags-capability-governance"
-version = "0.4.1"
+version = "0.4.11"
 dependencies = [
  "ags-governance-decision",
  "ags-host-integration",
@@ -18,7 +18,7 @@ dependencies = [
 
 [[package]]
 name = "ags-cli"
-version = "0.4.1"
+version = "0.4.11"
 dependencies = [
  "ags-capability-governance",
  "ags-evidence",
@@ -41,7 +41,7 @@ dependencies = [
 
 [[package]]
 name = "ags-evidence"
-version = "0.4.1"
+version = "0.4.11"
 dependencies = [
  "ags-governance-decision",
  "ags-platform",
@@ -53,7 +53,7 @@ dependencies = [
 
 [[package]]
 name = "ags-governance-decision"
-version = "0.4.1"
+version = "0.4.11"
 dependencies = [
  "serde",
  "serde_json",
@@ -62,7 +62,7 @@ dependencies = [
 
 [[package]]
 name = "ags-host-integration"
-version = "0.4.1"
+version = "0.4.11"
 dependencies = [
  "ags-platform",
  "serde",
@@ -72,7 +72,7 @@ dependencies = [
 
 [[package]]
 name = "ags-lifecycle"
-version = "0.4.1"
+version = "0.4.11"
 dependencies = [
  "ags-capability-governance",
  "ags-evidence",
@@ -88,7 +88,7 @@ dependencies = [
 
 [[package]]
 name = "ags-mcp"
-version = "0.4.1"
+version = "0.4.11"
 dependencies = [
  "ags-capability-governance",
  "ags-evidence",
@@ -107,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "ags-platform"
-version = "0.4.1"
+version = "0.4.11"
 dependencies = [
  "blake3",
  "sha2",
@@ -116,7 +116,7 @@ dependencies = [
 
 [[package]]
 name = "ags-session"
-version = "0.4.1"
+version = "0.4.11"
 dependencies = [
  "ags-capability-governance",
  "ags-platform",
@@ -131,7 +131,7 @@ dependencies = [
 
 [[package]]
 name = "ags-task-contract"
-version = "0.4.1"
+version = "0.4.11"
 dependencies = [
  "ags-capability-governance",
  "ags-governance-decision",
@@ -142,7 +142,7 @@ dependencies = [
 
 [[package]]
 name = "ags-verification"
-version = "0.4.1"
+version = "0.4.11"
 dependencies = [
  "ags-capability-governance",
  "ags-governance-decision",
@@ -160,7 +160,7 @@ dependencies = [
 
 [[package]]
 name = "ags-workspace-facts"
-version = "0.4.1"
+version = "0.4.11"
 dependencies = [
  "ags-governance-decision",
  "ags-host-integration",

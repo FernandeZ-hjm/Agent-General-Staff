@@ -129,6 +129,29 @@ fn release_scope_uses_only_an_explicit_public_source() {
 }
 
 #[test]
+fn release_and_promotion_scopes_do_not_replay_local_checks() {
+    let root = tempfile::tempdir().unwrap();
+    for (scope, options) in [
+        (Scope::Release, VerificationOptions::default()),
+        (Scope::Promotion, VerificationOptions::default()),
+    ] {
+        let report = run_verify_with_options(scope, root.path(), &options);
+        assert!(
+            report
+                .items
+                .iter()
+                .all(|item| item.scope == scope.to_string()),
+            "{scope} replayed checks from another scope: {:?}",
+            report
+                .items
+                .iter()
+                .map(|item| (&item.id, &item.scope))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
 fn release_version_surfaces_accept_the_real_workspace_tree() {
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")

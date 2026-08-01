@@ -67,10 +67,13 @@ fn snapshot(host: &str, target: &Path, write: bool, format: &str) {
         std::process::exit(1);
     });
     let runtime_home = ags_capability_governance::locate_runtime_home();
-    let built = ags_capability_governance::build_capability_snapshot_with_runtime_home(
+    let host_home = ags_platform::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let built = ags_capability_governance::build_capability_snapshot_with_live_roots_at(
         &root,
         host,
         &runtime_home,
+        &host_home,
+        &requested,
     )
     .unwrap_or_else(|error| {
         eprintln!("ags capability snapshot: build failed — {error:?}");

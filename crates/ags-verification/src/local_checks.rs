@@ -330,3 +330,39 @@ pub(super) fn check_session_preflight(repo_root: &Path) -> CheckItem {
         .with_exit_code(code)
     }
 }
+
+pub(super) fn check_project_session_preflight(repo_root: &Path) -> CheckItem {
+    let preflight = ags_workspace_facts::run_session_preflight(
+        repo_root,
+        &ags_workspace_facts::AgentType::ClaudeCode,
+    );
+    if preflight.exit_code == 0 {
+        return CheckItem::pass(
+            "session-preflight",
+            "local",
+            &format!(
+                "session preflight OK (status={:?}, integrated={})",
+                preflight.overall_status, preflight.is_ags_integrated
+            )
+            .to_ascii_lowercase(),
+        );
+    }
+
+    CheckItem::fail(
+        "session-preflight",
+        "local",
+        &format!(
+            "session preflight failed: {}",
+            truncate(&preflight.failures.join("; "), 500)
+        ),
+        &format!(
+            "Run `ags session preflight --for claude-code --target {}` to diagnose.",
+            repo_root.display()
+        ),
+    )
+    .with_command(&format!(
+        "ags session preflight --for claude-code --target {}",
+        repo_root.display()
+    ))
+    .with_exit_code(preflight.exit_code)
+}

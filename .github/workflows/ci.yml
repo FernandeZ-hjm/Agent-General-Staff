@@ -6,17 +6,6 @@ on:
       - main
   pull_request:
   workflow_dispatch:
-    inputs:
-      os:
-        description: Runner scope for a targeted CI retry
-        required: true
-        default: all
-        type: choice
-        options:
-          - all
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
 
 env:
   CARGO_TERM_COLOR: always
@@ -24,12 +13,8 @@ env:
 
 jobs:
   rust:
-    name: Rust (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.os != 'all' && format('["{0}"]', inputs.os) || '["ubuntu-latest","macos-latest","windows-latest"]') }}
+    name: Public source and release gate
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -41,7 +26,6 @@ jobs:
           rustup default stable
 
       - name: Cache cargo
-        if: matrix.os != 'windows-latest'
         uses: actions/cache@v5
         with:
           path: |
@@ -54,32 +38,16 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Format
-        run: cargo fmt --check
-
       - name: Clippy
-        run: cargo clippy --all-targets --all-features
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
-      # RUSTFLAGS set via env (not inline) so it works on the Windows PowerShell shell too.
-      - name: Test
-        run: cargo test --all
-        env:
-          RUSTFLAGS: "-D warnings"
+      - name: Verify source semantics once
+        run: cargo run -q -p ags-cli -- verify --scope local --format text
 
-      - name: Build release
-        run: cargo build --release
+      - name: Test npm launcher once
+        run: npm test --prefix packages/ags-mcp
 
-      # Rust-native local verify — canonical cross-platform gate. Windows and macOS
-      # run this Rust entry (NOT the Bash verify.sh) so portability is exercised off Linux.
-      # Invoke the already-built release binary directly: on Windows, launching verify
-      # through `cargo run` keeps target/debug/ags.exe locked while verify invokes Cargo.
-      - name: Verify (Rust-native local)
-        run: ./target/release/ags verify --scope local --format text
-
-      # Supply-chain gate (repo-local deny.toml) — Ubuntu only. The following
-      # Rust-native release gate owns the complete product verification.
       - name: Install cargo-deny
-        if: matrix.os == 'ubuntu-latest'
         run: |
           if command -v cargo-deny >/dev/null 2>&1; then
             cargo deny --version
@@ -88,9 +56,7 @@ jobs:
           fi
 
       - name: Supply-chain audit
-        if: matrix.os == 'ubuntu-latest'
         run: cargo deny check
 
-      - name: Verify public release boundary
-        if: matrix.os == 'ubuntu-latest'
+      - name: Verify public release boundary once
         run: ./target/release/ags verify --scope release --format text

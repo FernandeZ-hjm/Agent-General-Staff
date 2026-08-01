@@ -1,5 +1,26 @@
 # Agent Governance Suite Release Notes
 
+## Release 0.4.11
+
+0.4.11 removes redundant verification work and corrects local verification
+routing without adding a product feature or changing AGS wire schemas.
+
+- `local`, `release`, and `promotion` verification scopes are orthogonal. The
+  release workflow composes each required scope once for an exact commit
+  instead of replaying local Cargo checks inside later scopes.
+- `ags verify --scope local` distinguishes the AGS suite from an integrated
+  business project. Suite-only Cargo, task-card fixture, and runtime-template
+  checks no longer run in business repositories.
+- Integrated projects reuse the Rust preflight module directly, so verification
+  does not look for an `ags-cli` Cargo package in the business repository.
+- Stable promotion is proven by fast-forward commit/tree equality; public CI
+  owns one full source gate, while tag and npm workflows reuse the successful
+  exact-commit evidence and retain artifact, checksum, attestation, and publish
+  checks.
+- Existing `0.4.1-project-init`, `0.4.1-private-install`, `0.4.0-*`, and
+  `0.3.6-*` schema identifiers remain unchanged because their contracts did not
+  change.
+
 ## Release 0.4.1
 
 0.4.1 closes the setup-to-workspace lifecycle gap without adding another

@@ -56,7 +56,7 @@ EvoMap is an advisory layer. These templates enforce the boundary:
 
 ```bash
 # Rust owns structured validation; Node only checks the third-party-native hook.
-ags verify --scope release
+ags verify --scope local
 node --check manifests/templates/hooks/claude-code-executor-stop.template.js
 
 # Verify no real secrets or paths leaked

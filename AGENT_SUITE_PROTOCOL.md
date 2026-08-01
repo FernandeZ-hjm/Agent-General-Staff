@@ -3,7 +3,7 @@
 本文件是 Agent General Staff 公开版治理控制面协议概述。Canonical 协议文件位于本仓库
 `protocol/` 目录下，自包含，不依赖私有基础设施或私有仓库。
 
-Current product version: **0.4.1**. Existing governance wire schemas remain
+Current product version: **0.4.11**. Existing governance wire schemas remain
 versioned independently; lifecycle/install/release structures changed in this
 candidate keep their existing `0.4.0-*` identifiers unless their structure changed.
 

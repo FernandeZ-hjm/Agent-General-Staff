@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,8 +21,20 @@ jobs:
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-        with:
-          components: clippy,rustfmt
+      - name: Require successful CI for the exact tag commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          successes="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow ci.yml \
+            --commit "$GITHUB_SHA" \
+            --event push \
+            --limit 100 \
+            --json conclusion,headSha \
+            --jq '[.[] | select(.headSha == env.GITHUB_SHA and .conclusion == "success")] | length')"
+          test "$successes" -ge 1
       - name: Verify one aligned version
         shell: bash
         run: |
@@ -37,10 +50,6 @@ jobs:
           grep -Fqx "## Release $version" RELEASE_NOTES.md
           test "$GITHUB_REPOSITORY" = "FernandeZ-hjm/Agent-General-Staff"
           ! grep -Eq 'name: "(gep|evomap)"|evolution_asset_recall|private-runtime' manifests/mcp-registry.yaml
-      - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: npm test --prefix packages/ags-mcp
-      - run: cargo test -p ags-verification runtime_stage
-      - run: cargo run -q -p ags-cli -- verify --scope release --format text
       - name: Freeze canonical public release plan
         shell: bash
         run: |

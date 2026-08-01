@@ -7,11 +7,11 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Scope {
-    /// Local-only checks: fmt, test, build, fixtures, YAML, preflight.
+    /// Source-semantic checks for the target workspace.
     Local,
-    /// Self-contained checks for a public release source tree.
+    /// Release-payload, version, and public-safety checks only.
     Release,
-    /// Private/stable source to explicit public target promotion checks.
+    /// Private-to-public projection checks only.
     Promotion,
 }
 

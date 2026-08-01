@@ -15,29 +15,30 @@ pub fn run_verify_with_options(
     options: &VerificationOptions,
 ) -> VerificationReport {
     let repo_root = canonical_repo_root(repo_root);
-    let mut items: Vec<CheckItem> = Vec::new();
-
-    // Local checks — always run
-    items.push(check_cargo_fmt(&repo_root));
-    items.push(check_cargo_test(&repo_root));
-    items.push(check_cargo_build(&repo_root));
-    items.extend(check_task_card_fixtures(&repo_root));
-    items.extend(check_governance_yaml(&repo_root));
-    items.push(check_session_preflight(&repo_root));
-    items.push(check_runtime_profile_templates(&repo_root));
-
-    // Release scope — add release-specific checks
-    if matches!(scope, Scope::Release) {
-        items.extend(check_release_boundary(release_target_root(
-            &repo_root, options,
-        )));
-    }
-    if matches!(scope, Scope::Promotion) {
-        items.extend(check_promotion_boundary(
-            &repo_root,
-            options.public_root.as_deref(),
-        ));
-    }
+    let items = match scope {
+        Scope::Local => {
+            let identity = ags_workspace_facts::detect_project(&repo_root);
+            let mut items = Vec::new();
+            if identity.is_ags_suite {
+                items.extend([
+                    check_cargo_fmt(&repo_root),
+                    check_cargo_test(&repo_root),
+                    check_cargo_build(&repo_root),
+                ]);
+                items.extend(check_task_card_fixtures(&repo_root));
+            }
+            items.extend(check_governance_yaml(&repo_root));
+            if identity.is_ags_suite {
+                items.push(check_session_preflight(&repo_root));
+                items.push(check_runtime_profile_templates(&repo_root));
+            } else {
+                items.push(check_project_session_preflight(&repo_root));
+            }
+            items
+        }
+        Scope::Release => check_release_boundary(release_target_root(&repo_root, options)),
+        Scope::Promotion => check_promotion_boundary(&repo_root, options.public_root.as_deref()),
+    };
 
     // Build summary
     let total = items.len();

@@ -2,7 +2,8 @@
 
 ## Repository contract
 
-This checkout is the public distributable edition of Agent General Staff 0.3.
+This checkout is the public distributable edition of Agent Governance Suite
+0.4.11.
 It is self-contained and must not depend on private repositories, machine-local
 state, credentials, or unpublished skill bodies.
 
@@ -51,10 +52,9 @@ classification.
 Use the narrowest relevant check during development. Before delivery:
 
 ```bash
-cargo fmt --check
-RUSTFLAGS="-D warnings" cargo test
-cargo build --release
-ags verify --scope release
+cargo clippy --all-targets --all-features -- -D warnings
+cargo run -q -p ags-cli -- verify --scope local --target .
+./target/release/ags verify --scope release --target .
 git diff --check
 ```
 

@@ -348,10 +348,10 @@ pub(crate) enum SessionAction {
 /// Verification operations — structured verification entry point.
 ///
 /// Runs scoped verification checks with stable `CheckItem` model output.
-/// `local` focuses on in-repo checks (fmt, test, build, fixtures, YAML,
-/// preflight). `full` adds advisory local drift checks, `release` validates a
-/// public source tree, and `promotion` compares a source to an explicit public
-/// worktree.
+/// `local` checks source semantics for either the AGS suite or an integrated
+/// project. `release` validates only a public release source tree, and
+/// `promotion` compares only a source to an explicit public worktree. Callers
+/// compose the orthogonal scopes required by their workflow.
 #[derive(Subcommand)]
 pub(crate) enum VerifyAction {
     /// Classify the change lane for a git diff range (diff-aware verification).

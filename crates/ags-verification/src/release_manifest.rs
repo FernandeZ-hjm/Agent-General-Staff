@@ -1230,7 +1230,7 @@ mod tests {
         ] {
             assert!(
                 files.contains(path),
-                "v0.4.1 public authority must include {path}"
+                "v0.4.11 public authority must include {path}"
             );
         }
         for retired in [
