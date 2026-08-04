@@ -4,17 +4,17 @@
 
 ## 原则
 
-- 第三方版本只在维护者执行 update/release 时审查。
+- 官方/随包能力版本只在维护者执行 update/release 时审查；纯第三方 Skill 可在外部拉取后进入机器私有纳管事务。
 - 本地每个宿主只保留当前静态 snapshot，不保留历史 bundle。
 - 普通 preflight、resource read、route、apply、inventory 和 verify 不联网。
-- 没有运行时 adopt、ignore、rollback、dedupe 或 sync。
-- 没有 user overlay、source registry、usage ledger 或持久备份。
+- `ags skill adopt/remove` 只在显式 plan/hash/apply 事务中写机器私有 registry、不可变 body、宿主薄索引和所选静态快照。
+- 普通请求路径没有 adopt、ignore、rollback、dedupe 或 sync，也没有 user overlay、usage ledger 或持久备份。
 
 ## 更新流程
 
 ```text
-审查上游 release/commit/license
-→ 更新 tracked manifest 与 canonical body
+官方能力：审查上游 release/commit/license → 更新 tracked manifest 与 canonical body
+纯第三方：外部工具拉取 → adopt plan → 确认 plan hash → adopt apply
 → 运行验证
 → setup/update 原子写入各宿主当前 snapshot
 → 新连接 preflight

@@ -60,11 +60,11 @@ pub(crate) fn render_cross_platform_init_text(plan: &CrossPlatformInitPlan) -> S
                 platform.mcp_host_command
             ));
             lines.push(
-                "      Skill catalog:           read-only inventory; source changes happen only in an explicit reviewed install/update"
+                "      Skill catalog:           request path is read-only; source changes require reviewed suite update or machine-private adopt"
                     .to_string(),
             );
             lines.push(
-                "      Static capability state: refresh once with `ags capability snapshot --write --host <host>` after that install/update"
+                "      Static capability state: refresh after that explicit update/adopt transaction"
                     .to_string(),
             );
             lines.push(format!(

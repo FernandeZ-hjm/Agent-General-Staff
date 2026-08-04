@@ -194,7 +194,7 @@ Verification gate:
 - `Delegation planning` 声明是否允许 subagent / workflow（`none` / `within-card` / `plan-only` / `allowed`），默认 `none`；它只声明授权，不直接点火。
 - `子任务编排` 是可选槽位，`mode` 取 `none` / `optional` / `required`，默认 `none`（省略即 `none`）。`mode != none` 时 validator 要求 `Delegation planning` 非 none 且 `Execution topology` 为 subagent/worktree/multi-session/agent-team；该槽位只声明可拆分结构、子任务边界与回收要求，`ags run` 只把 resolved policy 放入 LaunchPlan，真正 subagent / workflow 点火由宿主决定，不由任务卡正文或 Runner 触发。子任务只能装可并行工作（只读审计 / 实现 / 文档同步 / 测试补充）；最终验证、交付报告、commit、push、release gate 必须由主 executor 独做，子任务结果合并为单一 diff 后由主 executor 统一验证与交付（见 `protocol/runtime-adapters.md` §Subtask Scope Rules）。
 - `ags run` 是唯一 LaunchPlan 准备入口。允许时返回 `HOST_EXECUTION_REQUIRED`；它不启动宿主、不执行任务、不验证结果、不写最终收据。`--check-only` 只做 gate 预览，`--dry-run` 输出相同结构化计划。
-- 涉及本地 Agent 技能目录时，必须引用项目内对应治理文档；如无项目治理文档，只使用 `ags skill inventory` / `ags skill verify` 和 `ags capability snapshot`。不存在运行时 adopt、ignore、dedupe 或 sync 命令。最终输出仍使用本文件的固定任务卡骨架。
+- 涉及本地 Agent 技能目录时，必须引用项目内对应治理文档。普通任务只读取静态快照；显式纳管任务可使用 `ags skill adopt/remove/status` 的 plan/hash/apply 维护协议，但不得引入运行时下载、ignore、dedupe 或 sync。最终输出仍使用本文件的固定任务卡骨架。
 
 ## 与全局提示词生成器的关系
 

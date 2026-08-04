@@ -253,7 +253,7 @@ pub(crate) enum Commands {
     },
 
     // ── Global skill governance (五段链路第 3 段) ─────────────────
-    /// Inspect the installed static skill catalog and refresh metadata explicitly.
+    /// Inspect static skills or explicitly manage machine-private third-party adoption.
     Skill {
         /// Output format: text (default) or json.
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]

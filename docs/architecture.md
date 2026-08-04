@@ -1,4 +1,4 @@
-# AGS v0.4.11 Architecture
+# AGS v0.4.12 Architecture
 
 AGS is a multi-Agent development governance control plane. It admits typed
 requests, binds authority and policy, validates evidence, and preserves
@@ -86,7 +86,7 @@ canonical workspace path
 
 Version classes remain separate:
 
-- current source candidate: `0.4.11`; latest published release: `0.4.1`;
+- current source candidate: `0.4.12`; latest published release: `0.4.11`;
 - existing governance wire schemas remain on the 0.3.6 contract;
 - lifecycle, install, runtime-stage, and release-plan schemas whose structures
   changed in the prior structural release keep their 0.4.0 identifiers;

@@ -17,6 +17,7 @@ mod authority;
 mod catalog;
 mod hashing;
 mod private_store;
+pub mod skill_adoption;
 /// Skill-body inventory, host probes, mutation plans and transactions.
 pub mod skill_body;
 mod snapshot_compiler;

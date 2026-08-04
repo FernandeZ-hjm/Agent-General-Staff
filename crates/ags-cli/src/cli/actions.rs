@@ -112,6 +112,45 @@ pub(crate) enum CapabilityAction {
 /// Static skill catalog commands.
 #[derive(Subcommand)]
 pub(crate) enum SkillAction {
+    /// Plan or explicitly adopt one audited local Skill directory into the
+    /// machine-private registry. The default is plan-only.
+    Adopt {
+        /// Local Skill directory or its SKILL.md file.
+        source: PathBuf,
+        /// Optional machine-private YAML routing metadata. It is audited and
+        /// hash-bound to the reviewed plan, but never copied into AGS Git.
+        #[arg(long)]
+        metadata: Option<PathBuf>,
+        /// Target host id; repeatable. Empty or `all` selects all supported hosts.
+        #[arg(long = "host")]
+        host: Vec<String>,
+        /// Exact hash from the reviewed plan. Required with --yes.
+        #[arg(long)]
+        plan_hash: Option<String>,
+        /// Confirm the reviewed machine-private writes.
+        #[arg(long)]
+        yes: bool,
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Plan or explicitly remove one machine-private adopted Skill. Immutable
+    /// body revisions remain available for recoverable rollback.
+    Remove {
+        skill_id: String,
+        /// Exact hash from the reviewed removal plan. Required with --yes.
+        #[arg(long)]
+        plan_hash: Option<String>,
+        #[arg(long)]
+        yes: bool,
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Inspect private registry, immutable body, host indexes, and active snapshots.
+    Status {
+        skill_id: String,
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
     /// Verify host visibility against the installed static catalog.
     Verify {
         #[arg(long, default_value = "claude-code")]

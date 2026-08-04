@@ -3,7 +3,7 @@
 本文件是 Agent General Staff 公开版治理控制面协议概述。Canonical 协议文件位于本仓库
 `protocol/` 目录下，自包含，不依赖私有基础设施或私有仓库。
 
-Current product version: **0.4.11**. Existing governance wire schemas remain
+Current product version: **0.4.12**. Existing governance wire schemas remain
 versioned independently; lifecycle/install/release structures changed in this
 candidate keep their existing `0.4.0-*` identifiers unless their structure changed.
 
@@ -23,6 +23,7 @@ candidate keep their existing `0.4.0-*` identifiers unless their structure chang
 - `ags policy check` — 校验 + 解析，按 gate 结果 exit
 - `ags doctor` — 套件健康诊断
 - `ags setup` — 写入公开安全的本机 AGS runtime、MCP 片段、Claude `/ags` 入口和 Codex AGS 命令技能
+- `ags skill adopt/remove/status` — 以 plan/hash/apply 显式维护机器私有第三方 Skill；正文与语义元数据不进入 AGS Git
 - `ags init` — 对用户项目执行 AGS managed-block 接入
 - `ags mcp serve --transport stdio` — 启动公开版 AGS MCP 服务
 - `ags mcp status` / `ags mcp restart` — 查询或重启当前工作区服务
@@ -123,8 +124,9 @@ B 自有 rewrite/overlay 的固定哈希以及禁止项 fail closed。旧的章�
   `archive-index.md`、`task-archive/README.md`；
 - 项目入口融合模板：`templates/project-integration/AGENTS.md.template`、
   `templates/project-integration/CLAUDE.md.template`；
-- 静态能力治理：第三方能力只在显式升级时审查，setup/update 为每个宿主生成唯一
-  current snapshot；请求路径不联网、不扫描、不刷新。
+- 静态能力治理：官方能力只在显式升级时审查；纯第三方 Skill 可在外部拉取后通过机器
+  私有 adopt 事务纳管。setup/update/adopt 为所选宿主生成唯一 current snapshot；请求路径
+  不联网、不扫描、不刷新。
 
 公开版不得包含：
 
@@ -158,8 +160,10 @@ marker 或发现与 AGS 治理冲突的入口规则，则停止并报告 conflic
 
 Agent General Staff 在公开版中提供静态技能治理框架，但不预装第三方技能或
 用户本地技能。`protocol/skill-governance.md` 定义权威清单、显式刷新、精确路由和
-写入边界。第三方能力由用户选择可信来源，在维护者审查升级后通过 setup/update
-刷新一次当前快照；运行时没有 adopt/ignore/rollback/sync 写入面。
+写入边界。普通请求路径始终只读；用户可先用外部工具拉取可信 Skill，再通过
+`ags skill adopt/remove/status` 的 plan/hash/apply 事务写入机器私有 registry、不可变
+body、宿主薄索引和所选静态快照。公开源码与发行资产不包含这些机器私有数据，也不提供
+运行时下载、ignore、dedupe 或 sync。
 
 Capability expected 集合以已安装 AGS source authority 为准，不得随执行命令的项目 cwd
 变化。registry 声明为 required+routable 的真实父能力即使本体缺失也必须进入 inventory

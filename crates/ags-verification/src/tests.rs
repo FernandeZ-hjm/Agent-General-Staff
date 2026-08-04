@@ -152,6 +152,19 @@ fn release_and_promotion_scopes_do_not_replay_local_checks() {
 }
 
 #[test]
+fn local_scope_does_not_replay_the_independent_source_gate() {
+    assert_eq!(
+        super::orchestrator::local_check_plan(true),
+        vec![
+            super::orchestrator::LocalCheckGroup::TaskCardFixtures,
+            super::orchestrator::LocalCheckGroup::GovernanceYaml,
+            super::orchestrator::LocalCheckGroup::SessionPreflight,
+            super::orchestrator::LocalCheckGroup::RuntimeProfileTemplates,
+        ]
+    );
+}
+
+#[test]
 fn release_version_surfaces_accept_the_real_workspace_tree() {
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")

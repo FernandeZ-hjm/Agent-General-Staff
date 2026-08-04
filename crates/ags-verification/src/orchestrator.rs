@@ -3,6 +3,32 @@
 use super::*;
 use std::path::{Path, PathBuf};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum LocalCheckGroup {
+    TaskCardFixtures,
+    GovernanceYaml,
+    SessionPreflight,
+    ProjectSessionPreflight,
+    RuntimeProfileTemplates,
+}
+
+pub(super) fn local_check_plan(is_ags_suite: bool) -> Vec<LocalCheckGroup> {
+    let mut plan = Vec::new();
+    if is_ags_suite {
+        plan.push(LocalCheckGroup::TaskCardFixtures);
+    }
+    plan.push(LocalCheckGroup::GovernanceYaml);
+    if is_ags_suite {
+        plan.extend([
+            LocalCheckGroup::SessionPreflight,
+            LocalCheckGroup::RuntimeProfileTemplates,
+        ]);
+    } else {
+        plan.push(LocalCheckGroup::ProjectSessionPreflight);
+    }
+    plan
+}
+
 /// Run all verification checks for the given scope and return a report.
 pub fn run_verify(scope: Scope, repo_root: &Path) -> VerificationReport {
     run_verify_with_options(scope, repo_root, &VerificationOptions::default())
@@ -19,20 +45,24 @@ pub fn run_verify_with_options(
         Scope::Local => {
             let identity = ags_workspace_facts::detect_project(&repo_root);
             let mut items = Vec::new();
-            if identity.is_ags_suite {
-                items.extend([
-                    check_cargo_fmt(&repo_root),
-                    check_cargo_test(&repo_root),
-                    check_cargo_build(&repo_root),
-                ]);
-                items.extend(check_task_card_fixtures(&repo_root));
-            }
-            items.extend(check_governance_yaml(&repo_root));
-            if identity.is_ags_suite {
-                items.push(check_session_preflight(&repo_root));
-                items.push(check_runtime_profile_templates(&repo_root));
-            } else {
-                items.push(check_project_session_preflight(&repo_root));
+            for group in local_check_plan(identity.is_ags_suite) {
+                match group {
+                    LocalCheckGroup::TaskCardFixtures => {
+                        items.extend(check_task_card_fixtures(&repo_root));
+                    }
+                    LocalCheckGroup::GovernanceYaml => {
+                        items.extend(check_governance_yaml(&repo_root));
+                    }
+                    LocalCheckGroup::SessionPreflight => {
+                        items.push(check_session_preflight(&repo_root));
+                    }
+                    LocalCheckGroup::ProjectSessionPreflight => {
+                        items.push(check_project_session_preflight(&repo_root));
+                    }
+                    LocalCheckGroup::RuntimeProfileTemplates => {
+                        items.push(check_runtime_profile_templates(&repo_root));
+                    }
+                }
             }
             items
         }

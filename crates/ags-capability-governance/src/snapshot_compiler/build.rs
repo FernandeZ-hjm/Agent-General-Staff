@@ -296,6 +296,10 @@ fn build_capability_snapshot_with_context_and_manifest(
         .iter()
         .map(|skill| (skill.name.as_str(), skill))
         .collect();
+    let official_ids = metadata
+        .keys()
+        .map(|name| (*name).to_string())
+        .collect::<HashSet<_>>();
     let entrypoint_projections = skill_entrypoint_projections(&inventory);
     let mcp_projections = mcp_tool_projections(&inventory);
 
@@ -350,6 +354,20 @@ fn build_capability_snapshot_with_context_and_manifest(
         }
         catalog.push(card);
     }
+
+    let private_projection = crate::skill_adoption::project_private_skills(
+        runtime_home,
+        &context.home,
+        active_host,
+        &official_ids,
+    )
+    .map_err(SnapshotBuildError::Manifest)?;
+    for card in private_projection.cards {
+        catalog.retain(|candidate| candidate.skill_id != card.skill_id);
+        active_skills.retain(|candidate| candidate.skill_id != card.skill_id);
+        catalog.push(card);
+    }
+    active_skills.extend(private_projection.active);
 
     let mut mcp_catalog = Vec::new();
     let mut active_mcps = Vec::new();
@@ -456,8 +474,14 @@ fn build_capability_snapshot_with_context_and_manifest(
         mcp_catalog.push(card);
     }
 
-    let runtime_hash =
-        sha256(format!("{}\n{auth_hash}", inventory_snapshot_hash(&inventory)).as_bytes());
+    let runtime_hash = sha256(
+        format!(
+            "{}\n{auth_hash}\n{}",
+            inventory_snapshot_hash(&inventory),
+            private_projection.registry_hash
+        )
+        .as_bytes(),
+    );
     let active_profile = capability_profile(manifest_root);
     let third_party_catalog = third_party
         .manifest

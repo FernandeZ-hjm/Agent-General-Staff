@@ -1,5 +1,25 @@
 # Agent Governance Suite Release Notes
 
+## Release 0.4.12
+
+0.4.12 restores an explicit, machine-private adoption transaction for audited
+third-party Skills. It adds a bounded `ags skill adopt/remove/status` command
+surface without reintroducing runtime network discovery, automatic routing, or
+third-party content in AGS source control.
+
+- Adoption is plan/hash/apply-gated and stores reviewed bodies as immutable
+  machine-private revisions; semantic metadata and host indexes remain outside
+  AGS Git and public release assets.
+- Selected host snapshots are rebuilt explicitly after adoption or removal.
+  Normal preflight, capability reads, and routing remain static, offline, and
+  read-only.
+- The public edition contains the same generic transaction and tests, while
+  excluding all local registry entries, adopted bodies, routing metadata, and
+  absolute host paths.
+- `ags verify --scope local` now owns only AGS governance, fixture, preflight,
+  and template checks. Formatting, tests, and release builds stay as explicit
+  source gates and are no longer replayed inside the local verifier.
+
 ## Release 0.4.11
 
 0.4.11 removes redundant verification work and corrects local verification

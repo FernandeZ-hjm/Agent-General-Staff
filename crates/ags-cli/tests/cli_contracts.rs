@@ -63,6 +63,109 @@ fn run_ags_isolated(args: &[&str]) -> Output {
 }
 
 #[test]
+fn skill_adoption_cli_requires_a_reviewed_plan_and_persists_private_state() {
+    let fixture = TestDir::new("private-skill-adoption");
+    let home = fixture.path().join("home");
+    let runtime = fixture.path().join("runtime");
+    let source_root = fixture.path().join("source");
+    let source = source_root.join("skill");
+    let metadata = fixture.path().join("routing.yaml");
+    std::fs::create_dir_all(source_root.join(".git")).unwrap();
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(source_root.join("LICENSE"), "MIT fixture license\n").unwrap();
+    std::fs::write(
+        source.join("SKILL.md"),
+        "---\nname: cli-adopted-team\ndescription: Upstream description.\n---\n# CLI adopted team\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &metadata,
+        "summary: Delegate bounded software work when parallel exploration is useful.\nintent_tags: [delegation, parallel-software-work]\npositive_examples: [Delegate this investigation in parallel]\nnegative_examples: [Answer this directly]\n",
+    )
+    .unwrap();
+
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_ags"))
+            .args(args)
+            .current_dir(repo_root())
+            .env("HOME", &home)
+            .env("AGS_RUNTIME_HOME", &runtime)
+            .env("PATH", "/usr/bin:/bin")
+            .output()
+            .expect("run isolated skill adoption command")
+    };
+    let source_arg = source.to_str().unwrap();
+    let metadata_arg = metadata.to_str().unwrap();
+    let plan = parse_json(
+        &run(&[
+            "skill",
+            "adopt",
+            source_arg,
+            "--metadata",
+            metadata_arg,
+            "--host",
+            "codex",
+            "--format",
+            "json",
+        ]),
+        "skill adopt plan",
+    );
+    assert_eq!(plan["operation"], "adopt");
+    assert!(
+        !runtime.exists(),
+        "plan-only CLI must not write runtime state"
+    );
+
+    let refused = run(&[
+        "skill",
+        "adopt",
+        source_arg,
+        "--metadata",
+        metadata_arg,
+        "--host",
+        "codex",
+        "--yes",
+        "--format",
+        "json",
+    ]);
+    assert!(!refused.status.success());
+    assert!(
+        !runtime.exists(),
+        "unbound apply must not write runtime state"
+    );
+
+    let plan_hash = plan["plan_hash"].as_str().unwrap();
+    let receipt = parse_json(
+        &run(&[
+            "skill",
+            "adopt",
+            source_arg,
+            "--metadata",
+            metadata_arg,
+            "--host",
+            "codex",
+            "--yes",
+            "--plan-hash",
+            plan_hash,
+            "--format",
+            "json",
+        ]),
+        "skill adopt apply",
+    );
+    assert_eq!(receipt["skill_id"], "cli-adopted-team");
+    assert_eq!(receipt["requires_repreflight"], true);
+
+    let status = parse_json(
+        &run(&["skill", "status", "cli-adopted-team", "--format", "json"]),
+        "skill adoption status",
+    );
+    assert_eq!(status["registered"], true);
+    assert_eq!(status["body_hash_matches"], true);
+    assert_eq!(status["visible_hosts"], serde_json::json!(["codex"]));
+    assert_eq!(status["active_hosts"], serde_json::json!(["codex"]));
+}
+
+#[test]
 fn retired_sync_and_full_scope_are_absent_from_the_cli_surface() {
     let root_help = run_ags(&["--help"]);
     assert_success(&root_help, "root help");

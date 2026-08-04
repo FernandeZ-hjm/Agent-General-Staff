@@ -11,9 +11,9 @@ Agent Governance Suite（AGS）是一个**多 Agent 开发治理控制面**。�
 队列、并行执行器或多 Agent 协商运行时。
 
 本仓是 AGS 的公开发行版，采用 **GPL-3.0-only**。
-当前源码发布候选是 **v0.4.11**；latest published release 是 **v0.4.1**。
+当前源码发布候选是 **v0.4.12**；latest published release 是 **v0.4.11**。
 
-## v0.4.11 核心链路
+## v0.4.12 核心链路
 
 ```text
 用户请求
@@ -59,7 +59,7 @@ ags mcp serve --transport stdio
 
 ## 十二个主要 module
 
-v0.4.11 的 runtime workspace 只暴露十二个权威 Cargo package：
+v0.4.12 的 runtime workspace 只暴露十二个权威 Cargo package：
 
 | Module | 职责 |
 |---|---|
@@ -79,7 +79,7 @@ v0.4.11 的 runtime workspace 只暴露十二个权威 Cargo package：
 原 `bootstrap-dry-run`、`capability-registry`、
 `delivery-report-validator`、`execution-policy`、`runner`、
 `skill-governance`、`suite-doctor`、`task-card-validator`、
-`workflow-sync-check` 的实现已收口到对应权威 module。0.4.11 只保留当前实际调用的
+`workflow-sync-check` 的实现已收口到对应权威 module。0.4.12 只保留当前实际调用的
 命令、wire/schema 和必要 re-export，不再保留旧命令或第二套 package authority。详见
 [WORKSPACE.md](WORKSPACE.md) 和 [docs/architecture.md](docs/architecture.md)。
 
@@ -149,7 +149,7 @@ setup、preflight、resource read、route 和 apply 都不联网刷新。
 
 ## 稳定命令面
 
-v0.4.11 只承诺下列当前命令面。已删除的旧命令、alias 和 plan-only 假动作不再作为兼容合同。
+v0.4.12 只承诺下列当前命令面。已删除的旧命令、alias 和 plan-only 假动作不再作为兼容合同。
 
 ```bash
 ags setup --help
@@ -194,19 +194,19 @@ git diff --check
 ## 许可证与发布
 
 - 许可证：**GPL-3.0-only**
-- source candidate：**v0.4.11**
-- latest published：**v0.4.1**
-- 当前合同：v0.4.11 human/Machine CLI
+- source candidate：**v0.4.12**
+- latest published：**v0.4.11**
+- 当前合同：v0.4.12 human/Machine CLI
 - 历史：v0.3.1 release notes 保留，不作为 current version
 
 发布顺序不可倒置：
 
 1. public-safe 源码进入 GitHub `main`，等待 exact commit CI 全绿；
-2. Cargo、npm、manifest、文档和 release notes 统一为 `0.4.11`；
-3. 维护者显式推送 annotated `v0.4.11` tag；
+2. Cargo、npm、manifest、文档和 release notes 统一为 `0.4.12`；
+3. 维护者显式推送 annotated `v0.4.12` tag；
 4. tag workflow 构建五个平台资产、`SHA256SUMS` 和 provenance；
 5. Release 资产齐全后，手动 dispatch npm OIDC trusted-publisher workflow，
-   发布 `@agent-governance-suite/mcp@0.4.11` 为 latest。
+   发布 `@agent-governance-suite/mcp@0.4.12` 为 latest。
 
 日常 CI、同步 guard 和 npm workflow 都不会替维护者创建 tag。
 

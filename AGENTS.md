@@ -3,7 +3,7 @@
 ## Repository contract
 
 This checkout is the public distributable edition of Agent Governance Suite
-0.4.11.
+0.4.12.
 It is self-contained and must not depend on private repositories, machine-local
 state, credentials, or unpublished skill bodies.
 

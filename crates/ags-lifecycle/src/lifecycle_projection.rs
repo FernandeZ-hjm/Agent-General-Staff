@@ -299,7 +299,7 @@ impl LifecycleProjection {
 
 pub(crate) fn migration_backup_path(path: &Path) -> PathBuf {
     path.with_extension(format!(
-        "{}ags-v0.4.11.bak",
+        "{}ags-v0.4.12.bak",
         path.extension()
             .and_then(|value| value.to_str())
             .map(|value| format!("{value}."))
