@@ -13,7 +13,7 @@ and is not a task queue, parallel executor, or multi-Agent negotiation runtime.
 
 This repository is the public AGS distribution, licensed **GPL-3.0-only**. The
 current source candidate is **v0.4.12**; the latest published release is
-**v0.4.11**.
+**v0.4.12**.
 
 ## v0.4.12 governance flow
 
@@ -224,7 +224,7 @@ assets, and remote CI for the exact public commit.
 
 - License: **GPL-3.0-only**
 - Source candidate: **v0.4.12**
-- Latest published: **v0.4.11**
+- Latest published: **v0.4.12**
 - Current contract: v0.4.12 human/Machine CLI
 - History: v0.3.1 release notes remain historical, not current
 

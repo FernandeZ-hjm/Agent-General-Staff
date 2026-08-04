@@ -186,11 +186,11 @@ public_rewrites:
   - path: CLAUDE.md
     target_sha256: "sha256:7adbab7cd4ceda945d7f2646d60a204f2ca75da23b4c07694e45e597df393a74"
   - path: README.md
-    target_sha256: "sha256:05df4004e15125e0ce48c1d051eff15c8b5fd138f7c84a7c9d2d515d62f71f44"
+    target_sha256: "sha256:fa3566181a9e6a50ed26efd728be8006b91676fa2edd95223314a21c0f2f3a8b"
   - path: README_EN.md
-    target_sha256: "sha256:aa7e5c57aeb80cfce659c383c5e8d39ef87293c8e33dee17b9931e71fadfd988"
+    target_sha256: "sha256:eac3df0577edebc06c541011705c0c54fc1be24de58f9b9411cd06ba43e5b1f2"
   - path: WORKSPACE.md
-    target_sha256: "sha256:e7ec642ff40c8612042a2820f5e8649f0a7aab543a9af8660980e28a15a0b124"
+    target_sha256: "sha256:d0047f0844845a8303e1f63d6c71a85ce1e49bdbc88790a3cf6970d9797d090b"
   - path: crates/ags-capability-governance/src/lib.rs
     target_sha256: "sha256:babb947b8320be8a59922410273480b3e83dd2c3933e2bbf5dad5f3c113caccc"
   - path: crates/ags-cli/src/cli/kernel_actions.rs
@@ -258,7 +258,7 @@ public_rewrites:
   - path: docs/adr/0001-workspace-service-and-deep-modules.md
     target_sha256: "sha256:9a2d9f30326b7f59ac84334dbc1e1531efb23e6357e2cd3490d9394fdb96f6a8"
   - path: docs/architecture.md
-    target_sha256: "sha256:5e4828f95c1ae574571424ba53be1726808b950cc82d16916e65ed237a50090f"
+    target_sha256: "sha256:32e6e0a1df73b60191963391e8f76573f408d439ceb4f8848d0f1ecaf01158cf"
   - path: governance/skill-sync.md
     target_sha256: "sha256:63be6f8ccaf41716522d842ffb9976ab3480be554417dae11ccecdd6934842d9"
   - path: manifests/mcp-registry.yaml

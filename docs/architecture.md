@@ -86,7 +86,7 @@ canonical workspace path
 
 Version classes remain separate:
 
-- current source candidate: `0.4.12`; latest published release: `0.4.11`;
+- current source candidate: `0.4.12`; latest published release: `0.4.12`;
 - existing governance wire schemas remain on the 0.3.6 contract;
 - lifecycle, install, runtime-stage, and release-plan schemas whose structures
   changed in the prior structural release keep their 0.4.0 identifiers;

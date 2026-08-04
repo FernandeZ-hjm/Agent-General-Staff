@@ -11,7 +11,7 @@ Agent Governance Suite（AGS）是一个**多 Agent 开发治理控制面**。�
 队列、并行执行器或多 Agent 协商运行时。
 
 本仓是 AGS 的公开发行版，采用 **GPL-3.0-only**。
-当前源码发布候选是 **v0.4.12**；latest published release 是 **v0.4.11**。
+当前源码发布候选是 **v0.4.12**；latest published release 是 **v0.4.12**。
 
 ## v0.4.12 核心链路
 
@@ -195,7 +195,7 @@ git diff --check
 
 - 许可证：**GPL-3.0-only**
 - source candidate：**v0.4.12**
-- latest published：**v0.4.11**
+- latest published：**v0.4.12**
 - 当前合同：v0.4.12 human/Machine CLI
 - 历史：v0.3.1 release notes 保留，不作为 current version
 

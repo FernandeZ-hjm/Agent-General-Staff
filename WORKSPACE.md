@@ -6,7 +6,7 @@ plane. It governs admission, authorization, policy, verification, receipts,
 capability state, and memory closure; it is not an Agent scheduler or execution
 platform.
 
-Current source candidate: **v0.4.12**. Latest published release: **v0.4.11**.
+Current source candidate: **v0.4.12**. Latest published release: **v0.4.12**.
 
 The normal request path is:
 
