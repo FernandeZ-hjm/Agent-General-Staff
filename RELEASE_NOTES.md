@@ -19,6 +19,8 @@ third-party content in AGS source control.
 - `ags verify --scope local` now owns only AGS governance, fixture, preflight,
   and template checks. Formatting, tests, and release builds stay as explicit
   source gates and are no longer replayed inside the local verifier.
+- Public CI builds the release verifier from the exact source commit instead
+  of executing a potentially stale `target/release/ags` restored from cache.
 
 ## Release 0.4.11
 

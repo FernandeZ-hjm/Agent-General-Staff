@@ -59,4 +59,4 @@ jobs:
         run: cargo deny check
 
       - name: Verify public release boundary once
-        run: ./target/release/ags verify --scope release --format text
+        run: cargo run -q -p ags-cli -- verify --scope release --format text

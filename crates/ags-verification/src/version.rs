@@ -255,6 +255,34 @@ fn require_inherited_product_field(
     }
 }
 
+pub(super) fn check_public_ci_release_invocation(repo_root: &Path) -> Vec<String> {
+    let path = repo_root.join(".github/workflows/ci.yml");
+    if !path.is_file() {
+        return Vec::new();
+    }
+
+    let required = "cargo run -q -p ags-cli -- verify --scope release --format text";
+    let stale_binary = "./target/release/ags verify --scope release";
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            let mut errors = Vec::new();
+            if !content.contains(required) {
+                errors.push(format!(
+                    ".github/workflows/ci.yml must build the release verifier from current source: {required}"
+                ));
+            }
+            if content.contains(stale_binary) {
+                errors.push(
+                    ".github/workflows/ci.yml must not execute a cached target/release/ags for the release gate"
+                        .to_string(),
+                );
+            }
+            errors
+        }
+        Err(_) => vec![".github/workflows/ci.yml is unreadable".to_string()],
+    }
+}
+
 pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
     const VERSION: &str = env!("CARGO_PKG_VERSION");
     const LICENSE: &str = "GPL-3.0-only";
@@ -281,6 +309,7 @@ pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
     }
 
     check_typed_product_metadata(repo_root, VERSION, LICENSE, &mut errors);
+    errors.extend(check_public_ci_release_invocation(repo_root));
 
     for (relative, marker) in [
         (

@@ -175,6 +175,26 @@ fn release_version_surfaces_accept_the_real_workspace_tree() {
 }
 
 #[test]
+fn public_ci_release_gate_rejects_a_cached_release_binary() {
+    let dir = tempfile::tempdir().unwrap();
+    let workflow = dir.path().join(".github/workflows/ci.yml");
+    std::fs::create_dir_all(workflow.parent().unwrap()).unwrap();
+    std::fs::write(
+        &workflow,
+        "run: ./target/release/ags verify --scope release --format text\n",
+    )
+    .unwrap();
+
+    let errors = super::version::check_public_ci_release_invocation(dir.path());
+    assert!(errors
+        .iter()
+        .any(|error| error.contains("must build the release verifier from current source")));
+    assert!(errors
+        .iter()
+        .any(|error| error.contains("must not execute a cached target/release/ags")));
+}
+
+#[test]
 fn command_runner_uses_the_requested_repository_root() {
     let dir = tempfile::tempdir().unwrap();
     #[cfg(windows)]
