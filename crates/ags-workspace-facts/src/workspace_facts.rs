@@ -206,8 +206,12 @@ pub fn detect_project(target: &Path) -> ProjectIdentity {
     // ── Check for crates/ directory ────────────────────────────────────
     let crates_dir = canonical.join("crates");
     let has_crates_dir = crates_dir.is_dir();
+    let has_suite_manifest = canonical.join("manifests/suite.yaml").is_file();
 
     // ── Suite detection ────────────────────────────────────────────────
+    // Product identity comes from repository-owned typed facts. The optional
+    // WORKSPACE role table is machine-local role inference and must not be a
+    // prerequisite for a sanitized public Suite checkout.
     identity.is_ags_suite = identity
         .root_entry_files_found
         .contains(&"WORKSPACE.md".to_string())
@@ -216,7 +220,7 @@ pub fn detect_project(target: &Path) -> ProjectIdentity {
             .contains(&"AGENT_SUITE_PROTOCOL.md".to_string())
         && has_ags_workspace
         && has_crates_dir
-        && !identity.workspace_identities.is_empty();
+        && has_suite_manifest;
 
     // ── Integration markers ────────────────────────────────────────────
     // Check for project profile

@@ -183,6 +183,42 @@ fn detection_and_protocol_status_distinguish_suite_from_empty_project() {
 }
 
 #[test]
+fn public_suite_identity_does_not_depend_on_machine_path_rows() {
+    let root = temp("public-suite");
+    std::fs::create_dir_all(root.join("crates")).unwrap();
+    std::fs::create_dir_all(root.join("manifests")).unwrap();
+    std::fs::create_dir_all(root.join("protocol")).unwrap();
+    std::fs::write(root.join("WORKSPACE.md"), "# Public AGS workspace\n").unwrap();
+    std::fs::write(root.join("AGENT_SUITE_PROTOCOL.md"), "# Protocol\n").unwrap();
+    std::fs::write(root.join("AGENTS.md"), "# AGENTS\n").unwrap();
+    std::fs::write(root.join("CLAUDE.md"), "# CLAUDE\n").unwrap();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/ags-cli\"]\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("manifests/suite.yaml"), "suite: {}\n").unwrap();
+    for protocol in [
+        "agent-task-protocol.md",
+        "task-card-template.md",
+        "runtime-adapters.md",
+    ] {
+        std::fs::write(root.join("protocol").join(protocol), "# Protocol\n").unwrap();
+    }
+
+    let identity = detect_project(&root);
+    assert!(identity.workspace_identities.is_empty());
+    assert!(identity.is_ags_suite);
+    assert_eq!(identity.integration_status, IntegrationStatus::Suite);
+    let preflight = run_session_preflight(&root, &AgentType::ClaudeCode);
+    assert_eq!(preflight.exit_code, 0, "{:?}", preflight.failures);
+
+    std::fs::remove_file(root.join("manifests/suite.yaml")).unwrap();
+    assert!(!detect_project(&root).is_ags_suite);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn instruction_projection_preserves_each_host_contract() {
     for (agent, canonical, marker) in [
         (AgentType::Codex, "codex", "ags_route_request"),

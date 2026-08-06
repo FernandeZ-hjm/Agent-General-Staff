@@ -43,9 +43,13 @@ jobs:
       - name: Verify source semantics once
         shell: bash
         run: |
-          cargo run -q --locked -p ags-cli -- verify \
+          local_report="$RUNNER_TEMP/public-verification-evidence/local-report.json"
+          if ! cargo run -q --locked -p ags-cli -- verify \
             --scope local \
-            --format json > "$RUNNER_TEMP/public-verification-evidence/local-report.json"
+            --format json > "$local_report"; then
+            cat "$local_report"
+            exit 1
+          fi
       - name: Test all npm entrypoints once
         run: >-
           node --test
