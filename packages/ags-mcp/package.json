@@ -1,6 +1,6 @@
 {
   "name": "@agent-governance-suite/mcp",
-  "version": "0.4.13",
+  "version": "0.4.14",
   "description": "Verified cross-platform launcher for the Agent Governance Suite MCP server",
   "license": "GPL-3.0-only",
   "type": "module",
@@ -22,7 +22,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@agent-governance-suite/launcher": "0.4.13"
+    "@agent-governance-suite/launcher": "0.4.14"
   },
   "repository": {
     "type": "git",

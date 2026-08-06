@@ -48,6 +48,8 @@ const REQUIRED_RUNTIME_FILES = Object.freeze([
   "manifests/mcp-registry.yaml",
   "protocol/agent-task-protocol.md"
 ]);
+const TAR_TYPE_REGULAR = "0".charCodeAt(0);
+const TAR_TYPE_DIRECTORY = "5".charCodeAt(0);
 
 const TARGETS = Object.freeze({
   "darwin-arm64": ["aarch64-apple-darwin", "tar.gz"],
@@ -1017,12 +1019,12 @@ export async function extractArchive(archivePath, extension, destination, binary
       throw new Error(`invalid tar entry size for ${name}`);
     }
     const output = archiveOutputOrThrow(destination, name, binaryName);
-    if (type === 0 || type === 48) {
+    if (type === 0 || type === TAR_TYPE_REGULAR) {
       if (output === path.resolve(destination, "runtime")) {
         throw new Error(`archive contains invalid regular directory payload: ${name}`);
       }
       writeArchiveFile(output, tar.subarray(offset, offset + size), binaryName);
-    } else if (type === 5) {
+    } else if (type === TAR_TYPE_DIRECTORY) {
       if (output === path.join(destination, binaryName)) {
         throw new Error(`archive contains invalid executable directory payload: ${name}`);
       }

@@ -1,5 +1,25 @@
 # Agent Governance Suite Release Notes
 
+## Release 0.4.14
+
+0.4.14 repairs the npm launcher boundary discovered by a real clean-machine
+installation of 0.4.13. Standard tar archives encode directory entries with
+the ASCII `5` typeflag; the launcher had compared that field with the numeric
+control byte `5`, so fresh macOS and Linux installs rejected the verified
+Release archive before activation.
+
+- The tar extractor now accepts only the standard regular-file and directory
+  typeflags while continuing to reject traversal, symlink, device and other
+  special payloads.
+- The archive fixture writes real POSIX typeflag bytes and includes explicit
+  directory entries, so the npm entry test exercises the same shape emitted by
+  the GitHub Release workflow.
+- Product versions advance to 0.4.14. Existing 0.4.13 maintenance and runtime
+  schema identifiers remain unchanged because their typed contracts did not
+  change.
+- The 0.4.13 npm packages are deprecated after 0.4.14 is published; the
+  immutable 0.4.13 GitHub Release remains available as historical evidence.
+
 ## Release 0.4.13
 
 0.4.13 closes the public installation, third-party Skill, host activation and
