@@ -128,6 +128,7 @@ struct ProjectionState {
 enum PreviousEntry {
     Absent,
     Symlink(PathBuf),
+    DirectoryBackup(PathBuf),
 }
 
 const PROJECTION_RECOVERY_SCHEMA: &str = "0.4.13-suite-skill-recovery";
@@ -268,7 +269,7 @@ pub fn plan_required_suite_skill_projection(
                     target: source.clone(),
                 },
             );
-            match inspect_link(&link, source, &owned_roots, prior.as_ref()) {
+            match inspect_projection_entry(&link, source, &owned_roots, prior.as_ref()) {
                 Ok(LinkDisposition::Current) => {}
                 Ok(LinkDisposition::Create) => operations.push(operation(
                     ProjectionOperationKind::Create,
@@ -468,7 +469,7 @@ pub fn apply_required_suite_skill_projection(
     for operation in &plan.operations {
         previous_entries.push((
             operation.link_path.clone(),
-            capture_previous(&operation.link_path)?,
+            capture_previous(&operation.link_path, transaction_id)?,
         ));
     }
 
@@ -490,10 +491,10 @@ pub fn apply_required_suite_skill_projection(
                         .desired_target
                         .as_deref()
                         .ok_or_else(|| "projection write is missing desired_target".to_string())?;
-                    replace_link(&operation.link_path, target, transaction_id)?;
+                    replace_projection_entry(&operation.link_path, target, transaction_id)?;
                 }
                 ProjectionOperationKind::RemoveRenamed | ProjectionOperationKind::RemoveRetired => {
-                    remove_owned_link(&operation.link_path)?
+                    remove_owned_entry(&operation.link_path, transaction_id)?
                 }
             }
         }
@@ -597,7 +598,7 @@ pub fn verify_required_suite_skill_projection_with_runtime(
         if !key.contains('/') {
             return Err(format!("invalid expected projection key `{key}`"));
         }
-        verify_link(&projection.link_path, &projection.target, &authority)?;
+        verify_projection_entry(&projection.link_path, &projection.target, &authority)?;
     }
     for operation in &plan.operations {
         if matches!(
@@ -796,7 +797,7 @@ enum LinkDisposition {
     Replace,
 }
 
-fn inspect_link(
+fn inspect_projection_entry(
     link: &Path,
     desired: &Path,
     owned_roots: &[PathBuf],
@@ -809,6 +810,21 @@ fn inspect_link(
         }
         Err(error) => return Err(format!("cannot inspect {}: {error}", link.display())),
     };
+    if metadata.is_dir() && cfg!(windows) {
+        if !prior_owns_entry(link, prior) {
+            return Err(format!(
+                "required Skill host directory is not AGS-owned: {}",
+                link.display()
+            ));
+        }
+        let actual = ags_capability_governance::hash_skill_source(link)?;
+        let expected = ags_capability_governance::hash_skill_source(desired)?;
+        return Ok(if actual == expected {
+            LinkDisposition::Current
+        } else {
+            LinkDisposition::Replace
+        });
+    }
     if !metadata.file_type().is_symlink() {
         return Err(format!(
             "required Skill host entry is not an AGS-owned symlink: {}",
@@ -852,6 +868,24 @@ fn plan_removal(
             return;
         }
     };
+    if metadata.is_dir() && cfg!(windows) {
+        if prior_owns_entry(link, prior) {
+            operations.push(operation(
+                kind,
+                host,
+                skill_id,
+                link.to_path_buf(),
+                None,
+                reason,
+            ));
+        } else {
+            blocking.push(format!(
+                "refusing to retire unowned Skill directory: {}",
+                link.display()
+            ));
+        }
+        return;
+    }
     if !metadata.file_type().is_symlink() {
         blocking.push(format!(
             "refusing to retire non-symlink Skill entry: {}",
@@ -925,6 +959,17 @@ fn link_matches_host_skill_path(link: &Path, host: &str, skill: &str) -> bool {
         .any(|root| link.ends_with(root.join(skill)))
 }
 
+fn prior_owns_entry(link: &Path, prior: Option<&ProjectionState>) -> bool {
+    prior.is_some_and(|state| {
+        state.projected_links.keys().any(|key| {
+            let Some((host, skill)) = key.split_once('/') else {
+                return false;
+            };
+            link_matches_host_skill_path(link, host, skill)
+        })
+    })
+}
+
 fn operation(
     kind: ProjectionOperationKind,
     host: &str,
@@ -987,13 +1032,16 @@ fn link_is_owned(
     })
 }
 
-fn capture_previous(path: &Path) -> Result<PreviousEntry, String> {
+fn capture_previous(path: &Path, transaction_id: &str) -> Result<PreviousEntry, String> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => fs::read_link(path)
             .map(PreviousEntry::Symlink)
             .map_err(|error| format!("cannot read {}: {error}", path.display())),
+        Ok(metadata) if metadata.is_dir() && cfg!(windows) => Ok(PreviousEntry::DirectoryBackup(
+            projection_backup_path(path, transaction_id)?,
+        )),
         Ok(_) => Err(format!(
-            "projection target changed to a non-symlink before apply: {}",
+            "projection target changed to an unsupported entry before apply: {}",
             path.display()
         )),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(PreviousEntry::Absent),
@@ -1001,7 +1049,11 @@ fn capture_previous(path: &Path) -> Result<PreviousEntry, String> {
     }
 }
 
-fn replace_link(link: &Path, target: &Path, transaction_id: &str) -> Result<(), String> {
+fn replace_projection_entry(
+    link: &Path,
+    target: &Path,
+    transaction_id: &str,
+) -> Result<(), String> {
     let parent = link
         .parent()
         .ok_or_else(|| "projection link has no parent".to_string())?;
@@ -1021,7 +1073,7 @@ fn replace_link(link: &Path, target: &Path, transaction_id: &str) -> Result<(), 
             stage.display()
         ));
     }
-    create_dir_symlink(target, &stage)?;
+    create_projection_stage(target, &stage)?;
     #[cfg(unix)]
     {
         fs::rename(&stage, link).map_err(|error| {
@@ -1031,23 +1083,66 @@ fn replace_link(link: &Path, target: &Path, transaction_id: &str) -> Result<(), 
     }
     #[cfg(not(unix))]
     {
-        if fs::symlink_metadata(link).is_ok() {
-            fs::remove_file(link)
-                .map_err(|error| format!("cannot replace {}: {error}", link.display()))?;
+        if let Ok(metadata) = fs::symlink_metadata(link) {
+            if metadata.file_type().is_symlink() {
+                fs::remove_file(link)
+                    .map_err(|error| format!("cannot replace {}: {error}", link.display()))?;
+            } else if metadata.is_dir() {
+                let backup = projection_backup_path(link, transaction_id)?;
+                if fs::symlink_metadata(&backup).is_ok() {
+                    let _ = fs::remove_dir_all(&stage);
+                    return Err(format!(
+                        "projection recovery backup already exists: {}",
+                        backup.display()
+                    ));
+                }
+                if let Some(parent) = backup.parent() {
+                    fs::create_dir_all(parent).map_err(|error| {
+                        format!("cannot create projection recovery directory: {error}")
+                    })?;
+                }
+                fs::rename(link, &backup).map_err(|error| {
+                    let _ = fs::remove_dir_all(&stage);
+                    format!("cannot preserve {} for recovery: {error}", link.display())
+                })?;
+            } else {
+                let _ = fs::remove_dir_all(&stage);
+                return Err(format!(
+                    "cannot replace unsupported projection entry: {}",
+                    link.display()
+                ));
+            }
         }
         fs::rename(&stage, link).map_err(|error| {
-            let _ = fs::remove_file(&stage);
+            let _ = fs::remove_dir_all(&stage);
             format!("cannot publish Skill link {}: {error}", link.display())
         })
     }
 }
 
-fn remove_owned_link(link: &Path) -> Result<(), String> {
+fn remove_owned_entry(link: &Path, transaction_id: &str) -> Result<(), String> {
     match fs::symlink_metadata(link) {
         Ok(metadata) if metadata.file_type().is_symlink() => fs::remove_file(link)
             .map_err(|error| format!("cannot unlink {}: {error}", link.display())),
+        Ok(metadata) if metadata.is_dir() && cfg!(windows) => {
+            let backup = projection_backup_path(link, transaction_id)?;
+            if fs::symlink_metadata(&backup).is_ok() {
+                return Err(format!(
+                    "projection recovery backup already exists: {}",
+                    backup.display()
+                ));
+            }
+            if let Some(parent) = backup.parent() {
+                fs::create_dir_all(parent).map_err(|error| {
+                    format!("cannot create projection recovery directory: {error}")
+                })?;
+            }
+            fs::rename(link, &backup).map_err(|error| {
+                format!("cannot preserve {} for recovery: {error}", link.display())
+            })
+        }
         Ok(_) => Err(format!(
-            "refusing to remove non-symlink during projection apply: {}",
+            "refusing to remove unsupported entry during projection apply: {}",
             link.display()
         )),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -1055,16 +1150,29 @@ fn remove_owned_link(link: &Path) -> Result<(), String> {
     }
 }
 
-fn verify_link(link: &Path, desired: &Path, authority: &Path) -> Result<(), String> {
+fn verify_projection_entry(link: &Path, desired: &Path, authority: &Path) -> Result<(), String> {
     let metadata = fs::symlink_metadata(link).map_err(|error| {
         format!(
             "required Skill projection missing {}: {error}",
             link.display()
         )
     })?;
+    if metadata.is_dir() && cfg!(windows) {
+        let actual = ags_capability_governance::hash_skill_source(link)?;
+        let expected = ags_capability_governance::hash_skill_source(desired)?;
+        if actual != expected {
+            return Err(format!(
+                "required Skill projection content mismatch {}: expected {}, observed {}",
+                link.display(),
+                expected,
+                actual
+            ));
+        }
+        return Ok(());
+    }
     if !metadata.file_type().is_symlink() {
         return Err(format!(
-            "required Skill projection is not a symlink: {}",
+            "required Skill projection has an unsupported entry type: {}",
             link.display()
         ));
     }
@@ -1090,6 +1198,17 @@ fn recover_entries(entries: &[(PathBuf, PreviousEntry)]) -> Result<(), String> {
                     continue;
                 }
             }
+            Ok(metadata) if metadata.is_dir() => {
+                if let PreviousEntry::DirectoryBackup(backup) = previous {
+                    if !backup.exists() {
+                        continue;
+                    }
+                }
+                if let Err(error) = fs::remove_dir_all(path) {
+                    errors.push(format!("cannot remove {}: {error}", path.display()));
+                    continue;
+                }
+            }
             Ok(_) => {
                 errors.push(format!(
                     "refusing to overwrite non-symlink during recovery: {}",
@@ -1103,15 +1222,41 @@ fn recover_entries(entries: &[(PathBuf, PreviousEntry)]) -> Result<(), String> {
                 continue;
             }
         }
-        if let PreviousEntry::Symlink(target) = previous {
-            if let Some(parent) = path.parent() {
-                if let Err(error) = fs::create_dir_all(parent) {
-                    errors.push(format!("cannot create {}: {error}", parent.display()));
-                    continue;
+        match previous {
+            PreviousEntry::Absent => {}
+            PreviousEntry::Symlink(target) => {
+                if let Some(parent) = path.parent() {
+                    if let Err(error) = fs::create_dir_all(parent) {
+                        errors.push(format!("cannot create {}: {error}", parent.display()));
+                        continue;
+                    }
+                }
+                if let Err(error) = create_dir_symlink(target, path) {
+                    errors.push(error);
                 }
             }
-            if let Err(error) = create_dir_symlink(target, path) {
-                errors.push(error);
+            PreviousEntry::DirectoryBackup(backup) => {
+                if !backup.exists() {
+                    if !path.is_dir() {
+                        errors.push(format!(
+                            "projection recovery lost both entry and backup: {}",
+                            path.display()
+                        ));
+                    }
+                    continue;
+                }
+                if let Some(parent) = path.parent() {
+                    if let Err(error) = fs::create_dir_all(parent) {
+                        errors.push(format!("cannot create {}: {error}", parent.display()));
+                        continue;
+                    }
+                }
+                if let Err(error) = fs::rename(backup, path) {
+                    errors.push(format!(
+                        "cannot restore directory projection {}: {error}",
+                        path.display()
+                    ));
+                }
             }
         }
     }
@@ -1172,6 +1317,86 @@ fn create_dir_symlink(target: &Path, link: &Path) -> Result<(), String> {
 fn create_dir_symlink(target: &Path, link: &Path) -> Result<(), String> {
     std::os::windows::fs::symlink_dir(target, link)
         .map_err(|error| format!("cannot create symlink {}: {error}", link.display()))
+}
+
+#[cfg(unix)]
+fn create_projection_stage(target: &Path, stage: &Path) -> Result<(), String> {
+    create_dir_symlink(target, stage)
+}
+
+#[cfg(not(unix))]
+fn create_projection_stage(target: &Path, stage: &Path) -> Result<(), String> {
+    copy_directory_tree(target, stage)
+}
+
+#[cfg(any(not(unix), test))]
+fn copy_directory_tree(source: &Path, target: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(source)
+        .map_err(|error| format!("cannot inspect Skill source {}: {error}", source.display()))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(format!(
+            "Skill projection source must be a real directory: {}",
+            source.display()
+        ));
+    }
+    fs::create_dir(target).map_err(|error| {
+        format!(
+            "cannot create Skill projection stage {}: {error}",
+            target.display()
+        )
+    })?;
+    let mut entries = fs::read_dir(source)
+        .map_err(|error| format!("cannot read Skill source {}: {error}", source.display()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            format!(
+                "cannot enumerate Skill source {}: {error}",
+                source.display()
+            )
+        })?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let input = entry.path();
+        let output = target.join(entry.file_name());
+        let metadata = fs::symlink_metadata(&input)
+            .map_err(|error| format!("cannot inspect Skill source {}: {error}", input.display()))?;
+        if metadata.file_type().is_symlink() {
+            let _ = fs::remove_dir_all(target);
+            return Err(format!(
+                "Skill projection refuses source symlink: {}",
+                input.display()
+            ));
+        }
+        let result = if metadata.is_dir() {
+            copy_directory_tree(&input, &output)
+        } else if metadata.is_file() {
+            fs::copy(&input, &output)
+                .map(|_| ())
+                .map_err(|error| format!("cannot copy Skill file {}: {error}", input.display()))
+        } else {
+            Err(format!(
+                "Skill projection refuses special file: {}",
+                input.display()
+            ))
+        };
+        if let Err(error) = result {
+            let _ = fs::remove_dir_all(target);
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
+fn projection_backup_path(link: &Path, transaction_id: &str) -> Result<PathBuf, String> {
+    let parent = link
+        .parent()
+        .ok_or_else(|| "projection entry has no parent".to_string())?;
+    let name = link
+        .file_name()
+        .ok_or_else(|| "projection entry has no file name".to_string())?;
+    let suffix = transaction_id.trim_start_matches("sha256:");
+    let suffix = suffix.get(..12).unwrap_or("invalid-plan");
+    Ok(parent.join(".ags-recovery").join(suffix).join(name))
 }
 
 fn safe_component(value: &str) -> bool {
@@ -1451,8 +1676,55 @@ mod tests {
         assert!(plan
             .blocking_findings
             .iter()
-            .any(|finding| finding.contains("not an AGS-owned symlink")));
+            .any(|finding| finding.contains(if cfg!(windows) {
+                "not AGS-owned"
+            } else {
+                "not an AGS-owned symlink"
+            })));
         assert!(apply_required_suite_skill_projection(&runtime, &plan, "test-plan").is_err());
+    }
+
+    #[test]
+    fn directory_projection_copy_is_content_exact_and_rejects_links() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        let target = temp.path().join("target");
+        fs::create_dir_all(source.join("assets")).unwrap();
+        fs::write(source.join("SKILL.md"), "---\nname: alpha\n---\n").unwrap();
+        fs::write(source.join("assets/data.txt"), "bounded body\n").unwrap();
+        copy_directory_tree(&source, &target).unwrap();
+        assert_eq!(
+            ags_capability_governance::hash_skill_source(&source).unwrap(),
+            ags_capability_governance::hash_skill_source(&target).unwrap()
+        );
+
+        #[cfg(unix)]
+        {
+            let linked_source = temp.path().join("linked-source");
+            let linked_target = temp.path().join("linked-target");
+            fs::create_dir_all(&linked_source).unwrap();
+            std::os::unix::fs::symlink(&source, linked_source.join("escape")).unwrap();
+            let error = copy_directory_tree(&linked_source, &linked_target).unwrap_err();
+            assert!(error.contains("refuses source symlink"));
+            assert!(!linked_target.exists());
+        }
+    }
+
+    #[test]
+    fn directory_projection_recovery_restores_the_previous_body() {
+        let temp = tempfile::tempdir().unwrap();
+        let link = temp.path().join("skills/alpha");
+        let backup = temp.path().join("skills/.ags-recovery/plan/alpha");
+        fs::create_dir_all(&link).unwrap();
+        fs::write(link.join("SKILL.md"), "old\n").unwrap();
+        fs::create_dir_all(backup.parent().unwrap()).unwrap();
+        fs::rename(&link, &backup).unwrap();
+        fs::create_dir_all(&link).unwrap();
+        fs::write(link.join("SKILL.md"), "new\n").unwrap();
+
+        recover_entries(&[(link.clone(), PreviousEntry::DirectoryBackup(backup.clone()))]).unwrap();
+        assert_eq!(fs::read_to_string(link.join("SKILL.md")).unwrap(), "old\n");
+        assert!(!backup.exists());
     }
 
     #[test]

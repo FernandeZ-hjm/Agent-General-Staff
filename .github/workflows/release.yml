@@ -177,8 +177,12 @@ jobs:
           $env:HOME = $cleanHome
           $env:USERPROFILE = $cleanHome
           $env:AGS_HOME = Join-Path $cleanHome ".ags/runtime"
-          $setupJson = & "unpacked/ags.exe" setup --yes --lifecycle-hosts codex --format json
-          if ($LASTEXITCODE -ne 0) { throw "unpacked one-host setup journey failed" }
+          $setupJson = & "unpacked/ags.exe" setup --yes --lifecycle-hosts codex --format json 2>&1
+          $setupExitCode = $LASTEXITCODE
+          if ($setupExitCode -ne 0) {
+            $setupJson | ForEach-Object { Write-Host $_ }
+            throw "unpacked one-host setup journey failed"
+          }
           $setup = ($setupJson -join "`n") | ConvertFrom-Json
           if (@($setup.approved_lifecycle_hosts).Count -ne 1 -or $setup.approved_lifecycle_hosts[0] -ne "codex") {
             throw "unpacked one-host setup did not select exactly codex"
