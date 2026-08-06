@@ -23,7 +23,7 @@ pub(super) fn source_kind(capability: &ManagedCapability) -> SkillSourceKind {
 
 pub(crate) fn source_hash(manifest_root: &Path, capability: &ManagedCapability) -> String {
     let Some(path) = capability_source_path(manifest_root, capability) else {
-        return sha256(capability.name.as_bytes());
+        return ags_platform::sha256(capability.name.as_bytes());
     };
     let mut canonical = b"ags-skill-source-v1\n".to_vec();
     let hashed = if path.is_dir() {
@@ -36,9 +36,9 @@ pub(crate) fn source_hash(manifest_root: &Path, capability: &ManagedCapability) 
         )
     };
     if hashed {
-        sha256(&canonical)
+        ags_platform::sha256(&canonical)
     } else {
-        sha256(format!("unreadable-skill-source\n{}", capability.name).as_bytes())
+        ags_platform::sha256(format!("unreadable-skill-source\n{}", capability.name).as_bytes())
     }
 }
 
@@ -54,7 +54,7 @@ pub fn hash_skill_source(path: &Path) -> Result<String, String> {
         )
     };
     if hashed {
-        Ok(sha256(&canonical))
+        Ok(ags_platform::sha256(&canonical))
     } else {
         Err(format!("cannot hash skill source {}", path.display()))
     }

@@ -1,13 +1,12 @@
-//! Human CLI adapter for the private-runtime setup lifecycle.
+//! Human CLI adapter for the shared runtime setup lifecycle.
 
 use crate::context::{
-    guard_writable_target, home_dir, private_install_target, source_root_or_exit,
+    guard_writable_target, home_dir, runtime_install_target, source_root_or_exit,
 };
 use crate::host_platforms::{
     cross_platform_init_json, cross_platform_init_plan, render_cross_platform_init_text,
     AGENT_PLATFORM_SPECS,
 };
-use crate::receipt_bridge::emit_ags_action_receipt;
 use std::path::PathBuf;
 
 fn detected_lifecycle_hosts() -> Vec<String> {
@@ -32,12 +31,26 @@ fn resolve_lifecycle_selection(
     target: &std::path::Path,
     selection: Option<&str>,
 ) -> Result<Vec<String>, String> {
+    let detected = detected_lifecycle_hosts();
+    resolve_lifecycle_selection_with_detected(target, selection, &detected)
+}
+
+fn resolve_lifecycle_selection_with_detected(
+    target: &std::path::Path,
+    selection: Option<&str>,
+    detected: &[String],
+) -> Result<Vec<String>, String> {
     let supported = ags_host_integration::lifecycle_specs()
         .map(|spec| spec.host_id.to_string())
         .collect::<std::collections::BTreeSet<_>>();
     let mut hosts = match selection.map(str::trim) {
-        Some("detected") => detected_lifecycle_hosts(),
-        Some("none") => Vec::new(),
+        Some("detected") => detected.to_vec(),
+        Some("none") => {
+            return Err(
+                "setup requires at least one Host; `none` is not a valid installation target"
+                    .to_string(),
+            )
+        }
         Some(value) => value
             .split(',')
             .map(str::trim)
@@ -47,14 +60,13 @@ fn resolve_lifecycle_selection(
         None if target.join("install-manifest.json").is_file() => {
             ags_lifecycle::setup::approved_lifecycle_hosts(target)?
         }
-        None => {
-            return Err(
-                "first write-mode setup requires --lifecycle-hosts <ids|detected|none>".to_string(),
-            )
-        }
+        None => detected.to_vec(),
     };
     hosts.sort();
     hosts.dedup();
+    if hosts.is_empty() {
+        return Err("setup requires at least one detected or explicitly selected Host".to_string());
+    }
     if let Some(host) = hosts.iter().find(|host| !supported.contains(*host)) {
         return Err(format!(
             "unsupported lifecycle host `{host}`; supported: {}",
@@ -64,26 +76,25 @@ fn resolve_lifecycle_selection(
     Ok(hosts)
 }
 
-pub(crate) fn private_install_health_report(
+pub(crate) fn runtime_install_health_report(
     target: &std::path::Path,
-    include_optional_extensions: bool,
     run_mcp_smoke: bool,
 ) -> ags_verification::doctor::HealthReport {
-    ags_lifecycle::setup::private_install_health_report(
-        target,
-        &home_dir(),
-        include_optional_extensions,
-        run_mcp_smoke,
-    )
+    ags_lifecycle::setup::runtime_install_health_report(target, &home_dir(), run_mcp_smoke)
 }
 
-pub(crate) fn cmd_private_plan(profile: &str, target: Option<PathBuf>, format: &str) {
-    if profile != "private" {
+pub(crate) fn cmd_runtime_plan(
+    profile: &str,
+    target: Option<PathBuf>,
+    required_skill_authority_root: Option<&std::path::Path>,
+    format: &str,
+) {
+    if profile != "runtime" {
         eprintln!("ags plan: unsupported profile '{profile}'");
         std::process::exit(2);
     }
     let source_root = source_root_or_exit("ags setup");
-    let target = private_install_target(target);
+    let target = runtime_install_target(target);
     let home = home_dir();
     let host_entries = AGENT_PLATFORM_SPECS
         .iter()
@@ -97,16 +108,23 @@ pub(crate) fn cmd_private_plan(profile: &str, target: Option<PathBuf>, format: &
                 .collect(),
         })
         .collect::<Vec<_>>();
-    let presentation = ags_lifecycle::setup::private_plan_presentation(
+    let approved = ags_lifecycle::setup::approved_lifecycle_hosts(&target).unwrap_or_default();
+    let detected = detected_lifecycle_hosts();
+    let installed = target.join("install-manifest.json").is_file();
+    let planned_hosts = if installed {
+        approved.clone()
+    } else {
+        detected.clone()
+    };
+    let presentation = ags_lifecycle::setup::runtime_plan_presentation(
         &source_root,
         &target,
         &home,
         &host_entries,
-        false,
+        &planned_hosts,
+        required_skill_authority_root,
     );
     let wizard = cross_platform_init_plan(&home, &|command| ags_platform::is_on_path(command));
-    let approved = ags_lifecycle::setup::approved_lifecycle_hosts(&target).unwrap_or_default();
-    let detected = detected_lifecycle_hosts();
     let pending = detected
         .iter()
         .filter(|host| !approved.contains(host))
@@ -117,10 +135,10 @@ pub(crate) fn cmd_private_plan(profile: &str, target: Option<PathBuf>, format: &
         presentation.install_text,
         approved.join(", "),
         pending.join(", "),
-        if target.join("install-manifest.json").exists() {
+        if installed {
             ""
         } else {
-            " selection-required"
+            " detected-hosts-selected-on-apply"
         },
         render_cross_platform_init_text(&wizard),
         presentation.global_entry_text,
@@ -138,7 +156,8 @@ pub(crate) fn cmd_private_plan(profile: &str, target: Option<PathBuf>, format: &
                 "detected_hosts": detected,
                 "approved_hosts": approved,
                 "pending_hosts": pending,
-                "selection_required": !target.join("install-manifest.json").exists(),
+                "selection_required": planned_hosts.is_empty(),
+                "planned_hosts": planned_hosts,
             }),
         );
         object.insert(
@@ -153,179 +172,100 @@ pub(crate) fn cmd_private_plan(profile: &str, target: Option<PathBuf>, format: &
     crate::output::emit(format, &value, || text);
 }
 
-/// Core private-install apply without exiting. Output and exit policy remain in
+/// Core runtime-install apply without exiting. Output and exit policy remain in
 /// the human adapter so update/setup callers can preserve their command
 /// contracts while sharing one lifecycle mutation authority.
-pub(crate) fn run_private_apply(
+pub(crate) fn run_runtime_apply(
     target: Option<PathBuf>,
     force: bool,
-    include_optional_extensions: bool,
-    register_claude: bool,
     approved_lifecycle_hosts: Option<&[String]>,
-) -> (ags_verification::doctor::HealthReport, PathBuf, String) {
+    required_skill_authority_root: Option<&std::path::Path>,
+) -> ags_lifecycle::setup::RuntimeApplyResult {
     let source_root = source_root_or_exit("ags setup");
-    let target = private_install_target(target);
+    let target = runtime_install_target(target);
     guard_writable_target("ags setup", &target);
-    let result = ags_lifecycle::setup::apply_private(ags_lifecycle::setup::PrivateApplyRequest {
+    ags_lifecycle::setup::apply_runtime(ags_lifecycle::setup::RuntimeApplyRequest {
         source_root: &source_root,
         target: &target,
         home: &home_dir(),
         force,
-        include_optional_extensions,
-        register_claude,
         approved_lifecycle_hosts,
-    });
-    (result.report, result.target, result.plan_text)
+        suite_skill_authority_root: required_skill_authority_root,
+    })
 }
 
-pub(crate) fn cmd_private_apply(
-    profile: &str,
-    target: Option<PathBuf>,
-    yes: bool,
-    force: bool,
-    format: &str,
-    register_claude: bool,
-) {
-    if profile != "private" {
-        eprintln!("ags apply: unsupported profile '{profile}'");
-        std::process::exit(2);
-    }
-    if !yes {
-        eprintln!("ags setup: --yes is required for write mode.");
-        eprintln!("Review `ags setup` first.");
-        std::process::exit(2);
-    }
-
-    let (report, target, plan_text_before_apply) =
-        run_private_apply(target, force, false, register_claude, None);
-    let output = serde_json::json!({
-        "schema_version": ags_lifecycle::setup::PRIVATE_INSTALL_SCHEMA,
-        "profile": profile,
-        "target": target.to_string_lossy(),
-        "register_claude": register_claude,
-        "force": force,
-        "report": report,
-    });
-    crate::output::emit(format, &output, || {
-        format!(
-            "{plan_text_before_apply}\n\n{}",
-            ags_verification::doctor::render_text(&report)
-        )
-    });
-    std::process::exit(report.exit_code());
-}
-
-pub(crate) fn cmd_private_verify(profile: &str, target: Option<PathBuf>, format: &str) {
-    if profile != "private" {
-        eprintln!("ags verify: unsupported profile '{profile}'");
-        std::process::exit(2);
-    }
-    let target = private_install_target(target);
-    let report = private_install_health_report(&target, false, true);
-    let output = serde_json::json!({
-        "schema_version": ags_lifecycle::setup::PRIVATE_INSTALL_SCHEMA,
-        "profile": profile,
-        "target": target.to_string_lossy(),
-        "report": report,
-    });
-    crate::output::emit(format, &output, || {
-        ags_verification::doctor::render_text(&report)
-    });
-    std::process::exit(report.exit_code());
-}
-
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn cmd_setup(
     target: Option<PathBuf>,
     yes: bool,
     force: bool,
-    register_claude: bool,
     lifecycle_hosts: Option<&str>,
+    required_skill_authority_root: Option<PathBuf>,
+    recover_plan_hash: Option<&str>,
     dry_run: bool,
     format: &str,
 ) {
-    let did_apply = yes && !dry_run;
-    let mut apply_code: Option<i32> = None;
-    let mut receipt_path: Option<PathBuf> = None;
-    if did_apply {
-        let runtime_target = private_install_target(target.clone());
+    if let Some(plan_hash) = recover_plan_hash {
+        if yes || dry_run || lifecycle_hosts.is_some() || required_skill_authority_root.is_some() {
+            eprintln!("ags setup: --recover-plan-hash cannot be combined with setup planning or apply options");
+            std::process::exit(2);
+        }
+        let runtime_target = runtime_install_target(target);
+        guard_writable_target("ags setup recovery", &runtime_target);
+        let receipt =
+            ags_lifecycle::maintenance::recover_runtime_setup_plan(&runtime_target, plan_hash)
+                .unwrap_or_else(|error| {
+                    eprintln!("ags setup recovery: {error}");
+                    std::process::exit(1);
+                });
+        crate::output::emit(format, &receipt, || {
+            format!(
+                "Recovered runtime setup plan {}\nReceipt: {}",
+                receipt.plan_hash, receipt.receipt_id
+            )
+        });
+        return;
+    }
+    if yes && !dry_run {
+        let runtime_target = runtime_install_target(target.clone());
         let approved = resolve_lifecycle_selection(&runtime_target, lifecycle_hosts)
             .unwrap_or_else(|error| {
                 eprintln!("ags setup: {error}");
                 std::process::exit(2);
             });
-        let (report, runtime_target, plan_text) = run_private_apply(
+        let result = run_runtime_apply(
             target.clone(),
             force,
-            false,
-            register_claude,
             Some(&approved),
+            required_skill_authority_root.as_deref(),
         );
         let output = serde_json::json!({
-            "schema_version": ags_lifecycle::setup::PRIVATE_INSTALL_SCHEMA,
-            "profile": "private",
-            "target": runtime_target.to_string_lossy(),
-            "register_claude": register_claude,
+            "schema_version": ags_lifecycle::setup::RUNTIME_INSTALL_SCHEMA,
+            "profile": "runtime",
+            "target": result.target.to_string_lossy(),
             "approved_lifecycle_hosts": approved,
             "force": force,
-            "report": report,
+            "result": result,
         });
         crate::output::emit(format, &output, || {
             format!(
-                "{plan_text}\n\n{}",
-                ags_verification::doctor::render_text(&report)
+                "{}\n\n{}",
+                result.plan_text,
+                ags_verification::doctor::render_text(&result.report)
             )
         });
-        let passed = report.passed();
-        let receipt = ags_evidence::build_action_receipt(
-            "setup-apply",
-            Some(&runtime_target.display().to_string()),
-            ags_evidence::GateResult {
-                decision: if passed { "allow" } else { "stop" }.to_string(),
-                reason: if passed {
-                    None
-                } else {
-                    Some("setup apply had failures".to_string())
-                },
-            },
-            vec![],
-            vec![],
-            vec![],
-            vec![ags_evidence::VerificationResult {
-                command: "ags setup --yes".to_string(),
-                exit_code: report.exit_code(),
-                output_hash: ags_evidence::sha256_hex(b"setup-applied"),
-            }],
-            if passed { "applied" } else { "failed" },
-            passed,
-        );
-        receipt_path = emit_ags_action_receipt(&receipt).ok();
-        apply_code = Some(report.exit_code());
-    }
-    if !crate::output::is_json(format) {
-        let source_root = source_root_or_exit("ags setup");
-        println!();
-        println!(
-            "{}",
-            ags_lifecycle::setup::render_memory_capture_plan(
-                &home_dir(),
-                &source_root,
-                register_claude,
-            )
-        );
-    }
-    cmd_private_plan("private", target, format);
-    if did_apply && !crate::output::is_json(format) {
-        if let Some(path) = &receipt_path {
-            println!(
-                "\n{}",
-                ags_evidence::render_action_receipt_summary_line(path)
-            );
+        if !crate::output::is_json(format) {
+            print_setup_agent_governance_next_step();
         }
-        print_setup_agent_governance_next_step();
+        std::process::exit(result.report.exit_code());
     }
-    if let Some(code) = apply_code {
-        std::process::exit(code);
-    }
+
+    cmd_runtime_plan(
+        "runtime",
+        target,
+        required_skill_authority_root.as_deref(),
+        format,
+    );
 }
 
 fn print_setup_agent_governance_next_step() {
@@ -351,14 +291,34 @@ fn print_setup_agent_governance_next_step() {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_lifecycle_selection;
+    use super::resolve_lifecycle_selection_with_detected;
 
     #[test]
-    fn lifecycle_selection_requires_first_choice_then_preserves_and_deduplicates() {
+    fn lifecycle_selection_defaults_to_detected_then_preserves_and_deduplicates() {
         let runtime = tempfile::tempdir().unwrap();
-        assert!(resolve_lifecycle_selection(runtime.path(), None).is_err());
         assert_eq!(
-            resolve_lifecycle_selection(runtime.path(), Some("cursor, codex, cursor")).unwrap(),
+            resolve_lifecycle_selection_with_detected(
+                runtime.path(),
+                None,
+                &["codex".to_string()],
+            )
+            .unwrap(),
+            vec!["codex"]
+        );
+        assert!(resolve_lifecycle_selection_with_detected(runtime.path(), None, &[]).is_err());
+        assert!(resolve_lifecycle_selection_with_detected(
+            runtime.path(),
+            Some("none"),
+            &["codex".to_string()],
+        )
+        .is_err());
+        assert_eq!(
+            resolve_lifecycle_selection_with_detected(
+                runtime.path(),
+                Some("cursor, codex, cursor"),
+                &[],
+            )
+            .unwrap(),
             vec!["codex", "cursor"]
         );
 
@@ -374,9 +334,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            resolve_lifecycle_selection(runtime.path(), None).unwrap(),
+            resolve_lifecycle_selection_with_detected(runtime.path(), None, &[]).unwrap(),
             vec!["claude-code", "codex"]
         );
-        assert!(resolve_lifecycle_selection(runtime.path(), Some("unknown-host")).is_err());
+        assert!(resolve_lifecycle_selection_with_detected(
+            runtime.path(),
+            Some("unknown-host"),
+            &[],
+        )
+        .is_err());
     }
 }

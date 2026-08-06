@@ -6,7 +6,6 @@
 //! launches processes, or writes files.
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 /// Execution-policy resolution lives behind the governance-decision seam.
 pub mod policy;
@@ -435,7 +434,7 @@ pub fn validate_proposal(proposal: &HostRouteProposal) -> Result<(), Vec<Proposa
 
 pub fn proposal_hash(proposal: &HostRouteProposal) -> String {
     let bytes = serde_json::to_vec(proposal).unwrap_or_default();
-    sha256(&bytes)
+    ags_platform::sha256(&bytes)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -525,12 +524,6 @@ fn is_stable_identifier(value: &str) -> bool {
         && value.chars().all(|character| {
             character.is_alphanumeric() || matches!(character, '-' | '_' | '.' | ':')
         })
-}
-
-pub fn sha256(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    format!("sha256:{:x}", hasher.finalize())
 }
 
 #[cfg(test)]

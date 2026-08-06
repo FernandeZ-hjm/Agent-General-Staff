@@ -317,6 +317,20 @@ pub fn supported_skill_hosts() -> impl Iterator<Item = &'static str> {
         .map(|spec| spec.id)
 }
 
+/// Return the one AGS-managed Skill index root for a Host.
+///
+/// Hosts that already load the shared multi-agent store must not receive a
+/// second copy in their native root: duplicate entries are ambiguous to the
+/// Host and cannot be sealed as an active route.
+pub fn managed_skill_root(home: &Path, host: &str) -> Option<PathBuf> {
+    let spec = platform_spec(host)?;
+    if spec.loads_shared_agent_skills {
+        Some(home.join(".agents/skills"))
+    } else {
+        spec.native_skill_subdir.map(|subdir| home.join(subdir))
+    }
+}
+
 pub fn static_skill_roots(home: &Path, host: &str) -> Vec<PathBuf> {
     let Some(spec) = platform_spec(host) else {
         return Vec::new();

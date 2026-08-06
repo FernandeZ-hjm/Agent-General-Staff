@@ -26,7 +26,7 @@ If you find a security vulnerability in AGS, please report it privately:
 
 | Version | Supported |
 |---|---|
-| 0.4.x | Yes |
+| 0.5.x | Yes |
 | 0.3.x | Yes |
 | < 0.3 | No |
 

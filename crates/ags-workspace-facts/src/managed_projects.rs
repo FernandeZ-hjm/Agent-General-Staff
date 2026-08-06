@@ -2,7 +2,8 @@
 //!
 //! Records every repository that `ags init` has onboarded into AGS, as a small
 //! hand-serialized YAML file under the AGS runtime home
-//! (`~/.ags/private-runtime/managed-projects.yaml`, honoring `$AGS_HOME`).
+//! (the canonical runtime root's `managed-projects.yaml`, honoring
+//! `$AGS_RUNTIME_HOME` / `$AGS_HOME`).
 //!
 //! - **Write side**: `ags init` upserts (append + dedupe on canonical path) the
 //!   project after a successful onboard. Re-running `ags init` refreshes the
@@ -91,7 +92,7 @@ pub enum RegistryChange {
 
 /// Registry file path under the given AGS runtime home.
 pub fn registry_path(runtime_home: &Path) -> PathBuf {
-    runtime_home.join("managed-projects.yaml")
+    ags_platform::RuntimeLayout::new(runtime_home).managed_projects()
 }
 
 /// Build a `ManagedProject` from explicit facts (pure; caller does git detection).

@@ -127,36 +127,8 @@ pub(crate) fn check_active_skill_tags(input: &str, errors: &mut Vec<String>) {
 
 fn active_task_card_skill_tags() -> Vec<String> {
     const SKILLS_REGISTRY: &str = include_str!("../../../../manifests/skills-registry.yaml");
-    let mut tags = Vec::new();
-
-    for block in SKILLS_REGISTRY.split("\n  - name:").skip(1) {
-        if !block
-            .lines()
-            .any(|line| line.trim() == "route_state: routable")
-        {
-            continue;
-        }
-
-        for line in block.lines() {
-            let trimmed = line.trim();
-            let Some(hint) = trimmed.strip_prefix("invoke_hint:") else {
-                continue;
-            };
-            let hint = hint.trim().trim_matches('"').trim_matches('\'');
-            let Some(tag) = hint
-                .strip_prefix("[skill:")
-                .and_then(|rest| rest.strip_suffix(']'))
-                .map(str::trim)
-            else {
-                continue;
-            };
-            if !tag.is_empty() && !tags.iter().any(|existing| existing == tag) {
-                tags.push(tag.to_string());
-            }
-        }
-    }
-
-    tags
+    ags_capability_governance::task_card_skill_tags_from_registry_yaml(SKILLS_REGISTRY)
+        .unwrap_or_default()
 }
 
 /// Extract the trailing `[skill: <tag>]` tags from a task card, in document

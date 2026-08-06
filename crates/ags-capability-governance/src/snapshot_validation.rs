@@ -49,7 +49,7 @@ pub struct SkillTagGate {
 }
 
 pub fn verify_skill_tags(tags: &[String], active_host: &str) -> SkillTagGate {
-    verify_skill_tags_with_runtime_home(tags, active_host, &locate_runtime_home())
+    verify_skill_tags_with_runtime_home(tags, active_host, &ags_platform::runtime_home())
 }
 
 pub fn verify_skill_tags_with_runtime_home(

@@ -1,6 +1,6 @@
 use super::*;
 #[allow(unused_imports)]
-use crate::{authority::*, catalog::*, hashing::*, private_store::*};
+use crate::{authority::*, catalog::*, hashing::*};
 #[derive(Debug, Deserialize)]
 pub(crate) struct RegistryDocument {
     #[serde(default)]
@@ -102,6 +102,36 @@ pub(crate) fn load_registry_document(root: &Path) -> Result<RegistryDocument, Re
     serde_yaml::from_str(&content).map_err(RegistryError::Parse)
 }
 
+/// Parse the canonical registry into the exact task-card invocation tags that
+/// are statically routable. Consumers must not infer routes from YAML layout or
+/// from a Skill body being installed on a Host.
+pub fn task_card_skill_tags_from_registry_yaml(
+    content: &str,
+) -> Result<Vec<String>, RegistryError> {
+    let document: RegistryDocument = serde_yaml::from_str(content).map_err(RegistryError::Parse)?;
+    let mut tags = Vec::new();
+    for skill in document.skills {
+        let Some(routing) = skill.routing else {
+            continue;
+        };
+        if routing.route_state != RouteState::Routable {
+            continue;
+        }
+        let hint = routing.invoke_hint.trim();
+        let Some(tag) = hint
+            .strip_prefix("[skill:")
+            .and_then(|rest| rest.strip_suffix(']'))
+            .map(str::trim)
+        else {
+            continue;
+        };
+        if !tag.is_empty() && !tags.iter().any(|existing| existing == tag) {
+            tags.push(tag.to_string());
+        }
+    }
+    Ok(tags)
+}
+
 #[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub(super) struct AuthStateDocument {
@@ -114,8 +144,11 @@ pub(super) fn load_auth_states(runtime_home: &Path, host: &str) -> (AuthStateDoc
         .join("auth-state")
         .join(format!("{}.json", safe_host(host)));
     let Ok(bytes) = std::fs::read(path) else {
-        return (AuthStateDocument::default(), sha256(b"missing-auth-state"));
+        return (
+            AuthStateDocument::default(),
+            ags_platform::sha256(b"missing-auth-state"),
+        );
     };
     let document = serde_json::from_slice(&bytes).unwrap_or_default();
-    (document, sha256(&bytes))
+    (document, ags_platform::sha256(&bytes))
 }

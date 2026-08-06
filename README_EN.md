@@ -2,247 +2,145 @@
 
 [![CI](https://github.com/FernandeZ-hjm/Agent-General-Staff/actions/workflows/ci.yml/badge.svg)](https://github.com/FernandeZ-hjm/Agent-General-Staff/actions/workflows/ci.yml)
 [![License: GPL-3.0-only](https://img.shields.io/badge/License-GPL--3.0--only-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg)](https://www.rust-lang.org/)
 
 [中文](README.md) | [English](README_EN.md)
 
-Agent Governance Suite (AGS) is a **multi-Agent development governance control
-plane**. It owns admission, authorization, policy, capability snapshots,
-verification, receipts, and memory closure. It does not schedule Agent teams
-and is not a task queue, parallel executor, or multi-Agent negotiation runtime.
+AGS is a governance control plane for multi-agent development. It owns
+admission, exact capability routing, authorization, maintenance transactions,
+verification, receipts, and recovery. It is not an agent scheduler, task queue,
+or natural-language classifier.
 
-This repository is the public AGS distribution, licensed **GPL-3.0-only**. The
-current source candidate is **v0.4.12**; the latest published release is
-**v0.4.12**.
+The current source candidate is **v0.5.0**; the latest published release is
+**v0.5.0**.
 
-## v0.4.12 governance flow
+## Choose CLI, MCP, or both
 
-```text
-human request
-  -> host interprets the full conversation
-  -> typed HostRouteProposal
-  -> AGS validates closed fields
-  -> read-only ags_route_request
-  -> host-native action or explicit ags_apply_action
-  -> evidence / delivery closure
-```
-
-- Natural language is interpreted only by hosts such as Codex, Claude Code,
-  Cursor, CodeBuddy-Code, and OMP.
-- `ags_route_request` is strictly read-only. It rejects raw requests and has no
-  keyword or similarity fallback.
-- `ags_apply_action` is the only effectful MCP tool and consumes one fixed,
-  server-held action exactly once.
-- DirectResponse is exclusive. Otherwise, a proposal may contain at most one
-  exact SkillTarget and one closed MachineCliTarget.
-- Skill Resolver, Compiler, Policy, Gate, and Runner consume structured
-  contracts only.
-- Task-card generation requires both an explicit handoff instruction and a
-  confirmed handoff contract.
-
-## One AGS per workspace
-
-Each canonical workspace has one long-lived AGS daemon:
-
-```text
-canonical workspace
-  -> AGS daemon
-       -> Codex client session
-       -> Claude Code client session
-       -> Cursor client session
-       -> CodeBuddy client session
-       -> OMP client session
-```
-
-The stdio process is only a `connect-or-start` forwarding adapter. The workspace
-daemon loads one static snapshot per host, while `session_id`,
-preflight binding, and DecisionLease remain isolated per client session.
-Disconnecting one client does not stop the daemon. Idle recycling and
-stop-before-restart executable upgrades are internal service behavior.
-
-This architecture adds **no new user command**. Hosts still launch:
+The CLI and MCP packages are independent npm entrypoints backed by the same
+signed Rust kernel, content-addressed cache, and machine state directory.
+Installing both does not download a second kernel.
 
 ```bash
-ags mcp serve --transport stdio
-```
-
-## Twelve major modules
-
-The v0.4.12 runtime workspace exposes exactly twelve authoritative Cargo
-packages:
-
-| Module | Responsibility |
-|---|---|
-| `ags-platform` | cross-platform paths, files, processes, hashing, and atomic writes |
-| `ags-workspace-facts` | canonical workspace facts, discovery, protocol audit, and preflight facts |
-| `ags-host-integration` | Codex, Claude Code, Cursor, CodeBuddy-Code, and OMP integration facts |
-| `ags-capability-governance` | capability catalog, skill-body governance, exact resolution, and snapshots |
-| `ags-task-contract` | task-card compile/validate, handoff contracts, and non-executing launch preparation |
-| `ags-governance-decision` | typed proposals, policy, route, and decision contracts |
-| `ags-session` | workspace daemon, client sessions, bindings, and one-shot action storage |
-| `ags-evidence` | receipts, delivery closure, and evidence integrity |
-| `ags-verification` | bootstrap readiness, doctor, projection, and local/promotion/release verification |
-| `ags-lifecycle` | setup, init, onboarding, and update |
-| `ags-cli` | current human and Machine CLI adapter |
-| `ags-mcp` | thin MCP wire, session connection, and error-mapping adapter |
-
-The former `bootstrap-dry-run`, `capability-registry`,
-`delivery-report-validator`, `execution-policy`, `runner`, `skill-governance`,
-`suite-doctor`, `task-card-validator`, and `workflow-sync-check`
-implementations have moved under their authoritative modules. v0.4.12 retains
-only commands, wire/schema types, and re-exports with current callers, not old
-aliases or a second package authority. See [WORKSPACE.md](WORKSPACE.md) and
-[docs/architecture.md](docs/architecture.md).
-
-## Host support matrix
-
-| Host | MCP / daemon | Skill or command entry | Native memory closure | Current verification |
-|---|---|---|---|---|
-| Codex | supported | global/project skills | SessionStart / Stop Guard / SessionEnd adapter | native MCP registration probe + lifecycle/MCP process E2E |
-| Claude Code | supported | `/ags` and skills | SessionStart / Stop Guard / SessionEnd adapter | native MCP connection probe + lifecycle/MCP process E2E |
-| OMP | supported; may reuse Codex config | native/shared skills | three-event OMP lifecycle extension | native RPC discoverability probe + lifecycle/MCP process E2E |
-| Cursor | supported | host/project skill projection | native sessionStart / sessionEnd / stop hooks | native `cursor-agent mcp list` read-only probe + lifecycle/MCP process E2E |
-| CodeBuddy-Code | supported | setup-generated configuration snippets | SessionStart / Stop Guard / SessionEnd adapter | native hook schema + lifecycle/MCP process E2E |
-| WorkBuddy | MCP onboarding | setup-generated configuration snippets | lifecycle support is not declared | initialization and static/visibility verification |
-
-The E2E suite launches the real `ags` stdio adapter and workspace daemon. It
-covers same-workspace sharing, cross-project isolation, reconnects, foreign
-lease rejection, snapshot rebind, idle recycling, and upgrades. It is not GUI
-automation for each host product.
-Cursor memory closure and external MCP registration are independent facts. AGS
-can install and verify native lifecycle hooks and inspect registration through
-`cursor-agent mcp list`; writing Cursor MCP configuration remains
-operator-controlled.
-
-## Current limitations
-
-- AGS can prove that a typed proposal matches governance state; it cannot prove
-  that the host understood the user's intent correctly.
-- Runner returns a validated LaunchPlan / host handoff only. It does not dispatch
-  Agents or claim execution or verification occurred.
-- AGS has no task queue, Agent scheduler, resource quota system, or multi-Agent
-  negotiation runtime.
-- External MCP/CLI registration is usually advice-only. AGS does not run
-  third-party installers for the user.
-- Codex, Claude Code, Cursor, CodeBuddy-Code, and OMP share one Rust lifecycle
-  contract; host files only map native events and output schemas.
-- The public edition does not carry private skill bodies, real
-  memory/receipt/archive data, or machine-private runtime state.
-
-`ags doctor` checks both runtime health and local current-version conformance.
-Drift in an enabled host's runtime, daemon, MCP registration, snapshot, or
-workspace lifecycle projection exits 1. The remote latest check is advisory and
-offline operation is non-blocking. Migration first verifies a complete
-workspace adapter and then removes only AGS-owned user-level lifecycle hooks;
-user hooks and MCP configuration are preserved.
-`ags setup --lifecycle-hosts` records only explicitly approved hosts, and
-`ags init` consumes that set for the explicitly selected current workspace.
-The public edition never enumerates or writes the private managed-project fleet.
-
-## Installation
-
-Ordinary MCP users do not need Rust or Cargo:
-
-```bash
+npx -y @agent-governance-suite/cli --help
 npx -y @agent-governance-suite/mcp
 ```
 
-The npm launcher downloads the matching prebuilt `ags` binary for the current
-OS/architecture, verifies `SHA256SUMS`, caches the verified binary, and starts
-`ags mcp serve --transport stdio` without a shell.
-
-To install from source:
+Source installation remains available:
 
 ```bash
 cargo install --path crates/ags-cli --locked --force
-ags setup --yes --force
+ags setup --yes
 ```
 
-## First-time onboarding
+## One maintenance transaction
+
+AGS core, Skill, setup, and Host activation changes share one closure:
+
+```text
+Intent -> hash-bound Plan -> user approval -> Apply
+       -> Host activation -> Verify -> Receipt
+                         \-> Recover on failure
+```
+
+Plans freeze source, version, content hashes, risks, writes, and rollback points.
+Apply accepts only the exact unexpired `plan_hash`. Copying files is not success:
+Host projections, snapshots, and a real RouteResolution must verify. Updates are
+never applied silently.
+
+## Third-party Skills
+
+The recommendation catalog is discovery and review metadata, not an install
+allowlist. Users may select a catalog ID or any GitHub repository/tree URL,
+branch, tag, or commit. Apply always resolves remote content to an immutable
+commit first.
 
 ```bash
-ags onboarding plan --host codex
-ags onboarding apply --item project-init --plan-hash <HASH_FROM_PLAN> --host codex --yes
-ags onboarding verify --host codex
+ags skill recommend
+ags skill inspect <catalog-id|github-url|local-path>
+ags skill install <catalog-id|github-url>
+ags skill adopt <local-path>
+ags skill check [skill-id]
+ags skill update <skill-id>
+ags skill rollback <skill-id>
+ags skill status [skill-id]
+ags skill verify <skill-id>
 ```
 
-`apply` accepts one plan item at a time. The third-party capability manifest is
-fixed in the release package; normal setup, preflight, resource reads, routing,
-and apply never refresh it over the network.
+The machine-local `InstalledSkillRecord` is the only installation truth.
+Catalog, installation, Host activation, and update policy are independent
+layers. Old JSON state is migrated once, never read as a compatibility model.
+The default policy is `notify`; `manual` and `pinned` are also available. AGS
+never executes scripts shipped by a third-party repository.
 
-## Stable command surface
+Traversal, symlink escape, special files, out-of-bound writes, ID overwrite,
+and hash drift are blocked. Unknown licenses, scripts, binaries, external
+dependencies, and elevated privileges are disclosed and require explicit risk
+acknowledgement.
 
-v0.4.12 supports only the current command surface below. Removed legacy
-commands, aliases, and plan-only fake actions are not compatibility contracts.
+## setup and five Host projections
+
+`ags setup` and maintenance updates project required suite Skills to Codex,
+Claude Code, OMP, Cursor, and CodeBuddy-Code. Declared upstream renames are
+migrated and AGS-owned retired symlinks are removed. The complete candidate
+state is prepared before an atomic switch; failure restores bodies, indexes,
+snapshots, and Host pointers.
+
+Private maintainer tooling may additionally require every target to come from a
+stable authority root. The public kernel exposes the policy seam without
+hard-coding maintainer paths.
+
+## Signed update notices
+
+CLI startup, MCP preflight, or Doctor lazily checks a signed release index once
+per seven calendar days by default. Offline or unreachable upstream state never
+blocks installed capabilities. Users can snooze, ignore one version, or disable
+checks.
 
 ```bash
-ags setup --help
-ags onboarding --help
-ags init --help
-ags doctor --help
-ags agents --help
-ags capability --help
-ags skill --help
-ags update --help
-ags mcp --help
-ags memory --help
-ags host lifecycle --help
-ags task close --help
+ags update check
+ags update plan
+ags update status --plan-hash <HASH>
+ags update apply --plan-hash <HASH>
+ags update verify --plan-hash <HASH>
+ags update recover
 ```
 
-Mutating actions still require explicit `--apply` or `--yes` and remain subject
-to existing confirmation, policy, and lease gates.
+## Typed governance path
 
-## Host-internal contracts and execution boundary
+Natural language stays in the Host. AGS consumes closed typed contracts only:
 
-`policy`, `project`, `session`, and `run` primarily serve host/MCP Machine CLI
-contracts. `task validate/close`, `memory`, `mcp`, and `verify` are also
-explicit operator interfaces.
-
-Without an explicit handoff instruction or confirmed handoff contract, the
-compiler may return diagnostics but cannot emit an executable card. `ags run`
-remains a non-executing preparation surface: it validates the card, resolves
-policy, evaluates the gate, and returns a structured
-`host_execution_required` plan.
-
-## Verification
-
-```bash
-# B runs the source gate once; release adds only release-boundary evidence.
-cargo clippy --all-targets --all-features -- -D warnings
-cargo run -q -p ags-cli -- verify --scope local --target .
-./target/release/ags verify --scope release --target .
-git diff --check
+```text
+preflight
+  -> ags://capabilities/current-host
+  -> typed HostRouteProposal
+  -> read-only ags_route_request
+  -> Host-native action or one-shot ags_apply_action
+  -> evidence / receipt closure
 ```
 
-Public completion cannot be inferred from the exact release manifest
-alone. It must also verify twelve-module source topology, bilingual docs, real
-MCP E2E, the performance benchmark contract, retired-authority absence, release
-assets, and remote CI for the exact public commit.
+`ags_route_request` accepts no raw request and has no keyword or similarity
+fallback. `ags_apply_action` consumes only a connection-bound one-shot action.
+Task-card creation requires both an explicit handoff request and a confirmed
+handoff contract. Heavy adds independent review; it never expands authority.
 
-## License and release
+## Architecture and release proof
 
-- License: **GPL-3.0-only**
-- Source candidate: **v0.4.12**
-- Latest published: **v0.4.12**
-- Current contract: v0.4.12 human/Machine CLI
-- History: v0.3.1 release notes remain historical, not current
+The public workspace contains exactly twelve authoritative Cargo modules. CLI
+and MCP are adapters; capability, decision, session, lifecycle, evidence, and
+verification modules own domain rules. Retired update/bootstrap/registry
+implementations are not preserved as a second authority. See
+[WORKSPACE.md](WORKSPACE.md) and [docs/architecture.md](docs/architecture.md).
 
-Release ordering is fixed:
-
-1. Push the public-safe source to GitHub `main` and wait for exact-commit CI.
-2. Align Cargo, npm, manifests, docs, and release notes to `0.4.12`.
-3. The maintainer explicitly pushes the annotated `v0.4.12` tag.
-4. The tag workflow builds five platform assets, `SHA256SUMS`, and provenance.
-5. After the Release assets are complete, manually dispatch the npm OIDC
-   trusted-publisher workflow and publish
-   `@agent-governance-suite/mcp@0.4.12` as latest.
-
-Daily CI, the synchronization guard, and the npm workflow never create tags.
+The release chain permits two full gates: one exact A candidate and one exact B
+public commit. Promotion, tag, Release, and npm consume a content-addressed
+`VerificationBundle` instead of replaying the workspace suite.
 
 ## Public boundary
 
-See [WORKSPACE.md](WORKSPACE.md) for module ownership and support-package
-migration status. This is a complete public Rust edition, but it excludes
-maintainer-local skill bodies, real memory/receipt/archive data, credentials,
-machine configuration, and `workspace-services/` state.
+The public edition includes the complete public Rust kernel, dual npm
+entrypoints, protocols, typed manifests, command Skills, and release workflows.
+It excludes private Skill bodies, real memory/receipt/archive data, credentials,
+machine paths, Host configuration, and runtime state. Typed projection generates
+the public capability manifests; catalog membership alone never means installed
+or routable.
+
+License: **GPL-3.0-only**.

@@ -62,16 +62,18 @@ fn run_cli() {
             target,
             yes,
             force,
-            register_claude,
             lifecycle_hosts,
+            required_skill_authority_root,
+            recover_plan_hash,
             dry_run,
             format,
         } => setup::cmd_setup(
             target,
             yes,
             force,
-            register_claude,
             lifecycle_hosts.as_deref(),
+            required_skill_authority_root,
+            recover_plan_hash.as_deref(),
             dry_run,
             &format,
         ),
@@ -83,19 +85,6 @@ fn run_cli() {
             mode,
             format,
         } => init::run(&target, slug, dry_run, &format, &mode),
-        Commands::Plan {
-            profile,
-            target,
-            format,
-        } => setup::cmd_private_plan(&profile, target, &format),
-        Commands::Apply {
-            profile,
-            target,
-            yes,
-            force,
-            register_claude,
-            format,
-        } => setup::cmd_private_apply(&profile, target, yes, force, &format, register_claude),
         Commands::Agents { action } => agents::run(action),
         Commands::Skill { action, format } => skill::run(action, &format),
         Commands::Update { action } => update::run(action),
@@ -110,12 +99,6 @@ fn run_cli() {
         // ── Hidden kernel surface ──
         Commands::Task { action } => kernel::task::run(action),
         Commands::Policy { action } => kernel::policy::run(action),
-        Commands::Bootstrap {
-            dry_run,
-            apply,
-            target,
-            format,
-        } => kernel::bootstrap::run(dry_run, apply, target, &format),
         Commands::Gate { action } => kernel::gate::run(action),
         Commands::Project { action } => kernel::awareness::run_project(action),
         Commands::Protocol { action } => kernel::awareness::run_protocol(action),
@@ -146,20 +129,9 @@ fn run_cli() {
         Commands::Verify {
             action,
             scope,
-            profile,
             format,
             target,
             public_root,
-        } => {
-            if let Some(profile) = profile {
-                let install_target = if target == *"." {
-                    None
-                } else {
-                    Some(target.clone())
-                };
-                setup::cmd_private_verify(&profile, install_target, &format);
-            }
-            kernel::verify::run(action, &scope, &format, &target, public_root.as_deref());
-        }
+        } => kernel::verify::run(action, &scope, &format, &target, public_root.as_deref()),
     }
 }

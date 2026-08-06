@@ -1,10 +1,9 @@
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-pub const PRIVATE_SKILL_REGISTRY_SCHEMA: &str = "0.4.0-private-skill-registry";
-pub const ADOPTION_PLAN_SCHEMA: &str = "0.4.0-skill-adoption-plan";
-pub const ADOPTION_RECEIPT_SCHEMA: &str = "0.4.0-skill-adoption-receipt";
+pub const INSTALLED_SKILL_INDEX_SCHEMA: &str = "0.5.0-installed-skill-index";
+pub const TRANSACTION_JOURNAL_SCHEMA: &str = "0.1.0-skill-adoption-transaction-journal";
 
 #[derive(Debug, Clone)]
 pub struct AdoptionContext {
@@ -20,9 +19,242 @@ pub enum SnapshotDiscovery {
     Offline,
 }
 
+/// The user-selected identity of a Skill source.
+///
+/// `Local` is intentionally retained as a first-class value.  A local source
+/// has no upstream identity merely because its path contains a Git checkout;
+/// only a `GitHub`/`Git` source can produce an update candidate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SourceSpec {
+    Local {
+        path: String,
+    },
+    GitHub {
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        requested_ref: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tracking_ref: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        subdir: Option<String>,
+    },
+    /// A generic Git URL is kept for hermetic local/file-backed test seams.
+    /// User-facing GitHub parsing never produces this variant.
+    Git {
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        requested_ref: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tracking_ref: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        subdir: Option<String>,
+    },
+}
+
+impl Default for SourceSpec {
+    fn default() -> Self {
+        Self::Local {
+            path: String::new(),
+        }
+    }
+}
+
+impl SourceSpec {
+    pub fn local(path: impl Into<String>) -> Self {
+        Self::Local { path: path.into() }
+    }
+
+    pub fn github(
+        url: impl Into<String>,
+        requested_ref: Option<String>,
+        subdir: Option<String>,
+    ) -> Self {
+        let tracking_ref = requested_ref.clone();
+        Self::GitHub {
+            url: url.into(),
+            requested_ref,
+            tracking_ref,
+            subdir,
+        }
+    }
+
+    pub fn with_tracking_ref(mut self, tracking_ref: Option<String>) -> Self {
+        match &mut self {
+            Self::GitHub {
+                tracking_ref: current,
+                ..
+            }
+            | Self::Git {
+                tracking_ref: current,
+                ..
+            } => *current = tracking_ref,
+            Self::Local { .. } => {}
+        }
+        self
+    }
+
+    pub fn tracking_candidate(&self) -> Option<Self> {
+        let mut candidate = self.clone();
+        match &mut candidate {
+            Self::GitHub {
+                requested_ref,
+                tracking_ref,
+                ..
+            }
+            | Self::Git {
+                requested_ref,
+                tracking_ref,
+                ..
+            } => {
+                *requested_ref = tracking_ref.clone();
+                Some(candidate)
+            }
+            Self::Local { .. } => None,
+        }
+    }
+
+    pub fn repository_url(&self) -> Option<&str> {
+        match self {
+            Self::GitHub { url, .. } | Self::Git { url, .. } => Some(url),
+            Self::Local { .. } => None,
+        }
+    }
+
+    pub fn requested_ref(&self) -> Option<&str> {
+        match self {
+            Self::GitHub { requested_ref, .. } | Self::Git { requested_ref, .. } => {
+                requested_ref.as_deref()
+            }
+            Self::Local { .. } => None,
+        }
+    }
+
+    pub fn tracking_ref(&self) -> Option<&str> {
+        match self {
+            Self::GitHub { tracking_ref, .. } | Self::Git { tracking_ref, .. } => {
+                tracking_ref.as_deref()
+            }
+            Self::Local { .. } => None,
+        }
+    }
+
+    pub fn subdir(&self) -> Option<&str> {
+        match self {
+            Self::GitHub { subdir, .. } | Self::Git { subdir, .. } => subdir.as_deref(),
+            Self::Local { .. } => None,
+        }
+    }
+
+    pub fn is_upstream_bound(&self) -> bool {
+        matches!(self, Self::GitHub { .. } | Self::Git { .. })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PrivateSkillRecord {
+pub struct ResolvedSource {
+    pub source_spec: SourceSpec,
+    pub resolved_commit: String,
+    pub body_hash: String,
+    pub candidate_identity: String,
+    #[serde(default)]
+    pub subdir: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdatePolicy {
+    #[default]
+    Notify,
+    Manual,
+    Pinned,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CatalogReviewStatus {
+    #[default]
+    Unreviewed,
+    Acknowledged,
+    Reviewed,
+    Rejected,
+}
+
+/// The set of deterministic risk identifiers explicitly acknowledged by the
+/// caller of a plan-bound apply operation.
+pub type RiskAcknowledgements = BTreeSet<String>;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RiskFinding {
+    pub code: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// This is deliberately a bounded, non-secret explanation.  Findings
+    /// never contain matching file bytes or suspected credential material.
+    pub detail: String,
+    #[serde(default = "default_true")]
+    pub acknowledgement_required: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl RiskFinding {
+    pub fn acknowledgement(
+        code: impl Into<String>,
+        path: Option<String>,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self {
+            code: code.into(),
+            path,
+            detail: detail.into(),
+            acknowledgement_required: true,
+        }
+    }
+
+    /// Return the stable acknowledgement key for this finding.
+    ///
+    /// Findings without a path use their code.  Path-scoped findings append
+    /// the normalized relative path, so two script or sensitive-content
+    /// findings cannot be acknowledged accidentally as one another.
+    pub fn acknowledgement_id(&self) -> String {
+        match &self.path {
+            Some(path) => format!("{}@{}", self.code, path.replace('\\', "/")),
+            None => self.code.clone(),
+        }
+    }
+
+    pub fn id(&self) -> String {
+        self.acknowledgement_id()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BodyRevision {
+    pub revision: String,
+    pub source_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_source: Option<ResolvedSource>,
+    #[serde(default)]
+    pub created_at: u64,
+    /// Complete immutable metadata for the installed body revision. During
+    /// one-way registry migration, records without it are materialized from
+    /// the current installed record and then written in the new schema.
+    #[serde(default)]
+    pub metadata: InstalledSkillMetadata,
+}
+
+/// All mutable registry metadata that belongs to one immutable body revision.
+/// Keeping this as a value object makes rollback restore provenance and host
+/// routing semantics together with the body hash.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstalledSkillMetadata {
     pub skill_id: String,
     pub source: String,
     pub source_hash: String,
@@ -46,21 +278,196 @@ pub struct PrivateSkillRecord {
     pub requires_auth: bool,
     pub version: String,
     pub target_hosts: Vec<String>,
+    #[serde(default)]
+    pub source_spec: SourceSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_source: Option<ResolvedSource>,
+    #[serde(default)]
+    pub update_policy: UpdatePolicy,
+    #[serde(default)]
+    pub catalog_review: CatalogReviewStatus,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub risk_findings: Vec<RiskFinding>,
+    #[serde(default)]
+    pub installed_at: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PrivateSkillRegistry {
+pub struct InstalledSkillRecord {
+    pub skill_id: String,
+    /// A stable display/source path kept for the existing projection API.
+    pub source: String,
+    pub source_hash: String,
+    pub license_path: String,
+    pub license_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing_metadata_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing_metadata_hash: Option<String>,
+    pub body_revision: String,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub intent_tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub positive_examples: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub negative_examples: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub entrypoints: Vec<String>,
+    pub invoke_hint: String,
+    pub requires_auth: bool,
+    pub version: String,
+    pub target_hosts: Vec<String>,
+    #[serde(default)]
+    pub source_spec: SourceSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_source: Option<ResolvedSource>,
+    #[serde(default)]
+    pub update_policy: UpdatePolicy,
+    #[serde(default)]
+    pub catalog_review: CatalogReviewStatus,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub risk_findings: Vec<RiskFinding>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub body_revisions: Vec<BodyRevision>,
+    #[serde(default)]
+    pub installed_at: u64,
+}
+
+impl InstalledSkillMetadata {
+    pub fn from_record(record: &InstalledSkillRecord) -> Self {
+        Self {
+            skill_id: record.skill_id.clone(),
+            source: record.source.clone(),
+            source_hash: record.source_hash.clone(),
+            license_path: record.license_path.clone(),
+            license_hash: record.license_hash.clone(),
+            routing_metadata_path: record.routing_metadata_path.clone(),
+            routing_metadata_hash: record.routing_metadata_hash.clone(),
+            body_revision: record.body_revision.clone(),
+            summary: record.summary.clone(),
+            intent_tags: record.intent_tags.clone(),
+            positive_examples: record.positive_examples.clone(),
+            negative_examples: record.negative_examples.clone(),
+            entrypoints: record.entrypoints.clone(),
+            invoke_hint: record.invoke_hint.clone(),
+            requires_auth: record.requires_auth,
+            version: record.version.clone(),
+            target_hosts: record.target_hosts.clone(),
+            source_spec: record.source_spec.clone(),
+            resolved_source: record.resolved_source.clone(),
+            update_policy: record.update_policy,
+            catalog_review: record.catalog_review,
+            risk_findings: record.risk_findings.clone(),
+            installed_at: record.installed_at,
+        }
+    }
+
+    pub fn restore_record(&self, body_revisions: Vec<BodyRevision>) -> InstalledSkillRecord {
+        InstalledSkillRecord {
+            skill_id: self.skill_id.clone(),
+            source: self.source.clone(),
+            source_hash: self.source_hash.clone(),
+            license_path: self.license_path.clone(),
+            license_hash: self.license_hash.clone(),
+            routing_metadata_path: self.routing_metadata_path.clone(),
+            routing_metadata_hash: self.routing_metadata_hash.clone(),
+            body_revision: self.body_revision.clone(),
+            summary: self.summary.clone(),
+            intent_tags: self.intent_tags.clone(),
+            positive_examples: self.positive_examples.clone(),
+            negative_examples: self.negative_examples.clone(),
+            entrypoints: self.entrypoints.clone(),
+            invoke_hint: self.invoke_hint.clone(),
+            requires_auth: self.requires_auth,
+            version: self.version.clone(),
+            target_hosts: self.target_hosts.clone(),
+            source_spec: self.source_spec.clone(),
+            resolved_source: self.resolved_source.clone(),
+            update_policy: self.update_policy,
+            catalog_review: self.catalog_review,
+            risk_findings: self.risk_findings.clone(),
+            body_revisions,
+            installed_at: self.installed_at,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.skill_id.is_empty() && self.body_revision.is_empty() && self.source_hash.is_empty()
+    }
+}
+
+impl BodyRevision {
+    pub fn from_record(record: &InstalledSkillRecord) -> Self {
+        Self {
+            revision: record.body_revision.clone(),
+            source_hash: record.source_hash.clone(),
+            resolved_source: record.resolved_source.clone(),
+            created_at: record.installed_at,
+            metadata: InstalledSkillMetadata::from_record(record),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransactionPhase {
+    Prepared,
+    BodyInstalled,
+    LinksApplied,
+    RegistryApplied,
+    SnapshotsApplied,
+    Committed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JournalFileState {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JournalLinkState {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_target: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TransactionJournal {
+    pub schema_version: String,
+    pub transaction_id: String,
+    pub operation: String,
+    pub phase: TransactionPhase,
+    pub body_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_body_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_body_hash: Option<String>,
+    pub body_preexisting: bool,
+    pub registry: JournalFileState,
+    pub links: Vec<JournalLinkState>,
+    pub snapshots: Vec<JournalFileState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstalledSkillIndex {
     pub schema_version: String,
     pub revision: u64,
     #[serde(default)]
-    pub skills: BTreeMap<String, PrivateSkillRecord>,
+    pub skills: BTreeMap<String, InstalledSkillRecord>,
 }
 
-impl Default for PrivateSkillRegistry {
+impl Default for InstalledSkillIndex {
     fn default() -> Self {
         Self {
-            schema_version: PRIVATE_SKILL_REGISTRY_SCHEMA.to_string(),
+            schema_version: INSTALLED_SKILL_INDEX_SCHEMA.to_string(),
             revision: 0,
             skills: BTreeMap::new(),
         }
@@ -69,10 +476,8 @@ impl Default for PrivateSkillRegistry {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct AdoptionPlan {
-    pub schema_version: String,
+pub struct PreparedSkillChange {
     pub operation: String,
-    pub plan_hash: String,
     pub skill_id: String,
     pub source: String,
     pub source_hash: String,
@@ -83,19 +488,54 @@ pub struct AdoptionPlan {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routing_metadata_hash: Option<String>,
     pub body_path: String,
-    pub registry_path: String,
+    pub installed_skill_index_path: String,
     pub target_hosts: Vec<String>,
     pub host_indexes: Vec<String>,
+    /// Obsolete AGS-owned indexes in other roots read by the same Host. They
+    /// are removed in the same WAL transaction before snapshot activation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retired_host_indexes: Vec<String>,
     pub planned_writes: Vec<String>,
     pub warnings: Vec<String>,
+    #[serde(default)]
+    pub source_spec: SourceSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_source: Option<ResolvedSource>,
+    #[serde(default)]
+    pub body_hash: String,
+    #[serde(default)]
+    pub candidate_identity: String,
+    #[serde(default)]
+    pub update_policy: UpdatePolicy,
+    #[serde(default)]
+    pub catalog_review: CatalogReviewStatus,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub risk_findings: Vec<RiskFinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_body_revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollback_revision: Option<String>,
+    /// Registry revision and complete previous identity form a compare-and-
+    /// swap binding.  They are checked again while holding the transaction
+    /// lock immediately before mutation.
+    #[serde(default)]
+    pub registry_revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_record: Option<InstalledSkillRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_record_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_body_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct AdoptionReceipt {
-    pub schema_version: String,
+pub struct SkillMutationResult {
     pub operation: String,
-    pub plan_hash: String,
+    /// Identity of the sole MaintenancePlan authorizing this mutation.
+    pub transaction_id: String,
     pub skill_id: String,
     pub registry_revision: u64,
     pub body_path: String,
@@ -116,6 +556,40 @@ pub struct AdoptionStatus {
     pub active_hosts: Vec<String>,
     pub source: Option<String>,
     pub source_hash: Option<String>,
+}
+
+/// One Host's current activated fact. This is produced by loading the sealed
+/// snapshot and executing the same exact resolver used by runtime routing; a
+/// snapshot membership check alone is insufficient.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActivatedCapability {
+    pub skill_id: String,
+    pub host: String,
+    pub visible: bool,
+    pub snapshot_loaded: bool,
+    pub route_verified: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_hash: Option<String>,
+    pub evidence: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdoptionRouteStatus {
+    pub installation: AdoptionStatus,
+    pub activations: Vec<ActivatedCapability>,
+}
+
+impl AdoptionRouteStatus {
+    pub fn verified_on_all_targets(&self) -> bool {
+        self.installation.registered
+            && self.installation.body_present
+            && self.installation.body_hash_matches
+            && !self.installation.target_hosts.is_empty()
+            && self.activations.len() == self.installation.target_hosts.len()
+            && self.activations.iter().all(|item| item.route_verified)
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

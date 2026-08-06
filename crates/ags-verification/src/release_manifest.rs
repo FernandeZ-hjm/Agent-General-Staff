@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path};
 use std::process::Command;
 
 // ── Manifest definition ────────────────────────────────────────────────
@@ -45,7 +45,14 @@ pub const PUBLIC_MANIFEST: ReleaseManifest = ReleaseManifest {
         "packages/ags-mcp/bin/ags-mcp.js",
         "packages/ags-mcp/src/launcher.js",
         "packages/ags-mcp/test/launcher.test.js",
+        "packages/ags-mcp/test/shared-launcher.test.js",
         "packages/ags-mcp/README.md",
+        "packages/ags-cli/package.json",
+        "packages/ags-cli/LICENSE",
+        "packages/ags-cli/bin/ags.js",
+        "packages/ags-cli/src/launcher.js",
+        "packages/ags-cli/test/launcher.test.js",
+        "packages/ags-cli/README.md",
         "protocol/agent-task-protocol.md",
         "protocol/entrypoint-guidelines.md",
         "protocol/mcp-server.md",
@@ -67,11 +74,8 @@ pub const PUBLIC_MANIFEST: ReleaseManifest = ReleaseManifest {
         "scripts/ags-memory-lifecycle-omp.js",
         "manifests/suite.yaml",
         "manifests/onboarding-public.yaml",
+        "manifests/public-capability-projection.yaml",
         "manifests/public-release-payload.yaml",
-        "manifests/templates/README.md",
-        "manifests/templates/hooks/claude-code-executor-stop.template.js",
-        "manifests/templates/hooks/codex-planner-recall.template.json",
-        "manifests/templates/runtime-profiles.template.yaml",
         "manifests/third-party-capabilities.yaml",
         "governance/skill-sync.md",
     ],
@@ -147,49 +151,6 @@ const APPROVED_PUBLIC_REWRITE_PATHS: &[&str] = &[
     "README.md",
     "README_EN.md",
     "WORKSPACE.md",
-    "crates/ags-capability-governance/src/lib.rs",
-    "crates/ags-cli/src/cli/kernel_actions.rs",
-    "crates/ags-cli/src/cli/mod.rs",
-    "crates/ags-cli/src/init/mod.rs",
-    "crates/ags-cli/src/kernel/mcp.rs",
-    "crates/ags-cli/src/setup/mod.rs",
-    "crates/ags-cli/src/skill/mod.rs",
-    "crates/ags-cli/src/update/apply.rs",
-    "crates/ags-cli/src/update/repair.rs",
-    "crates/ags-cli/tests/public_api_facade_contract.rs",
-    "crates/ags-lifecycle/src/init/managed_projects.rs",
-    "crates/ags-lifecycle/src/init/plan.rs",
-    "crates/ags-lifecycle/src/update/apply.rs",
-    "crates/ags-lifecycle/src/setup/apply.rs",
-    "crates/ags-lifecycle/src/setup/memory/adapter.rs",
-    "crates/ags-lifecycle/src/setup/memory/mod.rs",
-    "crates/ags-lifecycle/src/setup/mod.rs",
-    "crates/ags-lifecycle/src/setup/plan.rs",
-    "crates/ags-lifecycle/src/setup/plan/tests.rs",
-    "crates/ags-lifecycle/src/setup/templates.rs",
-    "crates/ags-lifecycle/src/setup/verify.rs",
-    "crates/ags-mcp/src/lib.rs",
-    "crates/ags-mcp/src/prompts.rs",
-    "crates/ags-mcp/src/prompts/delivery_report.txt",
-    "crates/ags-mcp/src/prompts/global_kernel.txt",
-    "crates/ags-mcp/src/resources.rs",
-    "crates/ags-mcp/src/resources/global_kernel.md",
-    "crates/ags-mcp/src/tools/apply.rs",
-    "crates/ags-verification/src/bootstrap.rs",
-    "crates/ags-verification/src/doctor/checks/mod.rs",
-    "crates/ags-verification/src/doctor/checks/orchestration.rs",
-    "crates/ags-verification/src/doctor/checks/runtime.rs",
-    "docs/adr/0001-workspace-service-and-deep-modules.md",
-    "docs/architecture.md",
-    "governance/skill-sync.md",
-    "manifests/mcp-registry.yaml",
-    "manifests/skills-registry.yaml",
-    "manifests/suite.yaml",
-    "protocol/agent-task-protocol.md",
-    "protocol/context-memory.md",
-    "protocol/mcp-server.md",
-    "protocol/runtime-adapters.md",
-    "protocol/skill-governance.md",
 ];
 
 /// B-owned release overlays are also a closed, compiled set. Each entry is
@@ -228,11 +189,6 @@ const APPROVED_PUBLIC_OVERLAY_PATHS: &[&str] = &[
     "examples/task-cards/light-demo-task.md",
     "examples/task-cards/medium-demo-task.md",
     "governance/skills-inventory.md",
-    "templates/command-skills/ags-agents/SKILL.md",
-    "templates/command-skills/ags-doctor/SKILL.md",
-    "templates/command-skills/ags-init/SKILL.md",
-    "templates/command-skills/ags-setup/SKILL.md",
-    "templates/command-skills/ags-skill/SKILL.md",
     "templates/memory/archive-index.md",
     "templates/memory/context-capsule.md",
     "templates/memory/task-archive/README.md",
@@ -265,6 +221,8 @@ pub struct PublicPayloadAuthority {
     pub projection_state: String,
     #[serde(default)]
     pub shared_files: Vec<String>,
+    #[serde(default)]
+    pub generated_files: Vec<String>,
     #[serde(default)]
     pub public_overlay_files: Vec<PublicPinnedFile>,
     #[serde(default)]
@@ -314,7 +272,7 @@ pub fn load_public_payload_authority(root: &Path) -> Result<PublicPayloadAuthori
 
 fn validate_public_payload_authority(authority: &PublicPayloadAuthority) -> Vec<String> {
     let mut errors = Vec::new();
-    if authority.schema_version != "1.1" {
+    if authority.schema_version != "1.2" {
         errors.push(format!(
             "unsupported public payload schema_version: {}",
             authority.schema_version
@@ -354,6 +312,33 @@ fn validate_public_payload_authority(authority: &PublicPayloadAuthority) -> Vec<
             ));
         }
     }
+    let expected_generated = crate::public_capability_projection::PUBLIC_CAPABILITY_GENERATED_FILES
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let actual_generated = authority
+        .generated_files
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if actual_generated != expected_generated
+        || authority.generated_files.len() != expected_generated.len()
+    {
+        errors.push(format!(
+            "generated_files must contain exactly the typed capability projection outputs; expected={expected_generated:?}, actual={actual_generated:?}"
+        ));
+    }
+    for path in &authority.generated_files {
+        validate_authority_path(path, "generated file", &mut errors);
+        if !declared.insert(path.as_str()) {
+            errors.push(format!("duplicate public payload file: {path}"));
+        }
+        if is_public_forbidden_payload(path) {
+            errors.push(format!(
+                "public payload authority includes forbidden generated path: {path}"
+            ));
+        }
+    }
     for overlay in &authority.public_overlay_files {
         validate_authority_path(&overlay.path, "public overlay", &mut errors);
         if !declared.insert(overlay.path.as_str()) {
@@ -365,7 +350,7 @@ fn validate_public_payload_authority(authority: &PublicPayloadAuthority) -> Vec<
                 overlay.path
             ));
         }
-        if !valid_sha256(&overlay.target_sha256) {
+        if !ags_platform::is_sha256(&overlay.target_sha256) {
             errors.push(format!(
                 "public overlay must use a lowercase sha256:<64-hex> digest: {}",
                 overlay.path
@@ -390,8 +375,6 @@ fn validate_public_payload_authority(authority: &PublicPayloadAuthority) -> Vec<
             if !is_public_forbidden_payload(&full)
                 && full != "crates/ags-capability-governance/src/adoption/"
                 && full != "crates/ags-cli/src/skill/adoption.rs"
-                && full != "crates/ags-verification/src/doctor/checks/evolver_hooks.rs"
-                && full != "crates/ags-verification/src/doctor/checks/proxy.rs"
                 && full != "crates/ags-verification/src/doctor/checks/templates.rs"
             {
                 errors.push(format!(
@@ -441,7 +424,7 @@ fn validate_public_payload_authority(authority: &PublicPayloadAuthority) -> Vec<
                 rewrite.path
             ));
         }
-        if !valid_sha256(&rewrite.target_sha256) {
+        if !ags_platform::is_sha256(&rewrite.target_sha256) {
             errors.push(format!(
                 "public rewrite must use a lowercase sha256:<64-hex> digest: {}",
                 rewrite.path
@@ -458,15 +441,6 @@ fn validate_public_payload_authority(authority: &PublicPayloadAuthority) -> Vec<
     }
 
     errors
-}
-
-fn valid_sha256(value: &str) -> bool {
-    value.strip_prefix("sha256:").is_some_and(|digest| {
-        digest.len() == 64
-            && digest
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    })
 }
 
 fn validate_authority_path(path: &str, label: &str, errors: &mut Vec<String>) {
@@ -528,6 +502,7 @@ fn expand_public_payload_files(
     authority: &PublicPayloadAuthority,
 ) -> BTreeSet<String> {
     let mut files: BTreeSet<String> = authority.shared_files.iter().cloned().collect();
+    files.extend(authority.generated_files.iter().cloned());
     files.extend(
         authority
             .public_overlay_files
@@ -566,6 +541,17 @@ pub fn public_runtime_asset_files(root: &Path) -> Result<Vec<String>, Vec<String
             errors.push(format!(
                 "runtime asset is outside canonical public payload: {path}"
             ));
+        }
+        let b_owned_overlay = authority
+            .public_overlay_files
+            .iter()
+            .any(|overlay| overlay.path == *path);
+        let generated = authority
+            .generated_files
+            .iter()
+            .any(|generated| generated == path);
+        if !root.join(path).exists() && (b_owned_overlay || generated) {
+            continue;
         }
         if let Err(error) = validate_regular_payload_file(root, path) {
             errors.push(format!("runtime asset {error}"));
@@ -686,6 +672,17 @@ fn verify_public_payload_against(
     }
 
     if let Some(authority) = &authority {
+        authority_errors.extend(verify_public_source_dependency_closure(
+            target,
+            &expected,
+            &authority.runtime_asset_files,
+        ));
+        authority_errors.extend(
+            crate::public_capability_projection::verify_public_capability_projection(
+                authority_root,
+                target,
+            ),
+        );
         for overlay in &authority.public_overlay_files {
             verify_pinned_target_file(
                 target,
@@ -761,6 +758,103 @@ fn verify_public_payload_against(
     }
 }
 
+fn verify_public_source_dependency_closure(
+    root: &Path,
+    expected_files: &BTreeSet<String>,
+    runtime_asset_files: &[String],
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    for source in expected_files.iter().filter(|path| path.ends_with(".rs")) {
+        let Ok(content) = fs::read_to_string(root.join(source)) else {
+            continue;
+        };
+        for macro_name in ["include_str!", "include_bytes!"] {
+            for embedded in direct_string_arguments(&content, macro_name) {
+                match resolve_source_relative(source, &embedded) {
+                    Ok(relative) if expected_files.contains(&relative) => {}
+                    Ok(relative) => errors.push(format!(
+                        "public source dependency is outside the canonical payload: {source}: {macro_name}(\"{embedded}\") -> {relative}"
+                    )),
+                    Err(error) => errors.push(format!(
+                        "public source dependency is unsafe: {source}: {macro_name}(\"{embedded}\"): {error}"
+                    )),
+                }
+            }
+        }
+    }
+
+    let mcp_resources = "crates/ags-mcp/src/resources.rs";
+    if expected_files.contains(mcp_resources) {
+        if let Ok(content) = fs::read_to_string(root.join(mcp_resources)) {
+            let runtime_assets = runtime_asset_files.iter().collect::<BTreeSet<_>>();
+            for protocol in direct_string_arguments(&content, "read_protocol_file") {
+                if !runtime_assets.contains(&protocol) {
+                    errors.push(format!(
+                        "public MCP resource is absent from the packaged runtime: {protocol}"
+                    ));
+                }
+            }
+        }
+    }
+
+    errors.sort();
+    errors.dedup();
+    errors
+}
+
+fn direct_string_arguments(content: &str, call: &str) -> Vec<String> {
+    let mut arguments = Vec::new();
+    let mut remaining = content;
+    while let Some(index) = remaining.find(call) {
+        remaining = &remaining[index + call.len()..];
+        let after_call = remaining.trim_start();
+        let Some(after_open) = after_call.strip_prefix('(') else {
+            continue;
+        };
+        let after_open = after_open.trim_start();
+        let Some(literal) = after_open.strip_prefix('"') else {
+            continue;
+        };
+        let mut escaped = false;
+        let mut end = None;
+        for (index, character) in literal.char_indices() {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                end = Some(index);
+                break;
+            }
+        }
+        if let Some(end) = end {
+            arguments.push(literal[..end].to_string());
+        }
+    }
+    arguments
+}
+
+fn resolve_source_relative(source: &str, embedded: &str) -> Result<String, String> {
+    let embedded = Path::new(embedded);
+    if embedded.is_absolute() {
+        return Err("absolute paths are forbidden".to_string());
+    }
+    let mut components = Vec::new();
+    let parent = Path::new(source).parent().unwrap_or_else(|| Path::new(""));
+    for component in parent.components().chain(embedded.components()) {
+        match component {
+            Component::Normal(part) => components.push(part.to_string_lossy().into_owned()),
+            Component::CurDir => {}
+            Component::ParentDir if components.pop().is_some() => {}
+            Component::ParentDir => return Err("path escapes the public source root".to_string()),
+            Component::RootDir | Component::Prefix(_) => {
+                return Err("path is not relative".to_string())
+            }
+        }
+    }
+    Ok(components.join("/"))
+}
+
 fn verify_pinned_target_file(
     target: &Path,
     relative: &str,
@@ -822,19 +916,24 @@ fn list_files(root: &std::path::Path) -> Vec<String> {
     } else {
         return files;
     };
-    if let Some(tracked) = list_git_tracked_files(&root_canonical) {
-        return tracked;
+    if let Some(git_payload) = list_git_payload_files(&root_canonical) {
+        return git_payload;
     }
     list_files_recursive(&root_canonical, &root_canonical, &mut files);
     files
 }
 
-fn list_git_tracked_files(root: &Path) -> Option<Vec<String>> {
+fn list_git_payload_files(root: &Path) -> Option<Vec<String>> {
     let output = Command::new("git")
         .arg("-C")
         .arg(root)
-        .arg("ls-files")
-        .arg("-z")
+        .args([
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+        ])
         .output()
         .ok()?;
     if !output.status.success() {
@@ -884,6 +983,20 @@ fn list_files_recursive(root: &Path, dir: &Path, files: &mut Vec<String>) {
 mod tests {
     use super::*;
 
+    fn run_git(root: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
     fn workspace_root() -> &'static Path {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -918,6 +1031,76 @@ mod tests {
             }
             std::fs::write(path, content).unwrap();
         }
+        let ids = [
+            "ags-agents",
+            "ags-doctor",
+            "ags-init",
+            "ags-setup",
+            "ags-skill",
+        ];
+        let public_path = "templates/command-skills/ags-setup";
+        let body_hash =
+            ags_platform::sha256_file(&root.join(public_path).join("SKILL.md")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\n[workspace.package]\nversion = \"0.5.0\"\nlicense = \"GPL-3.0-only\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("manifests/third-party-capabilities.yaml"),
+            "schema_version: \"1.0\"\nprinciple: fixture\ncapabilities: []\n",
+        )
+        .unwrap();
+        let registry_entries = ids
+            .iter()
+            .map(|id| {
+                let (route_state, routing_surface) = if *id == "ags-skill" {
+                    ("routable", "skill_target")
+                } else {
+                    ("not-routable", "host_command")
+                };
+                format!(
+                    "- name: {id}\n  profile: required\n  local_path: templates/command-skills/{id}\n  routing:\n    route_state: {route_state}\n    routing_surface: {routing_surface}\n    invoke_hint: '[skill: {id}]'\n"
+                )
+            })
+            .collect::<String>();
+        std::fs::write(
+            root.join("manifests/skills-registry.yaml"),
+            format!("registry:\n  schema_version: fixture\nskills:\n{registry_entries}"),
+        )
+        .unwrap();
+        let generated = crate::public_capability_projection::PUBLIC_CAPABILITY_GENERATED_FILES
+            .iter()
+            .map(|path| format!("  - {path}\n"))
+            .collect::<String>();
+        let bundled = ids
+            .iter()
+            .map(|id| {
+                format!(
+                    "  - id: {id}\n    source_path: templates/command-skills/{id}\n    public_path: templates/command-skills/{id}\n    public_sha256: \"{body_hash}\"\n"
+                )
+            })
+            .collect::<String>();
+        std::fs::write(
+            root.join("manifests/public-capability-projection.yaml"),
+            format!(
+                "schema_version: \"1.0\"\nproduct:\n  name: fixture\n  description: fixture\ngenerated_files:\n{generated}bundled_skills:\n{bundled}"
+            ),
+        )
+        .unwrap();
+        let plan =
+            crate::public_capability_projection::plan_public_capability_projection(root, root);
+        assert!(
+            plan.blocking_findings.is_empty(),
+            "{:?}",
+            plan.blocking_findings
+        );
+        crate::public_capability_projection::apply_public_capability_projection(
+            root,
+            root,
+            &plan.plan_hash,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -979,6 +1162,19 @@ mod tests {
     }
 
     #[test]
+    fn public_source_dependencies_are_closed_over_source_and_runtime_payloads() {
+        let root = workspace_root();
+        let authority = load_public_payload_authority(root).unwrap();
+        let expected = expand_public_payload_files(root, &authority);
+        let errors = verify_public_source_dependency_closure(
+            root,
+            &expected,
+            &authority.runtime_asset_files,
+        );
+        assert!(errors.is_empty(), "{errors:#?}");
+    }
+
+    #[test]
     fn public_forbidden_payload_covers_build_artifacts_and_runtime_state() {
         for path in [
             "target/release/ags",
@@ -1025,9 +1221,6 @@ mod tests {
             "hosts/claude-code.evomap-mcp.snippet.json"
         ));
         assert!(is_public_forbidden_payload("bin/evolver-proxy-mcp"));
-        assert!(!is_public_forbidden_payload(
-            "manifests/templates/runtime-profiles.template.yaml"
-        ));
         assert!(is_public_forbidden_payload(
             "manifests/runtime-profiles.yaml"
         ));
@@ -1134,7 +1327,7 @@ mod tests {
     }
 
     #[test]
-    fn verify_release_manifest_uses_tracked_payload_in_git_worktree() {
+    fn verify_release_manifest_uses_nonignored_git_payload() {
         let dir = tempfile::tempdir().unwrap();
         let status = std::process::Command::new("git")
             .arg("-C")
@@ -1184,6 +1377,23 @@ mod tests {
     }
 
     #[test]
+    fn verify_release_manifest_rejects_nonignored_untracked_payload() {
+        let dir = tempfile::tempdir().unwrap();
+        let authority = install_fixture_authority(dir.path(), b"approved");
+        populate_fixture_payload(dir.path(), &authority, b"approved");
+        run_git(dir.path(), &["init", "-q"]);
+        run_git(dir.path(), &["add", "."]);
+        std::fs::write(dir.path().join("rogue-public-file.txt"), "rogue\n").unwrap();
+
+        let result = verify_release_manifest(dir.path());
+        assert!(!result.passed);
+        assert_eq!(
+            result.extra_files,
+            vec!["rogue-public-file.txt".to_string()]
+        );
+    }
+
+    #[test]
     fn verify_release_manifest_accepts_clean_target() {
         let dir = tempfile::tempdir().unwrap();
         let authority = install_fixture_authority(dir.path(), b"placeholder");
@@ -1228,10 +1438,7 @@ mod tests {
             "crates/ags-lifecycle/src/workspace_lifecycle.rs",
             "crates/ags-verification/src/doctor/checks/conformance.rs",
         ] {
-            assert!(
-                files.contains(path),
-                "v0.4.12 public authority must include {path}"
-            );
+            assert!(files.contains(path), "public authority must include {path}");
         }
         for retired in [
             "crates/ags-lifecycle/src/setup/memory/assets.rs",
@@ -1503,7 +1710,8 @@ mod tests {
             .unwrap();
         let workflow =
             std::fs::read_to_string(workspace.join(".github/workflows/release.yml")).unwrap();
-        assert!(workflow.contains("release package"));
+        assert!(workflow.contains("verify bundle validate"));
+        assert!(workflow.contains("ci-evidence/public-release-plan.json"));
         assert!(workflow.contains("release stage-runtime"));
         assert!(!workflow.contains("python"));
         assert!(!workflow.contains("cp manifests/{"));

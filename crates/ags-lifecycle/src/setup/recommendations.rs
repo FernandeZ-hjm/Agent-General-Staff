@@ -5,20 +5,40 @@
 //! change and refreshes the static host snapshot once after verification.
 
 use ags_capability_governance::skill_body::recommendations::{
-    read_recommendations, recommendation_status,
+    read_recommendations, skill_status_projections,
 };
+use std::collections::BTreeMap;
 use std::path::Path;
 
 pub(in crate::setup) fn third_party_recommendations_json(
     source_root: &Path,
+    runtime_home: &Path,
     home: &Path,
 ) -> serde_json::Value {
     let doc = read_recommendations(source_root);
+    let ids = doc
+        .skills
+        .iter()
+        .map(|rec| rec.id.clone())
+        .collect::<Vec<_>>();
+    let statuses = skill_status_projections(source_root, runtime_home, home, &ids);
+    let status_by_id = statuses
+        .as_ref()
+        .map(|items| {
+            items
+                .iter()
+                .map(|status| (status.skill_id.as_str(), status))
+                .collect::<BTreeMap<_, _>>()
+        })
+        .ok();
     let items: Vec<serde_json::Value> = doc
         .skills
         .iter()
         .map(|rec| {
-            let st = recommendation_status(rec, home);
+            let status = status_by_id
+                .as_ref()
+                .and_then(|items| items.get(rec.id.as_str()))
+                .copied();
             serde_json::json!({
                 "id": rec.id,
                 "name": rec.name,
@@ -29,10 +49,8 @@ pub(in crate::setup) fn third_party_recommendations_json(
                 "upstream": rec.upstream,
                 "risk": rec.risk,
                 "install_location": rec.install_location,
-                "capability_state": st.capability_state,
-                "local_install": st.local_install,
-                "host_visibility": st.host_visibility,
-                "next_step": st.next_step,
+                "status": status,
+                "status_error": statuses.as_ref().err(),
             })
         })
         .collect();
@@ -47,9 +65,25 @@ pub(in crate::setup) fn third_party_recommendations_json(
 
 pub(in crate::setup) fn render_third_party_recommendations_text(
     source_root: &Path,
+    runtime_home: &Path,
     home: &Path,
 ) -> String {
     let doc = read_recommendations(source_root);
+    let ids = doc
+        .skills
+        .iter()
+        .map(|rec| rec.id.clone())
+        .collect::<Vec<_>>();
+    let statuses = skill_status_projections(source_root, runtime_home, home, &ids);
+    let status_by_id = statuses
+        .as_ref()
+        .map(|items| {
+            items
+                .iter()
+                .map(|status| (status.skill_id.as_str(), status))
+                .collect::<BTreeMap<_, _>>()
+        })
+        .ok();
     let mut lines =
         vec!["Third-Party Core Capability Recommendations (no silent install)".to_string()];
     if doc.skills.is_empty() {
@@ -70,22 +104,26 @@ pub(in crate::setup) fn render_third_party_recommendations_text(
         let label = if tier.is_empty() { "other" } else { tier };
         lines.push(format!("  [{label}]"));
         for rec in doc.skills.iter().filter(|r| &r.tier == tier) {
-            let st = recommendation_status(rec, home);
-            let hosts: Vec<String> = st
-                .host_visibility
-                .iter()
-                .map(|h| format!("{}={}", h.host, h.status))
-                .collect();
+            let status = status_by_id
+                .as_ref()
+                .and_then(|items| items.get(rec.id.as_str()))
+                .copied();
             let src = rec
                 .source
                 .clone()
                 .unwrap_or_else(|| "(community-maintained)".to_string());
             lines.push(format!(
-                "    - {:<28} state:{:<22} install:{:<14} hosts:{:<26} src:{}",
+                "    - {:<28} install:{:?} activate:{:?} update:{:?} src:{}",
                 rec.id,
-                st.capability_state,
-                st.local_install,
-                hosts.join(","),
+                status
+                    .map(|status| format!("{:?}", status.installation.state))
+                    .unwrap_or_else(|| "Error".to_string()),
+                status
+                    .map(|status| format!("{:?}", status.activation.state))
+                    .unwrap_or_else(|| "Error".to_string()),
+                status
+                    .map(|status| format!("{:?}", status.update.state))
+                    .unwrap_or_else(|| "Error".to_string()),
                 src,
             ));
         }

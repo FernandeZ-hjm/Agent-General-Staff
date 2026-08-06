@@ -17,6 +17,7 @@ ags-workspace-facts = { path = "../ags-workspace-facts" }
 ags-lifecycle = { path = "../ags-lifecycle" }
 ags-session = { path = "../ags-session" }
 ags-host-integration = { path = "../ags-host-integration" }
+ags-task-contract = { path = "../ags-task-contract" }
 
 [dev-dependencies]
 tempfile = "3"

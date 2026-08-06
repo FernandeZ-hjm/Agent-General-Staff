@@ -37,7 +37,7 @@ AGS 官方能力升级属于显式 update/release 工作。纯第三方 Skill �
 通道：先由外部工具拉取源码，再用 `ags skill adopt` 审计许可证、普通文件边界、内容
 哈希与可选 routing metadata。默认只输出计划；apply 必须提交同一计划哈希。成功后，
 body 进入 `$AGS_RUNTIME_HOME/skill-bodies` 的不可变修订，来源与语义元数据进入私有
-registry，五宿主只保留指向该 body 的薄索引，并显式重建所选宿主快照。任何第三方
+registry，所选宿主只保留指向该 body 的薄索引，并显式重建对应宿主快照。任何第三方
 正文和能力专属配置都不得写入 AGS Git。
 
 `--metadata` 是机器私有 YAML，可补充 `summary`、`intent_tags`、正反例、entrypoints、
@@ -48,4 +48,4 @@ MCP 并重新 preflight；旧 binding 必须 fail closed。
 OMP 是一等宿主。验证时使用 `--host omp`；其能力必须出现在 OMP 自己的静态快照中，
 不能借用 Codex 或 Claude 的可见性结论。
 
-此技能期望的 AGS 产品版本：0.4.12。
+此技能期望的 AGS 产品版本：0.5.0。

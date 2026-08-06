@@ -94,6 +94,7 @@ fn skill_adoption_cli_requires_a_reviewed_plan_and_persists_private_state() {
             .output()
             .expect("run isolated skill adoption command")
     };
+    let installed_index = ags_platform::RuntimeLayout::new(&runtime).installed_skills();
     let source_arg = source.to_str().unwrap();
     let metadata_arg = metadata.to_str().unwrap();
     let plan = parse_json(
@@ -110,10 +111,16 @@ fn skill_adoption_cli_requires_a_reviewed_plan_and_persists_private_state() {
         ]),
         "skill adopt plan",
     );
-    assert_eq!(plan["operation"], "adopt");
+    assert_eq!(plan["intent"]["operation"], "install");
+    assert_eq!(plan["metadata"]["adoption_operation"], "install");
+    assert_eq!(plan["metadata"]["skill_id"], "cli-adopted-team");
     assert!(
-        !runtime.exists(),
-        "plan-only CLI must not write runtime state"
+        runtime.join("maintenance/plans").is_dir(),
+        "plan-only CLI must persist the immutable reviewed plan for cross-process apply"
+    );
+    assert!(
+        !installed_index.exists(),
+        "planning must not install or register the Skill"
     );
 
     let refused = run(&[
@@ -130,8 +137,8 @@ fn skill_adoption_cli_requires_a_reviewed_plan_and_persists_private_state() {
     ]);
     assert!(!refused.status.success());
     assert!(
-        !runtime.exists(),
-        "unbound apply must not write runtime state"
+        !installed_index.exists(),
+        "unbound apply must not install or register the Skill"
     );
 
     let plan_hash = plan["plan_hash"].as_str().unwrap();
@@ -147,22 +154,34 @@ fn skill_adoption_cli_requires_a_reviewed_plan_and_persists_private_state() {
             "--yes",
             "--plan-hash",
             plan_hash,
+            "--ack-risk",
+            "catalog_unreviewed",
             "--format",
             "json",
         ]),
         "skill adopt apply",
     );
-    assert_eq!(receipt["skill_id"], "cli-adopted-team");
-    assert_eq!(receipt["requires_repreflight"], true);
+    assert_eq!(receipt["plan_hash"], plan["plan_hash"]);
+    assert_eq!(receipt["status"], "verified");
+    assert_eq!(plan["activation"][0]["requires_repreflight"], true);
 
     let status = parse_json(
         &run(&["skill", "status", "cli-adopted-team", "--format", "json"]),
         "skill adoption status",
     );
-    assert_eq!(status["registered"], true);
-    assert_eq!(status["body_hash_matches"], true);
-    assert_eq!(status["visible_hosts"], serde_json::json!(["codex"]));
-    assert_eq!(status["active_hosts"], serde_json::json!(["codex"]));
+    assert_eq!(status["schema_version"], "0.5.0-skill-status-projection");
+    assert_eq!(status["catalog"]["state"], "unlisted");
+    assert_eq!(status["installation"]["state"], "installed");
+    assert_eq!(status["activation"]["state"], "route-verified");
+    assert_eq!(status["update"]["state"], "rebind-required");
+    assert_eq!(
+        status["activation"]["routes"]["installation"]["visible_hosts"],
+        serde_json::json!(["codex"])
+    );
+    assert_eq!(
+        status["activation"]["routes"]["installation"]["active_hosts"],
+        serde_json::json!(["codex"])
+    );
 }
 
 #[test]
@@ -261,7 +280,6 @@ fn local_verify_routes_integrated_projects_away_from_suite_checks() {
         "cargo-build-release",
         "fixture-valid-full",
         "fixture-invalid-compact-rejected",
-        "runtime-profile-templates",
     ] {
         assert!(
             !ids.contains(&suite_only),
@@ -444,8 +462,7 @@ review-gate: n/a\n\
 }
 
 #[test]
-fn integrity_and_bootstrap_cli_contract() {
-    let root = repo_root();
+fn integrity_cli_contract() {
     let temp = TestDir::new("receipt-verify");
     let task = temp.path().join("task.md");
     let plan = temp.path().join("launch-plan.json");
@@ -493,17 +510,6 @@ fn integrity_and_bootstrap_cli_contract() {
         "receipt verify",
     );
     assert_eq!(verified["valid"], true);
-
-    let root = root.to_str().expect("UTF-8 workspace path");
-    let bootstrap = run_ags(&[
-        "bootstrap",
-        "--dry-run",
-        "--target",
-        root,
-        "--format",
-        "json",
-    ]);
-    assert_success(&bootstrap, "bootstrap --dry-run");
 }
 
 #[test]
@@ -584,96 +590,15 @@ fn setup_init_and_update_read_only_cli_contract() {
 }
 
 #[test]
-fn update_verify_validates_snapshot_against_installed_capability_authority() {
-    let root = repo_root();
-    let fixture = TestDir::new("update-verify-authority");
-    let authority = fixture.path().join("stable-authority");
-    let runtime = fixture.path().join("runtime");
-    let host_home = fixture.path().join("host-home");
-    std::fs::create_dir_all(&runtime).unwrap();
-    std::fs::create_dir_all(&host_home).unwrap();
-
-    let manifests = root.join("manifests");
+fn direct_rust_update_plan_fails_closed_without_verified_launcher() {
+    let output = run_ags(&["update", "plan", "--format", "json"]);
     assert!(
-        manifests.is_dir(),
-        "the capability authority fixture requires manifests"
+        !output.status.success(),
+        "the unsigned Rust entrypoint must not plan a core update"
     );
-    copy_tree(&manifests, &authority.join("manifests"));
-    for relative in ["global-skills", "skill-packs"] {
-        let source = root.join(relative);
-        if source.is_dir() {
-            copy_tree(&source, &authority.join(relative));
-        }
-    }
-    let registry_path = authority.join("manifests/skills-registry.yaml");
-    let mut registry = std::fs::read_to_string(&registry_path).unwrap();
-    registry.push_str("\n# authority fixture hash differs from current checkout\n");
-    std::fs::write(&registry_path, registry).unwrap();
-    std::fs::write(
-        runtime.join("install-manifest.json"),
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "source_root": authority.display().to_string(),
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-
-    let snapshot = Command::new(env!("CARGO_BIN_EXE_ags"))
-        .args([
-            "capability",
-            "snapshot",
-            "--host",
-            "codex",
-            "--target",
-            authority.to_str().unwrap(),
-            "--write",
-            "--format",
-            "json",
-        ])
-        .current_dir(&root)
-        .env("HOME", &host_home)
-        .env("AGS_HOME", &runtime)
-        .env_remove("AGS_RUNTIME_HOME")
-        .env("AGS_SOURCE_ROOT", &authority)
-        .env("AGS_THIRD_PARTY_MANIFEST_OFFLINE", "1")
-        .env("PATH", "/usr/bin:/bin")
-        .output()
-        .expect("write authority-bound capability snapshot");
-    assert_success(&snapshot, "capability snapshot --write");
-    assert_eq!(
-        ags_capability_governance::resolve_capability_authority_root(&root, &runtime, None)
-            .unwrap(),
-        authority.canonicalize().unwrap()
-    );
-
-    let output = Command::new(env!("CARGO_BIN_EXE_ags"))
-        .args([
-            "update",
-            "verify",
-            "--target",
-            runtime.to_str().unwrap(),
-            "--format",
-            "json",
-        ])
-        .current_dir(&root)
-        .env("HOME", &host_home)
-        .env("AGS_HOME", &runtime)
-        .env_remove("AGS_RUNTIME_HOME")
-        .env("AGS_THIRD_PARTY_MANIFEST_OFFLINE", "1")
-        .env("PATH", "/usr/bin:/bin")
-        .output()
-        .expect("run update verify against installed authority");
-    let report = parse_json(&output, "update verify installed authority");
-    assert_eq!(
-        report["skill_resolver"]["snapshot_current"], true,
-        "update verify must validate the snapshot against the installed capability authority, \
-         not the current A checkout"
-    );
-    assert_eq!(
-        report["lifecycle_workspace"],
-        root.canonicalize().unwrap().display().to_string(),
-        "update verify must observe the working workspace, not the installed source authority"
-    );
+    let report: Value = serde_json::from_slice(&output.stdout)
+        .expect("direct Rust update plan must emit one JSON error document");
+    assert_eq!(report["status"], "launcher_required");
 }
 
 #[test]

@@ -6,13 +6,11 @@ use std::sync::{Condvar, Mutex};
 
 pub const LIFECYCLE_SCHEMA_VERSION: &str = "0.4.0-workspace-lifecycle";
 pub const CLOSURE_POINTER_SCHEMA_VERSION: &str = "0.4.0-closure-pointer";
-const LEGACY_CLOSURE_POINTER_SCHEMA_VERSION: &str = "0.3.6-closure-pointer";
 const MAX_CAPSULE_CHARS: usize = 12_000;
 const MAX_TASK_MEMORY_CHARS: usize = 8_000;
 const MAX_COMPLETED_SESSION_ENDS: usize = 256;
 const MAX_RECENT_DECISIONS: usize = 256;
 const CLOSURE_POINTERS_DIR: &str = ".ags/state/closure-pointers";
-const LEGACY_CLOSURE_POINTER_PATH: &str = ".ags/state/closure-pointer.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ClosurePointer {
@@ -64,17 +62,6 @@ impl ClosurePointer {
                     .canonicalize()
                     .map_err(|error| format!("cannot resolve closure receipt path: {error}"))?;
                 require_workspace_path(canonical, workspace, "current closure pointer")
-            }
-            LEGACY_CLOSURE_POINTER_SCHEMA_VERSION => {
-                let candidate = if raw.is_absolute() {
-                    raw
-                } else {
-                    workspace.join(raw)
-                };
-                let canonical = candidate.canonicalize().map_err(|error| {
-                    format!("cannot resolve legacy closure receipt path: {error}")
-                })?;
-                require_workspace_path(canonical, workspace, "legacy closure pointer")
             }
             other => Err(format!("unsupported closure pointer schema `{other}`")),
         }
@@ -404,11 +391,6 @@ impl LifecycleKernel {
             }
         }
         pointer_paths.sort();
-        let legacy_pointer = self.workspace.join(LEGACY_CLOSURE_POINTER_PATH);
-        if legacy_pointer.is_file() {
-            pointer_paths.push(legacy_pointer);
-        }
-
         let mut closures = BTreeMap::<String, ResolvedClosure>::new();
         for pointer_path in pointer_paths {
             let pointer: ClosurePointer =
@@ -840,37 +822,10 @@ mod tests {
             ))
             .unwrap_err()
             .contains("identity mismatch"));
-
-        let legacy = ClosurePointer {
-            schema_version: LEGACY_CLOSURE_POINTER_SCHEMA_VERSION.to_string(),
-            canonical_workspace: None,
-            workspace_identity: None,
-            receipt_id: receipt.receipt_id,
-            receipt_path: receipt_path
-                .strip_prefix(&workspace)
-                .unwrap()
-                .to_string_lossy()
-                .to_string(),
-            task_card_hash: receipt.task_card_hash,
-            launch_plan_hash: receipt.launch_plan_hash,
-            delivery_report_hash: receipt.delivery_report_hash,
-        };
-        assert_eq!(
-            legacy
-                .receipt_path_for(&canonical_workspace, &identity)
-                .unwrap(),
-            receipt_path.canonicalize().unwrap()
-        );
-        let mut unbound = legacy;
-        unbound.receipt_path = outside.to_string_lossy().to_string();
-        assert!(unbound
-            .receipt_path_for(&canonical_workspace, &identity)
-            .unwrap_err()
-            .contains("not bound"));
     }
 
     #[test]
-    fn session_end_archives_every_pending_receipt_and_consumes_legacy_latest_pointer() {
+    fn session_end_archives_every_pending_receipt() {
         let (_root, workspace, kernel) = kernel();
         let (first_receipt, first_receipt_path) = valid_receipt(&workspace, "first");
         let (second_receipt, second_receipt_path) = valid_receipt(&workspace, "second");
@@ -881,7 +836,6 @@ mod tests {
         assert_ne!(first_pointer, second_pointer);
         assert!(first_pointer.is_file());
         assert!(second_pointer.is_file());
-        assert!(!workspace.join(LEGACY_CLOSURE_POINTER_PATH).exists());
 
         let decision = kernel
             .process(event(
@@ -932,40 +886,6 @@ mod tests {
                 .status,
             "skipped"
         );
-
-        let (legacy_receipt, legacy_receipt_path) = valid_receipt(&workspace, "legacy");
-        let legacy_pointer = ClosurePointer {
-            schema_version: LEGACY_CLOSURE_POINTER_SCHEMA_VERSION.to_string(),
-            canonical_workspace: None,
-            workspace_identity: None,
-            receipt_id: legacy_receipt.receipt_id.clone(),
-            receipt_path: legacy_receipt_path.to_string_lossy().to_string(),
-            task_card_hash: legacy_receipt.task_card_hash.clone(),
-            launch_plan_hash: legacy_receipt.launch_plan_hash.clone(),
-            delivery_report_hash: legacy_receipt.delivery_report_hash.clone(),
-        };
-        let legacy_pointer_path = workspace.join(LEGACY_CLOSURE_POINTER_PATH);
-        ags_platform::atomic_write(
-            &legacy_pointer_path,
-            &serde_json::to_vec_pretty(&legacy_pointer).unwrap(),
-        )
-        .unwrap();
-        let legacy_decision = kernel
-            .process(event(
-                &workspace,
-                "codex",
-                "session-end",
-                "legacy",
-                "legacy-end",
-            ))
-            .unwrap();
-        assert_eq!(legacy_decision.status, "archived");
-        assert!(!legacy_pointer_path.exists());
-        assert!(memory_dir
-            .join("task-archive")
-            .join(legacy_receipt.receipt_id)
-            .join("receipt.json")
-            .is_file());
     }
 
     #[test]
@@ -1045,7 +965,7 @@ mod tests {
     #[test]
     fn failed_session_end_is_retryable_and_completed_state_is_bounded() {
         let (_root, workspace, kernel) = kernel();
-        let pointer = workspace.join(".ags/state/closure-pointer.json");
+        let pointer = workspace.join(CLOSURE_POINTERS_DIR).join("invalid.json");
         std::fs::create_dir_all(pointer.parent().unwrap()).unwrap();
         std::fs::write(&pointer, b"{invalid").unwrap();
         let retry = event(&workspace, "codex", "session-end", "retry", "retry-end");

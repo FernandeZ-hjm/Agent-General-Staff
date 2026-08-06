@@ -1,5 +1,6 @@
-use crate::cli::VerifyAction;
-use std::path::Path;
+use crate::cli::{VerifyAction, VerifyBundleAction};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 /// Run the top-level `verify` command.
 fn cmd_verify_run(scope: &str, format: &str, target: &Path, public_root: Option<&Path>) {
@@ -71,6 +72,117 @@ fn cmd_verify_lane(range: &str, format: &str, target: &Path) {
     }
 }
 
+fn cmd_verify_bundle(action: VerifyBundleAction) {
+    match action {
+        VerifyBundleAction::Create {
+            target,
+            source_scope,
+            report,
+            commands,
+            test_ids,
+            artifacts,
+            output,
+        } => {
+            let report: ags_verification::VerificationReport = read_json(&report, "report");
+            let mut artifact_hashes = BTreeMap::new();
+            for binding in &artifacts {
+                let (name, hash) = parse_artifact(binding).unwrap_or_else(|error| {
+                    eprintln!("verify bundle create: {error}");
+                    std::process::exit(2);
+                });
+                if artifact_hashes.insert(name.clone(), hash).is_some() {
+                    eprintln!("verify bundle create: duplicate artifact name: {name}");
+                    std::process::exit(2);
+                }
+            }
+            let bundle = ags_verification::VerificationBundle::create(
+                &target,
+                source_scope,
+                commands,
+                test_ids,
+                artifact_hashes,
+                report,
+                true,
+            )
+            .unwrap_or_else(|error| {
+                eprintln!("verify bundle create: {error}");
+                std::process::exit(1);
+            });
+            let bytes = serde_json::to_vec_pretty(&bundle).expect("bundle serializes");
+            ags_platform::atomic_write(&output, &bytes).unwrap_or_else(|error| {
+                eprintln!(
+                    "verify bundle create: cannot write {}: {error}",
+                    output.display()
+                );
+                std::process::exit(1);
+            });
+            println!("{}", bundle.bundle_hash);
+        }
+        VerifyBundleAction::Validate {
+            target,
+            source_scope,
+            bundle,
+            format,
+        } => {
+            let bundle: ags_verification::VerificationBundle = read_json(&bundle, "bundle");
+            let result = bundle.validate_reuse_for(
+                &target,
+                &source_scope,
+                ags_verification::TEST_POLICY_VERSION,
+            );
+            let output = match &result {
+                Ok(()) => serde_json::json!({
+                    "valid": true,
+                    "bundle_hash": bundle.bundle_hash,
+                    "commit_sha": bundle.commit_sha,
+                    "tree_hash": bundle.tree_hash,
+                    "source_scope": bundle.source_scope,
+                    "test_policy_version": bundle.test_policy_version,
+                }),
+                Err(error) => serde_json::json!({"valid": false, "error": error}),
+            };
+            crate::output::emit(&format, &output, || {
+                if result.is_ok() {
+                    format!("VerificationBundle valid: {}", bundle.bundle_hash)
+                } else {
+                    format!("VerificationBundle invalid: {}", output["error"])
+                }
+            });
+            if result.is_err() {
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
+fn read_json<T: serde::de::DeserializeOwned>(path: &Path, label: &str) -> T {
+    let bytes = std::fs::read(path).unwrap_or_else(|error| {
+        eprintln!(
+            "verify bundle: cannot read {label} {}: {error}",
+            path.display()
+        );
+        std::process::exit(1);
+    });
+    serde_json::from_slice(&bytes).unwrap_or_else(|error| {
+        eprintln!(
+            "verify bundle: invalid {label} JSON {}: {error}",
+            path.display()
+        );
+        std::process::exit(1);
+    })
+}
+
+fn parse_artifact(binding: &str) -> Result<(String, String), String> {
+    let (name, path) = binding
+        .split_once('=')
+        .ok_or_else(|| format!("artifact must be NAME=PATH: {binding}"))?;
+    if name.trim().is_empty() || path.trim().is_empty() {
+        return Err(format!("artifact must be NAME=PATH: {binding}"));
+    }
+    let hash = ags_platform::sha256_file(&PathBuf::from(path))?;
+    Ok((name.to_string(), hash))
+}
+
 // ── main ──────────────────────────────────────────────────────────────────
 
 pub(crate) fn run(
@@ -86,6 +198,7 @@ pub(crate) fn run(
             format,
             target,
         }) => cmd_verify_lane(&range, &format, &target),
+        Some(VerifyAction::Bundle { action }) => cmd_verify_bundle(action),
         None => cmd_verify_run(scope, format, target, public_root),
     }
 }

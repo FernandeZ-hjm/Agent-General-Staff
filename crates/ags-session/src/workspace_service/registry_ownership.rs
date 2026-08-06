@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -53,7 +52,7 @@ pub(super) struct ServicePaths {
 
 impl ServicePaths {
     pub(super) fn new(runtime_home: &Path, workspace: &Path) -> Self {
-        let dir = runtime_home.join("workspace-services");
+        let dir = ags_platform::RuntimeLayout::new(runtime_home).workspace_services();
         let key = workspace_key(workspace);
         Self {
             registry: dir.join(format!("{key}.json")),
@@ -230,8 +229,7 @@ pub(super) fn atomic_write_json<T: Serialize>(path: &Path, value: &T) -> Result<
 }
 
 pub(super) fn workspace_key(workspace: &Path) -> String {
-    let digest = Sha256::digest(workspace.to_string_lossy().as_bytes());
-    format!("{digest:x}")
+    ags_platform::sha256_hex(workspace.to_string_lossy().as_bytes())
 }
 
 pub(super) fn current_executable_hash() -> Result<String, String> {
@@ -253,7 +251,7 @@ pub(super) fn fresh_id(prefix: &str, workspace: &Path) -> String {
         std::process::id(),
         now_millis()
     );
-    format!("{prefix}-{:x}", Sha256::digest(basis.as_bytes()))
+    format!("{prefix}-{}", ags_platform::sha256_hex(basis.as_bytes()))
 }
 
 pub(super) fn now_millis() -> u64 {

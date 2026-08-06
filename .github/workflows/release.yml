@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -21,20 +20,32 @@ jobs:
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-      - name: Require successful CI for the exact tag commit
+        with:
+          toolchain: 1.96.0
+      - name: Consume the exact public CI VerificationBundle
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          successes="$(gh run list \
+          run_id="$(gh run list \
             --repo "$GITHUB_REPOSITORY" \
             --workflow ci.yml \
             --commit "$GITHUB_SHA" \
             --event push \
             --limit 100 \
-            --json conclusion,headSha \
-            --jq '[.[] | select(.headSha == env.GITHUB_SHA and .conclusion == "success")] | length')"
-          test "$successes" -ge 1
+            --json conclusion,headSha,databaseId \
+            --jq '[.[] | select(.headSha == env.GITHUB_SHA and .conclusion == "success")][0].databaseId')"
+          test -n "$run_id"
+          gh run download "$run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name public-verification-evidence \
+            --dir ci-evidence
+          chmod +x ci-evidence/ags-verifier
+          ci-evidence/ags-verifier verify bundle validate \
+            --target . \
+            --source-scope public-full \
+            --bundle ci-evidence/verification-bundle.json \
+            --format json
       - name: Verify one aligned version
         shell: bash
         run: |
@@ -42,25 +53,22 @@ jobs:
           tag_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
           main_commit="$(git rev-parse "origin/main^{commit}")"
           test "$tag_commit" = "$main_commit"
-          version="$(cargo run -q -p ags-cli -- --version)"
+          version="$(ci-evidence/ags-verifier --version)"
           version="${version##* }"
-          npm_version="$(node -p "require('./packages/ags-mcp/package.json').version")"
+          launcher_version="$(node -p "require('./packages/ags-launcher/package.json').version")"
+          cli_version="$(node -p "require('./packages/ags-cli/package.json').version")"
+          mcp_version="$(node -p "require('./packages/ags-mcp/package.json').version")"
           test "$GITHUB_REF_NAME" = "v$version"
-          test "$npm_version" = "$version"
+          test "$launcher_version" = "$version"
+          test "$cli_version" = "$version"
+          test "$mcp_version" = "$version"
           grep -Fqx "## Release $version" RELEASE_NOTES.md
           test "$GITHUB_REPOSITORY" = "FernandeZ-hjm/Agent-General-Staff"
           ! grep -Eq 'name: "(gep|evomap)"|evolution_asset_recall|private-runtime' manifests/mcp-registry.yaml
-      - name: Freeze canonical public release plan
-        shell: bash
-        run: |
-          cargo run -q -p ags-cli -- release package \
-            --profile public-full \
-            --dry-run \
-            --format json > public-release-plan.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: public-release-plan
-          path: public-release-plan.json
+          path: ci-evidence/public-release-plan.json
           if-no-files-found: error
 
   build:
@@ -89,6 +97,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
+          toolchain: 1.96.0
           targets: ${{ matrix.target }}
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
@@ -121,6 +130,33 @@ jobs:
             --source . `
             --target stage/runtime
           Compress-Archive -Path stage/* -DestinationPath $asset
+      - name: Verify unpacked Unix asset and minimum user journey
+        if: matrix.archive == 'tar'
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          asset="ags-v${version}-${{ matrix.target }}.tar.gz"
+          mkdir unpacked
+          tar -xzf "$asset" -C unpacked
+          test -x unpacked/ags
+          test "$(unpacked/ags --version)" = "ags $version"
+          AGS_SOURCE_ROOT="$PWD/unpacked/runtime" \
+            unpacked/ags skill recommend --format json > unpacked/recommendations.json
+          grep -Fq '"diagnosing-bugs"' unpacked/recommendations.json
+      - name: Verify unpacked Windows asset and minimum user journey
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $asset = "ags-v$version-${{ matrix.target }}.zip"
+          Expand-Archive -Path $asset -DestinationPath unpacked
+          $observed = & "unpacked/ags.exe" --version
+          if ($LASTEXITCODE -ne 0 -or $observed -ne "ags $version") { throw "unpacked version smoke failed" }
+          $env:AGS_SOURCE_ROOT = "$PWD/unpacked/runtime"
+          $recommendations = & "unpacked/ags.exe" skill recommend --format json
+          if ($LASTEXITCODE -ne 0 -or -not ($recommendations -match '"diagnosing-bugs"')) {
+            throw "unpacked recommendation journey failed"
+          }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ags-${{ matrix.target }}
@@ -146,6 +182,16 @@ jobs:
       - name: Generate checksums
         working-directory: dist
         run: sha256sum ags-v* > SHA256SUMS
+      - name: Generate and verify signed release index
+        env:
+          AGS_RELEASE_VERSION: ${{ github.ref_name }}
+          AGS_RELEASE_COMMIT: ${{ github.sha }}
+          AGS_RELEASE_REPOSITORY: ${{ github.repository }}
+          AGS_RELEASE_SIGNING_PRIVATE_KEY: ${{ secrets.AGS_RELEASE_SIGNING_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          export AGS_RELEASE_VERSION="${AGS_RELEASE_VERSION#v}"
+          node scripts/sign-release-index.mjs dist
       - name: Attest release assets
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:

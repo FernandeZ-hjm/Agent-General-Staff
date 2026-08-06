@@ -3,7 +3,7 @@ use super::*;
 // ── Action receipt (write-action evidence) ───────────────────────────────────
 //
 // Distinct from the task-card-centric `Receipt`. AGS write / half-write actions
-// (setup --yes, skill --apply, init, update apply / repair-local)
+// (init and agents govern --apply; MaintenanceService owns maintenance receipts)
 // emit an `ActionReceipt` so every mutation leaves machine-readable evidence.
 // `receipt_id` is prefixed `ar-` and `schema_version`
 // is `0.3.6-action-receipt`, so action receipts never collide with task-card

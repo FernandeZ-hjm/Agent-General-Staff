@@ -25,8 +25,9 @@ The host is the only natural-language semantic node. AGS rejects raw request inp
 ## Proposal Rules
 
 - `DirectResponse` is exclusive and terminal.
-- Otherwise, at most one exact `SkillTarget` and one closed `MachineCliTarget` may coexist.
+- Otherwise, at most one exact `SkillTarget`, one exact `McpTarget`, and one closed `MachineCliTarget` may coexist.
 - A SkillTarget carries only `skill_id`, optional `entrypoint`, and `snapshot_hash`.
+- An McpTarget carries only canonical `mcp_id`, optional registered `tool`, and `snapshot_hash`; AGS returns host-native dispatch metadata and never proxies the third-party server.
 - Confirmed same-session direct edit is host-native and does not compile a task card.
 - Existing canonical task cards validate first and use `TaskPrepareExecution`; they do not re-enter solution formation.
 - Explicit task-card generation requires handoff intent plus a confirmed,
@@ -38,13 +39,17 @@ The host is the only natural-language semantic node. AGS rejects raw request inp
 
 `ags_route_request` launches no process and writes no file. Effectful actions remain in the current MCP connection and are bound by a one-shot `DecisionLease` over host, target, proposal, scope, registry, snapshot, and policy hashes. `ags_apply_action` is the only effectful MCP tool and accepts only lease/action references plus an optional controlled outcome. New preflight, new route, connection reset, binding drift, or any consumption invalidates the old lease.
 
-## Skill Resolution
+## Capability Resolution
 
-Skill Resolver validates exact identifiers against a preflight-bound `HostCapabilitySnapshot`. It has no keyword, similarity, or fallback path. Missing or stale state fails closed. A stale preflight stays bound for `DirectResponse`, reports `NEEDS_USER_DECISION` plus `capability_catalog.refresh.argv`, and blocks `SkillTarget` / `MachineCliTarget` until the user explicitly authorizes the machine-local snapshot write and the host runs preflight again. Preflight never refreshes the snapshot silently.
+Capability Resolver validates exact Skill and MCP identifiers against a preflight-bound `HostCapabilitySnapshot`. It has no keyword, similarity, or fallback path. Missing or stale state fails closed. A stale preflight stays bound for `DirectResponse`, reports `NEEDS_USER_DECISION` plus `capability_catalog.refresh.argv`, and blocks `SkillTarget` / `McpTarget` / `MachineCliTarget` until the user explicitly authorizes the machine-local snapshot write and the host runs preflight again. Preflight never refreshes the snapshot silently.
 
 ## Runner Boundary
 
 `TaskPrepareExecution` runs validate → policy → gate → LaunchPlan. An allowed plan returns `HOST_EXECUTION_REQUIRED`. Runner does not launch the host, execute the task, verify results, write the final receipt, or claim completion.
+
+## Advisory-system boundary
+
+Third-party memory and advisory systems are parallel peers of AGS MCP, never governance authorities. Their output may inform solution formation but cannot change AGS task level, execution mode, review/verification gates, lease admission, or release boundaries.
 
 ## Completion
 

@@ -27,12 +27,12 @@ ags session preflight --for <agent> --target <path>
 
 宿主负责语义理解与候选选择。AGS 不接收原始自然语言，不运行 substring/关键词、BM25、embedding 或另一套分类器。`{request: ...}` 必须返回 `raw_request_unsupported`。
 
-Proposal 必须提供 `schema_version`、`request_fingerprint`、`phase`、`solution_state`、`execution_authority`、`scope_hash` 和 `targets`。`DirectResponse` 独占；否则至多一个精确 `SkillTarget` 加至多一个闭集 `MachineCliTarget`。
+Proposal 必须提供 `schema_version`、`request_fingerprint`、`phase`、`solution_state`、`execution_authority`、`scope_hash` 和 `targets`。`DirectResponse` 独占；否则至多一个精确 `SkillTarget`、一个精确 `McpTarget`，加至多一个闭集 `MachineCliTarget`。
 
 ### 3. Phase / Authority（阶段与授权）
 
 - `DirectResponse`：有界内容加工或普通解释，直接交付，不读技能快照、不规划、不分级。
-- `SolutionFormation`：只有关键设计仍开放时才进入；公开版可参考项目内公开资料形成方案。
+- `SolutionFormation`：只有关键设计仍开放时才进入；非简单任务按 `protocol/evolution-memory.md` 做 advisory recall。
 - `DirectEdit`：方案已确认，且同会话收到明确修改授权；宿主按已确认 scope 直接执行，不编译任务卡、不重复方案形成、不通过 MCP 代写仓库。
 - `TaskCardHandoff`：明确要求交接并且 handoff contract 已确认后才可编译。
 - 宿主 Plan mode：方案封闭后，最后一步直接编译唯一 canonical `## 任务卡`；
@@ -41,15 +41,15 @@ Proposal 必须提供 `schema_version`、`request_fingerprint`、`phase`、`solu
 
 “方案 OK”仅确认设计，不独立授权 mutation 或 handoff。新问题若真正重开方案，才回到 SolutionFormation。
 
-### 4. Exact Skill Resolution（精确技能解析）
+### 4. Exact Capability Resolution（精确能力解析）
 
 ```text
 skill_id + optional entrypoint + snapshot_hash
-→ validated ActiveSkillTable
+→ validated ActiveSkillTable + ActiveMcpTable
 → exact SkillSelection | blocked reason
 ```
 
-Skill Resolver 不读自然语言、不相似匹配、不 fallback，也不保留旧分类迁移层。静态目录规则见 `protocol/skill-governance.md`。
+Capability Resolver 不读自然语言、不相似匹配、不 fallback，也不保留旧分类迁移层。Skill 只解析 canonical skill/entrypoint；MCP 只解析 canonical server/registered tool，返回宿主原生调用目标，AGS 不代理第三方服务器。静态目录规则见 `protocol/skill-governance.md`。
 
 ### 5. Read-only Resolve / Explicit Apply
 
@@ -134,7 +134,7 @@ preflight、route、apply、CLI、Runner 与 receipt 共享 `GovernanceStatus`�
 - 人类：提供需求、确认方案与授予明确 mutation/handoff 权限。
 - 宿主 Agent：保留上下文、做语义提案、执行 host-native 工作。
 - AGS Request Governance：验证 typed proposal，不解释自然语言。
-- Skill Resolver：验证精确 skill/entrypoint/snapshot。
+- Capability Resolver：验证精确 skill/entrypoint/snapshot 或 MCP/tool/snapshot。
 - AGS MCP：preflight、只读 resolve、daemon client session 内租约与显式 apply。
 - Compiler / Policy / Gate / Runner：只消费结构化输入。
 

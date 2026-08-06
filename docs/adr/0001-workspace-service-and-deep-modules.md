@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Introduced in: 0.3.1
-- Current implementation: 0.4.12
+- Current implementation: 0.5.0
 
 ## Context
 
@@ -33,16 +33,17 @@ sessions and leases.
 
 Split the four largest modules by cohesive change reason:
 
-- capability governance: authority, catalog, static snapshot compiler/validation
-  and hashing;
+- capability resolver: authority, catalog, snapshot compiler/validation,
+  local third-party manifest and hashing;
 - workspace facts: discovery, instruction projection, protocol audit,
   preflight and rendering;
 - lifecycle: setup, project initialization, updates and onboarding assessment;
 - MCP tools: wire, preflight, decision, apply and tests.
 
-Cargo package names identify the twelve major architectural boundaries. No
-retired source path may retain an alternate routing, snapshot, lease, or
-mutation implementation.
+Cargo package names identify the twelve major architectural boundaries. In
+0.3.2 the former support-package implementations moved under those owners and
+their package manifests were removed. v0.3.6 exposes the current contract only;
+retired packages and aliases do not remain as alternate authorities.
 
 ## Consequences
 
@@ -50,6 +51,6 @@ Four hosts can share one workspace service without sharing decision authority.
 Capability scans occur only in explicit setup, update, or snapshot publication,
 never while serving a request. Cross-session, cross-host,
 cross-workspace, and replayed leases fail
-closed. The current CLI and Machine CLI contracts are authoritative; removed
-dynamic lifecycle and compatibility fixtures are not preserved behind hidden
-adapters.
+closed. `ags mcp serve --transport stdio` remains the host entry;
+connect-or-start is internal. Future refactors must preserve these boundaries
+without retaining obsolete compatibility paths.

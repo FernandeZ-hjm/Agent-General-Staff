@@ -24,7 +24,6 @@ pub fn run_checks(report: &mut HealthReport, repo_root: &Path) {
         for finding in skill_resolution_coverage_check(repo_root) {
             report.add(finding);
         }
-        report.add(mcp_registry_codegraph_active(repo_root));
     }
 
     if identity.is_ags_suite {

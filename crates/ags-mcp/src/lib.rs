@@ -17,8 +17,15 @@
 //! # Identity
 //!
 //! AGS MCP is the suite's own host adapter — NOT a governed third-party MCP.
-//! In `manifests/mcp-registry.yaml`, `ags` resides under `suite_interfaces:`,
-//! not alongside governed third-party MCPs under `mcps:`.
+//! In `manifests/mcp-registry.yaml`, `ags` resides under `suite_interfaces:`.
+//! Third-party MCP parents come from the canonical capability catalog and
+//! become active only when the current Host probe confirms them.
+//!
+//! # Advisory-system boundary
+//!
+//! AGS MCP and third-party memory or advisory systems are **parallel peers**.
+//! AGS MCP is the governance authority; advisory output may inform solution
+//! formation only. AGS MCP does not proxy, wrap, or broker third-party MCP calls.
 //!
 //! # Usage
 //!

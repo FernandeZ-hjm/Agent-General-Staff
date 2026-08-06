@@ -89,7 +89,7 @@ impl TestEnvironment {
         fs::write(
             runtime.join("install-manifest.json"),
             serde_json::to_vec_pretty(&json!({
-                "schema_version": "0.4.1-private-install",
+                "schema_version": "0.5.0-runtime-install",
                 "producer_version": env!("CARGO_PKG_VERSION"),
                 "source_root": source_root.to_string_lossy(),
                 "target": runtime.to_string_lossy(),
@@ -681,7 +681,7 @@ fn init_projects_the_approved_host_subset_and_preserves_user_hooks() {
     fs::write(
         environment.runtime.join("install-manifest.json"),
         serde_json::to_vec_pretty(&json!({
-            "schema_version": "0.4.1-private-install",
+            "schema_version": "0.5.0-runtime-install",
             "source_root": environment.source_root,
             "lifecycle": {
                 "approved_hosts": HOSTS,
@@ -1689,9 +1689,10 @@ fn doctor_proves_target_aware_workspace_conformance_and_rejects_fixed_state_drif
         .env("HOME", &canonical_home)
         .env("USERPROFILE", &canonical_home)
         .env("AGS_HOME", &environment.runtime)
-        .args(["update", "apply", "--lane", "projects", "--target"])
-        .arg(&environment.runtime)
-        .args(["--apply", "--format", "json"])
+        .current_dir(&canonical_project_b)
+        .args(["init", "--target"])
+        .arg(&canonical_project_b)
+        .args(["--mode", "local", "--format", "json"])
         .output()
         .unwrap();
     assert!(
@@ -2017,7 +2018,7 @@ exit 2
     assert_eq!(runtime_drift.status.code(), Some(1));
     let runtime_drift_report: Value = serde_json::from_slice(&runtime_drift.stdout).unwrap();
     assert_eq!(
-        finding_status(&runtime_drift_report, "private-install-content-current"),
+        finding_status(&runtime_drift_report, "runtime-install-content-current"),
         "fail"
     );
     fs::write(&runtime_asset, canonical_runtime_asset).unwrap();

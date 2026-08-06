@@ -1,7 +1,6 @@
 //! Static third-party capability manifest loading and validation.
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -98,6 +97,8 @@ pub struct CapabilitySource {
     #[serde(default)]
     pub revision: Option<String>,
     #[serde(default)]
+    pub tracking_ref: Option<String>,
+    #[serde(default)]
     pub integrity: Option<String>,
     #[serde(default)]
     pub repository: Option<String>,
@@ -129,6 +130,20 @@ pub struct RoutingContract {
     pub invoke_hint: Option<String>,
     #[serde(default)]
     pub intent_tags: Vec<String>,
+    #[serde(default)]
+    pub scope_tags: Vec<String>,
+    #[serde(default)]
+    pub mutation_surface: String,
+    #[serde(default)]
+    pub auth_kind: Option<String>,
+    #[serde(default)]
+    pub cost_class: String,
+    #[serde(default)]
+    pub route_priority: Option<i32>,
+    #[serde(default)]
+    pub capability_group: Vec<String>,
+    #[serde(default)]
+    pub upstream_group: Option<String>,
     #[serde(default)]
     pub positive_examples: Vec<String>,
     #[serde(default)]
@@ -193,7 +208,7 @@ fn local_resolution(root: &Path) -> Result<ManifestResolution, String> {
     Ok(ManifestResolution {
         manifest,
         source,
-        content_hash: sha256(content.as_bytes()),
+        content_hash: ags_platform::sha256(content.as_bytes()),
     })
 }
 
@@ -208,6 +223,7 @@ pub fn validate_manifest(manifest: &ThirdPartyManifest) -> Result<(), String> {
         return Err("third-party capability manifest schema_version must be 1.0".into());
     }
     let mut ids = BTreeSet::new();
+    let mut mcp_server_names = BTreeSet::new();
     for capability in &manifest.capabilities {
         if capability.id.trim().is_empty() || !ids.insert(capability.id.as_str()) {
             return Err(format!(
@@ -219,6 +235,17 @@ pub fn validate_manifest(manifest: &ThirdPartyManifest) -> Result<(), String> {
         validate_install(capability)?;
         validate_routing(capability)?;
         validate_hook(capability)?;
+        if capability.kind == CapabilityKind::Mcp {
+            let server_name = capability
+                .mcp
+                .as_ref()
+                .map(|mcp| mcp.server_name.trim())
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| format!("{} MCP contract is missing", capability.id))?;
+            if !mcp_server_names.insert(server_name) {
+                return Err(format!("duplicate MCP server name: {server_name}"));
+            }
+        }
     }
     Ok(())
 }
@@ -251,9 +278,22 @@ fn validate_source(capability: &ThirdPartyCapability) -> Result<(), String> {
         && source
             .revision
             .as_deref()
-            .is_none_or(|value| !is_git_revision(value))
+            .is_none_or(|value| !ags_platform::is_git_commit(value))
     {
         return Err(format!("{} git source must pin a commit", capability.id));
+    }
+    if capability.kind == CapabilityKind::Skill
+        && source.manager == "git"
+        && (source
+            .integrity
+            .as_deref()
+            .is_none_or(|value| !ags_platform::is_sha256(value))
+            || source.tracking_ref.as_deref().is_none_or(str::is_empty))
+    {
+        return Err(format!(
+            "{} reviewed Skill source must pin sha256 integrity and a tracking ref",
+            capability.id
+        ));
     }
     Ok(())
 }
@@ -270,6 +310,33 @@ fn validate_install(capability: &ThirdPartyCapability) -> Result<(), String> {
 }
 
 fn validate_routing(capability: &ThirdPartyCapability) -> Result<(), String> {
+    if !matches!(
+        capability.routing.route_state.as_str(),
+        "routable" | "not-routable" | "retired"
+    ) {
+        return Err(format!(
+            "{} has unsupported routing state {}",
+            capability.id, capability.routing.route_state
+        ));
+    }
+    if !matches!(
+        capability.routing.mutation_surface.as_str(),
+        "" | "read-only" | "local-write" | "external-write"
+    ) {
+        return Err(format!(
+            "{} has unsupported mutation surface {}",
+            capability.id, capability.routing.mutation_surface
+        ));
+    }
+    if !matches!(
+        capability.routing.cost_class.as_str(),
+        "" | "free" | "local" | "network" | "paid"
+    ) {
+        return Err(format!(
+            "{} has unsupported cost class {}",
+            capability.id, capability.routing.cost_class
+        ));
+    }
     if capability.kind == CapabilityKind::Hook {
         if capability.routing.route_state == "routable" {
             return Err(format!("{} hook must not be routable", capability.id));
@@ -314,16 +381,6 @@ fn validate_hook(capability: &ThirdPartyCapability) -> Result<(), String> {
         ));
     }
     Ok(())
-}
-
-fn is_git_revision(value: &str) -> bool {
-    value.len() == 40 && value.chars().all(|character| character.is_ascii_hexdigit())
-}
-
-fn sha256(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    format!("sha256:{:x}", hasher.finalize())
 }
 
 #[cfg(test)]

@@ -1,16 +1,16 @@
-# Agent General Staff 0.3 — Public Edition
+# Agent General Staff 0.5.0 — Public Edition
 
 @AGENTS.md
 
-Claude Code is an execution host for this public distributable edition. Consume
-a validated task card or an explicitly bounded direct-edit request; do not infer
-task level, permission mode, review gate, or verification gate from raw user
-language.
+Claude Code is an execution Host for this public distribution. Start AGS work
+with `ags_preflight`. Consume a validated task card or an explicitly bounded
+direct-edit request; do not infer task level, permission mode, review gate, or
+verification gate from raw user language.
 
-For input beginning with `## 任务卡`, validate first and dispatch the exact card
-without regeneration. A host Plan-mode final artifact is the canonical task
-card; execution begins only after leaving Plan mode and preserving its
+For input beginning with `## 任务卡`, validate and dispatch the exact card
+without regeneration. A Host Plan-mode final artifact is the canonical task
+card; execution begins only after leaving Plan mode while preserving its
 `task_card_hash`.
 
-Use `ags_preflight` before AGS work. For implementation details, read only the
-relevant documents linked from `AGENTS.md`; do not preload the full protocol.
+Read only the documents linked from `AGENTS.md` that are relevant to the current
+request.

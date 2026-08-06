@@ -2,10 +2,9 @@
 
 ## Repository contract
 
-This checkout is the public distributable edition of Agent Governance Suite
-0.4.12.
-It is self-contained and must not depend on private repositories, machine-local
-state, credentials, or unpublished skill bodies.
+This checkout is the self-contained public distributable edition of Agent
+Governance Suite 0.5.0. It must not depend on private repositories,
+machine-local state, credentials, or unpublished Skill bodies.
 
 Before AGS-governed work, call MCP `ags_preflight` or run:
 
@@ -13,39 +12,35 @@ Before AGS-governed work, call MCP `ags_preflight` or run:
 ags session preflight --for <agent> --target .
 ```
 
-The host reads `ags://capabilities/current-host`, interprets the complete user
+The Host reads `ags://capabilities/current-host`, interprets the complete user
 context, and submits one typed `HostRouteProposal` to read-only
-`ags_route_request`. `ags_apply_action` may consume only the returned
+`ags_route_request`. `ags_apply_action` consumes only a returned
 connection-bound action. Existing `## 任务卡` input is validated before request
 classification.
 
 ## Hard boundaries
 
-- Do not publish local memory, receipts, credentials, build output, host config,
-  or machine-specific paths.
-- Do not modify protocol, release, protected, destructive, external-write, or
-  credential boundaries without matching authorization.
-- AGS MCP is the suite host adapter, not a governed third-party MCP.
-- `agents govern --apply` may install only AGS-owned host memory adapters;
-  external MCP registration remains advice-only.
-- Task-card authority is the explicit `Execution mode`, `Execution topology`,
-  and `Delegation planning` tuple; Heavy adds only an independent review gate.
-- Debugging, architecture, and change-design decisions start from first
-  principles. Skills and MCPs provide evidence or capability, not the decision;
-  this rule never bypasses safety or authorization gates.
-- Preserve unrelated working-tree changes and user-owned entry-file content.
+- Preserve user-owned content and unrelated working-tree changes.
+- Do not publish local memory, receipts, credentials, build output, Host config,
+  machine paths, or runtime state.
+- Recommendations are discovery metadata, never installation authority.
+- InstalledSkillRecord and verified Host activation are machine-local truths.
+- AGS MCP is the suite adapter, not a governed third-party MCP.
+- External MCP registration remains advice-only.
+- Task-card authority comes from `Execution mode`, `Execution topology`, and
+  `Delegation planning`; Heavy adds review but cannot expand authority.
+- Destructive, external-write, credential, protected-path, and release actions
+  require matching authorization.
 
 ## Read when relevant
 
-- Repository and publication boundary: `WORKSPACE.md`
-- Entrypoint size and ownership: `protocol/entrypoint-guidelines.md`
+- Repository/publication boundary: `WORKSPACE.md`
 - Governance overview: `AGENT_SUITE_PROTOCOL.md`
-- Task lifecycle and cards: `protocol/agent-task-protocol.md`,
-  `protocol/task-card-template.md`, `protocol/task-routing.md`
-- Host adapters and memory closure: `protocol/runtime-adapters.md`,
-  `protocol/context-memory.md`
+- Task lifecycle: `protocol/agent-task-protocol.md`
+- Runtime adapters: `protocol/runtime-adapters.md`
 - MCP contract: `protocol/mcp-server.md`
-- Skills and capabilities: `protocol/skill-governance.md`
+- Skill governance: `protocol/skill-governance.md`
+- Entrypoint ownership: `protocol/entrypoint-guidelines.md`
 
 ## Verification
 
@@ -58,5 +53,5 @@ cargo run -q -p ags-cli -- verify --scope local --target .
 git diff --check
 ```
 
-After context compaction, re-check the current request, repository root, and
+After context compaction, re-check the request, repository root, and
 `git status --short` before editing.

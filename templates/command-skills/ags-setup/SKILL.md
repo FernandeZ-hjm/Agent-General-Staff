@@ -27,16 +27,16 @@ capability snapshot 尝试让它进入 `ActiveSkillTable`。
 
 ```bash
 ags setup
-ags setup --yes --force --lifecycle-hosts <host1,host2|detected|none>
+ags setup --yes --force --lifecycle-hosts <host1,host2|detected>
 ags verify --scope local
 ags agents scan
 ```
 
-已有安装未改变宿主选择时可继续运行 `ags setup --yes --force`。不要把 setup
+至少选择一个宿主；当前 Agent 就是默认候选。已有安装未改变宿主选择时可继续运行 `ags setup --yes --force`。不要把 setup
 当成公开版发布命令。
 
 ## 安全边界
 
 不要绕过 AGS 做临时初始化。只有用户明确要求任务卡/交接、handoff contract 已独立确认，且不存在未决或重开的 solution work 时，才可生成可执行任务卡；缺少任一条件都不得生成。
 
-此技能期望的 AGS 产品版本：0.4.12。
+此技能期望的 AGS 产品版本：0.5.0。

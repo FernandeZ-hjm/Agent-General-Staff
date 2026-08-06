@@ -1,12 +1,9 @@
 //! Closed onboarding assessment, planning and application service.
 
-#[cfg(test)]
-use ags_capability_governance::third_party_manifest as manifest;
 use ags_capability_governance::third_party_manifest::{
     resolve_third_party_manifest, CapabilityKind, ManifestResolution, ThirdPartyCapability,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

@@ -40,8 +40,8 @@ pub use memory_lifecycle::{
 };
 pub use platforms::{
     cross_platform_init_plan, cross_platform_init_plan_with_detectors, lifecycle_specs,
-    platform_spec, static_skill_roots, supported_skill_hosts, AgentPlatformSpec,
-    AgentPlatformStatus, CrossPlatformInitPlan, HostLifecycleSpec, LifecycleNativeEvents,
-    LifecycleOutputProtocol, LifecycleProjectionFamily, McpListFormat, McpProbeProtocol,
-    McpProbeSpec, AGENT_PLATFORM_SPECS,
+    managed_skill_root, platform_spec, static_skill_roots, supported_skill_hosts,
+    AgentPlatformSpec, AgentPlatformStatus, CrossPlatformInitPlan, HostLifecycleSpec,
+    LifecycleNativeEvents, LifecycleOutputProtocol, LifecycleProjectionFamily, McpListFormat,
+    McpProbeProtocol, McpProbeSpec, AGENT_PLATFORM_SPECS,
 };

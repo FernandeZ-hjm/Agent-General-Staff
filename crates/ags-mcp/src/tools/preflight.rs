@@ -14,6 +14,18 @@ pub(super) fn tool_preflight(
     let mut value = serde_json::to_value(report).map_err(json_error)?;
     if let Some(object) = value.as_object_mut() {
         object.insert("agent".to_string(), serde_json::json!(agent_type.as_str()));
+        let now_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_secs());
+        let notice = ags_lifecycle::maintenance::cached_update_notice(
+            &ags_lifecycle::maintenance::default_update_state_root(),
+            env!("CARGO_PKG_VERSION"),
+            now_unix,
+        );
+        object.insert(
+            "update_notice".to_string(),
+            serde_json::to_value(notice).map_err(json_error)?,
+        );
     }
     let binding = PreflightBinding {
         host: agent_type.as_str().to_string(),
@@ -248,18 +260,6 @@ pub(super) fn tool_onboarding_plan(
         ags_capability_governance::third_party_manifest::resolve_third_party_manifest(
             &source_root,
         )?;
-    let active_skill_ids = ags_capability_governance::load_static_snapshot(
-        &ags_capability_governance::locate_runtime_home(),
-        &binding.host,
-    )
-    .map(|(_, table)| {
-        table
-            .active_skills()
-            .into_iter()
-            .map(|skill| skill.skill_id)
-            .collect::<Vec<_>>()
-    })
-    .unwrap_or_default();
     let plan = ags_lifecycle::assess_public_with_resolution(
         &ags_lifecycle::AssessContext {
             source_root: &source_root,
@@ -270,7 +270,6 @@ pub(super) fn tool_onboarding_plan(
             mcp_connected: true,
             host_registered: Some(true),
             registered_mcp_ids: &[],
-            active_skill_ids: &active_skill_ids,
         },
         &third_party,
     )?;

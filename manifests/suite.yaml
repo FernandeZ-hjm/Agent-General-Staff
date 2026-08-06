@@ -1,70 +1,172 @@
-# Suite Manifest — Agent General Staff public edition
-#
-# Schema version: 2.0-skill
-#
-# Full-blood public governance runtime.  Includes task-card validation,
-# compilation, execution policy resolution, gate check, protocol drift
-# checking, suite health diagnostics, bootstrap, project discovery,
-# session preflight, scoped verification, runner, receipt/compliance,
-# skill governance, capability registry, memory capsule, and stop-hook
-# archive.
-#
-# Third-party skills are optional and NEVER auto-installed by AGS.
-# Inspect reviewed static capability metadata with `ags skill inventory`.
-
-schema_version: "2.0-skill"
+schema_version: 2.0-skill
 suite:
-  name: "agent-general-staff"
-  version: "0.4.12"
-  description: >
-    Agent General Staff 0.4.12 public edition — Rust-native governance control
-    plane for multi-agent development. It governs admission, authority, policy,
-    evidence, capability state, and lifecycle; it is not an Agent scheduler.
-    Optional third-party development skills require confirmed installation.
+  name: agent-general-staff
+  version: 0.5.0
+  description: Public AGS governance control plane. Bundled command Skills are shipped with the release; reviewed third-party entries are discovery metadata only.
   required:
-    - name: "ags-agents"
-      version: "0.4.12"
-      source: "templates/command-skills/ags-agents"
-      hash: "7cd98a86153dcc8c34827bfb89b37ab680f3713325a656c4fd9965d3a660bf1f"
-    - name: "ags-doctor"
-      version: "0.4.12"
-      source: "templates/command-skills/ags-doctor"
-      hash: "d71cfe030f5593a707118933ffd6dcb581f3f7adda6a4a06e699203eef9baa18"
-    - name: "ags-init"
-      version: "0.4.12"
-      source: "templates/command-skills/ags-init"
-      hash: "d390c8ca070c61b6c824ee98742ffe2f8e35af6e2ba06c2a8a7377e5ee9891cc"
-    - name: "ags-setup"
-      version: "0.4.12"
-      source: "templates/command-skills/ags-setup"
-      hash: "40d68bed740007fc2aacb47c10727f1c05319d6cb87932093ba6eb02ab46af44"
-    - name: "ags-skill"
-      version: "0.4.12"
-      source: "templates/command-skills/ags-skill"
-      hash: "c23bb3742c22ed065415478b44e401d9bdb516007cd5bfca8157c597c82f1097"
+  - name: ags-agents
+    version: 0.5.0
+    source: templates/command-skills/ags-agents
+    hash: 12fcb4ce1d9bc28822efb700d4e017979bfca6813447e058de4a99f2aadb724f
+  - name: ags-doctor
+    version: 0.5.0
+    source: templates/command-skills/ags-doctor
+    hash: b037ef6f85f376f93058f25f98c73fb8978871a1f9ac0c64b2bd8cc76f48c841
+  - name: ags-init
+    version: 0.5.0
+    source: templates/command-skills/ags-init
+    hash: 7f654575ec8204614b0f58bbb85afa9d3a22c04139b3b10db4d2573c73a5856f
+  - name: ags-setup
+    version: 0.5.0
+    source: templates/command-skills/ags-setup
+    hash: 2c0d3a3cf8d7d73f29f2799fc1dbf65200d8d5039a5ddf85f647b12d25663be9
+  - name: ags-skill
+    version: 0.5.0
+    source: templates/command-skills/ags-skill
+    hash: 02cfabdff7de622445b9d7385628ab76b0422baf318d9a5861935e2ae8733c26
   optional:
-    # The host submits a typed HostRouteProposal. Skill Resolver validates exact
-    # SkillTarget identifiers against the machine-local HostCapabilitySnapshot;
-    # it does not interpret natural language or select fallbacks. Internal
-    # Superpowers playbooks remain entrypoints of the host-visible parent skill.
-    # ags-capability is also retired as a Codex front-stage command skill; the
-    # public `ags capability ...` CLI remains available for Cross-Agent
-    # visibility/sync and is not exposed as a `$ags-capability` skill.
-    # ── Manual skills (external recommendation-only sources; never auto-installed) ──
-    - name: diagnosing-bugs
-      source: "https://github.com/mattpocock/skills/tree/main/skills/engineering/diagnosing-bugs"
-      version: "latest"
-      description: "Root cause diagnosis with evidence chain"
-    - name: grill-with-docs
-      source: "https://github.com/mattpocock/skills/tree/main/skills/engineering/grill-with-docs"
-      version: "latest"
-      description: "Requirements alignment grounded in project docs"
-    - name: prototype
-      source: "https://github.com/mattpocock/skills/tree/main/skills/engineering/prototype"
-      version: "latest"
-      description: "Throwaway prototype workflow for uncertain designs"
-    - name: webapp-testing
-      source: "https://github.com/anthropics/skills/tree/main/webapp-testing"
-      version: "latest"
-      description: "Playwright-based web application testing"
+  - name: grilling
+    version: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    source: https://github.com/mattpocock/skills/tree/2ffb184ffbb752faa664c0b204f3c9241b1428e9/skills/productivity/grilling
+    description: Stress-test a plan through a deliberate interview.
+    repository: https://github.com/mattpocock/skills
+    subdirectory: skills/productivity/grilling
+    resolved_commit: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    body_hash: sha256:81688edf1a423b040d686033f334734d57439aad01e56b04443181eddd040750
+    license: MIT
+    catalog_review_status: reviewed
+    install_state: not-installed
+    route_state: not-routable-until-activated
+  - name: code-review
+    version: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    source: https://github.com/mattpocock/skills/tree/2ffb184ffbb752faa664c0b204f3c9241b1428e9/skills/engineering/code-review
+    description: Review changes since a fixed point against standards and spec.
+    repository: https://github.com/mattpocock/skills
+    subdirectory: skills/engineering/code-review
+    resolved_commit: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    body_hash: sha256:18e0a091449556b307adb3bac7911c68fe2e2d66a6d017b1f0d54d2c1cca1ae6
+    license: MIT
+    catalog_review_status: reviewed
+    install_state: not-installed
+    route_state: not-routable-until-activated
+  - name: wayfinder
+    version: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    source: https://github.com/mattpocock/skills/tree/2ffb184ffbb752faa664c0b204f3c9241b1428e9/skills/engineering/wayfinder
+    description: Plan a huge foggy effort as a shared map of decision tickets.
+    repository: https://github.com/mattpocock/skills
+    subdirectory: skills/engineering/wayfinder
+    resolved_commit: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    body_hash: sha256:cd2d8f06870f3761abdd2271e186868d900c6b63a8d31fc0b81243eb8a671626
+    license: MIT
+    catalog_review_status: reviewed
+    install_state: not-installed
+    route_state: not-routable-until-activated
+  - name: resolving-merge-conflicts
+    version: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    source: https://github.com/mattpocock/skills/tree/2ffb184ffbb752faa664c0b204f3c9241b1428e9/skills/engineering/resolving-merge-conflicts
+    description: Resolve an active merge or rebase conflict.
+    repository: https://github.com/mattpocock/skills
+    subdirectory: skills/engineering/resolving-merge-conflicts
+    resolved_commit: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    body_hash: sha256:2e38ff7d8a03e9d34c80d8e6ebacf74b18e55b29b21451c92c036816b18e64ae
+    license: MIT
+    catalog_review_status: reviewed
+    install_state: not-installed
+    route_state: not-routable-until-activated
+  - name: to-spec
+    version: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    source: https://github.com/mattpocock/skills/tree/2ffb184ffbb752faa664c0b204f3c9241b1428e9/skills/engineering/to-spec
+    description: Shape the current conversation into a spec and publish it to the issue tracker.
+    repository: https://github.com/mattpocock/skills
+    subdirectory: skills/engineering/to-spec
+    resolved_commit: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    body_hash: sha256:5df628f5c91ccc37c6b5038c963645a60c3a7c54e6da6ad6515ad7d13515d9cf
+    license: MIT
+    catalog_review_status: reviewed
+    install_state: not-installed
+    route_state: not-routable-until-activated
+  - name: to-tickets
+    version: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    source: https://github.com/mattpocock/skills/tree/2ffb184ffbb752faa664c0b204f3c9241b1428e9/skills/engineering/to-tickets
+    description: Break a plan, spec, or conversation into tracer-bullet tickets with blocking edges.
+    repository: https://github.com/mattpocock/skills
+    subdirectory: skills/engineering/to-tickets
+    resolved_commit: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    body_hash: sha256:63f9e81723fd01e77d48623cdfa75dc887ab57006d9020046dd9b82f54077950
+    license: MIT
+    catalog_review_status: reviewed
+    install_state: not-installed
+    route_state: not-routable-until-activated
+  - name: triage
+    version: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    source: https://github.com/mattpocock/skills/tree/2ffb184ffbb752faa664c0b204f3c9241b1428e9/skills/engineering/triage
+    description: Turn issue and PR backlogs into agent-ready briefs.
+    repository: https://github.com/mattpocock/skills
+    subdirectory: skills/engineering/triage
+    resolved_commit: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    body_hash: sha256:c212fb3f2055522309d3d67b9db755623739af29259ec617943aa562e11a271e
+    license: MIT
+    catalog_review_status: reviewed
+    install_state: not-installed
+    route_state: not-routable-until-activated
+  - name: handoff
+    version: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    source: https://github.com/mattpocock/skills/tree/2ffb184ffbb752faa664c0b204f3c9241b1428e9/skills/productivity/handoff
+    description: Compact the current session into a clean handoff document.
+    repository: https://github.com/mattpocock/skills
+    subdirectory: skills/productivity/handoff
+    resolved_commit: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    body_hash: sha256:f871ae2aa2ffca8bd220ba6be3c91de04ca8609a030b730fe0176496b1f138c4
+    license: MIT
+    catalog_review_status: reviewed
+    install_state: not-installed
+    route_state: not-routable-until-activated
+  - name: diagnosing-bugs
+    version: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    source: https://github.com/mattpocock/skills/tree/2ffb184ffbb752faa664c0b204f3c9241b1428e9/skills/engineering/diagnosing-bugs
+    description: Build an evidence chain to isolate a bug's root cause.
+    repository: https://github.com/mattpocock/skills
+    subdirectory: skills/engineering/diagnosing-bugs
+    resolved_commit: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    body_hash: sha256:6abc53b8814cce0c6ea38a3b744c8a7e39ebf498861c3edfff46614582c61e63
+    license: MIT
+    catalog_review_status: reviewed
+    install_state: not-installed
+    route_state: not-routable-until-activated
+  - name: grill-with-docs
+    version: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    source: https://github.com/mattpocock/skills/tree/2ffb184ffbb752faa664c0b204f3c9241b1428e9/skills/engineering/grill-with-docs
+    description: Align requirements against ADRs, terminology, and project documents.
+    repository: https://github.com/mattpocock/skills
+    subdirectory: skills/engineering/grill-with-docs
+    resolved_commit: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    body_hash: sha256:0b404baf10ad02ee5a69de5ba90bc9942b24baeff51a6fc45ba91ee5c36e506b
+    license: MIT
+    catalog_review_status: reviewed
+    install_state: not-installed
+    route_state: not-routable-until-activated
+  - name: writing-for-agents
+    version: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    source: https://github.com/mattpocock/skills/tree/2ffb184ffbb752faa664c0b204f3c9241b1428e9/skills/productivity/writing-for-agents
+    description: Write predictable skills, agent instructions, and context-pointer documents.
+    repository: https://github.com/mattpocock/skills
+    subdirectory: skills/productivity/writing-for-agents
+    resolved_commit: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    body_hash: sha256:90b12970eba1f3ee1631c73a12bb9a34a86be2bf5ba7afdaa2692ec6392ba517
+    license: MIT
+    catalog_review_status: reviewed
+    install_state: not-installed
+    route_state: not-routable-until-activated
+  - name: improve-codebase-architecture
+    version: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    source: https://github.com/mattpocock/skills/tree/2ffb184ffbb752faa664c0b204f3c9241b1428e9/skills/engineering/improve-codebase-architecture
+    description: Improve tangled boundaries, testability, and recurring technical debt.
+    repository: https://github.com/mattpocock/skills
+    subdirectory: skills/engineering/improve-codebase-architecture
+    resolved_commit: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
+    body_hash: sha256:eb46e7bdb210e4e2a06583903c7692ac9f240daf8ff969725ccc023bb88025b0
+    license: MIT
+    catalog_review_status: reviewed
+    install_state: not-installed
+    route_state: not-routable-until-activated
   personal: {}

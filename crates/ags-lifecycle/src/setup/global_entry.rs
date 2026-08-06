@@ -1,4 +1,4 @@
-use super::plan::PrivateInstallPlan;
+use super::plan::RuntimeInstallPlan;
 use super::SetupHostEntry;
 use std::path::Path;
 
@@ -49,40 +49,18 @@ fn merge_ags_entry_block(existing: &str, body: &str) -> (String, EntryBlockOutco
     }
     (existing.to_string(), EntryBlockOutcome::Conflict)
 }
-/// Write the AGS-owned global entry managed block into
-/// `<target>/ags-global-entry.md` (an AGS runtime file — never a host config).
-/// Incremental: updates an existing block, appends a missing one, and stops on
-/// a malformed block. Confirm-gated because it only runs on the setup apply path.
-pub(in crate::setup) fn write_ags_global_entry(target: &Path) -> crate::setup::SetupFinding {
+pub(super) fn planned_ags_global_entry(target: &Path) -> Result<String, String> {
     let path = target.join("ags-global-entry.md");
     let body = "@AGENTS.md\n@CLAUDE.md\n@hosts/host-entry-policy.md\nAGS managed global entry — five-segment chain: setup → agents → skill → init → update.";
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
     let (content, outcome) = merge_ags_entry_block(&existing, body);
     if outcome == EntryBlockOutcome::Conflict {
-        return crate::setup::SetupFinding::fail(
-            "global-entry-managed-block",
-            "ags-global-entry.md has a malformed AGS managed block; not overwriting",
-            "fix or remove the AGS managed block manually",
+        return Err(
+            "ags-global-entry.md has a malformed AGS managed block; fix or remove it before setup"
+                .to_string(),
         );
     }
-    match std::fs::write(&path, content) {
-        Ok(()) => crate::setup::SetupFinding::pass(
-            "global-entry-managed-block",
-            format!(
-                "ags-global-entry.md managed block {}",
-                if outcome == EntryBlockOutcome::Created {
-                    "created"
-                } else {
-                    "updated"
-                }
-            ),
-        ),
-        Err(e) => crate::setup::SetupFinding::fail(
-            "global-entry-managed-block",
-            "could not write ags-global-entry.md",
-            e.to_string(),
-        ),
-    }
+    Ok(content)
 }
 #[derive(Debug, Clone)]
 pub(in crate::setup) struct GlobalEntryTemplate {
@@ -98,7 +76,7 @@ pub(in crate::setup) struct GlobalEntryTemplate {
 }
 /// Inventory the AGS-relevant global entry protocol templates in three classes.
 pub(in crate::setup) fn global_entry_protocol_plan(
-    plan: &PrivateInstallPlan,
+    plan: &RuntimeInstallPlan,
     host_entries: &[SetupHostEntry],
 ) -> Vec<GlobalEntryTemplate> {
     let mut out = Vec::new();
@@ -124,23 +102,6 @@ pub(in crate::setup) fn global_entry_protocol_plan(
             confirm_needed: !f.path.exists(),
         });
     }
-    out.push(GlobalEntryTemplate {
-        id: "ags-global-entry.md".to_string(),
-        class: "ags-self",
-        target_path: plan
-            .target
-            .join("ags-global-entry.md")
-            .display()
-            .to_string(),
-        write_method: "managed-block",
-        status: if plan.target.join("ags-global-entry.md").exists() {
-            "present"
-        } else {
-            "missing"
-        }
-        .to_string(),
-        confirm_needed: true,
-    });
     // Class 2 — host global entries. External registration is advice-only;
     // native memory adapters are managed separately by `ags agents govern`.
     for spec in host_entries {
@@ -242,24 +203,21 @@ mod entry_block_tests {
     }
 
     #[test]
-    fn write_ags_global_entry_is_incremental_and_stops_on_conflict() {
+    fn global_entry_planning_is_pure_incremental_and_stops_on_conflict() {
         let target = temp_home("global-entry");
-        // first write → created.
-        let f1 = write_ags_global_entry(&target);
-        assert!(f1.message.contains("created"));
         let path = target.join("ags-global-entry.md");
-        assert!(path.is_file());
+        let planned = planned_ags_global_entry(&target).unwrap();
+        assert!(!path.exists(), "planning must not write");
+        ags_platform::atomic_write(&path, planned.as_bytes()).unwrap();
         let first = std::fs::read_to_string(&path).unwrap();
         assert_eq!(first.matches("BEGIN AGS managed entry").count(), 1);
-        // second write → updated, still a single block (idempotent shape).
-        let _f2 = write_ags_global_entry(&target);
-        let second = std::fs::read_to_string(&path).unwrap();
+        let second = planned_ags_global_entry(&target).unwrap();
         assert_eq!(second.matches("BEGIN AGS managed entry").count(), 1);
-        // malformed block → conflict, file left unchanged (no overwrite).
         std::fs::write(&path, "<!-- BEGIN AGS managed entry -->\nbroken\n").unwrap();
         let before = std::fs::read_to_string(&path).unwrap();
-        let f3 = write_ags_global_entry(&target);
-        assert!(f3.message.contains("malformed"));
+        assert!(planned_ags_global_entry(&target)
+            .unwrap_err()
+            .contains("malformed"));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
         let _ = std::fs::remove_dir_all(&target);
     }

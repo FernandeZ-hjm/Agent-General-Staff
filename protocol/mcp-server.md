@@ -1,14 +1,13 @@
-# AGS MCP: Workspace Service and Host Adapter
+# AGS MCP: Host Initialization Adapter
 
-> AGS 0.4.12 MCP 是宿主初始化、只读治理解析、workspace lifecycle 和显式 apply
-> 的工作区治理服务与薄宿主适配器，不是自然语言 Agent。
+> AGS MCP 是宿主初始化、只读治理解析、workspace lifecycle 和显式 maintenance/apply 的连接适配器，不是自然语言 Agent。
 
 ## Architecture
 
 ```text
 Human request
   → Host keeps full conversation context
-  → MCP stdio thin adapter
+  → MCP stdio adapter
   → connect-or-start unique workspace AGS daemon
   → per-client session + shared workspace capability state
   → read ags://capabilities/current-host
@@ -18,28 +17,32 @@ Human request
   → ags_apply_action(lease_id, action_id) only for a held action
 ```
 
-自然语言语义选择只在宿主发生。Compiler、Policy、Gate、Runner、Skill Resolver 和 MCP server 都不重新解释原始文本。
+自然语言语义选择只在宿主发生。Compiler、Policy、Gate、Runner、Capability Resolver 和 MCP server 都不重新解释原始文本。
 
 daemon 的唯一实例键只包含工作区 canonical path，不包含 host。Codex、Claude Code、
-Cursor、CodeBuddy、OMP 等宿主只是同一工作区服务的客户端；每个客户端仍拥有独立
+Cursor、CodeBuddy-Code、OMP 等宿主只是同一工作区服务的客户端；每个客户端连接仍拥有独立
 `session_id`、preflight binding、route generation 与 DecisionLease。stdio 进程仅转发
 JSON-RPC，不保存治理状态。客户端断开不会终止 daemon；无活动会话超过 idle window
 后才回收。新 adapter 发现 executable hash 变化时，必须先停止旧 daemon，再启动新
 版本，禁止同一工作区的新旧 daemon 并存。daemon 只监听 loopback ephemeral
-endpoint；registry/token、诊断日志与静态 host capability snapshot 位于用户私有 runtime 目录，
-使用私有权限、token handshake、非符号链接目录和原子替换。
+endpoint；registry/token 与静态 host capability snapshot 位于用户私有 runtime 目录，使用私有
+权限、token handshake、非符号链接目录和原子替换。
 
-静态 snapshot 的 catalog 同时声明 `routing_surface`。只有 `skill_target` 条目
+静态 snapshot 的 Skill catalog 同时声明 `routing_surface`。只有 `skill_target` 条目
 可以进入 typed proposal；`host_command` 条目（例如 `ags-setup`）由宿主按
 `routing_hint` 直接调用 CLI，不经 MCP 二次路由。若误交为 `SkillTarget`，
 route 返回 `skill_target_kind_mismatch`，而不是暗示安装或快照需要刷新。
+同一 snapshot 还包含 `mcp_catalog` 与 `active_mcps`：只有显式刷新时被宿主
+只读探针确认为 registered + active、且 registry 标记 routable 的 MCP 才可进入
+`McpTarget`。AGS 只校验 server/tool 标识并返回 host-native dispatch，不代理
+第三方 MCP。
 
 route 与 apply 只消费 daemon 已加载 snapshot 内封存的 registry/snapshot hash，
 不得重新读取现场 registry、overlay、PATH 或宿主技能目录。
 
 ## Initialization Gate
 
-任何 AGS 场景的第一调用必须是 `ags_preflight(agent, target?)`；MCP 不可用时才使用 `ags session preflight --for <agent> --target <path>`。preflight 绑定当前 daemon client session 的 host/target，并返回 current-host resource URI、`snapshot_hash` 与 `workspace_service` 身份。preflight target 必须属于 daemon 的 canonical workspace；跨工作区 target fail closed。新 preflight 会清空该 session 的所有 held actions。preflight 只读取 daemon 启动后首次加载的静态 host snapshot，不扫描或比较动态目录，也不自动写快照。快照缺失、损坏或内部 hash 不一致时返回结构化 warning 与显式刷新 argv，并对 `SkillTarget` / `MachineCliTarget` fail closed；`DirectResponse` 仍可用。
+任何 AGS 场景的第一调用必须是 `ags_preflight(agent, target?)`；MCP 不可用时才使用 `ags session preflight --for <agent> --target <path>`。preflight 绑定当前 daemon client session 的 host/target，并返回 current-host resource URI、`snapshot_hash` 与 `workspace_service` 身份。preflight target 必须属于 daemon 的 canonical workspace；跨工作区 target fail closed。新 preflight 会清空该 session 的所有 held actions。preflight 只读取 daemon 启动后首次加载的静态 host snapshot，不扫描或比较动态目录，也不自动写快照。快照缺失、损坏或内部 hash 不一致时返回结构化 warning 与显式刷新 argv，并对 `SkillTarget` / `McpTarget` / `MachineCliTarget` fail closed；`DirectResponse` 仍可用。
 
 尚未初始化的项目不会进入普通治理态，而会建立受限
 `bootstrap_required` 绑定。该绑定只允许 `ags_onboarding_plan` 与
@@ -48,29 +51,35 @@ route 与 apply 只消费 daemon 已加载 snapshot 内封存的 registry/snapsh
 
 ## MCP Capabilities
 
-### Tools (9)
+### Tools (14)
 
 | Tool | 副作用 | 作用 |
 |---|---|---|
-| `ags_preflight` | 只读 | 建立 session 的宿主/项目绑定 |
+| `ags_preflight` | 只读 | 建立连接的宿主/项目绑定 |
 | `ags_protocol_status` | 只读 | 读取协议状态 |
 | `ags_agent_instructions` | 只读 | 读取宿主指令 |
 | `ags_onboarding_plan` | 严格只读 | 评估 public profile，并为可逐项确认的动作建立 session 内引用 |
 | `ags_task_validate` | 只读 | 验证现有任务卡 |
 | `ags_policy_resolve` | 只读 | 解析已验证任务卡策略 |
-| `ags_route_request` | 严格只读 | 校验 typed proposal，解析精确技能并持有动作引用 |
+| `ags_route_request` | 严格只读 | 校验 typed proposal，解析精确 Skill/MCP 并按需持有动作引用 |
 | `ags_apply_action` | effectful | 一次性消费当前 daemon client session 内的固定动作 |
+| `ags_maintenance_status` | 只读 | 读取精确 Plan 与回执状态 |
+| `ags_maintenance_plan` | 只读/候选获取 | 生成绑定当前连接和不可变来源的 Plan；不激活 |
+| `ags_maintenance_apply` | effectful | 仅应用精确 plan hash 和已确认风险 |
+| `ags_maintenance_verify` | 只读 | 验证当前 body、快照、preflight 与精确路由 |
+| `ags_maintenance_recover` | effectful | 恢复该 Plan 的旧 body、索引、快照和指针 |
 
-`ags_apply_action` 是 AGS MCP 内唯一 effectful 工具。所有资源均只读。
+`ags_apply_action` 是治理路由内唯一 effectful 工具；maintenance apply/recover
+是独立的 typed 维护事务入口，不能执行 Host 自由文本或任意命令。所有资源均只读。
 真正的 local verification 必须作为 `MachineCliTarget(ProjectVerify)` 经
 `ags_route_request → DecisionLease → ags_apply_action` 执行。
 
 ### `ags_onboarding_plan`
 
 该工具只消费 preflight 绑定，不接受路径、命令或 profile 重传。它固定读取
-public onboarding profile和统一第三方能力清单，返回 `absent`、
-`installed-not-visible`、`visible-not-ready`、`active-ready`、
-`blocked-untrusted-source`、`blocked-missing-integrity` 或
+public onboarding profile，显式排除 EvoMap、GEP、private runtime 和 personal
+skill packs，返回 `absent`、`installed-not-visible`、`visible-not-ready`、
+`active-ready`、`blocked-untrusted-source`、`blocked-missing-integrity` 或
 `unsupported-host`。
 
 可执行项目只返回 `item_id + action_id`，不返回可篡改 argv。用户选择一个项目后，
@@ -104,7 +113,7 @@ public onboarding profile和统一第三方能力清单，返回 `absent`、
 
 旧 `{ "request": "..." }` 稳定返回 `raw_request_unsupported`。字段缺失返回结构化错误；绝不回退关键词分类。调用前后文件树与进程计数必须不变。
 
-输出 `RouteResolution`，包含 `governance_status`、`proposal_hash`、preflight host/target、精确 skill selection 或阻断理由，以及可选 `DecisionLease` 证据。direct-edit 只返回 host-native action；MCP 不代写项目。
+输出 `RouteResolution`，包含 `governance_status`、`proposal_hash`、preflight host/target、精确 Skill/MCP selection 或阻断理由，以及可选 `DecisionLease` 证据。`McpTarget` 返回 `HOST_EXECUTION_REQUIRED` 与 host-native server/tool 元数据，不生成 lease；direct-edit 只返回 host-native action；AGS MCP 不代理第三方 MCP，也不代写项目。
 
 ### `ags_apply_action`
 
@@ -116,9 +125,11 @@ public onboarding profile和统一第三方能力清单，返回 `absent`、
 }
 ```
 
-调用方不得重传 capability、input、argv 或 action payload。服务器只执行 route 时已固定的动作。成功或失败尝试均消费租约；重放、跨 session、hash 漂移、host/target 冲突或篡改都拒绝。
+调用方不得重传 capability、input、argv 或 action payload。服务器只执行 route 时已固定的动作。成功或失败尝试均消费租约；重放、跨连接、hash 漂移、host/target 冲突或篡改都拒绝。
 
-SkillTarget 在不与 MachineCli 共存时返回受控 outcome action。`outcome=abandoned` 加相同 `request_fingerprint` 的后续 decision 构成 route-correction evidence；它只供离线评估，不修改静态 registry 或生产路由。
+SkillTarget 在不与 MachineCli 共存时返回受控 outcome action。`outcome=abandoned`
+加相同 `request_fingerprint` 的后续 decision 构成 route-correction evidence；
+它只供离线评估，不修改静态 catalog 或生产路由。
 
 ### Fixed Machine CLI mappings
 
@@ -132,19 +143,19 @@ SkillTarget 在不与 MachineCli 共存时返回受控 outcome action。`outcome
 | `SkillTagsVerify` | `ags gate skill-tags - --target <preflight-target> --for <preflight-host> --format json` |
 | `ReceiptVerify` | `ags receipt verify - --format json` |
 
-每个 capability 只接受与其匹配的 `TypedCliInput`；route 在持有动作前校验，apply 在生成 argv 前再次校验。实现使用固定 argv 与 stdin，禁止 shell 和任意命令字符串。唯一执行准备能力是 `task_prepare_execution`。
+Machine CLI 子进程的 cwd 固定为 preflight-bound target，因此相对本地 Skill
+路径不能按 MCP server 自身启动目录重新解释。
+每个 capability 只接受与其匹配的 `TypedCliInput`；route 在持有动作前校验，
+apply 在生成 argv 前再次校验。实现使用固定 argv 与 stdin，禁止 shell 和任意
+命令字符串。
 
-### Resources (6)
+### Resources (8)
 
-新增 `ags://capabilities/current-host`：preflight-bound、只读的 `HostCapabilitySnapshot`。经显式 setup/update 或 snapshot refresh 原子写出的静态 snapshot，由工作区 daemon 每宿主只读取和校验一次；不存在 workspace capability bundle、bundle epoch 或请求期重新扫描。resource read、route 和 apply 复用同一内存对象与 `snapshot_hash`。宿主提交精确 `skill_id` / `entrypoint` / `snapshot_hash`。第三方能力是否 routable/ready、认证、health 与宿主可见性均是刷新时冻结的事实；实际调用失败作为普通执行失败记录，不会隐式重建快照。磁盘快照刷新后须重启 daemon/重新连接再 preflight，旧 session 与 lease 随服务重启失效。快照缺失或内部校验失败时，preflight 的 `capability_catalog.refresh.argv` 给出显式机器本地刷新参数。其他公开资源包括 `ags://global-kernel`、任务协议、路由、模板与 runtime adapter。
-
-### Prompts and hosts
-
-`ags_global_kernel` 是全局初始化 prompt。公开宿主 ID 包括 `codex`、`claude-code`、`cursor`、`tencent-agent`、`workbuddy` 与 `codebuddy-code`；它们都遵守同一个 preflight → current-host → typed proposal 入口。
+新增 `ags://capabilities/current-host`：preflight-bound、只读的 `HostCapabilitySnapshot`。经显式 setup/update 或 `ags capability snapshot --write` 原子写出的静态 snapshot，由工作区 daemon 每宿主只读取和校验一次；不存在 workspace capability bundle、bundle epoch 或请求期重新扫描。resource read、route 和 apply 复用同一内存对象与 `snapshot_hash`。宿主提交精确 `skill_id` / `entrypoint` / `snapshot_hash`。第三方能力是否 routable/ready、认证、health 与宿主可见性均是刷新时冻结的事实；实际调用失败作为普通执行失败记录，不会隐式重建快照。磁盘快照刷新后须重启 daemon/重新连接再 preflight，旧 session 与 lease 随服务重启失效。快照缺失或内部校验失败时，preflight 的 `capability_catalog.refresh.argv` 给出显式机器本地刷新参数。其他资源为全局内核、任务协议、路由、模板、runtime adapter 与 Evolver 边界文档。
 
 ## DecisionLease
 
-Lease 只存在于当前 daemon client session，绑定 `session_id`、preflight host/target、proposal/scope/registry/snapshot/policy hash。它不能跨 Codex/OMP/Claude Code/Cursor session 使用。没有任意 TTL；生命周期由 session 与事实绑定决定。新 route、新 preflight、session 重置、绑定变化或消费都会使旧 lease 失效。
+Lease 只存在于当前 daemon client session，绑定 `session_id`、preflight host/target、proposal/scope/registry/snapshot/policy hash。它不能跨 Codex/OMP/Claude Code/Cursor session 使用。没有任意 TTL；生命周期由 session 与事实绑定决定。新 route、新 preflight、连接重置、绑定变化或消费都会使旧 lease 失效。
 
 Onboarding lease 绑定 public profile 的完整 `plan_hash`、item、host 与 target；
 不借用尚未存在的 capability snapshot。apply 后强制重新 preflight。
@@ -153,15 +164,21 @@ Onboarding lease 绑定 public profile 的完整 `plan_hash`、item、host 与 t
 
 `TaskPrepareExecution` 只返回 LaunchPlan。Runner 不启动宿主、不验证任务执行结果、不写最终 receipt，也不声称任务完成；允许状态必须是 `HOST_EXECUTION_REQUIRED`。
 
+## EvoMap Boundary
+
+AGS MCP 与 EvoMap MCP 是平行 peers。EvoMap 只在方案形成时提供 advisory recall，不影响 route admission、task level、permission、review、verification 或 release gate。
+
 ## Server Info
 
-`serverInfo` example: `{"name":"ags-mcp","version":"0.4.12"}`
+```json
+{"name":"ags-mcp","version":"0.4.0"}
+```
 
 ## Verification
 
 ```bash
-cargo test -p request-governance
-cargo test -p skill-resolver
+cargo test -p ags-governance-decision
+cargo test -p ags-capability-governance
 cargo test -p ags-mcp
 cargo test --workspace
 ags verify --scope promotion --public-root <public-worktree> --format json
@@ -171,5 +188,5 @@ ags verify --scope promotion --public-root <public-worktree> --format json
 
 | Version | Date | Change |
 |---|---|---|
-| 0.3.0 | 2026-07-19 | 宿主语义 typed proposal、只读 route、session 内 DecisionLease、显式 apply、workspace daemon 与 current-host 技能目录。 |
+| 0.3.0 | 2026-07-19 | 宿主语义 typed proposal、只读 route、连接内 DecisionLease、显式 apply、current-host 技能目录。 |
 | 0.2.8 | 2026-07-16 | 关键词 Request Router、闭集 SkillDemand、固定 argv MachineCli。 |

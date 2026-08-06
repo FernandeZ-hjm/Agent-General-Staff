@@ -1,7 +1,6 @@
 //! Hidden kernel commands used by MCP and CI.
 
 pub(crate) mod awareness;
-pub(crate) mod bootstrap;
 pub(crate) mod compliance;
 pub(crate) mod gate;
 pub(crate) mod hooks;

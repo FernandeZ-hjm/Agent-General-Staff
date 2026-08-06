@@ -371,6 +371,50 @@ pub(crate) enum VerifyAction {
         #[arg(long, default_value = ".")]
         target: PathBuf,
     },
+    /// Create or validate an exact-input VerificationBundle.
+    Bundle {
+        #[command(subcommand)]
+        action: VerifyBundleAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum VerifyBundleAction {
+    /// Create a bundle from one already-produced verification report.
+    Create {
+        /// Repository whose clean exact commit/tree produced the report.
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+        /// Source scope identity, for example public-full or private-local.
+        #[arg(long)]
+        source_scope: String,
+        /// JSON VerificationReport produced by the unique full gate.
+        #[arg(long)]
+        report: PathBuf,
+        /// Exact command represented by the report. Repeat for composed gates.
+        #[arg(long = "command", required = true)]
+        commands: Vec<String>,
+        /// Stable test IDs represented by the gate. Repeat for every test group.
+        #[arg(long = "test-id", required = true)]
+        test_ids: Vec<String>,
+        /// Artifact binding as NAME=PATH. Repeat as needed.
+        #[arg(long = "artifact")]
+        artifacts: Vec<String>,
+        /// Destination JSON bundle.
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Validate bundle integrity and exact current commit/tree/toolchain inputs.
+    Validate {
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+        #[arg(long)]
+        source_scope: String,
+        #[arg(long)]
+        bundle: PathBuf,
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
 }
 
 // ── MCP Server ─────────────────────────────────────────────────────────────
@@ -381,7 +425,8 @@ pub(crate) enum VerifyAction {
 /// (Tencent Agent, Codex, OMP, Cursor, Claude Code) to call as a global
 /// governance capability.
 ///
-/// Third-party MCP servers remain host-owned and are never proxied by AGS.
+/// AGS MCP and EvoMap MCP are parallel peers. AGS MCP does NOT
+/// proxy, wrap, or broker EvoMap MCP calls.
 #[derive(Subcommand)]
 pub(crate) enum McpAction {
     /// Inspect the workspace MCP daemon without starting it.
@@ -432,11 +477,48 @@ pub(crate) enum HooksAction {
 /// Release packaging operations — dry-run only, no apply to stable/public.
 #[derive(Subcommand)]
 pub(crate) enum ReleaseAction {
+    /// Plan or apply the typed public capability projection.
+    ProjectCapabilities {
+        /// Private authority checkout containing the projection specification.
+        #[arg(long)]
+        source: PathBuf,
+        /// Public checkout whose generated manifests are inspected or written.
+        #[arg(long)]
+        target: PathBuf,
+        /// Apply the exact approved plan. Without this flag the command is read-only.
+        #[arg(long, default_value_t = false)]
+        apply: bool,
+        /// Plan hash printed by a preceding read-only invocation; required with --apply.
+        #[arg(long, requires = "apply")]
+        plan_hash: Option<String>,
+        /// Output format: text (default) or json.
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Plan or apply the complete transactional A-to-B public source projection.
+    ProjectPublic {
+        /// Private authority checkout A.
+        #[arg(long)]
+        source: PathBuf,
+        /// Public checkout B.
+        #[arg(long)]
+        target: PathBuf,
+        /// Apply the exact approved plan. Without this flag the command is read-only.
+        #[arg(long, default_value_t = false)]
+        apply: bool,
+        /// Plan hash printed by a preceding invocation; required with --apply.
+        #[arg(long, requires = "apply")]
+        plan_hash: Option<String>,
+        /// Output format: text (default) or json.
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
     /// Plan a release package — lists what files WOULD be included.
     ///
     /// Public profiles include the public Rust workspace and governance
-    /// runtime, while excluding build output, local runtime state, real memory,
-    /// preinstalled skill packs, and local agent config.
+    /// runtime, while excluding build output, local/private runtime state, real
+    /// memory, preinstalled skill packs, local agent config, and EvoMap/GEP
+    /// runtime surfaces.
     /// `private-full` includes everything. Dry-run only, nothing is written.
     Package {
         /// Package profile: public-full or private-full

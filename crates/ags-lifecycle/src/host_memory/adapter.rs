@@ -87,7 +87,7 @@ pub fn lifecycle_migration_preview(
 fn managed_lifecycle_workspace_observations(
     current_workspace: &Path,
 ) -> Result<Vec<ManagedLifecycleWorkspaceObservation>, String> {
-    let runtime = ags_capability_governance::locate_runtime_home();
+    let runtime = ags_platform::runtime_home();
     let registry_path = ags_workspace_facts::managed_projects::registry_path(&runtime);
     let registry = ags_workspace_facts::managed_projects::load(&registry_path)
         .map_err(|error| format!("{}: {error}", registry_path.display()))?;
@@ -339,11 +339,8 @@ fn migrate_global_adapter_for_workspaces(
 
 /// Bootstrap the current workspace's memory capsule by invoking the installed
 /// `ags memory init`. Create-if-missing; the Rust kernel never overwrites the
-/// capsule. Fail-closed on the `--register-claude` apply path.
-pub(in crate::setup) fn bootstrap_workspace_memory(
-    workspace_root: &Path,
-    home: &Path,
-) -> crate::setup::SetupFinding {
+/// capsule. Host governance treats failure as a closed transaction finding.
+fn bootstrap_workspace_memory(workspace_root: &Path, home: &Path) -> crate::setup::SetupFinding {
     let check = "setup-memory-capsule-bootstrap";
     let memory_dir = ags_host_integration::project_memory_dir_at(workspace_root, home);
     match ags_evidence::memory::init(&memory_dir) {
@@ -360,100 +357,6 @@ pub(in crate::setup) fn bootstrap_workspace_memory(
             e.to_string(),
         ),
     }
-}
-
-/// Register-claude apply step: wire the workspace Stop pipeline and bootstrap
-/// the workspace memory capsule. `home` resolves the installed script path;
-/// `workspace_root` is the current AGS suite/workspace whose `.claude` config
-/// and memory are bootstrapped.
-pub(in crate::setup) fn add_workspace_memory_capture(
-    report: &mut crate::setup::SetupReport,
-    home: &Path,
-    workspace_root: &Path,
-) {
-    apply_host_memory_adapter(report, home, workspace_root, "claude-code");
-}
-
-/// Read-only preview of what `ags setup --yes --register-claude` will do to the
-/// workspace memory-capture chain. Rendered in the setup plan / dry-run so the
-/// operator can see the hook install/repair before applying.
-pub(in crate::setup) fn render_memory_capture_plan(
-    _home: &Path,
-    workspace_root: &Path,
-    register_claude: bool,
-) -> String {
-    let projection =
-        crate::lifecycle_projection::LifecycleProjection::new(workspace_root, "claude-code").ok();
-    let observed = projection.as_ref().map(|projection| projection.observe());
-    let settings_path = projection
-        .as_ref()
-        .map(crate::lifecycle_projection::LifecycleProjection::path)
-        .unwrap_or_else(|| workspace_root.join(".claude/settings.local.json"));
-    let (start_wired, raw_wired, memory_wired) = observed
-        .as_ref()
-        .map(|observation| {
-            (
-                observation.events_complete,
-                observation.events_complete,
-                observation.events_complete,
-            )
-        })
-        .unwrap_or((false, false, false));
-
-    let mut lines = vec!["Memory capture chain (project memory):".to_string()];
-    lines.push(
-        "  - Rust lifecycle command: ags host lifecycle (SessionStart / SessionEnd / Stop guard)"
-            .to_string(),
-    );
-    lines.push(format!(
-        "  - OMP native extension: {}",
-        crate::lifecycle_projection::workspace_adapter_path(workspace_root, "omp")
-            .unwrap_or_else(|| workspace_root.join(".omp/extensions/ags-lifecycle.js"))
-            .display()
-    ));
-    lines.push(format!(
-        "  - Workspace SessionStart config: {}",
-        settings_path.display()
-    ));
-    lines.push(format!(
-        "  - Workspace Stop + SessionEnd config: {}",
-        settings_path.display()
-    ));
-    lines.push(format!(
-        "  - Current state: project memory start hook {}",
-        if start_wired { "WIRED" } else { "MISSING" }
-    ));
-    lines.push(format!(
-        "  - Current state: raw guard {}",
-        if raw_wired { "WIRED" } else { "MISSING" }
-    ));
-    lines.push(format!(
-        "  - Current state: project memory capture {}",
-        if memory_wired { "WIRED" } else { "MISSING" }
-    ));
-    if register_claude {
-        if start_wired && raw_wired && memory_wired {
-            lines.push(
-                "  - Action: workspace SessionStart + per-turn Stop Guard + true SessionEnd already wired (idempotent)."
-                    .to_string(),
-            );
-        } else {
-            lines.push(
-                "  - Action: install the workspace SessionStart, per-turn Stop Guard, and true SessionEnd adapter while preserving unrelated hooks."
-                    .to_string(),
-            );
-        }
-        lines.push(
-            "  - Capsule: bootstrapped by the Rust memory kernel (create-if-missing; never overwrites context-capsule.md)."
-                .to_string(),
-        );
-    } else {
-        lines.push(
-            "  - Action: setup leaves optional workspace adapters unchanged. Use `ags agents govern --agent <claude-code|codex|cursor|codebuddy-code|omp> --apply` for explicit workspace host wiring; use --register-claude only for explicit Claude MCP/workspace registration."
-                .to_string(),
-        );
-    }
-    lines.join("\n")
 }
 
 #[cfg(test)]

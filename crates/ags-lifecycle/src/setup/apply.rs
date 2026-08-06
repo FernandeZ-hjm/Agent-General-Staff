@@ -1,4 +1,3 @@
-use super::{command_in_path, sanitize_name, InstallFile};
 use std::path::{Path, PathBuf};
 
 fn is_codex_skill_path(path: &Path) -> bool {
@@ -28,186 +27,10 @@ pub(in crate::setup) fn codex_skill_thin_index_ancestor(path: &Path) -> Option<P
     }
 }
 
-pub(in crate::setup) fn write_install_file(
-    file: &InstallFile,
-    force: bool,
-) -> crate::setup::SetupFinding {
-    if let Some(link) = codex_skill_thin_index_ancestor(&file.path) {
-        return crate::setup::SetupFinding::pass(
-            format!("install-{}", sanitize_name(&file.path.to_string_lossy())),
-            format!(
-                "skipped thin-index symlink: {} (ancestor {}; canonical skill body remains authoritative)",
-                file.path.display(),
-                link.display()
-            ),
-        );
-    }
-
-    if let Some(parent) = file.path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            return crate::setup::SetupFinding::fail(
-                format!("install-{}", sanitize_name(&file.path.to_string_lossy())),
-                format!("cannot create directory {}", parent.display()),
-                e.to_string(),
-            );
-        }
-    }
-
-    match std::fs::read(&file.path) {
-        Ok(existing) if existing == file.content.as_bytes() => {
-            return crate::setup::SetupFinding::pass(
-                format!("install-{}", sanitize_name(&file.path.to_string_lossy())),
-                format!("unchanged: {}", file.path.display()),
-            );
-        }
-        Ok(_) if !force => {
-            return crate::setup::SetupFinding::fail(
-                format!("install-{}", sanitize_name(&file.path.to_string_lossy())),
-                format!("exists with different content: {}", file.path.display()),
-                "Review `ags setup`, then rerun setup with --force --yes if replacement is intended.",
-            );
-        }
-        Ok(_) => {}
-        Err(_) => {}
-    }
-
-    if let Err(e) = ags_platform::atomic_write(&file.path, file.content.as_bytes()) {
-        return crate::setup::SetupFinding::fail(
-            format!("install-{}", sanitize_name(&file.path.to_string_lossy())),
-            format!("write failed: {}", file.path.display()),
-            e.to_string(),
-        );
-    }
-
-    #[cfg(unix)]
-    if let Some(mode) = file.mode {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(metadata) = std::fs::metadata(&file.path) {
-            let mut perms = metadata.permissions();
-            perms.set_mode(mode);
-            let _ = std::fs::set_permissions(&file.path, perms);
-        }
-    }
-
-    crate::setup::SetupFinding::pass(
-        format!("install-{}", sanitize_name(&file.path.to_string_lossy())),
-        format!("written: {}", file.path.display()),
-    )
-}
-
-fn run_claude_mcp_command(args: &[String]) -> Result<String, String> {
-    let output = std::process::Command::new("claude")
-        .args(args)
-        .output()
-        .map_err(|e| e.to_string())?;
-    let combined = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    if output.status.success() {
-        Ok(combined.trim().to_string())
-    } else {
-        Err(combined.trim().to_string())
-    }
-}
-fn register_claude_mcp_server(
-    report: &mut crate::setup::SetupReport,
-    server: &str,
-    command: String,
-    args: &[&str],
-) {
-    let remove_args = vec![
-        "mcp".to_string(),
-        "remove".to_string(),
-        server.to_string(),
-        "-s".to_string(),
-        "user".to_string(),
-    ];
-    let _ = run_claude_mcp_command(&remove_args);
-
-    let mut add_args = vec![
-        "mcp".to_string(),
-        "add".to_string(),
-        "-s".to_string(),
-        "user".to_string(),
-        server.to_string(),
-        "--".to_string(),
-        command.clone(),
-    ];
-    add_args.extend(args.iter().map(|arg| (*arg).to_string()));
-
-    match run_claude_mcp_command(&add_args) {
-        Ok(output) => {
-            let mut finding = crate::setup::SetupFinding::pass(
-                format!("install-claude-mcp-register-{server}"),
-                format!("Claude Code MCP registered {server}: {command}"),
-            );
-            finding.detail = if output.trim().is_empty() {
-                None
-            } else {
-                Some(output)
-            };
-            report.add(finding);
-        }
-        Err(e) => report.add(crate::setup::SetupFinding::fail(
-            format!("install-claude-mcp-register-{server}"),
-            format!("failed to register Claude Code MCP {server}"),
-            e,
-        )),
-    }
-}
-pub(in crate::setup) fn add_claude_registration_checks(
-    report: &mut crate::setup::SetupReport,
-    _target: &Path,
-) {
-    match command_in_path("claude") {
-        Ok(path) => report.add(crate::setup::SetupFinding::pass(
-            "install-claude-code-cli",
-            format!("Claude Code CLI available at {path}"),
-        )),
-        Err(e) => {
-            report.add(crate::setup::SetupFinding::fail(
-                "install-claude-code-cli",
-                "Claude Code CLI is required for --register-claude",
-                e,
-            ));
-            return;
-        }
-    }
-
-    match command_in_path("ags") {
-        Ok(ags_path) => register_claude_mcp_server(
-            report,
-            "ags",
-            ags_path,
-            &["mcp", "serve", "--transport", "stdio"],
-        ),
-        Err(e) => report.add(crate::setup::SetupFinding::fail(
-            "install-claude-mcp-register-ags",
-            "cannot register AGS MCP because `ags` is not on PATH",
-            e,
-        )),
-    }
-
-    match command_in_path("codegraph") {
-        Ok(codegraph_path) => {
-            register_claude_mcp_server(report, "codegraph", codegraph_path, &["serve", "--mcp"])
-        }
-        Err(e) => report.add(crate::setup::SetupFinding::fail(
-            "install-claude-mcp-register-codegraph",
-            "cannot register codegraph MCP because `codegraph` is not on PATH",
-            format!("install codegraph first, then rerun setup. {e}"),
-        )),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #[cfg(unix)]
-    use super::super::InstallFile;
-    #[cfg(unix)]
-    use super::write_install_file;
+    use super::codex_skill_thin_index_ancestor;
     #[cfg(unix)]
     use std::path::Path;
     #[cfg(unix)]
@@ -220,16 +43,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
         base
-    }
-
-    #[cfg(unix)]
-    fn install_file(path: PathBuf, content: &str) -> InstallFile {
-        InstallFile {
-            path,
-            description: "test".to_string(),
-            content: content.to_string(),
-            mode: None,
-        }
     }
 
     #[cfg(unix)]
@@ -251,11 +64,10 @@ mod tests {
         std::fs::write(canonical.join("SKILL.md"), "canonical\n").unwrap();
         symlink_dir(&canonical, &host.join("ags-setup"));
 
-        let file = install_file(host.join("ags-setup/SKILL.md"), "generated\n");
-        let finding = write_install_file(&file, true);
-
-        assert_eq!(finding.status, crate::setup::SetupCheckStatus::Pass);
-        assert!(finding.message.contains("skipped thin-index symlink"));
+        assert_eq!(
+            codex_skill_thin_index_ancestor(&host.join("ags-setup/SKILL.md")),
+            Some(host.join("ags-setup"))
+        );
         assert_eq!(
             std::fs::read_to_string(canonical.join("SKILL.md")).unwrap(),
             "canonical\n"
@@ -274,14 +86,10 @@ mod tests {
         std::fs::write(canonical.join("agents/openai.yaml"), "canonical-meta\n").unwrap();
         symlink_dir(&canonical, &host.join("ags-setup"));
 
-        let file = install_file(
-            host.join("ags-setup/agents/openai.yaml"),
-            "generated-meta\n",
+        assert_eq!(
+            codex_skill_thin_index_ancestor(&host.join("ags-setup/agents/openai.yaml")),
+            Some(host.join("ags-setup"))
         );
-        let finding = write_install_file(&file, true);
-
-        assert_eq!(finding.status, crate::setup::SetupCheckStatus::Pass);
-        assert!(finding.message.contains("skipped thin-index symlink"));
         assert_eq!(
             std::fs::read_to_string(canonical.join("agents/openai.yaml")).unwrap(),
             "canonical-meta\n"

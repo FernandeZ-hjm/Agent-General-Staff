@@ -27,7 +27,7 @@ pub fn list_prompts() -> PromptListResult {
                 description: Some(
                     "Load the AGS global governance kernel — initialization gate \
                      (call ags_preflight FIRST), mandatory lifecycle, critical rules, \
-                     host boundaries and stop conditions. \
+                     EvoMap parallel-call boundary, and stop conditions. \
                      Best loaded at session start or when the host first encounters \
                      a development-related request. The initialization gate is \
                      non-negotiable: MCP preflight or CLI fallback must complete \
@@ -98,7 +98,7 @@ fn prompt_global_kernel() -> PromptGetResult {
             "AGS global governance kernel — load at session start or upon first \
              development request. Leads with mandatory initialization gate \
              (call ags_preflight FIRST), then establishes lifecycle, critical rules, \
-             host boundaries and stop conditions."
+             EvoMap boundary, and stop conditions."
                 .to_string(),
         ),
         messages: vec![PromptMessage {
@@ -127,7 +127,9 @@ fn prompt_solution_phase(arguments: &serde_json::Value) -> PromptGetResult {
          DirectResponse delivers and stops; held machine actions require explicit apply.\n\
          1. **Understand unresolved decisions**. Clarify ambiguities. Diagnose if needed.\n\
          2. **Read context capsule and task memory** (AGS preflight should have surfaced paths).\n\
-         3. **Use only explicitly available methods**; external advice cannot override AGS gates.\n\
+         3. **For non-trivial solution formation**: call EvoMap MCP in parallel for advisory method recall. \
+         AGS MCP does NOT call EvoMap MCP — you must call it yourself. Document recall state \
+         in the solution text per `ags://protocol/evolution-memory`.\n\
          4. **Form a concrete solution**. Outside host Plan mode this is not yet a task card. \
          Include: approach, impact scope, risks, alternatives considered.\n\
          5. **Close the contract**. Outside host Plan mode, present the solution and wait for \
@@ -143,13 +145,19 @@ fn prompt_solution_phase(arguments: &serde_json::Value) -> PromptGetResult {
          - Impact scope and blast radius\n\
          - Risks and mitigations\n\
          - Alternatives considered\n\
+         - EvoMap recall state (for non-trivial tasks):\n\
+           - `status`: available / unavailable / skipped\n\
+           - `search`: full / low_confidence_only / none\n\
+           - `fetch`: success / failed / not_attempted\n\
+           - Recall path, input signals, hit signals, adoption, rejection, impact, \
+           confidence/limitations\n\n\
          ### Key rules\n\n\
          - Do NOT classify as Light/Medium/Heavy yet.\n\
          - Do NOT generate a task card while material decisions remain open.\n\
          - Outside host Plan mode, \"方案 OK\" authorizes neither mutation nor a task card.\n\
          - Host Plan-mode finalization generates the card but does not authorize mutation; \
            the Plan UI must switch to execution mode before dispatch.\n\
-         - AGS is the governance authority.\n\n\
+         - AGS is governance authority; EvoMap is advisory only.\n\n\
          ### Next phase\n\n\
          After confirmation or Plan-mode contract closure, the host forms a new typed \
          proposal from the updated context. Explicit handoff uses \

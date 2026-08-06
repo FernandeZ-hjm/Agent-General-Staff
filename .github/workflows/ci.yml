@@ -12,21 +12,19 @@ env:
   AGS_WORKSPACE_IDLE_MS: "1000"
 
 jobs:
-  rust:
-    name: Public source and release gate
+  public-gate:
+    name: Unique public source and release gate
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Install Rust stable
-        run: |
-          rustup toolchain install stable --profile minimal --component clippy
-          rustup default stable
-
-      - name: Cache cargo
-        uses: actions/cache@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: 1.96.0
+          components: clippy
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/bin/
@@ -34,29 +32,81 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
-
-      - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
+      - name: Prepare evidence directory
+        shell: bash
+        run: mkdir -p "$RUNNER_TEMP/public-verification-evidence"
+      - name: Clippy once
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - name: Verify source semantics once
-        run: cargo run -q -p ags-cli -- verify --scope local --format text
-
-      - name: Test npm launcher once
-        run: npm test --prefix packages/ags-mcp
-
+        shell: bash
+        run: |
+          cargo run -q --locked -p ags-cli -- verify \
+            --scope local \
+            --format json > "$RUNNER_TEMP/public-verification-evidence/local-report.json"
+      - name: Test all npm entrypoints once
+        run: >-
+          node --test
+          packages/ags-launcher/test/launcher.test.js
+          packages/ags-cli/test/launcher.test.js
+          packages/ags-mcp/test/launcher.test.js
       - name: Install cargo-deny
         run: |
-          if command -v cargo-deny >/dev/null 2>&1; then
-            cargo deny --version
-          else
+          if ! command -v cargo-deny >/dev/null 2>&1; then
             cargo install cargo-deny --locked
           fi
-
-      - name: Supply-chain audit
+          cargo deny --version | tee "$RUNNER_TEMP/public-verification-evidence/cargo-deny-version.txt"
+      - name: Supply-chain audit once
         run: cargo deny check
-
       - name: Verify public release boundary once
-        run: cargo run -q -p ags-cli -- verify --scope release --format text
+        shell: bash
+        run: |
+          cargo run -q --locked -p ags-cli -- verify \
+            --scope release \
+            --format json > "$RUNNER_TEMP/public-verification-evidence/release-report.json"
+      - name: Freeze canonical public release plan
+        shell: bash
+        run: |
+          cargo run -q --locked -p ags-cli -- release package \
+            --profile public-full \
+            --dry-run \
+            --format json > "$RUNNER_TEMP/public-verification-evidence/public-release-plan.json"
+      - name: Create exact-input VerificationBundle
+        shell: bash
+        run: |
+          cargo build -q --locked -p ags-cli
+          cp target/debug/ags "$RUNNER_TEMP/public-verification-evidence/ags-verifier"
+          "$RUNNER_TEMP/public-verification-evidence/ags-verifier" verify bundle create \
+            --target . \
+            --source-scope public-full \
+            --report "$RUNNER_TEMP/public-verification-evidence/release-report.json" \
+            --command 'cargo clippy --locked --all-targets --all-features -- -D warnings' \
+            --command 'ags verify --scope local --format json' \
+            --command 'node --test launcher suites' \
+            --command 'cargo deny check' \
+            --command 'ags verify --scope release --format json' \
+            --command 'ags release package --profile public-full --dry-run --format json' \
+            --test-id public::clippy \
+            --test-id public::local-verification \
+            --test-id public::npm-entrypoints \
+            --test-id public::supply-chain \
+            --test-id public::release-boundary \
+            --test-id public::release-plan \
+            --artifact "local-report=$RUNNER_TEMP/public-verification-evidence/local-report.json" \
+            --artifact "release-report=$RUNNER_TEMP/public-verification-evidence/release-report.json" \
+            --artifact "public-release-plan=$RUNNER_TEMP/public-verification-evidence/public-release-plan.json" \
+            --artifact "cargo-deny-version=$RUNNER_TEMP/public-verification-evidence/cargo-deny-version.txt" \
+            --artifact "ags-verifier=$RUNNER_TEMP/public-verification-evidence/ags-verifier" \
+            --output "$RUNNER_TEMP/public-verification-evidence/verification-bundle.json"
+          "$RUNNER_TEMP/public-verification-evidence/ags-verifier" verify bundle validate \
+            --target . \
+            --source-scope public-full \
+            --bundle "$RUNNER_TEMP/public-verification-evidence/verification-bundle.json" \
+            --format json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: public-verification-evidence
+          path: ${{ runner.temp }}/public-verification-evidence/
+          if-no-files-found: error

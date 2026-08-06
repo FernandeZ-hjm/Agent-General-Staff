@@ -27,16 +27,20 @@ jobs:
           registry-url: "https://registry.npmjs.org"
       - name: Install npm with trusted publishing support
         run: npm install --global npm@11.12.1
-      - name: Normalize and verify package metadata
-        working-directory: packages/ags-mcp
+      - name: Pack and inspect npm entry payloads
+        shell: bash
         run: |
-          npm pkg fix
-          git diff --exit-code -- package.json
+          for package in ags-launcher ags-cli ags-mcp; do
+            npm pack --dry-run --json "./packages/$package" > "$RUNNER_TEMP/$package-pack.json"
+            test "$(jq 'length' "$RUNNER_TEMP/$package-pack.json")" -eq 1
+          done
       - name: Verify package and release versions
         shell: bash
         run: |
-          package_version="$(node -p "require('./packages/ags-mcp/package.json').version")"
-          test "$package_version" = "${{ inputs.version }}"
+          for package in ags-launcher ags-cli ags-mcp; do
+            package_version="$(node -p "require('./packages/$package/package.json').version")"
+            test "$package_version" = "${{ inputs.version }}"
+          done
           test "$GITHUB_REPOSITORY" = "FernandeZ-hjm/Agent-General-Staff"
           tag="v${{ inputs.version }}"
           assets="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
@@ -47,7 +51,7 @@ jobs:
             "ags-${tag}-aarch64-unknown-linux-gnu.tar.gz" \
             "ags-${tag}-x86_64-pc-windows-msvc.zip" \
           )
-          for name in "${asset_names[@]}" SHA256SUMS
+          for name in "${asset_names[@]}" SHA256SUMS release-index.json release-index.sig
           do
             grep -Fqx "$name" <<<"$assets"
           done
@@ -55,6 +59,8 @@ jobs:
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
             --pattern 'ags-v*' \
             --pattern SHA256SUMS \
+            --pattern release-index.json \
+            --pattern release-index.sig \
             --dir "$RUNNER_TEMP/ags-release-check"
           cd "$RUNNER_TEMP/ags-release-check"
           signer_workflow="${GITHUB_SERVER_URL#*://}/$GITHUB_REPOSITORY/.github/workflows/release.yml"
@@ -67,7 +73,26 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --signer-workflow "$signer_workflow"
           done
+          node --input-type=module <<'NODE'
+          import crypto from "node:crypto";
+          import fs from "node:fs";
+          const directory = process.env.RUNNER_TEMP + "/ags-release-check";
+          const indexBytes = fs.readFileSync(directory + "/release-index.json");
+          const signature = Buffer.from(fs.readFileSync(directory + "/release-index.sig", "utf8").trim(), "base64");
+          const publicKey = fs.readFileSync(process.env.GITHUB_WORKSPACE + "/packages/ags-launcher/release-signing-public.pem", "utf8");
+          if (!crypto.verify(null, indexBytes, publicKey, signature)) process.exit(1);
+          const index = JSON.parse(indexBytes);
+          if (index.version !== process.env.INPUT_VERSION || index.tag !== `v${process.env.INPUT_VERSION}`) process.exit(1);
+          NODE
         env:
           GH_TOKEN: ${{ github.token }}
-      - run: npm publish --provenance --access public
+          INPUT_VERSION: ${{ inputs.version }}
+      - name: Publish shared launcher
+        run: npm publish --provenance --access public
+        working-directory: packages/ags-launcher
+      - name: Publish CLI
+        run: npm publish --provenance --access public
+        working-directory: packages/ags-cli
+      - name: Publish MCP
+        run: npm publish --provenance --access public
         working-directory: packages/ags-mcp

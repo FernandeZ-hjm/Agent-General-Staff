@@ -2,7 +2,7 @@
 //!
 //! Provides a shared vocabulary of diagnostic types (`HealthReport`,
 //! `Finding`, `Severity`, `CheckStatus`) and report rendering (text / JSON)
-//! reusable by `ags doctor`, `ags bootstrap-dry-run`, and any future diagnostic
+//! reusable by `ags doctor` and future diagnostic
 //! CLI. Source formatting, tests, and builds are intentionally owned by
 //! `ags verify`, not doctor.
 //!

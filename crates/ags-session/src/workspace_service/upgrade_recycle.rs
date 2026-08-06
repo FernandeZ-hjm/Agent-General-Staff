@@ -34,10 +34,7 @@ pub(super) fn workspace_service_status_impl(
     workspace: &Path,
 ) -> Result<WorkspaceServiceStatus, String> {
     let workspace = canonical_workspace_root(workspace)?;
-    let paths = ServicePaths::new(
-        &ags_capability_governance::locate_runtime_home(),
-        &workspace,
-    );
+    let paths = ServicePaths::new(&ags_platform::runtime_home(), &workspace);
     let current_hash = current_executable_hash()?;
     let Some(registry) = read_registry(&paths.registry)? else {
         return Ok(WorkspaceServiceStatus {
@@ -69,10 +66,7 @@ pub(super) fn restart_workspace_service_impl(
     workspace: &Path,
 ) -> Result<WorkspaceServiceStatus, String> {
     let workspace = canonical_workspace_root(workspace)?;
-    let paths = ServicePaths::new(
-        &ags_capability_governance::locate_runtime_home(),
-        &workspace,
-    );
+    let paths = ServicePaths::new(&ags_platform::runtime_home(), &workspace);
     if let Some(registry) = read_registry(&paths.registry)? {
         if registry.workspace != workspace {
             return Err("workspace daemon registry identity mismatch".to_string());
@@ -95,7 +89,7 @@ pub(super) fn run_workspace_daemon_impl(
     handler: Arc<dyn WorkspaceSessionHandler>,
 ) -> Result<(), String> {
     let workspace = canonical_workspace_root(workspace)?;
-    let runtime_home = ags_capability_governance::locate_runtime_home();
+    let runtime_home = ags_platform::runtime_home();
     let paths = ServicePaths::new(&runtime_home, &workspace);
     ensure_private_dir(&paths.dir)?;
     let owner = acquire_workspace_owner(&paths, &workspace)?;
@@ -176,7 +170,7 @@ pub(super) fn run_workspace_daemon_impl(
 }
 
 pub(super) fn connect_or_start(workspace: &Path) -> Result<(TcpStream, WorkspaceRegistry), String> {
-    let runtime_home = ags_capability_governance::locate_runtime_home();
+    let runtime_home = ags_platform::runtime_home();
     let paths = ServicePaths::new(&runtime_home, workspace);
     ensure_private_dir(&paths.dir)?;
     let fast_connected = connect_registered(&paths, workspace)?;

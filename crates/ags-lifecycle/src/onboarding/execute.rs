@@ -1,4 +1,3 @@
-use super::util::*;
 use super::*;
 
 pub fn find_action<'a>(
@@ -17,7 +16,7 @@ pub fn find_action<'a>(
 
 pub fn action_hash(plan_hash: &str, item_id: &str, action: &OnboardingAction) -> String {
     let bytes = serde_json::to_vec(&(plan_hash, item_id, action)).unwrap_or_default();
-    sha256(&bytes)
+    ags_platform::sha256(&bytes)
 }
 
 /// Execute one closed action already selected from an assessed plan.

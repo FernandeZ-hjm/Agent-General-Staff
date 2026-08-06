@@ -24,14 +24,15 @@ pub(in super::super) fn cli_family_for_skill(skill_name: &str) -> Option<&'stati
         .find(|f| skill_name != f.cli && skill_name.starts_with(f.prefix))
 }
 
-// ── MCP registry reader ──────────────────────────────────────────────────────
+// ── MCP inventory sources ───────────────────────────────────────────────────
 
-pub(in super::super) struct RegistryEntry {
+pub(in super::super) struct McpInventorySource {
     pub(in super::super) name: String,
     pub(in super::super) manager: Option<String>,
     pub(in super::super) suite_interface: bool,
-    /// Host clients the registry declares this server installed in
-    /// (`install.installed_clients`). Used to decide expected host visibility.
+    pub(in super::super) declaration_source: &'static str,
+    /// Only the bundled AGS suite interface may declare an expected Host set.
+    /// Third-party installation and activation are observed from Host state.
     pub(in super::super) installed_clients: Vec<String>,
 }
 
@@ -50,48 +51,63 @@ pub(in super::super) struct RequiredRegistrySkill {
     pub(in super::super) source_type: Option<String>,
 }
 
-/// Read `manifests/mcp-registry.yaml` and return entries from both the
-/// `suite_interfaces:` (AGS self) and `mcps:` (governed) sections. Lenient:
-/// returns an empty list when the file is missing or unparseable.
-pub(in super::super) fn read_mcp_registry(repo_root: &Path) -> Vec<RegistryEntry> {
+/// Join the bundled AGS suite interface with catalog MCP identities. Static
+/// manifests never claim that a third-party MCP is installed or active; live
+/// Host probes supply that fact later in the inventory build.
+pub(in super::super) fn read_mcp_inventory_sources(repo_root: &Path) -> Vec<McpInventorySource> {
     let path = repo_root.join("manifests/mcp-registry.yaml");
-    let Ok(content) = std::fs::read_to_string(&path) else {
-        return Vec::new();
-    };
-    let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(&content) else {
-        return Vec::new();
-    };
-
     let mut out = Vec::new();
-    for (section, is_iface) in [("suite_interfaces", true), ("mcps", false)] {
-        if let Some(seq) = doc.get(section).and_then(|v| v.as_sequence()) {
-            for item in seq {
-                if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
-                    let manager = item
-                        .get("package")
-                        .and_then(|p| p.get("manager"))
-                        .and_then(|v| v.as_str())
-                        .map(ToString::to_string);
-                    let installed_clients = item
-                        .get("install")
-                        .and_then(|i| i.get("installed_clients"))
-                        .and_then(|v| v.as_sequence())
-                        .map(|seq| {
-                            seq.iter()
-                                .filter_map(|v| v.as_str().map(ToString::to_string))
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    out.push(RegistryEntry {
-                        name: name.to_string(),
-                        manager,
-                        suite_interface: is_iface,
-                        installed_clients,
-                    });
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(doc) = serde_yaml::from_str::<serde_yaml::Value>(&content) {
+            if let Some(seq) = doc.get("suite_interfaces").and_then(|v| v.as_sequence()) {
+                for item in seq {
+                    if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
+                        let manager = item
+                            .get("package")
+                            .and_then(|p| p.get("manager"))
+                            .and_then(|v| v.as_str())
+                            .map(ToString::to_string);
+                        let installed_clients = item
+                            .get("install")
+                            .and_then(|i| i.get("installed_clients"))
+                            .and_then(|v| v.as_sequence())
+                            .map(|seq| {
+                                seq.iter()
+                                    .filter_map(|v| v.as_str().map(ToString::to_string))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        out.push(McpInventorySource {
+                            name: name.to_string(),
+                            manager,
+                            suite_interface: true,
+                            declaration_source: "manifests/mcp-registry.yaml",
+                            installed_clients,
+                        });
+                    }
                 }
             }
         }
     }
+
+    if let Ok(manifest) = crate::third_party_manifest::read_third_party_manifest(repo_root) {
+        for capability in manifest.capabilities.into_iter().filter(|capability| {
+            capability.kind == crate::third_party_manifest::CapabilityKind::Mcp
+        }) {
+            let Some(contract) = capability.mcp else {
+                continue;
+            };
+            out.push(McpInventorySource {
+                name: contract.server_name,
+                manager: Some(capability.source.manager),
+                suite_interface: false,
+                declaration_source: crate::third_party_manifest::THIRD_PARTY_MANIFEST_PATH,
+                installed_clients: Vec::new(),
+            });
+        }
+    }
+    out.sort_by(|left, right| left.name.cmp(&right.name));
+    out.dedup_by(|left, right| left.name == right.name);
     out
 }
 
@@ -114,13 +130,10 @@ pub struct RoutingRead {
     pub parse_failures: Vec<String>,
 }
 
-/// Read stable routing metadata declared in `manifests/skills-registry.yaml`
-/// (per skill) and `manifests/mcp-registry.yaml` (per MCP / suite interface),
-/// keyed by capability name. This is the ONLY source of production routing
-/// metadata — there is no built-in fallback table. Lenient: missing or
-/// unparseable files yield an empty map, and entries without a `routing:` block
-/// are simply absent (never synthesized). A present-but-malformed block is
-/// absent from the map AND recorded in `parse_failures`.
+/// Read stable routing metadata from the suite Skill registry, the canonical
+/// third-party catalog, and internal entrypoint declarations. There is no
+/// built-in fallback table. Missing or malformed entries stay absent and are
+/// recorded in `parse_failures` so routing fails closed.
 pub(in super::super) fn read_routing_metadata(repo_root: &Path) -> RoutingRead {
     let mut read = RoutingRead::default();
 
@@ -155,7 +168,86 @@ pub(in super::super) fn read_routing_metadata(repo_root: &Path) -> RoutingRead {
         }
     }
 
+    match crate::third_party_manifest::read_third_party_manifest(repo_root) {
+        Ok(manifest) => {
+            for capability in manifest.capabilities.iter().filter(|capability| {
+                matches!(
+                    capability.kind,
+                    crate::third_party_manifest::CapabilityKind::Skill
+                        | crate::third_party_manifest::CapabilityKind::Mcp
+                        | crate::third_party_manifest::CapabilityKind::Cli
+                )
+            }) {
+                let name = capability
+                    .mcp
+                    .as_ref()
+                    .map(|contract| contract.server_name.as_str())
+                    .unwrap_or(capability.id.as_str());
+                match catalog_routing(capability) {
+                    Ok(routing) => {
+                        if read.map.contains_key(name) {
+                            read.parse_failures
+                                .push(format!("duplicate-route-authority:{name}"));
+                        } else {
+                            read.map.insert(name.to_string(), routing);
+                        }
+                    }
+                    Err(()) => read.parse_failures.push(name.to_string()),
+                }
+            }
+        }
+        Err(error) => read
+            .parse_failures
+            .push(format!("third-party-capabilities: {error}")),
+    }
+
     read
+}
+
+fn catalog_routing(
+    capability: &crate::third_party_manifest::ThirdPartyCapability,
+) -> Result<RoutingMetadata, ()> {
+    let routing = &capability.routing;
+    let route_state = match routing.route_state.as_str() {
+        "routable" => RouteState::Routable,
+        "not-routable" => RouteState::NotRoutable,
+        "retired" => RouteState::Retired,
+        _ => return Err(()),
+    };
+    let mutation_surface = match routing.mutation_surface.as_str() {
+        "" | "read-only" => MutationSurface::ReadOnly,
+        "local-write" => MutationSurface::LocalWrite,
+        "external-write" => MutationSurface::ExternalWrite,
+        _ => return Err(()),
+    };
+    let cost_class = match routing.cost_class.as_str() {
+        "" | "free" => CostClass::Free,
+        "local" => CostClass::Local,
+        "network" => CostClass::Network,
+        "paid" => CostClass::Paid,
+        _ => return Err(()),
+    };
+    Ok(RoutingMetadata {
+        intent_tags: routing.intent_tags.clone(),
+        scope_tags: routing.scope_tags.clone(),
+        mutation_surface,
+        requires_auth: capability.requires_auth,
+        auth_kind: routing.auth_kind.clone(),
+        cost_class,
+        invoke_hint: routing.invoke_hint.clone().unwrap_or_default(),
+        route_priority: routing
+            .route_priority
+            .unwrap_or_else(default_route_priority),
+        route_state,
+        capability_group: routing.capability_group.clone(),
+        upstream_group: routing.upstream_group.clone(),
+        examples: RouteExamples {
+            positive: routing.positive_examples.clone(),
+            negative: routing.negative_examples.clone(),
+        },
+        parent: None,
+        entrypoint: None,
+    })
 }
 
 /// Parse one registry entry's `name` + optional `routing:` block. An entry

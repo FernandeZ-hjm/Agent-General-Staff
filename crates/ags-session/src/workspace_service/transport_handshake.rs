@@ -70,10 +70,7 @@ impl Drop for SessionActivity {
 pub(super) fn run_stdio_adapter_impl() -> Result<(), String> {
     let cwd = std::env::current_dir().map_err(|error| format!("current_dir failed: {error}"))?;
     let workspace = canonical_workspace_root(&cwd)?;
-    let service_paths = ServicePaths::new(
-        &ags_capability_governance::locate_runtime_home(),
-        &workspace,
-    );
+    let service_paths = ServicePaths::new(&ags_platform::runtime_home(), &workspace);
     let mut first_error = None;
     let (mut stream, mut daemon_reader) = loop {
         match connect_workspace_session(&workspace) {
@@ -153,7 +150,7 @@ pub(super) fn inspect_existing_workspace_service_impl(
     workspace: &Path,
 ) -> Result<Option<WorkspaceServiceInspection>, String> {
     let workspace = canonical_workspace_root(workspace)?;
-    let runtime_home = ags_capability_governance::locate_runtime_home();
+    let runtime_home = ags_platform::runtime_home();
     inspect_existing_workspace_service_at(&runtime_home, &workspace)
 }
 
@@ -216,7 +213,7 @@ fn connect_workspace_session(
     workspace: &Path,
 ) -> Result<(TcpStream, BufReader<TcpStream>), String> {
     let (stream, registry) = connect_or_start(workspace)?;
-    let paths = ServicePaths::new(&ags_capability_governance::locate_runtime_home(), workspace);
+    let paths = ServicePaths::new(&ags_platform::runtime_home(), workspace);
     finish_workspace_session(stream, &registry, workspace, &paths)
 }
 

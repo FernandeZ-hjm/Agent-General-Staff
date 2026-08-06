@@ -127,6 +127,28 @@ pub(super) fn scan_skill_dir_drift(dir: &Path, label: &str) -> Option<ThinIndexD
 
 /// Verify host visibility for one host. Read-only.
 pub fn verify_host(ctx: &ConsoleContext, host: &str) -> HostVerifyResult {
+    verify_hosts(ctx, &[host])
+        .into_iter()
+        .next()
+        .expect("single-Host verification returns one result")
+}
+
+/// Verify multiple Hosts from one canonical machine observation. Host-specific
+/// assertions stay table-driven while manifest parsing, directory scans and
+/// MCP probes execute only once.
+pub fn verify_hosts(ctx: &ConsoleContext, hosts: &[&str]) -> Vec<HostVerifyResult> {
+    let inventory = build_inventory(ctx, hosts);
+    hosts
+        .iter()
+        .map(|host| verify_host_from_inventory(ctx, host, &inventory))
+        .collect()
+}
+
+fn verify_host_from_inventory(
+    ctx: &ConsoleContext,
+    host: &str,
+    inventory: &ManagedInventoryResult,
+) -> HostVerifyResult {
     let supported = host_skills_subdir(host).is_some();
     if !supported {
         return HostVerifyResult {
@@ -150,7 +172,6 @@ pub fn verify_host(ctx: &ConsoleContext, host: &str) -> HostVerifyResult {
         };
     }
 
-    let inventory = build_inventory(ctx, &[host]);
     let mut checks = Vec::new();
     for cap in &inventory.capabilities {
         if let Some(vis) = cap.host_visibility.iter().find(|v| v.host == host) {

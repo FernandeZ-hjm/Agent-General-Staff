@@ -14,10 +14,6 @@ pub struct AssessContext<'a> {
     pub host_registered: Option<bool>,
     /// MCP server ids proven by an official host registrar probe.
     pub registered_mcp_ids: &'a [String],
-    /// Exact skills proven Active+Ready by the current host capability
-    /// snapshot. This is the routing truth source; filesystem visibility alone
-    /// is never enough to claim a skill is ready.
-    pub active_skill_ids: &'a [String],
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -72,7 +68,9 @@ pub fn assess_public_with_resolution(
         .iter()
         .filter(|capability| capability.applies_to("public"))
     {
-        items.push(capability_item(ctx, capability));
+        if let Some(item) = capability_item(ctx, capability) {
+            items.push(item);
+        }
     }
 
     for tool in &profile.developer_tools {
@@ -250,12 +248,19 @@ fn host_item(ctx: &AssessContext<'_>) -> OnboardingItem {
     }
 }
 
-fn capability_item(ctx: &AssessContext<'_>, capability: &ThirdPartyCapability) -> OnboardingItem {
+fn capability_item(
+    ctx: &AssessContext<'_>,
+    capability: &ThirdPartyCapability,
+) -> Option<OnboardingItem> {
     match capability.kind {
-        CapabilityKind::Skill => skill_item(ctx, capability),
-        CapabilityKind::Cli => cli_item(capability),
-        CapabilityKind::Mcp => mcp_item(ctx, capability),
-        CapabilityKind::Hook => hook_item(ctx, capability),
+        // Skill discovery and lifecycle belong exclusively to the canonical
+        // catalog + MaintenanceService path. Onboarding must not author a
+        // second installed/routable decision from catalog metadata or Host
+        // filesystem visibility.
+        CapabilityKind::Skill => None,
+        CapabilityKind::Cli => Some(cli_item(capability)),
+        CapabilityKind::Mcp => Some(mcp_item(ctx, capability)),
+        CapabilityKind::Hook => Some(hook_item(ctx, capability)),
     }
 }
 
@@ -381,86 +386,6 @@ fn mcp_item(ctx: &AssessContext<'_>, capability: &ThirdPartyCapability) -> Onboa
         hook: None,
         action,
     }
-}
-
-pub(super) fn skill_item(ctx: &AssessContext<'_>, skill: &ThirdPartyCapability) -> OnboardingItem {
-    let active = ctx
-        .active_skill_ids
-        .iter()
-        .any(|skill_id| skill_id == &skill.id);
-    let visible = host_skill_body_paths(ctx.home, ctx.host, &skill.id)
-        .iter()
-        .any(|body| body.join("SKILL.md").is_file());
-    let trusted_source = skill.source.manager == "git"
-        && skill
-            .source
-            .repository
-            .as_deref()
-            .is_some_and(|source| source.starts_with("https://github.com/"));
-    let revision = skill
-        .source
-        .revision
-        .as_deref()
-        .filter(|value| is_git_revision(value));
-    let integrity = revision.map(|value| format!("git-commit:{value}"));
-    let license_ready = skill
-        .source
-        .license
-        .as_deref()
-        .is_some_and(|value| !value.is_empty());
-    let (state, reason, action) = if active {
-        (
-            ComponentState::ActiveReady,
-            "current host capability snapshot confirms the skill is active and routable"
-                .to_string(),
-            None,
-        )
-    } else if visible {
-        (
-            ComponentState::VisibleNotReady,
-            "a host-visible skill body exists but the current capability snapshot does not admit it"
-                .to_string(),
-            None,
-        )
-    } else if !trusted_source {
-        (
-            ComponentState::BlockedUntrustedSource,
-            "no reviewed upstream source is recorded".to_string(),
-            None,
-        )
-    } else if revision.is_none() || !license_ready {
-        (
-            ComponentState::BlockedMissingIntegrity,
-            "source revision or license metadata is missing".to_string(),
-            None,
-        )
-    } else {
-        (
-            ComponentState::Absent,
-            "reviewed skill is available through its external manager; install or update it explicitly, then refresh the static host snapshot once".to_string(),
-            None,
-        )
-    };
-    OnboardingItem {
-        id: format!("skill:{}", skill.id),
-        category: "skill".to_string(),
-        required: skill.required,
-        state,
-        reason,
-        source: skill.source.repository.clone(),
-        license: skill.source.license.clone(),
-        integrity,
-        routing: routing_readiness(skill),
-        hook: None,
-        action,
-    }
-}
-
-fn host_skill_body_paths(home: &Path, host: &str, skill_id: &str) -> Vec<PathBuf> {
-    ags_host_integration::static_skill_roots(home, host)
-        .into_iter()
-        .map(|root| root.join(skill_id))
-        .collect()
 }
 
 fn hook_item(ctx: &AssessContext<'_>, capability: &ThirdPartyCapability) -> OnboardingItem {

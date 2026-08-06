@@ -1,6 +1,6 @@
 //! Thin `ags init` CLI adapter (五段链路第 4 段).
 
-use crate::context::{default_private_runtime_home, unix_timestamp};
+use crate::context::unix_timestamp;
 use crate::receipt_bridge::emit_ags_action_receipt;
 use std::path::{Path, PathBuf};
 
@@ -31,7 +31,7 @@ fn emit_registration_receipt(
 
 pub(crate) fn run(target: &Path, slug: Option<String>, dry_run: bool, format: &str, mode: &str) {
     let now = unix_timestamp();
-    let runtime_home = default_private_runtime_home();
+    let runtime_home = ags_platform::runtime_home();
     let approved_lifecycle_hosts = ags_lifecycle::setup::approved_lifecycle_hosts(&runtime_home)
         .unwrap_or_else(|error| {
             eprintln!("ags init: {error}");

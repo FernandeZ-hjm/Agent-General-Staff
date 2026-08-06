@@ -1,5 +1,5 @@
-schema_version: "1.1"
-# Frozen for the reviewed v0.4.12 public candidate. Refresh only when every
+schema_version: "1.2"
+# Frozen for the reviewed v0.5.0 public candidate. Refresh only when every
 # changed B overlay/rewrite byte has been reviewed and pinned here.
 projection_state: "frozen"
 
@@ -21,22 +21,29 @@ shared_files:
   - docs/adr/0001-workspace-service-and-deep-modules.md
   - docs/architecture.md
   - governance/skill-sync.md
-  - manifests/mcp-registry.yaml
   - manifests/onboarding-public.yaml
+  - manifests/public-capability-projection.yaml
   - manifests/public-release-payload.yaml
-  - manifests/skills-registry.yaml
-  - manifests/suite.yaml
-  - manifests/templates/README.md
-  - manifests/templates/hooks/claude-code-executor-stop.template.js
-  - manifests/templates/hooks/codex-planner-recall.template.json
-  - manifests/templates/runtime-profiles.template.yaml
   - manifests/third-party-capabilities.yaml
+  - rust-toolchain.toml
+  - packages/ags-cli/LICENSE
+  - packages/ags-cli/README.md
+  - packages/ags-cli/bin/ags.js
+  - packages/ags-cli/package.json
+  - packages/ags-cli/src/launcher.js
+  - packages/ags-cli/test/launcher.test.js
+  - packages/ags-launcher/README.md
+  - packages/ags-launcher/package.json
+  - packages/ags-launcher/release-signing-public.pem
+  - packages/ags-launcher/src/launcher.js
+  - packages/ags-launcher/test/launcher.test.js
   - packages/ags-mcp/LICENSE
   - packages/ags-mcp/README.md
   - packages/ags-mcp/bin/ags-mcp.js
   - packages/ags-mcp/package.json
   - packages/ags-mcp/src/launcher.js
   - packages/ags-mcp/test/launcher.test.js
+  - scripts/sign-release-index.mjs
   - protocol/agent-task-protocol.md
   - protocol/context-memory.md
   - protocol/cursor-skill-index.md
@@ -65,19 +72,21 @@ shared_files:
   - tests/fixtures/removed-compact.md
   - tests/fixtures/valid-full.md
 
+# Closed outputs of the typed public capability projection. These bytes are
+# generated and verified, never maintained as handwritten A/B rewrites.
+generated_files:
+  - manifests/mcp-registry.yaml
+  - manifests/skills-registry.yaml
+  - manifests/suite.yaml
+  - templates/command-skills/ags-agents/SKILL.md
+  - templates/command-skills/ags-doctor/SKILL.md
+  - templates/command-skills/ags-init/SKILL.md
+  - templates/command-skills/ags-setup/SKILL.md
+  - templates/command-skills/ags-skill/SKILL.md
+
 # B-owned files are not copied from A, but A still pins their exact reviewed
 # bytes. Promotion and release self-verification both reject overlay drift.
 public_overlay_files:
-  - path: templates/command-skills/ags-agents/SKILL.md
-    target_sha256: "sha256:7cd98a86153dcc8c34827bfb89b37ab680f3713325a656c4fd9965d3a660bf1f"
-  - path: templates/command-skills/ags-doctor/SKILL.md
-    target_sha256: "sha256:d71cfe030f5593a707118933ffd6dcb581f3f7adda6a4a06e699203eef9baa18"
-  - path: templates/command-skills/ags-init/SKILL.md
-    target_sha256: "sha256:d390c8ca070c61b6c824ee98742ffe2f8e35af6e2ba06c2a8a7377e5ee9891cc"
-  - path: templates/command-skills/ags-setup/SKILL.md
-    target_sha256: "sha256:40d68bed740007fc2aacb47c10727f1c05319d6cb87932093ba6eb02ab46af44"
-  - path: templates/command-skills/ags-skill/SKILL.md
-    target_sha256: "sha256:c23bb3742c22ed065415478b44e401d9bdb516007cd5bfca8157c597c82f1097"
   - path: .gitattributes
     target_sha256: "sha256:b10eef5d65afea50c501f1497529255b5634d626c55f4f0397c5f7524dfb575e"
   - path: .gitignore
@@ -89,11 +98,11 @@ public_overlay_files:
   - path: .github/PULL_REQUEST_TEMPLATE.md
     target_sha256: "sha256:e2955b5d15b08657cab32477bba15b69a9657548d0617a7d34446156da035418"
   - path: .github/workflows/ci.yml
-    target_sha256: "sha256:07bec361039f794b05392fc96ebebe7310f134a6ce2a2fcc5e296d44a7b1157b"
+    target_sha256: "sha256:6a85d129124c3722908f2fcb3ea4bcceeb0220a03ff9eeb5fe2f4df9a9193fca"
   - path: .github/workflows/npm-publish.yml
-    target_sha256: "sha256:df64f57ca39a7275f139b2589762c179baa9969696a1c4279e99849f9e093948"
+    target_sha256: "sha256:6bfbe4b053df013ad7c4ced2912bad3a9ba3b6db7836038a2c525b6e086aa320"
   - path: .github/workflows/release.yml
-    target_sha256: "sha256:72fdd3bd9505ebfdc610a84c77f962bb75383e2de0beabfc9a78509563975413"
+    target_sha256: "sha256:26acf634115d6721eca9437f40991c80cc6f12583df09f4889920045f33e5706"
   - path: COMMERCIAL.md
     target_sha256: "sha256:8035a28d9d06bc354f72a19b563dc26b8863b72d811577d862715e394f8c5ef0"
   - path: CONTRIBUTING.md
@@ -164,10 +173,6 @@ crate_trees:
   - root: crates/ags-session
   - root: crates/ags-evidence
   - root: crates/ags-verification
-    exclude:
-      - src/doctor/checks/evolver_hooks.rs
-      - src/doctor/checks/proxy.rs
-      - src/doctor/checks/templates.rs
   - root: crates/ags-lifecycle
   - root: crates/ags-cli
   - root: crates/ags-mcp
@@ -180,111 +185,31 @@ crate_trees:
 # the corresponding public projection.
 public_rewrites:
   - path: AGENTS.md
-    target_sha256: "sha256:943c7ff22b735df68cd2b85311085706e866d859b927138a0118c015a5eba633"
+    target_sha256: "sha256:148fb6b12ba436977b66cbc6b8feca99826601abf2b866aad988efe89126122d"
   - path: AGENT_SUITE_PROTOCOL.md
-    target_sha256: "sha256:8df1519727c9a5a77a61e3cd429ad308f553cdc4f305b2c642cb2a8de8ca8bc7"
+    target_sha256: "sha256:9ead5356961c56648e18aaeed4beb44a8f786de527521d8ca5085f6838e217c6"
   - path: CLAUDE.md
-    target_sha256: "sha256:7adbab7cd4ceda945d7f2646d60a204f2ca75da23b4c07694e45e597df393a74"
+    target_sha256: "sha256:7e648e284263bc7de1053162fe87c82ddb430635b77a05aa4ecd6ad23a6cc143"
   - path: README.md
-    target_sha256: "sha256:fa3566181a9e6a50ed26efd728be8006b91676fa2edd95223314a21c0f2f3a8b"
+    target_sha256: "sha256:f9d00a2d05bdc6a003289c24717fdddb3d4b7dc814d092f54e7deeb35494e1b5"
   - path: README_EN.md
-    target_sha256: "sha256:eac3df0577edebc06c541011705c0c54fc1be24de58f9b9411cd06ba43e5b1f2"
+    target_sha256: "sha256:12a10da11b6d559d1ed84603e008ae812a5079fe4fb45560c2fe24a7b0eb5256"
   - path: WORKSPACE.md
-    target_sha256: "sha256:d0047f0844845a8303e1f63d6c71a85ce1e49bdbc88790a3cf6970d9797d090b"
-  - path: crates/ags-capability-governance/src/lib.rs
-    target_sha256: "sha256:babb947b8320be8a59922410273480b3e83dd2c3933e2bbf5dad5f3c113caccc"
-  - path: crates/ags-cli/src/cli/kernel_actions.rs
-    target_sha256: "sha256:5665662ef9f6908891d2ce5dfbe4e9d7e0a902cfc2e4b9029f5ed0f5b380b4bd"
-  - path: crates/ags-cli/src/cli/mod.rs
-    target_sha256: "sha256:ac658e1207cbc6ba3b450a44ae5011690e00116dc463de5762efe33fc08ed3e0"
-  - path: crates/ags-cli/src/init/mod.rs
-    target_sha256: "sha256:244b251866c1d2da5d29973a92646e5b03a9758fe4a65ff153a7555cd2379779"
-  - path: crates/ags-cli/src/kernel/mcp.rs
-    target_sha256: "sha256:c14ce26ad9f471baec2164b97958eb4f3a4bbfcc678a3d85eb0f3f1becede808"
-  - path: crates/ags-cli/src/setup/mod.rs
-    target_sha256: "sha256:f8fc7dc26f6dc5f709549a0437b53db51e0483dbbe5d47880ade5f5b3c3487c3"
-  - path: crates/ags-cli/src/skill/mod.rs
-    target_sha256: "sha256:57092dde506ba4a952a3f2d3cc7f6db42d8d4e1ed5de6b402fd5558d2fd9235e"
-  - path: crates/ags-cli/src/update/apply.rs
-    target_sha256: "sha256:15bfbce3fe881d30d6d583a2490d2d8673e2bebbc245ca605116b17a05f1dff1"
-  - path: crates/ags-cli/src/update/repair.rs
-    target_sha256: "sha256:149c612bd865e7f6e802f8c6e1af8e75d112830d8377a6ca73ff4e02750d532a"
-  - path: crates/ags-cli/tests/public_api_facade_contract.rs
-    target_sha256: "sha256:9b153091427d5d7a6faf9afd7781403dba4c511d99ff8ccdef9143f6f0a9aff0"
-  - path: crates/ags-lifecycle/src/init/managed_projects.rs
-    target_sha256: "sha256:aed58d361e361ad1eefd30da8098fb726d67490581713a64e6dc3e20ffc9361d"
-  - path: crates/ags-lifecycle/src/init/plan.rs
-    target_sha256: "sha256:ebd8c6b21c43647172945cd1ae7c92bdb7515fc5f96cbad895a32377ec326de6"
-  - path: crates/ags-lifecycle/src/update/apply.rs
-    target_sha256: "sha256:c733d12569259a7ddfd6e9c17474f653b262916bc399875e25e428feb3912f5c"
-  - path: crates/ags-lifecycle/src/setup/apply.rs
-    target_sha256: "sha256:a4d26ac9ecbdbdfddace724dd02bc7ec757157850ecc6d441bef7c93821008f4"
-  - path: crates/ags-lifecycle/src/setup/memory/adapter.rs
-    target_sha256: "sha256:e7cadfd502a5d8e2a9e0faeb1ace27cf19a6be311355c7925e96d95b4770bb08"
-  - path: crates/ags-lifecycle/src/setup/memory/mod.rs
-    target_sha256: "sha256:f0ce89f8d72dfc85ffd127b4e791bd4ad6968b21241dce5eba58520952733d59"
-  - path: crates/ags-lifecycle/src/setup/mod.rs
-    target_sha256: "sha256:f4e6984de783d740f29382ea257ab458bd97f771144b1008260f5fe8879deb28"
-  - path: crates/ags-lifecycle/src/setup/plan.rs
-    target_sha256: "sha256:58053e89d675506b310e47f62e9fd9f0d076a7002e9ac6da6c51fddf824bed2e"
-  - path: crates/ags-lifecycle/src/setup/plan/tests.rs
-    target_sha256: "sha256:113295be8495426f6f1bd835a0f3e782f2334b6066adb012116d0c60548283dd"
-  - path: crates/ags-lifecycle/src/setup/templates.rs
-    target_sha256: "sha256:1945f4b0b5070a1ac7553cc38f26a1aa5b397c11a4cdd3212ff0916edf0fa604"
-  - path: crates/ags-lifecycle/src/setup/verify.rs
-    target_sha256: "sha256:63ad072a1c830d4b2cf90a22d45daa8d585d42fa23378394722ce68b9d9e8dc5"
-  - path: crates/ags-mcp/src/lib.rs
-    target_sha256: "sha256:a92d28857b363e5e75d244ca9340227274ed8027cd1fd6df6aa7024acaa7caae"
-  - path: crates/ags-mcp/src/prompts.rs
-    target_sha256: "sha256:fb75347baae8e6affc5dca41e6e7f0daf22cbd05c31b1ae0abbc61d27dd7e9b3"
-  - path: crates/ags-mcp/src/prompts/delivery_report.txt
-    target_sha256: "sha256:665eba33d71719144ce6cf9505cd3091abec45abeb586215e3fa8d123ce23f95"
-  - path: crates/ags-mcp/src/prompts/global_kernel.txt
-    target_sha256: "sha256:a94aa52708e10bf06e50d312848f00d65330f27793e6a83c5ce2943d2909a91e"
-  - path: crates/ags-mcp/src/resources.rs
-    target_sha256: "sha256:6b37e9d2515f9417fafdff0cb0ce9acc64ed34cf13f28599f24c720a4fd27c07"
-  - path: crates/ags-mcp/src/resources/global_kernel.md
-    target_sha256: "sha256:8d897fee810c8066779906a26577f61454301f6a052a44dfef5db8067fc1053a"
-  - path: crates/ags-mcp/src/tools/apply.rs
-    target_sha256: "sha256:4071f2ad5d2eb4db093ef8fa9d46df20394e9fd0abb9fd1b6cfa85015c70760c"
-  - path: crates/ags-verification/src/bootstrap.rs
-    target_sha256: "sha256:4907b9fc53e1f0ed0868c13e131e84767ed70c46d95ab612f0f76038e60a8dfb"
-  - path: crates/ags-verification/src/doctor/checks/mod.rs
-    target_sha256: "sha256:5dd0e51b87cced6e24ef691c217ce76d3c02f7e6ff88f9739e46565aa4aac0a2"
-  - path: crates/ags-verification/src/doctor/checks/orchestration.rs
-    target_sha256: "sha256:a25e45241ff2e437546ba3ee1704d97acab4f58a7a2d4bb4a12f8ac6c534803d"
-  - path: crates/ags-verification/src/doctor/checks/runtime.rs
-    target_sha256: "sha256:186eb3a14ee3ff53f3c8ce44e94a2b9e2462911ad0d0e940e4eb1be6f8a96533"
-  - path: docs/adr/0001-workspace-service-and-deep-modules.md
-    target_sha256: "sha256:9a2d9f30326b7f59ac84334dbc1e1531efb23e6357e2cd3490d9394fdb96f6a8"
-  - path: docs/architecture.md
-    target_sha256: "sha256:32e6e0a1df73b60191963391e8f76573f408d439ceb4f8848d0f1ecaf01158cf"
-  - path: governance/skill-sync.md
-    target_sha256: "sha256:63be6f8ccaf41716522d842ffb9976ab3480be554417dae11ccecdd6934842d9"
-  - path: manifests/mcp-registry.yaml
-    target_sha256: "sha256:807b7da9ed5d2747ec495e9b6b85ddc98672c6160a9812dedaef6c88ce4a5dfe"
-  - path: manifests/skills-registry.yaml
-    target_sha256: "sha256:f5a7d690aa3998a09aa2827f54414fd38171f22c8454bafc7a3eddc0fc9fba56"
-  - path: manifests/suite.yaml
-    target_sha256: "sha256:936bdc87f563872f630c4db72828bfdc00ce26573878375e34f48763d0d652fc"
-  - path: protocol/agent-task-protocol.md
-    target_sha256: "sha256:3740fc41f7e497a857a5ac40c7b2717223ec228f7402edc4cfc0c8afa96af2a3"
-  - path: protocol/context-memory.md
-    target_sha256: "sha256:7ede9b909113b8184c56afb015232bab9fb3c031827219e5ddf1ab8da6bc56e3"
-  - path: protocol/mcp-server.md
-    target_sha256: "sha256:ac60819f170ae889d3738503ea3fdc9efc38910b51a72b873a45d3d672cfb6a8"
-  - path: protocol/runtime-adapters.md
-    target_sha256: "sha256:44a10c38d3f37a963224497c7ac1e5a46993a607adc5e321d014ac4e28e49c97"
-  - path: protocol/skill-governance.md
-    target_sha256: "sha256:4f5bf51e7e0213462ef0057b5c372f23226d10bd403e49c9a88f439274652a6c"
+    target_sha256: "sha256:14447fb8a48304550e87d49c049adaa3af5f946f8686e52bd76feccd2adba2e0"
 
 # Binary release assets contain only this runtime support subset. The workflow
 # obtains this list from `ags release package`; it must not repeat the paths.
 runtime_asset_files:
+  - manifests/suite.yaml
   - manifests/skills-registry.yaml
   - manifests/mcp-registry.yaml
   - manifests/onboarding-public.yaml
   - manifests/third-party-capabilities.yaml
+  - templates/command-skills/ags-agents/SKILL.md
+  - templates/command-skills/ags-doctor/SKILL.md
+  - templates/command-skills/ags-init/SKILL.md
+  - templates/command-skills/ags-setup/SKILL.md
+  - templates/command-skills/ags-skill/SKILL.md
   - protocol/agent-task-protocol.md
   - protocol/task-card-template.md
   - protocol/runtime-adapters.md

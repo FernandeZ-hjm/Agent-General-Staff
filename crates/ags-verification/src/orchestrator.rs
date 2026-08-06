@@ -9,7 +9,6 @@ pub(super) enum LocalCheckGroup {
     GovernanceYaml,
     SessionPreflight,
     ProjectSessionPreflight,
-    RuntimeProfileTemplates,
 }
 
 pub(super) fn local_check_plan(is_ags_suite: bool) -> Vec<LocalCheckGroup> {
@@ -19,10 +18,7 @@ pub(super) fn local_check_plan(is_ags_suite: bool) -> Vec<LocalCheckGroup> {
     }
     plan.push(LocalCheckGroup::GovernanceYaml);
     if is_ags_suite {
-        plan.extend([
-            LocalCheckGroup::SessionPreflight,
-            LocalCheckGroup::RuntimeProfileTemplates,
-        ]);
+        plan.push(LocalCheckGroup::SessionPreflight);
     } else {
         plan.push(LocalCheckGroup::ProjectSessionPreflight);
     }
@@ -58,9 +54,6 @@ pub fn run_verify_with_options(
                     }
                     LocalCheckGroup::ProjectSessionPreflight => {
                         items.push(check_project_session_preflight(&repo_root));
-                    }
-                    LocalCheckGroup::RuntimeProfileTemplates => {
-                        items.push(check_runtime_profile_templates(&repo_root));
                     }
                 }
             }

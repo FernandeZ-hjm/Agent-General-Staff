@@ -36,13 +36,17 @@ pub(crate) enum Commands {
         /// Replace differing AGS-owned files atomically.
         #[arg(long)]
         force: bool,
-        /// Register AGS MCP servers in Claude Code user config after setup.
-        #[arg(long)]
-        register_claude: bool,
-        /// Approved workspace lifecycle hosts: comma-separated ids, `detected`,
-        /// or `none`. Required on first write-mode setup.
+        /// Approved workspace lifecycle hosts: comma-separated ids or
+        /// `detected`. At least one Host is required.
         #[arg(long)]
         lifecycle_hosts: Option<String>,
+        /// Require every suite Skill target to resolve under this authority.
+        /// Machine-local promotion tooling persists this for later updates.
+        #[arg(long, hide = true)]
+        required_skill_authority_root: Option<PathBuf>,
+        /// Internal signed-launcher recovery hook for one exact setup plan.
+        #[arg(long, hide = true)]
+        recover_plan_hash: Option<String>,
         /// Print plan only, even if --yes is omitted.
         #[arg(long)]
         dry_run: bool,
@@ -82,41 +86,6 @@ pub(crate) enum Commands {
         format: String,
     },
 
-    /// Plan private AGS runtime installation. Read-only.
-    #[command(hide = true)]
-    Plan {
-        /// Installation profile. Only `private` is currently supported.
-        #[arg(long, value_parser = ["private"])]
-        profile: String,
-        /// Target runtime home (default: $AGS_HOME or ~/.ags/private-runtime).
-        #[arg(long)]
-        target: Option<PathBuf>,
-        /// Output format: text (default) or json
-        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
-        format: String,
-    },
-    /// Apply private AGS runtime installation.
-    #[command(hide = true)]
-    Apply {
-        /// Installation profile. Only `private` is currently supported.
-        #[arg(long, value_parser = ["private"])]
-        profile: String,
-        /// Target runtime home (default: $AGS_HOME or ~/.ags/private-runtime).
-        #[arg(long)]
-        target: Option<PathBuf>,
-        /// Required confirmation for write-mode install.
-        #[arg(long)]
-        yes: bool,
-        /// Replace differing AGS-owned files atomically.
-        #[arg(long)]
-        force: bool,
-        /// Register AGS MCP servers in Claude Code user config after apply.
-        #[arg(long)]
-        register_claude: bool,
-        /// Output format: text (default) or json
-        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
-        format: String,
-    },
     /// Task card operations
     Task {
         #[command(subcommand)]
@@ -149,31 +118,6 @@ pub(crate) enum Commands {
         #[arg(long, default_value = ".")]
         target: PathBuf,
     },
-    /// Bootstrap operations — plan, dry-run, and apply to a target.
-    ///
-    /// --dry-run checks the current workspace (Rust toolchain + structure).
-    /// --apply writes bootstrap payload to a target directory.
-    /// --apply REQUIRES --target; the target MUST be a tempdir or
-    /// non-A/S/B directory.  Writing to A/S/B/B1/A1 or any suite root
-    /// containing WORKSPACE.md is rejected.
-    #[command(hide = true)]
-    Bootstrap {
-        /// Perform a dry run (no files are written).
-        #[arg(long)]
-        dry_run: bool,
-        /// Apply bootstrap: write bootstrap payload to target directory.
-        /// Requires --target.
-        #[arg(long)]
-        apply: bool,
-        /// Target directory for bootstrap operations.
-        /// Required with --apply; optional with --dry-run (default: current dir).
-        #[arg(long)]
-        target: Option<PathBuf>,
-        /// Output format: text (default) or json
-        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
-        format: String,
-    },
-
     /// Gate operations (runner-facing, M3)
     #[command(hide = true)]
     Gate {
@@ -253,7 +197,7 @@ pub(crate) enum Commands {
     },
 
     // ── Global skill governance (五段链路第 3 段) ─────────────────
-    /// Inspect static skills or explicitly manage machine-private third-party adoption.
+    /// Discover Skills or manage machine-local third-party adoption.
     Skill {
         /// Output format: text (default) or json.
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
@@ -281,7 +225,7 @@ pub(crate) enum Commands {
     // ── MCP operations ─────────────────────────────────────────
     /// Start AGS MCP server — expose governance tools/resources/prompts
     /// to MCP hosts (Tencent Agent, Codex, OMP, Cursor, Claude Code). V1 supports
-    /// stdio transport only. Third-party MCP servers remain host-owned.
+    /// stdio transport only. AGS MCP and EvoMap MCP are parallel peers.
     #[command(hide = true)]
     Mcp {
         #[command(subcommand)]
@@ -340,9 +284,6 @@ pub(crate) enum Commands {
         /// Verification scope: local, release, or promotion
         #[arg(long, default_value = "local", value_parser = ["local", "release", "promotion"])]
         scope: String,
-        /// Verification profile. `private` verifies the local AGS runtime home.
-        #[arg(long, value_parser = ["private"])]
-        profile: Option<String>,
         /// Output format: text (default) or json
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,

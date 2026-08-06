@@ -511,7 +511,7 @@ pub(super) fn machine_policy_hash(
         }),
     };
     serde_json::to_vec(&admission)
-        .map(|bytes| sha256(&bytes))
+        .map(|bytes| ags_platform::sha256(&bytes))
         .map_err(|error| format!("cannot serialize resolved machine policy: {error}"))
 }
 
@@ -529,7 +529,7 @@ pub(super) fn outcome_policy_hash(
     skill_id: &str,
     entrypoint: Option<&str>,
 ) -> String {
-    sha256(
+    ags_platform::sha256(
         serde_json::to_string(&(
             "ags-skill-outcome-policy-v1",
             request_fingerprint,
@@ -615,7 +615,7 @@ pub(super) fn hold_onboarding_action<'a>(
         lease_id,
         decision_id: session.stable_id("onboarding-decision", plan_hash),
         proposal_hash: plan_hash.to_string(),
-        scope_hash: sha256(binding.target.to_string_lossy().as_bytes()),
+        scope_hash: ags_platform::sha256(binding.target.to_string_lossy().as_bytes()),
         host: binding.host.clone(),
         target: binding.target.to_string_lossy().into_owned(),
         registry_hash: plan_hash.to_string(),

@@ -24,7 +24,7 @@ pub(super) fn capability_profile(manifest_root: &Path) -> &'static str {
 pub(super) fn third_party_availability(
     capability: &crate::third_party_manifest::ThirdPartyCapability,
     active_host: &str,
-    catalog: &[SkillCard],
+    installed_skill_catalog: &[SkillCard],
     inventory: &[ManagedCapability],
 ) -> (AvailabilityState, Vec<String>, AuthState, String) {
     use crate::third_party_manifest::CapabilityKind;
@@ -39,7 +39,10 @@ pub(super) fn third_party_availability(
 
     match capability.kind {
         CapabilityKind::Skill => {
-            if let Some(card) = catalog.iter().find(|card| card.skill_id == capability.id) {
+            if let Some(card) = installed_skill_catalog
+                .iter()
+                .find(|card| card.skill_id == capability.id)
+            {
                 reasons.extend(card.reason_codes.clone());
                 health_status = if card.availability.is_ready() {
                     "healthy"
@@ -174,6 +177,7 @@ pub(crate) fn skill_card(
     capability: &ManagedCapability,
     registry: Option<&RegistrySkill>,
     auth_state: AuthState,
+    active_host: &str,
 ) -> SkillCard {
     let file_metadata = load_skill_file_metadata(manifest_root, capability);
     let routing = registry.and_then(|item| item.routing.as_ref());
@@ -217,11 +221,11 @@ pub(crate) fn skill_card(
     if capability.health_status != HealthStatus::Healthy {
         reasons.push("health_degraded".to_string());
     }
-    if !capability
-        .host_visibility
-        .iter()
-        .any(|visibility| visibility.status == HostVisibilityStatus::Visible)
-    {
+    if !capability.host_visibility.iter().any(|visibility| {
+        visibility.host == active_host
+            && visibility.supported
+            && visibility.status == HostVisibilityStatus::Visible
+    }) {
         reasons.push("host_not_visible".to_string());
     }
     if matches!(auth_state, AuthState::Missing | AuthState::Unknown) {

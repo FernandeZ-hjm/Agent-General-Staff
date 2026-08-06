@@ -5,6 +5,9 @@ use crate::context::AGS_VERSION;
 ///
 /// The stdio process is a thin proxy. It connects to, or starts, the unique
 /// daemon keyed by the canonical workspace path.
+///
+/// AGS MCP and EvoMap MCP are parallel peers — AGS MCP does NOT proxy,
+/// wrap, or broker EvoMap MCP calls.
 fn cmd_mcp_serve(transport: &str) {
     match transport {
         "stdio" => {
@@ -13,6 +16,7 @@ fn cmd_mcp_serve(transport: &str) {
                 AGS_VERSION
             );
             eprintln!("[ags-mcp] AGS MCP is the mandatory governance interface (NOT a governed third-party MCP).");
+            eprintln!("[ags-mcp] EvoMap boundary: AGS MCP and EvoMap MCP are parallel peers. AGS MCP does not proxy EvoMap MCP.");
             if let Err(error) = ags_mcp::run_stdio_adapter() {
                 eprintln!("[ags-mcp] workspace adapter failed: {error}");
                 std::process::exit(1);

@@ -1,0 +1,36 @@
+schema_version: "1.0"
+product:
+  name: agent-general-staff
+  description: >
+    Public AGS governance control plane. Bundled command Skills are shipped with
+    the release; reviewed third-party entries are discovery metadata only.
+generated_files:
+  - manifests/mcp-registry.yaml
+  - manifests/suite.yaml
+  - manifests/skills-registry.yaml
+  - templates/command-skills/ags-agents/SKILL.md
+  - templates/command-skills/ags-doctor/SKILL.md
+  - templates/command-skills/ags-init/SKILL.md
+  - templates/command-skills/ags-setup/SKILL.md
+  - templates/command-skills/ags-skill/SKILL.md
+bundled_skills:
+  - id: ags-agents
+    source_path: global-skills/ags-agents
+    public_path: templates/command-skills/ags-agents
+    public_sha256: "sha256:12fcb4ce1d9bc28822efb700d4e017979bfca6813447e058de4a99f2aadb724f"
+  - id: ags-doctor
+    source_path: global-skills/ags-doctor
+    public_path: templates/command-skills/ags-doctor
+    public_sha256: "sha256:b037ef6f85f376f93058f25f98c73fb8978871a1f9ac0c64b2bd8cc76f48c841"
+  - id: ags-init
+    source_path: global-skills/ags-init
+    public_path: templates/command-skills/ags-init
+    public_sha256: "sha256:7f654575ec8204614b0f58bbb85afa9d3a22c04139b3b10db4d2573c73a5856f"
+  - id: ags-setup
+    source_path: global-skills/ags-setup
+    public_path: templates/command-skills/ags-setup
+    public_sha256: "sha256:2c0d3a3cf8d7d73f29f2799fc1dbf65200d8d5039a5ddf85f647b12d25663be9"
+  - id: ags-skill
+    source_path: global-skills/ags-skill
+    public_path: templates/command-skills/ags-skill
+    public_sha256: "sha256:02cfabdff7de622445b9d7385628ab76b0422baf318d9a5861935e2ae8733c26"

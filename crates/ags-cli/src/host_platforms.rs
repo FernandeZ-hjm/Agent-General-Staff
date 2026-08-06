@@ -60,7 +60,7 @@ pub(crate) fn render_cross_platform_init_text(plan: &CrossPlatformInitPlan) -> S
                 platform.mcp_host_command
             ));
             lines.push(
-                "      Skill catalog:           request path is read-only; source changes require reviewed suite update or machine-private adopt"
+                "      Skill catalog:           request path is read-only; source changes require reviewed suite update or machine-local adopt"
                     .to_string(),
             );
             lines.push(

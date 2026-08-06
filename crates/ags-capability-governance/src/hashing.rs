@@ -1,6 +1,5 @@
 #[allow(unused_imports)]
 use super::catalog::*;
-use super::*;
 pub(super) fn sort_active_skills(skills: &mut [ActiveSkill]) {
     skills.sort_by(|left, right| left.skill_id.cmp(&right.skill_id));
 }
@@ -36,8 +35,8 @@ pub(super) fn snapshot_integrity_hash(snapshot: &HostCapabilitySnapshot) -> Stri
     sort_active_skills(&mut active_skills);
     let mut active_mcps = snapshot.active_mcps.clone();
     sort_active_mcps(&mut active_mcps);
-    sha256(
-        &serde_json::to_vec(&(
+    ags_platform::sha256(
+        serde_json::to_vec(&(
             &snapshot.schema_version,
             &snapshot.host,
             &snapshot.registry_hash,
@@ -52,10 +51,4 @@ pub(super) fn snapshot_integrity_hash(snapshot: &HostCapabilitySnapshot) -> Stri
         ))
         .unwrap_or_default(),
     )
-}
-
-pub fn sha256(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    format!("sha256:{:x}", hasher.finalize())
 }

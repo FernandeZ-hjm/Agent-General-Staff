@@ -1,5 +1,5 @@
 //! `ags doctor` thin facade.
-use crate::context::{default_private_runtime_home, guard_writable_target, home_dir};
+use crate::context::{guard_writable_target, home_dir};
 use ags_workspace_facts::managed_projects;
 use std::path::Path;
 
@@ -119,14 +119,14 @@ pub(crate) fn cmd_doctor(format: &str, repair: bool, dry_run: bool, target: &Pat
     if !repair {
         // Read-only diagnosis. Doctor is the global-pipeline diagnostic authority;
         // it also surfaces the managed-projects registry (global scan).
-        let runtime_home = default_private_runtime_home();
-        let kernel = crate::setup::private_install_health_report(&runtime_home, false, false);
+        let runtime_home = ags_platform::runtime_home();
+        let kernel = crate::setup::runtime_install_health_report(&runtime_home, false);
         let project = ags_verification::doctor::run(target);
         let host_entry = host_entry_semantic_report(&home_dir().join(".agents/rules/ags-core.md"));
         let mut report = compose_doctor_report(kernel, project);
         report.findings.extend(host_entry.findings);
         let reg = managed_projects::load(&managed_projects::registry_path(
-            &default_private_runtime_home(),
+            &ags_platform::runtime_home(),
         ))
         .unwrap_or_default();
         crate::output::emit_rendered(
@@ -134,7 +134,7 @@ pub(crate) fn cmd_doctor(format: &str, repair: bool, dry_run: bool, target: &Pat
             || ags_verification::doctor::render_json(&report),
             || {
                 format!(
-                    "{}\n\n{}\nNote: lightweight local repair lives in `ags update repair-local`; doctor stays read-only.",
+                    "{}\n\n{}\nNote: Doctor stays read-only; use the owning command named by each remediation.",
                     ags_verification::doctor::render_text(&report),
                     managed_projects::render_registry_text(&reg)
                 )

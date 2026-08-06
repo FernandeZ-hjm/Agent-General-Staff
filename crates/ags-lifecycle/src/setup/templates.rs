@@ -8,7 +8,7 @@ Current protocol version: {AGS_VERSION}.
 
 - In an AGS-governed project, call MCP `ags_preflight` before any other AGS tool; use `ags session preflight --for <agent> --target <repo>` only when MCP is unavailable.
 - After preflight, read `ags://capabilities/current-host`. The host keeps the complete conversation context, performs the only natural-language interpretation, builds a typed `HostRouteProposal`, and submits it to the strictly read-only `ags_route_request`.
-- Never send raw request text to AGS. Consume `RouteResolution`; invoke only an exact admitted `SkillTarget` or closed `MachineCliTarget`. Only `ags_apply_action` may consume a returned connection-held action.
+- Never send raw request text to AGS. Consume `RouteResolution`; load an exact admitted `SkillTarget`, invoke an exact admitted `McpTarget` through the host's connected MCP surface, or consume a closed `MachineCliTarget`. AGS never proxies a third-party MCP. Only `ags_apply_action` may consume a returned connection-held action.
 - Existing canonical `## 任务卡` input validates first. A valid card proceeds to policy, gate, and LaunchPlan; an invalid card stops and never falls back to task-card generation.
 - Task-card compilation requires a confirmed closed handoff contract plus either an explicit handoff request or the final host Plan-mode artifact. Authorized same-session direct edits remain host-native.
 - In host Plan mode, keep `solution_state=open` while decisions remain unresolved. When the contract closes, run `ags task compile --host-plan-mode-final --confirmed-handoff-contract`; the final artifact is the single canonical `## 任务卡`, not a separate final-plan document.
@@ -40,13 +40,11 @@ if ! command -v ags >/dev/null 2>&1; then
   exit 127
 fi
 
-ags setup --yes --force --register-claude --lifecycle-hosts detected
-ags verify --profile private
-
-claude mcp list
+ags setup --yes --force --lifecycle-hosts detected
+ags doctor
 ```
 
-Expected result: `ags`, `/ags`, and Claude Code MCP registration are ready on this machine.
+Expected result: the AGS runtime, `/ags`, and required suite Skills are verified only across the detected, approved Host set. Host MCP registration is owned by the selected `@agent-governance-suite/mcp` package integration, not by setup.
 
 ## `/ags init`
 
@@ -64,7 +62,7 @@ Aliases: `/ags onboard`, `/ags manage`, `/ags 纳管`.
 - Empty or `preflight`: report the AGS preflight result and next allowed actions.
 - `doctor`: run `ags doctor --target .` and summarize the findings.
 - `verify`: run `ags verify --scope local --target .` and summarize the check results.
-- Any other text: treat it as the user request. Prefer MCP `ags_preflight` first; if MCP is unavailable, run `ags session preflight --for claude-code --target .`. Read the preflight-bound current-host capability resource, use complete conversation context to create a typed `HostRouteProposal`, and submit it to strictly read-only `ags_route_request`. Never send raw request text or reclassify it in Compiler, Policy, Gate, Runner, or Skill Resolver. Only `ags_apply_action` may consume a returned connection-held action. A confirmed same-session direct edit stays host-native and does not regenerate a plan or task card; an existing canonical task card validates first. Explicit handoff uses `--task-card-requested --confirmed-handoff-contract`. In host Plan mode, the decision-complete final artifact uses `--host-plan-mode-final --confirmed-handoff-contract` and is the canonical task card itself. If solution work is unresolved or reopened, remain in solution formation and do not compile.
+- Any other text: treat it as the user request. Prefer MCP `ags_preflight` first; if MCP is unavailable, run `ags session preflight --for claude-code --target .`. Read the preflight-bound current-host capability resource, use complete conversation context to create a typed `HostRouteProposal`, and submit it to strictly read-only `ags_route_request`. Never send raw request text or reclassify it in Compiler, Policy, Gate, Runner, or Capability Resolver. Load admitted Skills through the host and invoke admitted MCP targets through the host's connected MCP surface; AGS never proxies third-party MCPs. Only `ags_apply_action` may consume a returned connection-held action. A confirmed same-session direct edit stays host-native and does not regenerate a plan or task card; an existing canonical task card validates first. Explicit handoff uses `--task-card-requested --confirmed-handoff-contract`. In host Plan mode, the decision-complete final artifact uses `--host-plan-mode-final --confirmed-handoff-contract` and is the canonical task card itself. If solution work is unresolved or reopened, remain in solution formation and do not compile.
 
 Current AGS version expected by this command: {AGS_VERSION}.
 "#
@@ -89,7 +87,7 @@ pub(in crate::setup) fn codex_ags_command_skill_specs() -> &'static [(
             "AGS Setup",
             "初始化本机 AGS 环境",
             "用 $ags-setup 初始化本机 AGS 环境。",
-            "初始化本机 AGS 环境：先运行 `ags setup` 查看宿主，再运行 `ags setup --yes --force --register-claude --lifecycle-hosts <ids|detected|none>`，然后用 `ags verify --profile private` 校验",
+            "初始化本机 AGS 环境：先运行 `ags setup` 查看宿主，再运行 `ags setup --yes --force --lifecycle-hosts <ids|detected>` 至少选择当前宿主，然后用 `ags doctor` 校验",
         ),
         (
             "ags-agents",
@@ -103,7 +101,7 @@ pub(in crate::setup) fn codex_ags_command_skill_specs() -> &'static [(
             "AGS Skill",
             "管理第三方技能",
             "用 $ags-skill 管理第三方技能。",
-            "管理第三方技能：运行 `ags skill inventory` 查看静态目录；第三方来源只在明确的安装或升级流程中更新，完成后运行 `ags capability snapshot --write --host <host>` 刷新一次静态快照，并用 `ags skill verify --strict` 复核",
+            "管理第三方技能：用 `ags skill recommend` 浏览推荐目录，或向 `ags skill inspect/install` 提供任意 GitHub 来源；审阅 Plan 后用精确 plan hash 确认安装或更新，AGS 会事务化刷新受影响宿主快照并验证路由，最后用 `ags skill status` 或 `ags skill verify <skill-id>` 复核",
         ),
         (
             "ags-init",
@@ -120,58 +118,4 @@ pub(in crate::setup) fn codex_ags_command_skill_specs() -> &'static [(
             "诊断 AGS 安装和项目状态：运行 `ags doctor --target .` 并优先汇总失败项",
         ),
     ]
-}
-pub(in crate::setup) fn codex_ags_command_skill_content(
-    name: &str,
-    display_name: &str,
-    summary: &str,
-) -> String {
-    let route = name.strip_prefix("ags-").unwrap_or(name);
-    format!(
-        r#"---
-name: "{name}"
-description: "当用户提到 /ags {route}、{display_name}、AGS {route}，或需要{summary}时使用。"
----
-
-# {display_name}
-
-这是 Codex 顶层 AGS 命令技能，用来把明确的 AGS 操作路由到已安装的 `ags` CLI 和 AGS 初始化门禁。
-
-## 必须先执行
-
-对目标仓库先运行 AGS preflight：
-
-```bash
-ags session preflight --for codex --target .
-```
-
-如果目标项目不明确，先询问仓库路径，不要误把桌面工作区当成项目。
-
-## 路由
-
-{summary}.
-
-## 安全边界
-
-不要绕过 AGS 做临时初始化。只有用户明确要求任务卡/交接、handoff contract 已独立确认，且不存在未决或重开的 solution work 时，才可生成可执行任务卡；缺少任一条件都不得生成。
-
-此技能期望的 AGS 版本：{AGS_VERSION}。
-"#
-    )
-}
-pub(in crate::setup) fn codex_ags_command_skill_agent_metadata_content(
-    display_name: &str,
-    short_description: &str,
-    default_prompt: &str,
-) -> String {
-    format!(
-        r#"interface:
-  display_name: "{display_name}"
-  short_description: "{short_description}"
-  default_prompt: "{default_prompt}"
-
-policy:
-  allow_implicit_invocation: true
-"#
-    )
 }

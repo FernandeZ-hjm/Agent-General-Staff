@@ -4,12 +4,8 @@ pub(super) fn plan_hash(plan: &OnboardingPlan) -> Result<String, String> {
     let mut copy = plan.clone();
     copy.plan_hash.clear();
     serde_json::to_vec(&copy)
-        .map(|bytes| sha256(&bytes))
+        .map(|bytes| ags_platform::sha256(&bytes))
         .map_err(|error| format!("cannot hash onboarding plan: {error}"))
-}
-
-pub(super) fn is_git_revision(value: &str) -> bool {
-    value.len() == 40 && value.chars().all(|character| character.is_ascii_hexdigit())
 }
 
 pub(super) fn normalized_path(path: &Path) -> String {
@@ -24,10 +20,4 @@ pub(super) fn command_in_path(command: &str) -> Option<PathBuf> {
     std::env::split_paths(&path)
         .map(|dir| dir.join(command))
         .find(|candidate| candidate.is_file())
-}
-
-pub(super) fn sha256(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    format!("sha256:{:x}", hasher.finalize())
 }

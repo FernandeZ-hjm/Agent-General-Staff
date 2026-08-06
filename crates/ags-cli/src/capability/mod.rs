@@ -13,7 +13,7 @@ fn write_capability_snapshot(
     let path = ags_capability_governance::snapshot_path(runtime_home, active_host);
     let json = serde_json::to_string_pretty(snapshot)
         .map_err(|error| format!("capability snapshot serialization failed: {error}"))?;
-    ags_capability_governance::write_private_atomic(&path, (json + "\n").as_bytes())?;
+    ags_platform::atomic_write(&path, (json + "\n").as_bytes())?;
     Ok(path)
 }
 
@@ -59,14 +59,14 @@ fn snapshot(host: &str, target: &Path, write: bool, format: &str) {
     };
     let root = crate::context::resolve_capability_authority_root(
         &requested,
-        &ags_capability_governance::locate_runtime_home(),
+        &ags_platform::runtime_home(),
         std::env::var_os("AGS_SOURCE_ROOT").map(PathBuf::from),
     )
     .unwrap_or_else(|detail| {
         eprintln!("ags capability snapshot: refused — {detail}");
         std::process::exit(1);
     });
-    let runtime_home = ags_capability_governance::locate_runtime_home();
+    let runtime_home = ags_platform::runtime_home();
     let host_home = ags_platform::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let built = ags_capability_governance::build_capability_snapshot_with_live_roots_at(
         &root,

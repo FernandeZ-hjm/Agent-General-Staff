@@ -159,7 +159,7 @@ pub fn run_task_card(
     approve_writes: bool,
     current_task_approval: bool,
 ) -> LaunchPlan {
-    let runtime_home = ags_capability_governance::locate_runtime_home();
+    let runtime_home = ags_platform::runtime_home();
     run_task_card_inner(
         task_card_path,
         check_only,

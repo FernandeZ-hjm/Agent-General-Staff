@@ -1,0 +1,30 @@
+{
+  "name": "@agent-governance-suite/launcher",
+  "version": "0.5.0",
+  "description": "Shared signed release launcher for Agent Governance Suite",
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": "./src/launcher.js",
+    "./launcher": "./src/launcher.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src/",
+    "release-signing-public.pem",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FernandeZ-hjm/Agent-General-Staff.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}

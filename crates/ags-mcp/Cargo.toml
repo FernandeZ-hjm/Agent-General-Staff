@@ -8,6 +8,7 @@ description = "AGS MCP Server — governance kernel exposed as MCP tools/resourc
 [dependencies]
 ags-task-contract = { path = "../ags-task-contract" }
 ags-governance-decision = { path = "../ags-governance-decision" }
+ags-host-integration = { path = "../ags-host-integration" }
 ags-capability-governance = { path = "../ags-capability-governance" }
 ags-workspace-facts = { path = "../ags-workspace-facts" }
 ags-verification = { path = "../ags-verification" }

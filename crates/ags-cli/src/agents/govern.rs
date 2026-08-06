@@ -34,7 +34,7 @@ pub(in crate::agents) fn cmd_agents_govern(
                 .and_then(|spec| spec.lifecycle)
                 .is_some()
             {
-                ags_lifecycle::setup::apply_host_memory_adapter(
+                ags_lifecycle::host_memory::apply_host_memory_adapter(
                     &mut apply_report,
                     &home,
                     &workspace,
@@ -53,7 +53,7 @@ pub(in crate::agents) fn cmd_agents_govern(
             }
         }
         if apply_report.passed() {
-            let runtime_home = ags_capability_governance::locate_runtime_home();
+            let runtime_home = ags_platform::runtime_home();
             let approved = targets
                 .iter()
                 .filter(|target| {
@@ -139,7 +139,8 @@ pub(in crate::agents) fn cmd_agents_govern(
         .iter()
         .map(|p| {
             let migration_preview =
-                ags_lifecycle::setup::lifecycle_migration_preview(&home, &workspace, &p.id).ok();
+                ags_lifecycle::host_memory::lifecycle_migration_preview(&home, &workspace, &p.id)
+                    .ok();
             serde_json::json!({
                 "host": p.id,
                 "display": p.display,
@@ -190,7 +191,7 @@ pub(in crate::agents) fn cmd_agents_govern(
             lines.push("      mandatory first tool: ags_preflight".into());
             lines.push(format!("      tools: {}", tool_surface.join(", ")));
             if let Ok(preview) =
-                ags_lifecycle::setup::lifecycle_migration_preview(&home, &workspace, &p.id)
+                ags_lifecycle::host_memory::lifecycle_migration_preview(&home, &workspace, &p.id)
             {
                 lines.push(format!(
                     "      lifecycle: {} managed workspace(s), global AGS entry={}, removal ready after apply={}",

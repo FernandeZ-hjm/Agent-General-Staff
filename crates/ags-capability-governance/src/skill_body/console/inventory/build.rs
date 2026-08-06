@@ -21,7 +21,7 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
     // Skill-resolution metadata — manifest is the single authority.
     // Read up-front so expected-host gating can exclude internal-entrypoint
     // route targets (routing.parent set) before they are ever flagged.
-    let routing_meta = read_routing_metadata(&ctx.repo_root);
+    let mut routing_meta = read_routing_metadata(&ctx.repo_root);
 
     // 1. Suite-managed skills from the static suite manifest.
     let scan = crate::skill_body::scan_skills(&ctx.repo_root);
@@ -73,6 +73,84 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
             risk_notes,
             routing: None,
         });
+    }
+
+    // 1.4. User-installed Skill bodies. InstalledSkillIndex is the machine
+    // truth; filesystem coincidence and catalog membership never create an
+    // installed or routable capability.
+    match crate::skill_adoption::load_installed_skills(&ctx.runtime_home) {
+        Ok(index) => {
+            for record in index.skills.values() {
+                if known_skill_names
+                    .iter()
+                    .any(|name| name == &record.skill_id)
+                {
+                    continue;
+                }
+                known_skill_names.push(record.skill_id.clone());
+                let body = crate::skill_adoption::body_path(&ctx.runtime_home, record);
+                let body_present = body.join("SKILL.md").is_file();
+                let body_hash_matches = body_present
+                    && crate::hash_skill_source(&body)
+                        .is_ok_and(|actual| actual == record.source_hash);
+                let mut risk_notes = vec![
+                    "Installed Skill; AGS owns its immutable body, provenance, host indexes and snapshot activation."
+                        .to_string(),
+                ];
+                if !body_present {
+                    risk_notes.push("InstalledSkillIndex body is missing SKILL.md.".to_string());
+                } else if !body_hash_matches {
+                    risk_notes.push(
+                        "InstalledSkillIndex body hash does not match its immutable revision."
+                            .to_string(),
+                    );
+                }
+
+                routing_meta.map.insert(
+                    record.skill_id.clone(),
+                    RoutingMetadata {
+                        intent_tags: record.intent_tags.clone(),
+                        scope_tags: Vec::new(),
+                        mutation_surface: MutationSurface::ReadOnly,
+                        requires_auth: record.requires_auth,
+                        auth_kind: None,
+                        cost_class: CostClass::Free,
+                        invoke_hint: record.invoke_hint.clone(),
+                        route_priority: default_route_priority(),
+                        route_state: RouteState::Routable,
+                        capability_group: Vec::new(),
+                        upstream_group: Some("installed-skill".to_string()),
+                        examples: RouteExamples {
+                            positive: record.positive_examples.clone(),
+                            negative: record.negative_examples.clone(),
+                        },
+                        parent: None,
+                        entrypoint: None,
+                    },
+                );
+
+                let mut expected_hosts = record.target_hosts.clone();
+                expected_hosts.sort();
+                expected_hosts.dedup();
+                caps.push(ManagedCapability {
+                    kind: ManagedKind::Skill,
+                    name: record.skill_id.clone(),
+                    source: Some(body.to_string_lossy().to_string()),
+                    profile: None,
+                    managed_status: ManagedStatus::Governed,
+                    registry_status: RegistryStatus::Registered,
+                    canonical_present: body_hash_matches,
+                    expected_hosts,
+                    host_visibility: Vec::new(),
+                    health_status: HealthStatus::Unknown,
+                    risk_notes,
+                    routing: None,
+                });
+            }
+        }
+        Err(error) => routing_meta
+            .parse_failures
+            .push(format!("installed-skill-index: {error}")),
     }
 
     // 1.5. Registry-governed external skill bodies. The external manager owns
@@ -202,8 +280,9 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
         caps.push(cap);
     }
 
-    // 3. Governed MCPs + AGS suite interface + CLI-backed MCPs from the registry.
-    for e in read_mcp_registry(&ctx.repo_root) {
+    // 3. Catalog MCP identities + the bundled AGS suite interface. Static
+    // declarations never manufacture third-party installation state.
+    for e in read_mcp_inventory_sources(&ctx.repo_root) {
         let is_cli = e.manager.as_deref() == Some("external-cli");
         let (kind, managed_status, mut risk_notes) = if e.suite_interface {
             (
@@ -231,9 +310,9 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
                 "AGS advises host MCP registration commands; it never runs `claude mcp add/remove` itself.".to_string(),
             );
         }
-        // Expected visible where the registry declares the server installed for
-        // a supported host. Flags "registry says installed but host can't see it"
-        // drift; an MCP the registry says is NOT installed here is not a gap.
+        // Only the suite interface can carry expected Host projections. A
+        // third-party MCP becomes available solely through positive Host probe
+        // evidence, never because a catalog entry exists.
         // An internal-entrypoint route target (routing.parent set) is never a
         // standalone host body → no expected-host gap.
         let e_is_route_target = routing_meta
@@ -254,7 +333,7 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
         caps.push(ManagedCapability {
             kind,
             name: e.name.clone(),
-            source: Some("manifests/mcp-registry.yaml".to_string()),
+            source: Some(e.declaration_source.to_string()),
             profile: None,
             managed_status,
             registry_status: RegistryStatus::Registered,
@@ -422,5 +501,114 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
         summary,
         note: "Read-only inventory. Third-party capabilities are opt-in; AGS never silently bundles or installs. Add or update a reviewed source only through an explicit release/setup workflow, then refresh the host's single static snapshot and verify it.".to_string(),
         routing_parse_failures: routing_meta.parse_failures,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::skill_adoption::{
+        body_path, installed_skill_index_path, BodyRevision, CatalogReviewStatus,
+        InstalledSkillIndex, InstalledSkillMetadata, InstalledSkillRecord, SourceSpec,
+        UpdatePolicy,
+    };
+    use std::collections::BTreeMap;
+
+    struct NoProcessRunner;
+
+    impl CommandRunner for NoProcessRunner {
+        fn run(&self, _spec: &ags_host_integration::McpProbeSpec) -> CommandOutcome {
+            CommandOutcome::Unavailable
+        }
+    }
+
+    #[test]
+    fn private_adopted_skill_is_governed_in_unified_inventory() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo_root = temp.path().join("repo");
+        let home = temp.path().join("home");
+        let runtime_home = temp.path().join("runtime");
+        std::fs::create_dir_all(&repo_root).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+
+        let mut record = InstalledSkillRecord {
+            skill_id: "private-example".to_string(),
+            source: "/audited/source/private-example".to_string(),
+            source_hash: String::new(),
+            license_path: "/audited/source/LICENSE".to_string(),
+            license_hash: "sha256:license".to_string(),
+            routing_metadata_path: None,
+            routing_metadata_hash: None,
+            body_revision: "revision-one".to_string(),
+            summary: "Private adopted example".to_string(),
+            intent_tags: vec!["private-example".to_string()],
+            positive_examples: vec!["use private example".to_string()],
+            negative_examples: vec!["do something else".to_string()],
+            entrypoints: Vec::new(),
+            invoke_hint: "[skill: private-example]".to_string(),
+            requires_auth: false,
+            version: "1.0.0".to_string(),
+            target_hosts: vec!["codex".to_string()],
+            source_spec: SourceSpec::local("/audited/source/private-example"),
+            resolved_source: None,
+            update_policy: UpdatePolicy::Notify,
+            catalog_review: CatalogReviewStatus::Unreviewed,
+            risk_findings: Vec::new(),
+            body_revisions: Vec::new(),
+            installed_at: 0,
+        };
+        let body = body_path(&runtime_home, &record);
+        std::fs::create_dir_all(&body).unwrap();
+        std::fs::write(
+            body.join("SKILL.md"),
+            "---\nname: private-example\ndescription: Private adopted example\n---\n",
+        )
+        .unwrap();
+        record.source_hash = crate::hash_skill_source(&body).unwrap();
+        record.body_revisions.push(BodyRevision {
+            revision: record.body_revision.clone(),
+            source_hash: record.source_hash.clone(),
+            resolved_source: None,
+            created_at: 0,
+            metadata: InstalledSkillMetadata::from_record(&record),
+        });
+
+        let registry = InstalledSkillIndex {
+            schema_version: crate::skill_adoption::INSTALLED_SKILL_INDEX_SCHEMA.to_string(),
+            revision: 1,
+            skills: BTreeMap::from([("private-example".to_string(), record)]),
+        };
+        let registry_file = installed_skill_index_path(&runtime_home);
+        std::fs::create_dir_all(registry_file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &registry_file,
+            serde_json::to_vec_pretty(&registry).unwrap(),
+        )
+        .unwrap();
+
+        let context = ConsoleContext::new_with_runtime_home(
+            &repo_root,
+            &home,
+            &runtime_home,
+            Box::new(NoProcessRunner),
+        );
+        let inventory = build_inventory(&context, &["codex"]);
+        let capability = inventory
+            .capabilities
+            .iter()
+            .find(|candidate| candidate.name == "private-example")
+            .expect("private adopted skill must be present");
+
+        assert_eq!(capability.managed_status, ManagedStatus::Governed);
+        assert_eq!(capability.registry_status, RegistryStatus::Registered);
+        assert!(capability.canonical_present);
+        assert_eq!(capability.source.as_deref(), Some(body.to_str().unwrap()));
+        assert_eq!(
+            capability
+                .routing
+                .as_ref()
+                .map(|routing| routing.invoke_hint.as_str()),
+            Some("[skill: private-example]")
+        );
     }
 }

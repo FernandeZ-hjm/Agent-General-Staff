@@ -1,7 +1,7 @@
 //! Managed-project refresh planning and atomic apply.
 
 use super::model::InitFile;
-use super::plan::{guard_path, project_init_plan_with_protocol, ProjectInitPlan};
+use super::plan::{project_init_plan_with_protocol, ProjectInitPlan};
 use super::{InitFinding, InitReport};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -229,7 +229,7 @@ pub fn refresh_managed_project(
     approved_hosts: &[String],
     apply: bool,
 ) -> ManagedProjectRefresh {
-    let canonical = guard_path(target);
+    let canonical = ags_platform::normalize_path(target);
     if ags_workspace_facts::detect_project(&canonical).is_ags_suite {
         return ManagedProjectRefresh {
             target: canonical.display().to_string(),

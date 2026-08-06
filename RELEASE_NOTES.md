@@ -1,5 +1,32 @@
 # Agent Governance Suite Release Notes
 
+## Release 0.5.0
+
+0.5.0 closes the public installation, third-party Skill, host activation and
+self-update lifecycles around one typed maintenance transaction. It is a
+breaking cleanup release: retired update lanes, setup aliases and legacy Skill
+JSON readers are removed rather than kept as compatibility layers.
+
+- CLI and MCP npm packages share one signed launcher, immutable platform cache,
+  runtime directory and core update Plan. Initialized runtimes seal and verify
+  required suite Skill projection as part of core activation and recovery.
+- Catalog recommendations are discovery facts only. Users may install a
+  recommended entry, arbitrary GitHub HTTPS source or audited local directory;
+  all remote bodies resolve to immutable commits and all mutations require the
+  exact Plan hash and explicit risk acknowledgements.
+- Installed Skill state, immutable bodies and five Host snapshots live under
+  one stable runtime fact root. Old local layouts are migrated once with
+  rollback-safe archival and are never read by normal code.
+- Setup projects required suite Skills to Claude Code, Codex, Cursor, OMP and
+  CodeBuddy-Code, migrates renamed entries, removes retired AGS symlinks,
+  verifies exact routes, and exposes apply/verify/recover receipts.
+- The retired six-lane update implementation, hidden `ags plan`/`ags apply`
+  aliases, post-receipt Claude registration, automatic GEP installation,
+  CodeGraph setup coupling and EvoMap runtime scaffolding are deleted.
+- Release verification is content-addressed. Private A and public B each own
+  one full gate; promotion, tag, Release and npm stages consume exact
+  VerificationBundles and perform only their unique artifact checks.
+
 ## Release 0.4.12
 
 0.4.12 restores an explicit, machine-private adoption transaction for audited

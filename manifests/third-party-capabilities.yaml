@@ -57,6 +57,12 @@ capabilities:
       route_state: routable
       invoke_hint: "codegraph MCP"
       intent_tags: [code-intelligence, symbol-search, call-flow, change-impact]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      cost_class: local
+      route_priority: 25
+      capability_group: [code-intelligence]
+      upstream_group: colbymchenry/codegraph
       positive_examples:
         - "这个函数是怎么一路调用到写入层的？"
         - "改这个模块会影响哪些调用方？"
@@ -89,6 +95,12 @@ capabilities:
       route_state: routable
       invoke_hint: "context7 MCP (resolve-library-id + get-library-docs)"
       intent_tags: [docs-lookup, library-reference]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      cost_class: network
+      route_priority: 30
+      capability_group: [documentation-context]
+      upstream_group: upstash/context7
       positive_examples:
         - "查一下这个库的最新文档"
       negative_examples:
@@ -110,9 +122,9 @@ capabilities:
     source:
       manager: npm
       package: "@larksuite/cli"
-      version: "1.0.77"
-      revision: "a7865cd0a7416655535517a2a630848fde318761"
-      integrity: "sha512-xsyUkGS6WsMmxiVHG7Qpl/U8vmi5qoZterAprAMBYQ0/lA5kMjUv5NL2pfDv/Krp2frQme/OtRjD5+jlEw0RPg=="
+      version: "1.0.83"
+      revision: "811d37e57b4328453ecd5a7c3814e790c2f13921"
+      integrity: "sha512-qbJYoJtNch6dV8RvYBO2wpcKO9+6Io3Cuf5alYFzvLbtkSntOKqoc+xHI7p6wRq4oH4F9fydgNJbTGy79ibPdg=="
       repository: "https://github.com/larksuite/cli"
       license: MIT
     install:
@@ -137,7 +149,7 @@ capabilities:
     risk: medium
     source:
       manager: github-release
-      version: "13.12.4"
+      version: "13.13.1"
       repository: "https://github.com/thedotmack/claude-mem"
       license: Apache-2.0
     install:
@@ -147,6 +159,12 @@ capabilities:
       route_state: routable
       invoke_hint: "claude-mem MCP search"
       intent_tags: [memory-search, previous-session, continuity]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      cost_class: local
+      route_priority: 70
+      capability_group: [continuity-memory]
+      upstream_group: thedotmack/claude-mem
       positive_examples:
         - "找一下上次会话里我们为什么这样设计"
       negative_examples:
@@ -166,7 +184,7 @@ capabilities:
     risk: high
     source:
       manager: github-release
-      version: "13.12.4"
+      version: "13.13.1"
       repository: "https://github.com/thedotmack/claude-mem"
       license: Apache-2.0
     install:
@@ -180,28 +198,36 @@ capabilities:
       managed_by: "Claude Code plugin manager"
       health_probe: "plugin manifest exists and every declared event has a handler"
 
-  - id: superpowers
+  - id: codex-luna-max-team
     kind: skill
-    name: Engineering Workflow
-    profiles: [public, private]
+    name: Codex Luna Max Team
+    profiles: [private]
     required: false
-    tier: core
-    purpose: Explicit-gated engineering workflow parent with internal playbooks.
+    tier: flow
+    purpose: Coordinate bounded explorer, worker, and independent test lanes under one Lead.
     risk: medium
     source:
       manager: git
-      revision: "3dcbd5c4b48e02263fbf4a3c01e3fe4f81d584d9"
-      repository: "https://github.com/obra/superpowers"
+      revision: "007a6cf04c41053bfe2b07e8620176c6b4bccfc8"
+      tracking_ref: main
+      repository: "https://github.com/Larkspur-Wang/codex-luna-max-team"
       license: MIT
+      subdir: "skill/codex-luna-max-team"
+      integrity: "sha256:6717a5eb0a670c9d811756f0f06cec981d150a770ad7a8967896d25db1b903ff"
     install:
-      strategy: external-manager
-      install_location: "$HOME/.agents/skills/superpowers/"
+      strategy: none
     routing:
       route_state: routable
-      invoke_hint: "[skill: superpowers]"
-      intent_tags: [engineering-workflow]
-      positive_examples: ["调用 superpowers 的 verification-before-completion playbook"]
-      negative_examples: ["解释什么是单元测试"]
+      invoke_hint: "[skill: codex-luna-max-team]"
+      intent_tags: [software-delegation, multi-agent-coordination, independent-testing]
+      scope_tags: [parallel-investigation, parallel-implementation, independent-testing, worktree-coordination]
+      mutation_surface: local-write
+      cost_class: free
+      route_priority: 30
+      capability_group: [engineering-process, multi-agent-coordination]
+      upstream_group: Larkspur-Wang/codex-luna-max-team
+      positive_examples: ["把这个软件任务拆成边界清晰的探索、实现和独立测试 lane"]
+      negative_examples: ["直接回答这个简单问题", "用户明确要求单线程完成"]
 
   - id: grilling
     kind: skill
@@ -213,10 +239,12 @@ capabilities:
     risk: low
     source: &matt_grilling
       manager: git
-      revision: "ed37663cc5fbef691ddfecd080dff42f7e7e350d"
+      revision: "2ffb184ffbb752faa664c0b204f3c9241b1428e9"
+      tracking_ref: main
       repository: "https://github.com/mattpocock/skills"
       license: MIT
       subdir: "skills/productivity/grilling"
+      integrity: "sha256:81688edf1a423b040d686033f334734d57439aad01e56b04443181eddd040750"
     install: &matt_install
       strategy: external-manager
       install_location: "$HOME/.agents/skills/grilling/"
@@ -224,10 +252,16 @@ capabilities:
       route_state: routable
       invoke_hint: "[skill: grilling]"
       intent_tags: [plan-grilling]
+      scope_tags: [plan-review, stress-test]
+      mutation_surface: read-only
+      cost_class: free
+      route_priority: 45
+      capability_group: [engineering-process]
+      upstream_group: mattpocock/skills:grilling
       positive_examples: ["压力测试一下这个方案"]
       negative_examples: ["按已批准方案开始实现"]
 
-  - id: review
+  - id: code-review
     kind: skill
     name: Branch Change Review
     profiles: [public, private]
@@ -237,36 +271,50 @@ capabilities:
     risk: low
     source:
       <<: *matt_grilling
-      subdir: "skills/in-progress/review"
+      subdir: "skills/engineering/code-review"
+      integrity: "sha256:18e0a091449556b307adb3bac7911c68fe2e2d66a6d017b1f0d54d2c1cca1ae6"
     install:
       <<: *matt_install
-      install_location: "$HOME/.agents/skills/review/"
+      install_location: "$HOME/.agents/skills/code-review/"
     routing:
       route_state: routable
-      invoke_hint: "[skill: review]"
+      invoke_hint: "[skill: code-review]"
       intent_tags: [branch-review, two-axis-review]
+      scope_tags: [branch-review, standards-and-spec]
+      mutation_surface: read-only
+      cost_class: free
+      route_priority: 45
+      capability_group: [code-review, engineering-process, mattpocock-flow]
+      upstream_group: mattpocock/skills:code-review
       positive_examples: ["从 main 开始做两轴变更审查"]
       negative_examples: ["帮我修这个 bug"]
 
-  - id: decision-mapping
+  - id: wayfinder
     kind: skill
-    name: Decision Mapping
+    name: Wayfinder
     profiles: [public, private]
     required: false
     tier: flow
-    purpose: Turn a loose idea into sequenced investigation decisions.
+    purpose: Plan a huge foggy effort as a shared map of decision tickets.
     risk: low
     source:
       <<: *matt_grilling
-      subdir: "skills/in-progress/decision-mapping"
+      subdir: "skills/engineering/wayfinder"
+      integrity: "sha256:cd2d8f06870f3761abdd2271e186868d900c6b63a8d31fc0b81243eb8a671626"
     install:
       <<: *matt_install
-      install_location: "$HOME/.agents/skills/decision-mapping/"
+      install_location: "$HOME/.agents/skills/wayfinder/"
     routing:
       route_state: routable
-      invoke_hint: "[skill: decision-mapping]"
-      intent_tags: [decision-map, investigation]
-      positive_examples: ["把这个松散想法做成决策地图"]
+      invoke_hint: "[skill: wayfinder]"
+      intent_tags: [wayfinder, decision-tickets, large-effort-planning]
+      scope_tags: [decision-tickets, foggy-effort, large-project-planning]
+      mutation_surface: external-write
+      cost_class: free
+      route_priority: 50
+      capability_group: [engineering-process, product-planning, mattpocock-flow]
+      upstream_group: mattpocock/skills:wayfinder
+      positive_examples: ["用 wayfinder 规划这个跨多个会话的大项目"]
       negative_examples: ["直接实现这个功能"]
 
   - id: resolving-merge-conflicts
@@ -280,6 +328,7 @@ capabilities:
     source:
       <<: *matt_grilling
       subdir: "skills/engineering/resolving-merge-conflicts"
+      integrity: "sha256:2e38ff7d8a03e9d34c80d8e6ebacf74b18e55b29b21451c92c036816b18e64ae"
     install:
       <<: *matt_install
       install_location: "$HOME/.agents/skills/resolving-merge-conflicts/"
@@ -287,49 +336,69 @@ capabilities:
       route_state: routable
       invoke_hint: "[skill: resolving-merge-conflicts]"
       intent_tags: [merge-conflict, rebase-conflict]
+      scope_tags: [merge-conflict, rebase-conflict]
+      mutation_surface: local-write
+      cost_class: free
+      route_priority: 35
+      capability_group: [engineering-process, git-workflow, mattpocock-flow]
+      upstream_group: mattpocock/skills:resolving-merge-conflicts
       positive_examples: ["解决当前 rebase 冲突"]
       negative_examples: ["准备提交前帮我验证"]
 
-  - id: to-prd
+  - id: to-spec
     kind: skill
-    name: To PRD
+    name: To Spec
     profiles: [public, private]
     required: false
     tier: flow
-    purpose: Shape the current conversation into a product requirements document.
+    purpose: Shape the current conversation into a spec and publish it to the issue tracker.
     risk: low
     source:
       <<: *matt_grilling
-      subdir: "skills/engineering/to-prd"
+      subdir: "skills/engineering/to-spec"
+      integrity: "sha256:5df628f5c91ccc37c6b5038c963645a60c3a7c54e6da6ad6515ad7d13515d9cf"
     install:
       <<: *matt_install
-      install_location: "$HOME/.agents/skills/to-prd/"
+      install_location: "$HOME/.agents/skills/to-spec/"
     routing:
       route_state: routable
-      invoke_hint: "[skill: to-prd]"
-      intent_tags: [prd, product-requirements]
-      positive_examples: ["把当前对话整理成 PRD"]
+      invoke_hint: "[skill: to-spec]"
+      intent_tags: [spec, specification]
+      scope_tags: [spec, specification, requirements]
+      mutation_surface: external-write
+      cost_class: free
+      route_priority: 40
+      capability_group: [engineering-process, product-planning, mattpocock-flow]
+      upstream_group: mattpocock/skills:to-spec
+      positive_examples: ["把当前对话整理成 spec"]
       negative_examples: ["查一下 React 文档"]
 
-  - id: to-issues
+  - id: to-tickets
     kind: skill
-    name: To Issues
+    name: To Tickets
     profiles: [public, private]
     required: false
     tier: flow
-    purpose: Break a plan or PRD into independently executable issue slices.
+    purpose: Break a plan, spec, or conversation into tracer-bullet tickets with blocking edges.
     risk: medium
     source:
       <<: *matt_grilling
-      subdir: "skills/engineering/to-issues"
+      subdir: "skills/engineering/to-tickets"
+      integrity: "sha256:63f9e81723fd01e77d48623cdfa75dc887ab57006d9020046dd9b82f54077950"
     install:
       <<: *matt_install
-      install_location: "$HOME/.agents/skills/to-issues/"
+      install_location: "$HOME/.agents/skills/to-tickets/"
     routing:
       route_state: routable
-      invoke_hint: "[skill: to-issues]"
-      intent_tags: [issues, task-slicing]
-      positive_examples: ["把这份 PRD 拆成 issues"]
+      invoke_hint: "[skill: to-tickets]"
+      intent_tags: [tickets, blocking-edges, task-slicing]
+      scope_tags: [tickets, blocking-edges, task-slicing]
+      mutation_surface: external-write
+      cost_class: free
+      route_priority: 60
+      capability_group: [engineering-process, issue-planning, mattpocock-flow]
+      upstream_group: mattpocock/skills:to-tickets
+      positive_examples: ["把这份 spec 拆成 tickets"]
       negative_examples: ["帮我写一个 commit"]
 
   - id: triage
@@ -343,6 +412,7 @@ capabilities:
     source:
       <<: *matt_grilling
       subdir: "skills/engineering/triage"
+      integrity: "sha256:c212fb3f2055522309d3d67b9db755623739af29259ec617943aa562e11a271e"
     install:
       <<: *matt_install
       install_location: "$HOME/.agents/skills/triage/"
@@ -350,6 +420,12 @@ capabilities:
       route_state: routable
       invoke_hint: "[skill: triage]"
       intent_tags: [issue-triage, pr-triage]
+      scope_tags: [issue-triage, ready-for-agent]
+      mutation_surface: external-write
+      cost_class: free
+      route_priority: 40
+      capability_group: [engineering-process, issue-triage, mattpocock-flow]
+      upstream_group: mattpocock/skills:triage
       positive_examples: ["把 issue 42 分诊成 agent-ready"]
       negative_examples: ["测试挂了，帮我排查"]
 
@@ -364,6 +440,7 @@ capabilities:
     source:
       <<: *matt_grilling
       subdir: "skills/productivity/handoff"
+      integrity: "sha256:f871ae2aa2ffca8bd220ba6be3c91de04ca8609a030b730fe0176496b1f138c4"
     install:
       <<: *matt_install
       install_location: "$HOME/.agents/skills/handoff/"
@@ -371,6 +448,12 @@ capabilities:
       route_state: routable
       invoke_hint: "[skill: handoff]"
       intent_tags: [context-handoff]
+      scope_tags: [handoff-document, context-handoff]
+      mutation_surface: local-write
+      cost_class: free
+      route_priority: 40
+      capability_group: [engineering-process, context-handoff, mattpocock-flow]
+      upstream_group: mattpocock/skills:handoff
       positive_examples: ["给下一个 agent 写交接文档"]
       negative_examples: ["交给 Claude Code 执行"]
 
@@ -385,6 +468,7 @@ capabilities:
     source:
       <<: *matt_grilling
       subdir: "skills/engineering/diagnosing-bugs"
+      integrity: "sha256:6abc53b8814cce0c6ea38a3b744c8a7e39ebf498861c3edfff46614582c61e63"
     install:
       <<: *matt_install
       install_location: "$HOME/.agents/skills/diagnosing-bugs/"
@@ -392,6 +476,12 @@ capabilities:
       route_state: routable
       invoke_hint: "[skill: diagnosing-bugs]"
       intent_tags: [debug, root-cause]
+      scope_tags: ["*"]
+      mutation_surface: read-only
+      cost_class: free
+      route_priority: 50
+      capability_group: [engineering-process]
+      upstream_group: mattpocock/skills:diagnosing-bugs
       positive_examples: ["系统排查这个异常并定位根因"]
       negative_examples: ["帮我做代码审查"]
 
@@ -406,6 +496,7 @@ capabilities:
     source:
       <<: *matt_grilling
       subdir: "skills/engineering/grill-with-docs"
+      integrity: "sha256:0b404baf10ad02ee5a69de5ba90bc9942b24baeff51a6fc45ba91ee5c36e506b"
     install:
       <<: *matt_install
       install_location: "$HOME/.agents/skills/grill-with-docs/"
@@ -413,8 +504,41 @@ capabilities:
       route_state: routable
       invoke_hint: "[skill: grill-with-docs]"
       intent_tags: [docs-grounded-grilling, requirements-clarification]
+      scope_tags: [adrs, terminology, project-documents]
+      mutation_surface: local-write
+      cost_class: free
+      capability_group: [engineering-process]
+      upstream_group: mattpocock/skills:grill-with-docs
       positive_examples: ["结合 ADR 和术语表追问我，把需求对齐"]
       negative_examples: ["给我一个普通架构建议"]
+
+  - id: writing-for-agents
+    kind: skill
+    name: Writing for Agents
+    profiles: [public, private]
+    required: false
+    tier: flow
+    purpose: Write predictable skills, agent instructions, and context-pointer documents.
+    risk: low
+    source:
+      <<: *matt_grilling
+      subdir: "skills/productivity/writing-for-agents"
+      integrity: "sha256:90b12970eba1f3ee1631c73a12bb9a34a86be2bf5ba7afdaa2692ec6392ba517"
+    install:
+      <<: *matt_install
+      install_location: "$HOME/.agents/skills/writing-for-agents/"
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: writing-for-agents]"
+      intent_tags: [agent-document-writing, skill-instructions]
+      scope_tags: [agent-instructions, skill-authoring, context-pointers]
+      mutation_surface: local-write
+      cost_class: free
+      route_priority: 15
+      capability_group: [skill-authoring, agent-instructions]
+      upstream_group: mattpocock/skills:writing-for-agents
+      positive_examples: ["用 writing-for-agents 修改这个 AGENTS.md"]
+      negative_examples: ["直接创建并打包一个新的 Codex Skill"]
 
   - id: improve-codebase-architecture
     kind: skill
@@ -427,6 +551,7 @@ capabilities:
     source:
       <<: *matt_grilling
       subdir: "skills/engineering/improve-codebase-architecture"
+      integrity: "sha256:eb46e7bdb210e4e2a06583903c7692ac9f240daf8ff969725ccc023bb88025b0"
     install:
       <<: *matt_install
       install_location: "$HOME/.agents/skills/improve-codebase-architecture/"
@@ -434,21 +559,11 @@ capabilities:
       route_state: routable
       invoke_hint: "[skill: improve-codebase-architecture]"
       intent_tags: [architecture-improvement, technical-debt]
+      scope_tags: [refactor, technical-debt, boundary-design]
+      mutation_surface: local-write
+      cost_class: free
+      route_priority: 40
+      capability_group: [engineering-process, architecture]
+      upstream_group: mattpocock/skills:improve-codebase-architecture
       positive_examples: ["治理这个模块的架构技术债"]
       negative_examples: ["解释技术债是什么"]
-
-  - id: supply-chain-risk-auditor
-    kind: skill
-    name: Supply Chain Risk Auditor
-    profiles: [public, private]
-    required: false
-    tier: security
-    purpose: Audit dependency and package supply-chain risk.
-    risk: low
-    source:
-      manager: community
-    install:
-      strategy: none
-      install_location: "$HOME/.agents/skills/supply-chain-risk-auditor/"
-    routing:
-      route_state: not-routable

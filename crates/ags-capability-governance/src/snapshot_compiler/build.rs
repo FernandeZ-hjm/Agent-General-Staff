@@ -133,7 +133,11 @@ pub fn build_capability_snapshot(
     manifest_root: &Path,
     active_host: &str,
 ) -> Result<HostCapabilitySnapshot, SnapshotBuildError> {
-    build_capability_snapshot_with_runtime_home(manifest_root, active_host, &locate_runtime_home())
+    build_capability_snapshot_with_runtime_home(
+        manifest_root,
+        active_host,
+        &ags_platform::runtime_home(),
+    )
 }
 
 pub fn build_capability_snapshot_with_runtime_home(
@@ -163,6 +167,78 @@ pub fn build_capability_snapshot_with_live_roots(
         host_home,
         Box::new(SystemCommandRunner),
     )
+}
+
+/// Scan the machine and resolve immutable manifests once, then compile one
+/// host-specific snapshot per requested Host from that shared observation.
+/// This is the canonical setup/update path for multi-Host activation.
+pub fn build_capability_snapshots_with_live_roots(
+    manifest_root: &Path,
+    active_hosts: &[String],
+    runtime_home: &Path,
+    host_home: &Path,
+) -> Result<Vec<(String, HostCapabilitySnapshot)>, SnapshotBuildError> {
+    let third_party = crate::third_party_manifest::resolve_third_party_manifest(manifest_root)
+        .map_err(SnapshotBuildError::Manifest)?;
+    let context = ConsoleContext::new_with_runtime_home(
+        manifest_root.to_path_buf(),
+        host_home.to_path_buf(),
+        runtime_home.to_path_buf(),
+        Box::new(SystemCommandRunner),
+    );
+    let host_refs = active_hosts.iter().map(String::as_str).collect::<Vec<_>>();
+    let inventory = build_inventory(&context, &host_refs);
+    let registry_document =
+        load_registry_document(manifest_root).map_err(SnapshotBuildError::Registry)?;
+    let registry_bytes = std::fs::read(manifest_root.join("manifests/skills-registry.yaml"))
+        .map_err(SnapshotBuildError::Read)?;
+    active_hosts
+        .iter()
+        .map(|host| {
+            compile_snapshot_from_inventory(
+                manifest_root,
+                host,
+                runtime_home,
+                &context,
+                &third_party,
+                &inventory,
+                &registry_document,
+                &registry_bytes,
+            )
+            .map(|snapshot| (host.clone(), snapshot))
+        })
+        .collect()
+}
+
+/// Validate and publish one already-compiled snapshot set. Every candidate is
+/// integrity-checked and serialized before the first pointer is replaced, so
+/// suite activation and third-party Skill transactions cannot drift into
+/// separate snapshot writers.
+pub fn publish_capability_snapshots(
+    runtime_home: &Path,
+    snapshots: Vec<(String, HostCapabilitySnapshot)>,
+) -> Result<BTreeMap<String, String>, String> {
+    let prepared = snapshots
+        .into_iter()
+        .map(|(host, snapshot)| {
+            snapshot
+                .validate_integrity(&host)
+                .map_err(|error| format!("invalid `{host}` candidate snapshot: {error:?}"))?;
+            let hash = snapshot.snapshot_hash.clone();
+            let mut bytes = serde_json::to_vec_pretty(&snapshot)
+                .map_err(|error| format!("cannot serialize `{host}` snapshot: {error}"))?;
+            bytes.push(b'\n');
+            Ok((host, hash, bytes))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let mut hashes = BTreeMap::new();
+    for (host, hash, bytes) in prepared {
+        let path = crate::snapshot_path(runtime_home, &host);
+        ags_platform::atomic_write(&path, &bytes)
+            .map_err(|error| format!("cannot publish `{host}` snapshot: {error}"))?;
+        hashes.insert(host, hash);
+    }
+    Ok(hashes)
 }
 
 /// Rebuild a live snapshot while resolving workspace-scoped host registration
@@ -204,7 +280,12 @@ fn build_capability_snapshot_with_live_roots_and_runner(
 ) -> Result<HostCapabilitySnapshot, SnapshotBuildError> {
     let third_party = crate::third_party_manifest::resolve_third_party_manifest(manifest_root)
         .map_err(SnapshotBuildError::Manifest)?;
-    let context = ConsoleContext::new(manifest_root.to_path_buf(), host_home.to_path_buf(), runner);
+    let context = ConsoleContext::new_with_runtime_home(
+        manifest_root.to_path_buf(),
+        host_home.to_path_buf(),
+        runtime_home.to_path_buf(),
+        runner,
+    );
     build_capability_snapshot_with_context_and_manifest(
         manifest_root,
         active_host,
@@ -225,7 +306,7 @@ pub fn write_capability_snapshot_with_roots(
             .map_err(|error| format!("capability snapshot build failed: {error:?}"))?;
     let serialized = serde_json::to_string_pretty(&snapshot)
         .map_err(|error| format!("capability snapshot serialization failed: {error}"))?;
-    write_private_atomic(
+    ags_platform::atomic_write(
         &snapshot_path(runtime_home, active_host),
         (serialized + "\n").as_bytes(),
     )?;
@@ -263,9 +344,10 @@ pub fn build_capability_snapshot_with_roots_and_manifest(
     host_home: &Path,
     third_party: &crate::third_party_manifest::ManifestResolution,
 ) -> Result<HostCapabilitySnapshot, SnapshotBuildError> {
-    let context = ConsoleContext::new(
+    let context = ConsoleContext::new_with_runtime_home(
         manifest_root.to_path_buf(),
         host_home.to_path_buf(),
+        runtime_home.to_path_buf(),
         Box::new(NoProcessDiscovery),
     );
     build_capability_snapshot_with_context_and_manifest(
@@ -289,6 +371,29 @@ fn build_capability_snapshot_with_context_and_manifest(
         load_registry_document(manifest_root).map_err(SnapshotBuildError::Registry)?;
     let registry_bytes = std::fs::read(manifest_root.join("manifests/skills-registry.yaml"))
         .map_err(SnapshotBuildError::Read)?;
+    compile_snapshot_from_inventory(
+        manifest_root,
+        active_host,
+        runtime_home,
+        context,
+        third_party,
+        &inventory,
+        &registry_document,
+        &registry_bytes,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compile_snapshot_from_inventory(
+    manifest_root: &Path,
+    active_host: &str,
+    runtime_home: &Path,
+    context: &ConsoleContext,
+    third_party: &crate::third_party_manifest::ManifestResolution,
+    inventory: &ManagedInventoryResult,
+    registry_document: &RegistryDocument,
+    registry_bytes: &[u8],
+) -> Result<HostCapabilitySnapshot, SnapshotBuildError> {
     let (auth_states, auth_hash) = load_auth_states(runtime_home, active_host);
 
     let metadata: HashMap<_, _> = registry_document
@@ -300,8 +405,8 @@ fn build_capability_snapshot_with_context_and_manifest(
         .keys()
         .map(|name| (*name).to_string())
         .collect::<HashSet<_>>();
-    let entrypoint_projections = skill_entrypoint_projections(&inventory);
-    let mcp_projections = mcp_tool_projections(&inventory);
+    let entrypoint_projections = skill_entrypoint_projections(inventory);
+    let mcp_projections = mcp_tool_projections(inventory);
 
     let mut catalog = Vec::new();
     let mut active_skills = Vec::new();
@@ -318,7 +423,7 @@ fn build_capability_snapshot_with_context_and_manifest(
                 || file_requires_auth,
             auth_states.skills.get(&capability.name).copied(),
         );
-        let mut card = skill_card(manifest_root, capability, registry, auth_state);
+        let mut card = skill_card(manifest_root, capability, registry, auth_state, active_host);
         if let Some(projection) = entrypoint_projections.get(&capability.name) {
             card.entrypoints.extend(projection.entrypoints.clone());
             card.entrypoints.sort();
@@ -355,19 +460,20 @@ fn build_capability_snapshot_with_context_and_manifest(
         catalog.push(card);
     }
 
-    let private_projection = crate::skill_adoption::project_private_skills(
+    let installed_projection = crate::skill_adoption::project_installed_skills(
         runtime_home,
         &context.home,
         active_host,
         &official_ids,
     )
     .map_err(SnapshotBuildError::Manifest)?;
-    for card in private_projection.cards {
+    let installed_skill_catalog = installed_projection.cards.clone();
+    for card in installed_projection.cards {
         catalog.retain(|candidate| candidate.skill_id != card.skill_id);
         active_skills.retain(|candidate| candidate.skill_id != card.skill_id);
         catalog.push(card);
     }
-    active_skills.extend(private_projection.active);
+    active_skills.extend(installed_projection.active);
 
     let mut mcp_catalog = Vec::new();
     let mut active_mcps = Vec::new();
@@ -474,11 +580,11 @@ fn build_capability_snapshot_with_context_and_manifest(
         mcp_catalog.push(card);
     }
 
-    let runtime_hash = sha256(
+    let runtime_hash = ags_platform::sha256(
         format!(
             "{}\n{auth_hash}\n{}",
-            inventory_snapshot_hash(&inventory),
-            private_projection.registry_hash
+            inventory_snapshot_hash(inventory),
+            installed_projection.installed_skill_index_hash
         )
         .as_bytes(),
     );
@@ -505,17 +611,34 @@ fn build_capability_snapshot_with_context_and_manifest(
             let (availability, reason_codes, auth_state, health_status) = third_party_availability(
                 capability,
                 active_host,
-                &catalog,
+                &installed_skill_catalog,
                 &inventory.capabilities,
             );
+            let installation_state = match capability.kind {
+                crate::third_party_manifest::CapabilityKind::Skill
+                    if reason_codes
+                        .iter()
+                        .any(|reason| reason == "capability_not_installed") =>
+                {
+                    "not-installed"
+                }
+                crate::third_party_manifest::CapabilityKind::Skill if availability.is_ready() => {
+                    "installed-snapshot-active"
+                }
+                crate::third_party_manifest::CapabilityKind::Skill => "installed-not-active",
+                _ => "observed-runtime-state",
+            };
             ThirdPartyCapabilityCard {
                 capability_id: capability.id.clone(),
                 kind,
+                catalog_state: "recommendation-only".to_string(),
+                installation_state: installation_state.to_string(),
                 display_name: capability.name.clone(),
                 purpose: capability.purpose.clone(),
                 profiles: capability.profiles.clone(),
                 required: capability.required,
                 route_state: capability.routing.route_state.clone(),
+                route_state_semantics: "post-activation-contract".to_string(),
                 availability,
                 reason_codes,
                 requires_auth: capability.requires_auth,
@@ -537,7 +660,7 @@ fn build_capability_snapshot_with_context_and_manifest(
         .collect();
     HostCapabilitySnapshot::new(
         active_host,
-        sha256(&registry_bytes),
+        ags_platform::sha256(registry_bytes),
         runtime_hash,
         catalog,
         mcp_catalog,
@@ -579,9 +702,10 @@ mod tests {
         std::fs::create_dir_all(&host_home).unwrap();
         let third_party =
             crate::third_party_manifest::resolve_third_party_manifest(&manifest_root).unwrap();
-        let context = ConsoleContext::new(
+        let context = ConsoleContext::new_with_runtime_home(
             &manifest_root,
             &host_home,
+            &runtime_home,
             Box::new(ConnectedCodexMcpRunner),
         );
 
@@ -615,6 +739,24 @@ mod tests {
             .active_mcps
             .iter()
             .any(|mcp| mcp.mcp_id == "evomap"));
+
+        // A bundled suite body with the same id as a recommendation is not an
+        // InstalledSkillRecord and must never make the catalog entry ready.
+        let diagnosing_bugs = snapshot
+            .third_party_catalog
+            .iter()
+            .find(|card| card.capability_id == "diagnosing-bugs")
+            .unwrap();
+        assert_eq!(diagnosing_bugs.catalog_state, "recommendation-only");
+        assert_eq!(diagnosing_bugs.installation_state, "not-installed");
+        assert_eq!(
+            diagnosing_bugs.route_state_semantics,
+            "post-activation-contract"
+        );
+        assert!(!diagnosing_bugs.availability.is_ready());
+        assert!(diagnosing_bugs
+            .reason_codes
+            .contains(&"capability_not_installed".to_string()));
 
         let _ = std::fs::remove_dir_all(base);
     }

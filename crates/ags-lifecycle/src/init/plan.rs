@@ -3,59 +3,11 @@
 use super::model::{InitFile, AGS_VERSION};
 use std::path::{Path, PathBuf};
 
-pub(crate) fn guard_path(path: &Path) -> PathBuf {
-    if let Ok(canonical) = path.canonicalize() {
-        return canonical;
-    }
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(path)
-    };
-    if let Ok(canonical) = absolute.canonicalize() {
-        return canonical;
-    }
-    let mut existing = absolute.as_path();
-    let mut missing = Vec::new();
-    while !existing.exists() {
-        if let Some(name) = existing.file_name() {
-            missing.push(name.to_os_string());
-        }
-        match existing.parent() {
-            Some(parent) => existing = parent,
-            None => return absolute,
-        }
-    }
-    let mut normalized = existing
-        .canonicalize()
-        .unwrap_or_else(|_| existing.to_path_buf());
-    for component in missing.iter().rev() {
-        normalized.push(component);
-    }
-    normalized
-}
-
 pub(crate) fn sanitize_name(path: &str) -> String {
     path.trim_matches('/')
         .replace(['/', '\\', '.'], "-")
         .trim_matches('-')
         .to_string()
-}
-
-fn home_dir() -> PathBuf {
-    ags_platform::home_dir().unwrap_or_else(|| PathBuf::from("."))
-}
-
-fn default_private_runtime_home() -> PathBuf {
-    if let Some(path) = std::env::var_os("AGS_RUNTIME_HOME") {
-        return PathBuf::from(path);
-    }
-    if let Some(path) = std::env::var_os("AGS_HOME") {
-        return PathBuf::from(path);
-    }
-    home_dir().join(".ags").join("private-runtime")
 }
 
 fn yaml_string(value: &str) -> String {
@@ -99,7 +51,7 @@ fn default_project_slug(target: &Path) -> String {
     }
 }
 fn project_memory_dir(slug: &str) -> PathBuf {
-    home_dir()
+    ags_platform::home_dir_or_temp()
         .join(".agents")
         .join("memory")
         .join("projects")
@@ -125,7 +77,7 @@ fn project_template_protocol_dir() -> Option<PathBuf> {
         }
     }
 
-    let dir = default_private_runtime_home().join("project-templates/protocol");
+    let dir = ags_platform::runtime_home().join("project-templates/protocol");
     if dir.join("agent-task-protocol.md").exists() {
         Some(dir)
     } else {
@@ -147,7 +99,7 @@ pub(crate) fn project_init_plan_with_protocol(
     slug: Option<String>,
     protocol_dir: Option<PathBuf>,
 ) -> ProjectInitPlan {
-    let canonical = guard_path(target);
+    let canonical = ags_platform::normalize_path(target);
     let slug = slug.unwrap_or_else(|| default_project_slug(&canonical));
     let memory_dir = project_memory_dir(&slug);
     let mut files = Vec::new();

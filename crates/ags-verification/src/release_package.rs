@@ -683,11 +683,6 @@ mod tests {
         assert!(included.contains(&"Cargo.toml"));
         assert!(included.contains(&"crates/ags-cli/src/main.rs"));
         assert!(included.contains(&"protocol/task-card-template.md"));
-        assert!(included.contains(&"manifests/templates/runtime-profiles.template.yaml"));
-        assert!(
-            included.contains(&"manifests/templates/hooks/claude-code-executor-stop.template.js")
-        );
-        assert!(included.contains(&"manifests/templates/hooks/codex-planner-recall.template.json"));
         assert!(included.contains(&"manifests/mcp-registry.yaml"));
         assert!(included.contains(&"manifests/skills-registry.yaml"));
         assert!(!included.contains(&"protocol/evolution-memory.md"));

@@ -8,7 +8,7 @@ description = "AGS typed host proposal validation and decision-lease contracts"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
+ags-platform = { path = "../ags-platform" }
 
 [dev-dependencies]
 serde_json = "1"

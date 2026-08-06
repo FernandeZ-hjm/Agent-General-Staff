@@ -40,6 +40,15 @@ review-gate: pending-review | passed | n/a
 - 风险：无 | <risk>
 - 下一步：无 | <action>
 
+## Evolver / GEP
+- planning recall：yes | no | skipped
+- recall path：MCP | CLI | skill fallback | unavailable
+- recall state：status=... / search=... / fetch=...
+- used gene/capsule：none | summary-only | <id>
+- adoption impact：none | scoped design decision | avoided approach | risk flag
+- outcome recorded：yes | no | pending
+- record target：method | gene | capsule | none
+- reason if skipped：<reason>
 ````
 
 ### Requirements:

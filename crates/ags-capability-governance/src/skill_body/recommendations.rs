@@ -7,6 +7,7 @@
 //! host snapshot refresh.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Read-only public-skill view of the unified third-party capability manifest.
@@ -17,12 +18,13 @@ pub struct RecommendationsDoc {
     #[serde(default)]
     pub principle: String,
     #[serde(default)]
-    pub skills: Vec<Recommendation>,
+    pub skills: Vec<CatalogEntry>,
 }
 
-/// A single third-party recommendation (upstream canonical name).
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct Recommendation {
+/// A discovery-only catalog entry (upstream canonical name). It deliberately
+/// carries no local installation or activation state.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct CatalogEntry {
     pub id: String,
     #[serde(default)]
     pub name: String,
@@ -41,6 +43,10 @@ pub struct Recommendation {
     #[serde(default)]
     pub revision: Option<String>,
     #[serde(default)]
+    pub tracking_ref: Option<String>,
+    #[serde(default)]
+    pub integrity: Option<String>,
+    #[serde(default)]
     pub license: Option<String>,
     #[serde(default)]
     pub risk: Option<String>,
@@ -48,36 +54,82 @@ pub struct Recommendation {
     pub install_location: Option<String>,
 }
 
-/// Read-only status for one recommendation (filesystem stat only).
+/// Compatibility name for callers of the earlier recommendation surface.
+pub type Recommendation = CatalogEntry;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CatalogLayerState {
+    Recommended,
+    Unlisted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InstallationLayerState {
+    NotInstalled,
+    Installed,
+    Invalid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ActivationLayerState {
+    NotInstalled,
+    NotActivated,
+    Partial,
+    RouteVerified,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UpdateLayerState {
+    NotInstalled,
+    Notify,
+    Manual,
+    Pinned,
+    RebindRequired,
+}
+
+/// Canonical layered read model consumed by current JSON clients. Catalog,
+/// installation and activation are independent facts; none implies another.
 #[derive(Debug, Clone, Serialize)]
-pub struct RecommendationStatus {
-    pub id: String,
-    /// Unified onboarding state. This prevents contradictory local-install and
-    /// host-visibility fields from being interpreted as ready.
-    pub capability_state: String,
-    /// "installed" when a local body exists at the install location, else
-    /// "not-installed". A controlled onboarding action may install it only
-    /// after explicit confirmation.
-    pub local_install: String,
-    /// Per-host visibility through either a direct thin index or the shared
-    /// multi-agent skill body.
-    pub host_visibility: Vec<HostVisibilityLite>,
-    pub next_step: String,
+pub struct SkillStatusProjection {
+    pub schema_version: &'static str,
+    pub skill_id: String,
+    pub catalog: CatalogLayer,
+    pub installation: InstallationLayer,
+    pub activation: ActivationLayer,
+    pub update: UpdateLayer,
+    pub next_action: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct HostVisibilityLite {
-    pub host: String,
-    /// "visible" when a loadable direct or shared `SKILL.md` exists, else
-    /// "not-visible".
-    pub status: String,
+pub struct CatalogLayer {
+    pub state: CatalogLayerState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entry: Option<CatalogEntry>,
 }
 
-/// Hosts whose skill thin-index AGS reports on (read-only stat).
-const HOST_SKILL_DIRS: &[(&str, &str)] = &[
-    ("claude-code", ".claude/skills"),
-    ("codex", ".codex/skills"),
-];
+#[derive(Debug, Clone, Serialize)]
+pub struct InstallationLayer {
+    pub state: InstallationLayerState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub record: Option<crate::skill_adoption::InstalledSkillRecord>,
+    pub unmanaged_body_observed: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ActivationLayer {
+    pub state: ActivationLayerState,
+    pub routes: crate::skill_adoption::AdoptionRouteStatus,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateLayer {
+    pub state: UpdateLayerState,
+    pub upstream_bound: bool,
+}
 
 /// Read public Skill entries from the unified third-party capability manifest.
 /// Missing or malformed manifest → an empty doc (setup degrades gracefully).
@@ -104,7 +156,7 @@ pub fn read_recommendations(repo_root: &Path) -> RecommendationsDoc {
                 }
                 pinned
             });
-            Recommendation {
+            CatalogEntry {
                 id: capability.id,
                 name: capability.name,
                 tier: capability.tier,
@@ -114,6 +166,8 @@ pub fn read_recommendations(repo_root: &Path) -> RecommendationsDoc {
                 source,
                 upstream: capability.source.repository,
                 revision: capability.source.revision,
+                tracking_ref: capability.source.tracking_ref,
+                integrity: capability.source.integrity,
                 license: capability.source.license,
                 risk: Some(capability.risk),
                 install_location: capability.install.install_location,
@@ -127,58 +181,142 @@ pub fn read_recommendations(repo_root: &Path) -> RecommendationsDoc {
     }
 }
 
-/// Compute read-only install + host-visibility status for one recommendation.
-/// Pure filesystem stat against `home`; never spawns a process or writes.
-pub fn recommendation_status(rec: &Recommendation, home: &Path) -> RecommendationStatus {
-    let installed = local_body_present(rec, home);
-    let shared_body = home.join(".agents/skills").join(&rec.id).join("SKILL.md");
-    let host_visibility = HOST_SKILL_DIRS
+/// Join the discovery-only catalog with the two machine-local fact layers.
+/// Filesystem coincidence cannot manufacture an installation claim.
+pub fn skill_status_projection(
+    repo_root: &Path,
+    runtime_home: &Path,
+    home: &Path,
+    skill_id: &str,
+) -> Result<SkillStatusProjection, String> {
+    let skill_id = skill_id.trim();
+    if skill_id.is_empty() {
+        return Err("Skill id is empty".to_string());
+    }
+    skill_status_projections(repo_root, runtime_home, home, &[skill_id.to_string()])?
+        .into_iter()
+        .next()
+        .ok_or_else(|| "Skill status projection was not produced".to_string())
+}
+
+/// Build layered status for multiple Skills from one catalog/index/snapshot
+/// read. This is the canonical JSON-client path; the singular helper is only a
+/// convenience wrapper over it.
+pub fn skill_status_projections(
+    repo_root: &Path,
+    runtime_home: &Path,
+    home: &Path,
+    skill_ids: &[String],
+) -> Result<Vec<SkillStatusProjection>, String> {
+    if skill_ids.iter().any(|skill_id| skill_id.trim().is_empty()) {
+        return Err("Skill id is empty".to_string());
+    }
+    let catalog = read_recommendations(repo_root)
+        .skills
+        .into_iter()
+        .map(|entry| (entry.id.clone(), entry))
+        .collect::<BTreeMap<_, _>>();
+    let index = crate::skill_adoption::load_installed_skills(runtime_home)?;
+    let mut routes =
+        crate::skill_adoption::verify_adoption_routes_batch(runtime_home, home, skill_ids)?;
+    skill_ids
         .iter()
-        .map(|(host, subdir)| {
-            let entry = home.join(subdir).join(&rec.id);
-            let visible = entry.join("SKILL.md").is_file() || shared_body.is_file();
-            HostVisibilityLite {
-                host: host.to_string(),
-                status: if visible { "visible" } else { "not-visible" }.to_string(),
-            }
+        .map(|skill_id| {
+            let catalog_entry = catalog.get(skill_id).cloned();
+            let record = index.skills.get(skill_id).cloned();
+            let routes = routes
+                .remove(skill_id)
+                .ok_or_else(|| format!("missing route projection for `{skill_id}`"))?;
+            Ok(project_status(
+                skill_id,
+                catalog_entry,
+                record,
+                routes,
+                home,
+            ))
         })
-        .collect::<Vec<_>>();
-    let any_visible = host_visibility
-        .iter()
-        .any(|visibility| visibility.status == "visible");
-    let capability_state = match (installed, any_visible) {
-        (true, true) => "active-ready",
-        (true, false) => "installed-not-visible",
-        (false, true) => "visible-not-ready",
-        (false, false) => "absent",
+        .collect()
+}
+
+fn project_status(
+    skill_id: &str,
+    catalog_entry: Option<CatalogEntry>,
+    record: Option<crate::skill_adoption::InstalledSkillRecord>,
+    routes: crate::skill_adoption::AdoptionRouteStatus,
+    home: &Path,
+) -> SkillStatusProjection {
+    let unmanaged_body_observed = catalog_entry
+        .as_ref()
+        .is_some_and(|entry| local_body_present(entry, home));
+    let installation_state = match record.as_ref() {
+        None => InstallationLayerState::NotInstalled,
+        Some(_) if !routes.installation.body_present || !routes.installation.body_hash_matches => {
+            InstallationLayerState::Invalid
+        }
+        Some(_) => InstallationLayerState::Installed,
     };
-    let next_step = match capability_state {
-        "active-ready" => "Installed and visible — verify host visibility with `ags skill verify --strict`."
-            .to_string(),
-        "installed-not-visible" => "Installed locally — repair the host entry during an explicit setup/update, refresh the static snapshot once, then verify.".to_string(),
-        "visible-not-ready" => "A host entry exists without the reviewed local body — repair or remove the stale entry before routing.".to_string(),
-        _ => {
-        match rec.source.as_deref() {
-            Some(src) => {
-                format!(
-                    "Not installed — review {src}; use an explicit per-item onboarding apply or install manually."
-                )
-            }
-            None => "Not installed — select a trusted source and install manually.".to_string(),
+    let activation_state = match installation_state {
+        InstallationLayerState::NotInstalled => ActivationLayerState::NotInstalled,
+        InstallationLayerState::Invalid => ActivationLayerState::NotActivated,
+        InstallationLayerState::Installed if routes.verified_on_all_targets() => {
+            ActivationLayerState::RouteVerified
         }
+        InstallationLayerState::Installed
+            if routes
+                .activations
+                .iter()
+                .any(|route| route.visible || route.snapshot_loaded || route.route_verified) =>
+        {
+            ActivationLayerState::Partial
         }
+        InstallationLayerState::Installed => ActivationLayerState::NotActivated,
     };
-    RecommendationStatus {
-        id: rec.id.clone(),
-        capability_state: capability_state.to_string(),
-        local_install: if installed {
-            "installed"
-        } else {
-            "not-installed"
-        }
-        .to_string(),
-        host_visibility,
-        next_step,
+    let upstream_bound = record
+        .as_ref()
+        .is_some_and(|record| record.source_spec.is_upstream_bound());
+    let update_state = match record.as_ref() {
+        None => UpdateLayerState::NotInstalled,
+        Some(_) if !upstream_bound => UpdateLayerState::RebindRequired,
+        Some(record) => match record.update_policy {
+            crate::skill_adoption::UpdatePolicy::Notify => UpdateLayerState::Notify,
+            crate::skill_adoption::UpdatePolicy::Manual => UpdateLayerState::Manual,
+            crate::skill_adoption::UpdatePolicy::Pinned => UpdateLayerState::Pinned,
+        },
+    };
+    let next_action = match (installation_state, activation_state, update_state) {
+        (InstallationLayerState::NotInstalled, _, _) => "inspect-and-install",
+        (InstallationLayerState::Invalid, _, _) => "recover-or-rollback",
+        (_, _, UpdateLayerState::RebindRequired) => "reinstall-from-explicit-upstream",
+        (_, ActivationLayerState::RouteVerified, UpdateLayerState::Pinned) => "none-pinned",
+        (_, ActivationLayerState::RouteVerified, _) => "check-upstream",
+        _ => "verify-activation",
+    }
+    .to_string();
+    SkillStatusProjection {
+        schema_version: "0.5.0-skill-status-projection",
+        skill_id: skill_id.to_string(),
+        catalog: CatalogLayer {
+            state: if catalog_entry.is_some() {
+                CatalogLayerState::Recommended
+            } else {
+                CatalogLayerState::Unlisted
+            },
+            entry: catalog_entry,
+        },
+        installation: InstallationLayer {
+            state: installation_state,
+            record,
+            unmanaged_body_observed,
+        },
+        activation: ActivationLayer {
+            state: activation_state,
+            routes,
+        },
+        update: UpdateLayer {
+            state: update_state,
+            upstream_bound,
+        },
+        next_action,
     }
 }
 
@@ -226,16 +364,18 @@ mod tests {
         let ids: Vec<&str> = doc.skills.iter().map(|s| s.id.as_str()).collect();
         // Upstream canonical names are present.
         for want in [
-            "superpowers",
             "grilling",
-            "review",
-            "decision-mapping",
+            "code-review",
+            "wayfinder",
             "resolving-merge-conflicts",
-            "to-prd",
-            "to-issues",
+            "to-spec",
+            "to-tickets",
             "triage",
             "handoff",
             "diagnosing-bugs",
+            "grill-with-docs",
+            "writing-for-agents",
+            "improve-codebase-architecture",
         ] {
             assert!(ids.contains(&want), "missing recommendation id: {want}");
         }
@@ -244,7 +384,11 @@ mod tests {
             concat!("cave", "man", "-", "com", "mit"),
             concat!("cave", "man", "-", "re", "view"),
             concat!("diag", "nose"),
-            "code-review",
+            "review",
+            "decision-mapping",
+            "to-prd",
+            "to-issues",
+            "writing-great-skills",
             concat!("t", "d", "d"),
             "test-driven-development",
             "using-git-worktrees",
@@ -262,6 +406,16 @@ mod tests {
             doc.skills.iter().all(|s| s.recommendation_only),
             "all entries must be recommendation_only"
         );
+        assert!(doc.skills.iter().all(|skill| {
+            skill
+                .tracking_ref
+                .as_deref()
+                .is_some_and(|value| !value.is_empty())
+                && skill
+                    .integrity
+                    .as_deref()
+                    .is_some_and(|value| value.starts_with("sha256:"))
+        }));
     }
 
     #[test]
@@ -274,29 +428,32 @@ mod tests {
             source: Some("https://github.com/mattpocock/skills".to_string()),
             ..Default::default()
         };
-        let st = recommendation_status(&rec, &home);
-        assert_eq!(st.local_install, "not-installed");
-        assert_eq!(st.capability_state, "absent");
-        assert!(st.host_visibility.iter().all(|h| h.status == "not-visible"));
-        assert!(st.next_step.contains("Not installed"));
+        let runtime = home.join("runtime");
+        let root = repo_root();
+        let st = skill_status_projection(&root, &runtime, &home, &rec.id).unwrap();
+        assert_eq!(st.installation.state, InstallationLayerState::NotInstalled);
+        assert_eq!(st.activation.state, ActivationLayerState::NotInstalled);
+        assert_eq!(st.next_action, "inspect-and-install");
     }
 
     #[test]
-    fn status_is_installed_when_body_present() {
+    fn unmanaged_body_never_becomes_installed_or_active() {
         let home = std::env::temp_dir().join(format!("ags-rec-ok-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
-        let body = home.join(".agents/skills/review");
+        let body = home.join(".agents/skills/code-review");
         std::fs::create_dir_all(&body).unwrap();
-        std::fs::write(body.join("SKILL.md"), "---\nname: review\n---\n").unwrap();
+        std::fs::write(body.join("SKILL.md"), "---\nname: code-review\n---\n").unwrap();
         let rec = Recommendation {
-            id: "review".to_string(),
-            install_location: Some("$HOME/.agents/skills/review/".to_string()),
+            id: "code-review".to_string(),
+            install_location: Some("$HOME/.agents/skills/code-review/".to_string()),
             ..Default::default()
         };
-        let st = recommendation_status(&rec, &home);
-        assert_eq!(st.local_install, "installed");
-        assert_eq!(st.capability_state, "active-ready");
-        assert!(st.host_visibility.iter().all(|h| h.status == "visible"));
+        let runtime = home.join("runtime");
+        let root = repo_root();
+        let st = skill_status_projection(&root, &runtime, &home, &rec.id).unwrap();
+        assert_eq!(st.installation.state, InstallationLayerState::NotInstalled);
+        assert!(st.installation.unmanaged_body_observed);
+        assert_eq!(st.activation.state, ActivationLayerState::NotInstalled);
         let _ = std::fs::remove_dir_all(&home);
     }
 }

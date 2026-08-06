@@ -16,7 +16,7 @@ pub fn list_resources() -> ResourceListResult {
                 uri: crate::tools::CURRENT_HOST_CAPABILITIES_URI.to_string(),
                 name: "Current Host Capability Catalog".to_string(),
                 description: Some(
-                    "Preflight-bound, read-only HostCapabilitySnapshot. Hosts cache this thin catalog by snapshot_hash, submit only routing_surface=skill_target rows as exact SkillTarget values, and invoke routing_surface=host_command rows directly through their frozen routing_hint."
+                    "Preflight-bound, read-only HostCapabilitySnapshot. Hosts cache this unified Skill/MCP catalog by snapshot_hash, submit exact SkillTarget or McpTarget values from active indexes, and invoke routing_surface=host_command rows directly through their frozen routing_hint."
                         .to_string(),
                 ),
                 mimeType: Some("application/json".to_string()),
@@ -25,11 +25,11 @@ pub fn list_resources() -> ResourceListResult {
                 uri: "ags://global-kernel".to_string(),
                 name: "AGS Global Kernel".to_string(),
                 description: Some(
-                    "AGS global governance kernel summary — lifecycle, rules, and host boundary. \
+                    "AGS global governance kernel summary — lifecycle, rules, and advisory-system boundary. \
                      Applicable to any project; does NOT assume the target is an AGS repo. \
                      Includes: ambient preflight → current-host catalog → typed host proposal \
                      → read-only resolution → optional explicit apply. DirectResponse is \
-                     exclusive, while one exact SkillTarget and one MachineCliTarget may coexist. \
+                     exclusive, while one exact SkillTarget, one exact McpTarget, and one MachineCliTarget may coexist. \
                      Critical: do NOT jump from raw user requests to Light/Medium/Heavy; \
                      \"方案 OK\" authorizes neither mutation nor task-card generation."
                         .to_string(),

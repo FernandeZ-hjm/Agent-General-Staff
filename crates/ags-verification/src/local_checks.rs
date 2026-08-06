@@ -32,23 +32,6 @@ pub(crate) fn run_command(
     }
 }
 
-/// Count the longest consecutive run of hex characters in a string.
-pub(crate) fn longest_hex_run(s: &str) -> usize {
-    let mut max_run = 0;
-    let mut current = 0;
-    for ch in s.chars() {
-        if ch.is_ascii_hexdigit() {
-            current += 1;
-            if current > max_run {
-                max_run = current;
-            }
-        } else {
-            current = 0;
-        }
-    }
-    max_run
-}
-
 /// Truncate a string to `max_len` characters, appending "..." if truncated.
 /// Uses char boundaries to avoid splitting multi-byte UTF-8 characters.
 pub(crate) fn truncate(s: &str, max_len: usize) -> String {
@@ -89,22 +72,19 @@ pub(super) fn check_task_card_fixtures(repo_root: &Path) -> Vec<CheckItem> {
                 );
             }
 
-            let (code, stdout, stderr) = run_command(
-                repo_root,
-                "cargo",
-                &[
-                    "run",
-                    "-q",
-                    "-p",
-                    "ags-cli",
-                    "--",
-                    "task",
-                    "validate",
-                    &path.to_string_lossy(),
-                ],
-                &[],
-            );
-            let accepted = code == 0;
+            let input = match std::fs::read_to_string(&path) {
+                Ok(input) => input,
+                Err(error) => {
+                    return CheckItem::fail(
+                        id,
+                        "local",
+                        &format!("Cannot read {relative}: {error}"),
+                        "Restore the current canonical task-card fixture.",
+                    )
+                }
+            };
+            let validation_errors = ags_task_contract::validator::validate(&input);
+            let accepted = validation_errors.is_empty();
             if accepted == should_accept {
                 CheckItem::pass(id, "local", success)
             } else {
@@ -112,15 +92,15 @@ pub(super) fn check_task_card_fixtures(repo_root: &Path) -> Vec<CheckItem> {
                     id,
                     "local",
                     &format!(
-                        "{relative} expected accepted={should_accept}, exit={code}: {}",
-                        truncate(&format!("{stdout}\n{stderr}"), 400)
+                        "{relative} expected accepted={should_accept}: {}",
+                        truncate(&validation_errors.join("; "), 400)
                     ),
                     "Repair the CLI validator or its current-contract fixture.",
                 )
                 .with_command(&format!(
                     "cargo run -q -p ags-cli -- task validate {relative}"
                 ))
-                .with_exit_code(code)
+                .with_exit_code(if accepted { 0 } else { 1 })
             }
         })
         .collect()
@@ -179,57 +159,21 @@ pub(super) fn check_governance_yaml(repo_root: &Path) -> Vec<CheckItem> {
 }
 
 pub(super) fn check_session_preflight(repo_root: &Path) -> CheckItem {
-    // Run `ags session preflight` for smoke verification.
-    // Use cargo run since ags may not be on PATH during development.
-    let (code, stdout, stderr) = run_command(
+    let preflight = ags_workspace_facts::run_session_preflight(
         repo_root,
-        "cargo",
-        &[
-            "run",
-            "-q",
-            "-p",
-            "ags-cli",
-            "--",
-            "session",
-            "preflight",
-            "--for",
-            "claude-code",
-            "--format",
-            "json",
-            "--target",
-            &repo_root.to_string_lossy(),
-        ],
-        &[],
+        &ags_workspace_facts::AgentType::ClaudeCode,
     );
-
-    if code == 0 {
-        // Verify the JSON output is parseable
-        match serde_json::from_str::<serde_json::Value>(&stdout) {
-            Ok(json) => {
-                let status = json
-                    .get("overall_status")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
-                CheckItem::pass(
-                    "session-preflight",
-                    "local",
-                    &format!("session preflight OK (status={})", status),
-                )
-            }
-            Err(e) => CheckItem::fail(
-                "session-preflight",
-                "local",
-                &format!("session preflight produced invalid JSON: {}", e),
-                "Check ags session preflight output for errors.",
+    if preflight.exit_code == 0 {
+        CheckItem::pass(
+            "session-preflight",
+            "local",
+            &format!(
+                "session preflight OK (status={:?}, suite={})",
+                preflight.overall_status, preflight.is_ags_suite
             )
-            .with_command(&format!(
-                "ags session preflight --for claude-code --format json --target {}",
-                repo_root.display()
-            ))
-            .with_exit_code(1),
-        }
+            .to_ascii_lowercase(),
+        )
     } else {
-        let combined = format!("{}\n{}", truncate(&stdout, 300), truncate(&stderr, 300));
         let remediation = format!(
             "Run `ags session preflight --for claude-code --format json --target {}` to diagnose.",
             repo_root.display()
@@ -237,14 +181,18 @@ pub(super) fn check_session_preflight(repo_root: &Path) -> CheckItem {
         CheckItem::fail(
             "session-preflight",
             "local",
-            &format!("session preflight failed (exit {}): {}", code, combined),
+            &format!(
+                "session preflight failed (exit {}): {}",
+                preflight.exit_code,
+                truncate(&preflight.failures.join("; "), 600)
+            ),
             &remediation,
         )
         .with_command(&format!(
             "ags session preflight --for claude-code --format json --target {}",
             repo_root.display()
         ))
-        .with_exit_code(code)
+        .with_exit_code(preflight.exit_code)
     }
 }
 

@@ -156,7 +156,7 @@ ags host lifecycle --event session-start|session-end|stop-guard \
   --target <repo>
 ```
 
-The v0.4.12 generator writes only workspace-owned adapters and replaces
+The v0.4.1 generator writes only workspace-owned adapters and replaces
 `<repo>` with the canonical absolute workspace path. Claude Code uses
 `.claude/settings.local.json`, CodeBuddy-Code uses
 `.codebuddy/settings.local.json`, Codex and Cursor use their project hook

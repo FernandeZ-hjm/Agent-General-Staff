@@ -48,7 +48,9 @@ fn unavailable_runtime_skill_tag_blocks_launch() {
     let dir = unique_tmp("blocked-skill");
     std::fs::create_dir_all(&dir).unwrap();
     let card = dir.join("card.md");
-    std::fs::write(&card, format!("{VALID_CARD}\n[skill: skill-creator]\n")).unwrap();
+    // Use a canonical bundled route so the card passes the two static gates;
+    // the isolated runtime home must then fail at the live availability gate.
+    std::fs::write(&card, format!("{VALID_CARD}\n[skill: ags-skill]\n")).unwrap();
 
     let plan = run_task_card_inner(
         &card.to_string_lossy(),
@@ -103,7 +105,7 @@ fn check_only_skips_runtime_skill_gate() {
     let dir = unique_tmp("check-only");
     std::fs::create_dir_all(&dir).unwrap();
     let card = dir.join("card.md");
-    std::fs::write(&card, format!("{VALID_CARD}\n[skill: skill-creator]\n")).unwrap();
+    std::fs::write(&card, format!("{VALID_CARD}\n[skill: ags-skill]\n")).unwrap();
 
     let plan = run_task_card_inner(
         &card.to_string_lossy(),

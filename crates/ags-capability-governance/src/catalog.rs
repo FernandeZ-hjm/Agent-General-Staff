@@ -127,11 +127,20 @@ pub struct McpCard {
 pub struct ThirdPartyCapabilityCard {
     pub capability_id: String,
     pub kind: String,
+    /// Catalog entries are discovery/review facts. They never enter the active
+    /// route table by themselves.
+    pub catalog_state: String,
+    /// For Skills this is derived only from InstalledSkillRecord projection;
+    /// conventional-path bodies and suite-owned bodies cannot satisfy it.
+    pub installation_state: String,
     pub display_name: String,
     pub purpose: String,
     pub profiles: Vec<String>,
     pub required: bool,
     pub route_state: String,
+    /// Clarifies that `route_state` describes the contract after successful
+    /// installation and activation, not the current machine route state.
+    pub route_state_semantics: String,
     pub availability: AvailabilityState,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reason_codes: Vec<String>,

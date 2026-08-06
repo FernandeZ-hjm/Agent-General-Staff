@@ -42,19 +42,12 @@ pub(super) fn is_capability_authority_root(path: &Path) -> bool {
 }
 
 pub(super) fn normalized_path(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| {
-        if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            std::env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
-                .join(path)
-        }
-    })
+    ags_platform::normalize_path(path)
 }
 
 pub(super) fn installed_source_root(runtime_home: &Path) -> Option<PathBuf> {
-    let content = std::fs::read_to_string(runtime_home.join("install-manifest.json")).ok()?;
+    let layout = ags_platform::RuntimeLayout::new(runtime_home);
+    let content = std::fs::read_to_string(layout.install_manifest()).ok()?;
     let manifest: serde_json::Value = serde_json::from_str(&content).ok()?;
     manifest
         .get("source_root")
@@ -106,18 +99,6 @@ pub fn resolve_capability_authority_root(
     Err(CapabilityAuthorityError { tried })
 }
 
-pub fn locate_runtime_home() -> PathBuf {
-    if let Some(path) = std::env::var_os("AGS_RUNTIME_HOME") {
-        return PathBuf::from(path);
-    }
-    if let Some(path) = std::env::var_os("AGS_HOME") {
-        return PathBuf::from(path);
-    }
-    ags_platform::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".ags/private-runtime")
-}
-
 pub(super) fn safe_host(active_host: &str) -> String {
     let host = active_host.trim();
     if host.is_empty() {
@@ -135,7 +116,7 @@ pub(super) fn safe_host(active_host: &str) -> String {
 }
 
 pub fn snapshot_path(runtime_home: &Path, active_host: &str) -> PathBuf {
-    runtime_home
-        .join("capability-snapshot")
+    ags_platform::RuntimeLayout::new(runtime_home)
+        .capability_snapshots()
         .join(format!("{}.json", safe_host(active_host)))
 }

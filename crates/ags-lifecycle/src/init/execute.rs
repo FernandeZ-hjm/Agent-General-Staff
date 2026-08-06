@@ -205,7 +205,7 @@ pub fn execute(request: InitRequest) -> Result<InitOutput, String> {
         }
     }
     for file in &plan.files {
-        report.add(write_project_init_file(file, &plan.append_files));
+        report.add(write_project_init_file(&plan, file));
     }
     for warning in &plan.warnings {
         report.add(InitFinding::warn(

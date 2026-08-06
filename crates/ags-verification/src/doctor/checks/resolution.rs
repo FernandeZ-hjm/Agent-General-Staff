@@ -121,7 +121,7 @@ pub fn skill_resolution_drift_check(repo_root: &Path) -> Vec<Finding> {
     // 2. Machine-local Skill/MCP capability snapshot. Missing or stale state is a
     // governance precondition failure for Skill targets, never an advisory
     // deterministic active-skill snapshot.
-    let runtime_home = ags_capability_governance::locate_runtime_home();
+    let runtime_home = ags_platform::runtime_home();
     let evidence = ags_capability_governance::snapshot_path(&runtime_home, "codex");
     match ags_capability_governance::load_static_snapshot(&runtime_home, "codex") {
         Ok(_) => findings.push(Finding::info(
@@ -146,14 +146,12 @@ pub fn skill_resolution_drift_check(repo_root: &Path) -> Vec<Finding> {
     findings
 }
 
-/// Read-only routing-COVERAGE gate (manifest hygiene). Every adopted capability
-/// — suite.yaml required/optional/personal skills and governed MCPs — must carry
-/// an explicit `routing.route_state` (routable / not-routable / retired) in the
-/// routing-source manifests. A missing route_state is exactly the
-/// indistinguishable "forgot to annotate" gap the 0.2.7 closure removes, so it is a
-/// FAIL — but it gates the MANIFEST AUTHOR (CI / doctor), never a live route:
-/// This gates manifest authorship, not request routing. Hermetic: reads manifests
-/// only, never probes a host.
+/// Read-only routing-COVERAGE gate (manifest hygiene).
+///
+/// The registry is the static route declaration surface and every entry in it
+/// must carry an explicit typed route state. Suite bundled command Skills are
+/// not SkillTargets, and catalog recommendations are not installed or routable,
+/// so neither is joined into this check. Live activation remains machine-local.
 pub fn skill_resolution_coverage_check(repo_root: &Path) -> Vec<Finding> {
     let mut findings = Vec::new();
 
@@ -240,45 +238,21 @@ pub fn skill_resolution_coverage_check(repo_root: &Path) -> Vec<Finding> {
             }
         };
 
-    // Suite skill names from suite.yaml (required + optional lists, personal map).
-    let mut suite_skills: Vec<String> = Vec::new();
-    if let Ok(c) = std::fs::read_to_string(repo_root.join("manifests/suite.yaml")) {
-        if let Ok(doc) = serde_yaml::from_str::<YamlValue>(&c) {
-            let suite = doc.get("suite");
-            for sect in ["required", "optional"] {
-                if let Some(seq) = suite
-                    .and_then(|s| s.get(sect))
-                    .and_then(|v| v.as_sequence())
-                {
-                    suite_skills.extend(
-                        seq.iter()
-                            .filter_map(|it| it.get("name").and_then(|n| n.as_str()))
-                            .map(String::from),
-                    );
-                }
-            }
-            if let Some(map) = suite
-                .and_then(|s| s.get("personal"))
-                .and_then(|v| v.as_mapping())
-            {
-                suite_skills.extend(map.keys().filter_map(|k| k.as_str()).map(String::from));
-            }
-        }
-    }
-
     let mut malformed: Vec<String> = Vec::new();
     let mut missing: Vec<String> = Vec::new();
-    for name in suite_skills {
-        match skill_cov.get(&name) {
-            Some(RouteCoverage::Covered) => {}
-            Some(RouteCoverage::Malformed) => malformed.push(name),
-            _ => missing.push(name),
+    for (name, coverage) in &skill_cov {
+        match coverage {
+            RouteCoverage::Covered => {}
+            RouteCoverage::Malformed => malformed.push(name.clone()),
+            RouteCoverage::Missing => missing.push(name.clone()),
         }
     }
+    malformed.sort();
+    missing.sort();
     if malformed.is_empty() && missing.is_empty() {
         findings.push(Finding::pass(
             "skill-resolution-coverage",
-            "every suite skill declares a valid, explicit routing.route_state (typed parse)",
+            "every static Skill route declares a valid, explicit routing.route_state (typed parse)",
         ));
     } else {
         let mut detail = String::new();
@@ -296,37 +270,34 @@ pub fn skill_resolution_coverage_check(repo_root: &Path) -> Vec<Finding> {
         }
         findings.push(Finding::fail(
             "skill-resolution-coverage",
-            "suite skills with invalid or missing routing.route_state",
+            "static Skill routes with invalid or missing routing.route_state",
             detail,
         ));
     }
 
-    // Governed MCPs: same typed-parse coverage (key presence is not enough).
-    if let Ok(c) = std::fs::read_to_string(repo_root.join("manifests/mcp-registry.yaml")) {
-        if let Ok(doc) = serde_yaml::from_str::<YamlValue>(&c) {
-            if let Some(seq) = doc.get("mcps").and_then(|v| v.as_sequence()) {
-                let mcp_bad: Vec<String> = seq
-                    .iter()
-                    .filter(|it| classify_routing(it) != RouteCoverage::Covered)
-                    .filter_map(|it| it.get("name").and_then(|n| n.as_str()).map(String::from))
-                    .collect();
-                if mcp_bad.is_empty() {
-                    findings.push(Finding::pass(
-                        "skill-resolution-coverage-mcp",
-                        "every governed MCP declares a valid, explicit routing.route_state",
-                    ));
-                } else {
-                    findings.push(Finding::fail(
-                        "skill-resolution-coverage-mcp",
-                        "governed MCPs with invalid or missing routing.route_state",
-                        format!(
-                            "Fix routing.route_state (valid + explicit) in mcp-registry.yaml for: {}.",
-                            mcp_bad.join(", ")
-                        ),
-                    ));
-                }
-            }
+    // Third-party parent routing is validated once by the canonical catalog
+    // parser. The MCP registry no longer duplicates parent definitions or
+    // manufactures installed/active state.
+    match ags_capability_governance::third_party_manifest::read_third_party_manifest(repo_root) {
+        Ok(manifest) => {
+            let count = manifest
+                .capabilities
+                .iter()
+                .filter(|capability| {
+                    capability.kind
+                        == ags_capability_governance::third_party_manifest::CapabilityKind::Mcp
+                })
+                .count();
+            findings.push(Finding::pass(
+                "skill-resolution-coverage-mcp",
+                format!("{count} catalog MCP routes passed the canonical typed validator"),
+            ));
         }
+        Err(error) => findings.push(Finding::fail(
+            "skill-resolution-coverage-mcp",
+            "third-party MCP catalog routing is invalid",
+            error,
+        )),
     }
 
     let mut incomplete = Vec::new();
@@ -335,10 +306,7 @@ pub fn skill_resolution_coverage_check(repo_root: &Path) -> Vec<Finding> {
             "manifests/skills-registry.yaml",
             &["skills", "route_targets"][..],
         ),
-        (
-            "manifests/mcp-registry.yaml",
-            &["mcps", "route_targets"][..],
-        ),
+        ("manifests/mcp-registry.yaml", &["route_targets"][..]),
     ] {
         let Ok(content) = std::fs::read_to_string(repo_root.join(path)) else {
             continue;

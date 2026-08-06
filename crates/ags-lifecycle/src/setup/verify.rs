@@ -21,7 +21,7 @@ fn add_install_content_conformance(
         Err(error) => {
             report.add(
                 crate::setup::SetupFinding::fail(
-                    "private-install-content-current",
+                    "runtime-install-content-current",
                     "installed AGS runtime cannot be compared with the canonical setup plan",
                     format!("{}: {error}", manifest_path.display()),
                 )
@@ -51,7 +51,7 @@ fn add_install_content_conformance(
             producer.unwrap_or("<missing>")
         ));
     }
-    if schema != Some(super::PRIVATE_INSTALL_SCHEMA) {
+    if schema != Some(super::RUNTIME_INSTALL_SCHEMA) {
         drift.push(format!("schema_version={}", schema.unwrap_or("<missing>")));
     }
     let Some(source_root) = source_root else {
@@ -67,7 +67,7 @@ fn add_install_content_conformance(
         report.add(install_content_finding(drift));
         return;
     }
-    let plan = super::plan::private_install_plan(source_root, target, home);
+    let plan = super::plan::runtime_install_plan(source_root, target, home);
     for file in plan
         .files
         .iter()
@@ -85,13 +85,13 @@ fn add_install_content_conformance(
 fn install_content_finding(drift: Vec<String>) -> crate::setup::SetupFinding {
     if drift.is_empty() {
         return crate::setup::SetupFinding::pass(
-            "private-install-content-current",
+            "runtime-install-content-current",
             "install manifest and AGS-owned runtime assets equal the current setup plan",
         )
         .with_conformance(
             format!(
                 "{} / producer {} / exact plan content",
-                super::PRIVATE_INSTALL_SCHEMA,
+                super::RUNTIME_INSTALL_SCHEMA,
                 AGS_VERSION
             ),
             "all AGS-owned runtime assets current",
@@ -104,14 +104,14 @@ fn install_content_finding(drift: Vec<String>) -> crate::setup::SetupFinding {
         observed.push_str(&format!(", and {} more", total - 8));
     }
     crate::setup::SetupFinding::fail(
-        "private-install-content-current",
+        "runtime-install-content-current",
         "installed AGS runtime differs from the current setup plan",
         observed.clone(),
     )
     .with_conformance(
         format!(
             "{} / producer {} / exact AGS-owned plan content",
-            super::PRIVATE_INSTALL_SCHEMA,
+            super::RUNTIME_INSTALL_SCHEMA,
             AGS_VERSION
         ),
         observed,
@@ -209,71 +209,14 @@ fn claude_mcp_get_at(server: &str, current_dir: &Path) -> Result<String, String>
         Err(combined.trim().to_string())
     }
 }
-fn add_codegraph_claude_checks(report: &mut crate::setup::SetupReport, home: &Path) {
-    match claude_mcp_list_line_at("codegraph", home) {
-        Ok(Some(line)) if line.contains("Connected") => {
-            report.add(crate::setup::SetupFinding::pass(
-                "private-install-claude-code-codegraph-global",
-                "Claude Code global MCP includes connected codegraph",
-            ))
-        }
-        Ok(Some(line)) => report.add(crate::setup::SetupFinding::fail(
-            "private-install-claude-code-codegraph-global",
-            "Claude Code global MCP codegraph is configured but not connected",
-            line,
-        )),
-        Ok(None) => report.add(crate::setup::SetupFinding::fail(
-            "private-install-claude-code-codegraph-global",
-            "Claude Code global MCP does not include codegraph",
-            "run `claude mcp add -s user codegraph -- codegraph serve --mcp`",
-        )),
-        Err(e) => report.add(crate::setup::SetupFinding::fail(
-            "private-install-claude-code-codegraph-global",
-            "cannot verify Claude Code global MCP codegraph entry",
-            e,
-        )),
-    }
-
-    match claude_mcp_get_at("codegraph", home) {
-        Ok(detail) if detail.contains("codegraph") && detail.contains("serve --mcp") => {
-            report.add(crate::setup::SetupFinding::pass(
-                "private-install-claude-code-codegraph-command",
-                "Claude Code codegraph MCP uses `codegraph serve --mcp`",
-            ));
-        }
-        Ok(detail) => report.add(crate::setup::SetupFinding::fail(
-            "private-install-claude-code-codegraph-command",
-            "Claude Code codegraph MCP does not use `codegraph serve --mcp`",
-            detail,
-        )),
-        Err(e) => report.add(crate::setup::SetupFinding::fail(
-            "private-install-claude-code-codegraph-command",
-            "cannot inspect Claude Code codegraph MCP command",
-            e,
-        )),
-    }
-
-    match command_in_path("codegraph") {
-        Ok(path) => report.add(crate::setup::SetupFinding::pass(
-            "private-install-codegraph-cli",
-            format!("codegraph CLI available at {path}"),
-        )),
-        Err(e) => report.add(crate::setup::SetupFinding::fail(
-            "private-install-codegraph-cli",
-            "codegraph CLI is not available on PATH",
-            format!("install codegraph before relying on code intelligence. {e}"),
-        )),
-    }
-}
-/// Build the installed-kernel/runtime health report without rendering or
 /// exiting so `ags doctor` can use the same diagnostic authority as setup
 /// verification.
-pub(in crate::setup) fn private_install_health_report(
+pub(in crate::setup) fn runtime_install_health_report(
     target: &Path,
     home: &Path,
     run_mcp_smoke: bool,
 ) -> crate::setup::SetupReport {
-    let mut report = crate::setup::SetupReport::new("private-install-verify");
+    let mut report = crate::setup::SetupReport::new("runtime-install-verify");
     add_install_content_conformance(&mut report, target, home);
 
     let required = [
@@ -284,8 +227,6 @@ pub(in crate::setup) fn private_install_health_report(
         "hosts/tencent-agent.mcp.snippet.json",
         "hosts/workbuddy.mcp.snippet.json",
         "hosts/codebuddy-code.mcp.snippet.json",
-        "manifests/runtime-profiles.yaml",
-        "hooks/codex-planner-recall.json",
         "bin/ags-mcp-stdio.sh",
     ];
 
@@ -293,33 +234,37 @@ pub(in crate::setup) fn private_install_health_report(
         let path = target.join(rel);
         if path.exists() {
             report.add(crate::setup::SetupFinding::pass(
-                format!("private-install-present-{}", sanitize_name(rel)),
+                format!("runtime-install-present-{}", sanitize_name(rel)),
                 format!("present: {rel}"),
             ));
         } else {
             report.add(crate::setup::SetupFinding::fail(
-                format!("private-install-present-{}", sanitize_name(rel)),
+                format!("runtime-install-present-{}", sanitize_name(rel)),
                 format!("missing: {rel}"),
                 path.display().to_string(),
             ));
         }
     }
 
+    let approved_hosts = super::approved_lifecycle_hosts(target).unwrap_or_default();
+    let claude_selected = approved_hosts.iter().any(|host| host == "claude-code");
+    let codex_selected = approved_hosts.iter().any(|host| host == "codex");
+
     let claude_command_path = claude_ags_command_path(home);
-    if claude_command_path.exists() {
+    if claude_selected && claude_command_path.exists() {
         report.add(crate::setup::SetupFinding::pass(
-            "private-install-claude-code-slash-command-present",
+            "runtime-install-claude-code-slash-command-present",
             format!("present: {}", claude_command_path.display()),
         ));
         match std::fs::read_to_string(&claude_command_path) {
             Ok(content) if content.contains("ags_preflight") && content.contains(AGS_VERSION) => {
                 report.add(crate::setup::SetupFinding::pass(
-                    "private-install-claude-code-slash-command-content",
+                    "runtime-install-claude-code-slash-command-content",
                     "Claude Code /ags command references AGS preflight and current version",
                 ));
             }
             Ok(_) => report.add(crate::setup::SetupFinding::fail(
-                "private-install-claude-code-slash-command-content",
+                "runtime-install-claude-code-slash-command-content",
                 "Claude Code /ags command content is stale",
                 format!(
                     "expected ags_preflight and version {AGS_VERSION} in {}",
@@ -327,30 +272,35 @@ pub(in crate::setup) fn private_install_health_report(
                 ),
             )),
             Err(e) => report.add(crate::setup::SetupFinding::fail(
-                "private-install-claude-code-slash-command-content",
+                "runtime-install-claude-code-slash-command-content",
                 "cannot read Claude Code /ags command",
                 e.to_string(),
             )),
         }
         match text_file_contains_no_secret_markers(&claude_command_path) {
             Ok(()) => report.add(crate::setup::SetupFinding::pass(
-                "private-install-claude-code-slash-command-secret-scan",
+                "runtime-install-claude-code-slash-command-secret-scan",
                 "secret marker scan OK: Claude Code /ags command",
             )),
             Err(e) => report.add(crate::setup::SetupFinding::fail(
-                "private-install-claude-code-slash-command-secret-scan",
+                "runtime-install-claude-code-slash-command-secret-scan",
                 "secret marker scan failed: Claude Code /ags command",
                 e,
             )),
         }
-    } else {
+    } else if claude_selected {
         report.add(crate::setup::SetupFinding::fail(
-            "private-install-claude-code-slash-command-present",
+            "runtime-install-claude-code-slash-command-present",
             "missing Claude Code /ags command",
             format!(
                 "rerun `ags setup --yes` to create {}",
                 claude_command_path.display()
             ),
+        ));
+    } else {
+        report.add(crate::setup::SetupFinding::skip(
+            "runtime-install-claude-code-slash-command-not-selected",
+            "Claude Code is not in this installation's approved Host set",
         ));
     }
 
@@ -358,7 +308,7 @@ pub(in crate::setup) fn private_install_health_report(
         let check_suffix = sanitize_name(&retired_dir.to_string_lossy());
         if retired_dir.exists() {
             report.add(crate::setup::SetupFinding::fail(
-                format!("private-install-retired-codex-skill-{check_suffix}"),
+                format!("runtime-install-retired-codex-skill-{check_suffix}"),
                 "retired Codex AGS visible skill still exists",
                 format!(
                     "rerun `ags setup --yes --force` to remove {}",
@@ -367,7 +317,7 @@ pub(in crate::setup) fn private_install_health_report(
             ));
         } else {
             report.add(crate::setup::SetupFinding::pass(
-                format!("private-install-retired-codex-skill-{check_suffix}"),
+                format!("runtime-install-retired-codex-skill-{check_suffix}"),
                 format!(
                     "retired Codex AGS visible skill absent: {}",
                     retired_dir.display()
@@ -376,120 +326,134 @@ pub(in crate::setup) fn private_install_health_report(
         }
     }
 
-    for (name, display_name, _, _, summary) in codex_ags_command_skill_specs() {
-        let skill_path = codex_ags_named_skill_path(home, name);
-        let check_suffix = sanitize_name(name);
-        if skill_path.exists() {
-            match std::fs::read_to_string(&skill_path) {
-                Ok(content) if codex_command_skill_is_current(&content, name) => {
-                    report.add(crate::setup::SetupFinding::pass(
-                        format!("private-install-codex-command-skill-{check_suffix}"),
-                        format!("Codex command skill present: {name}"),
-                    ));
+    if codex_selected {
+        for (name, display_name, _, _, summary) in codex_ags_command_skill_specs() {
+            let skill_path = codex_ags_named_skill_path(home, name);
+            let check_suffix = sanitize_name(name);
+            if skill_path.exists() {
+                match std::fs::read_to_string(&skill_path) {
+                    Ok(content) if codex_command_skill_is_current(&content, name) => {
+                        report.add(crate::setup::SetupFinding::pass(
+                            format!("runtime-install-codex-command-skill-{check_suffix}"),
+                            format!("Codex command skill present: {name}"),
+                        ));
+                    }
+                    Ok(_) => report.add(crate::setup::SetupFinding::fail(
+                        format!("runtime-install-codex-command-skill-{check_suffix}"),
+                        format!("Codex command skill content is stale: {name}"),
+                        format!("expected {display_name}, {summary}, and version {AGS_VERSION}"),
+                    )),
+                    Err(e) => report.add(crate::setup::SetupFinding::fail(
+                        format!("runtime-install-codex-command-skill-{check_suffix}"),
+                        format!("cannot read Codex command skill: {name}"),
+                        e.to_string(),
+                    )),
                 }
-                Ok(_) => report.add(crate::setup::SetupFinding::fail(
-                    format!("private-install-codex-command-skill-{check_suffix}"),
-                    format!("Codex command skill content is stale: {name}"),
-                    format!("expected {display_name}, {summary}, and version {AGS_VERSION}"),
-                )),
-                Err(e) => report.add(crate::setup::SetupFinding::fail(
-                    format!("private-install-codex-command-skill-{check_suffix}"),
-                    format!("cannot read Codex command skill: {name}"),
-                    e.to_string(),
-                )),
+            } else {
+                report.add(crate::setup::SetupFinding::fail(
+                    format!("runtime-install-codex-command-skill-{check_suffix}"),
+                    format!("missing Codex command skill: {name}"),
+                    skill_path.display().to_string(),
+                ));
             }
-        } else {
-            report.add(crate::setup::SetupFinding::fail(
-                format!("private-install-codex-command-skill-{check_suffix}"),
-                format!("missing Codex command skill: {name}"),
-                skill_path.display().to_string(),
-            ));
-        }
 
-        let metadata_path = codex_ags_named_skill_agent_metadata_path(home, name);
-        if metadata_path.exists() {
-            match std::fs::read_to_string(&metadata_path) {
-                Ok(content) if content.contains(&format!("display_name: \"{display_name}\"")) => {
-                    report.add(crate::setup::SetupFinding::pass(
-                        format!("private-install-codex-command-skill-metadata-{check_suffix}"),
-                        format!("Codex command skill metadata present: {name}"),
-                    ));
+            let metadata_path = codex_ags_named_skill_agent_metadata_path(home, name);
+            if metadata_path.exists() {
+                match std::fs::read_to_string(&metadata_path) {
+                    Ok(content)
+                        if content.contains(&format!("display_name: \"{display_name}\"")) =>
+                    {
+                        report.add(crate::setup::SetupFinding::pass(
+                            format!("runtime-install-codex-command-skill-metadata-{check_suffix}"),
+                            format!("Codex command skill metadata present: {name}"),
+                        ));
+                    }
+                    Ok(_) => report.add(crate::setup::SetupFinding::fail(
+                        format!("runtime-install-codex-command-skill-metadata-{check_suffix}"),
+                        format!("Codex command skill metadata is stale: {name}"),
+                        metadata_path.display().to_string(),
+                    )),
+                    Err(e) => report.add(crate::setup::SetupFinding::fail(
+                        format!("runtime-install-codex-command-skill-metadata-{check_suffix}"),
+                        format!("cannot read Codex command skill metadata: {name}"),
+                        e.to_string(),
+                    )),
                 }
-                Ok(_) => report.add(crate::setup::SetupFinding::fail(
-                    format!("private-install-codex-command-skill-metadata-{check_suffix}"),
-                    format!("Codex command skill metadata is stale: {name}"),
+            } else {
+                report.add(crate::setup::SetupFinding::fail(
+                    format!("runtime-install-codex-command-skill-metadata-{check_suffix}"),
+                    format!("missing Codex command skill metadata: {name}"),
                     metadata_path.display().to_string(),
-                )),
-                Err(e) => report.add(crate::setup::SetupFinding::fail(
-                    format!("private-install-codex-command-skill-metadata-{check_suffix}"),
-                    format!("cannot read Codex command skill metadata: {name}"),
-                    e.to_string(),
-                )),
+                ));
             }
-        } else {
-            report.add(crate::setup::SetupFinding::fail(
-                format!("private-install-codex-command-skill-metadata-{check_suffix}"),
-                format!("missing Codex command skill metadata: {name}"),
-                metadata_path.display().to_string(),
-            ));
         }
+    } else {
+        report.add(crate::setup::SetupFinding::skip(
+            "runtime-install-codex-command-skills-not-selected",
+            "Codex is not in this installation's approved Host set",
+        ));
     }
 
-    match claude_mcp_list_line_at("ags", home) {
-        Ok(Some(line)) if line.contains("Connected") => {
-            report.add(crate::setup::SetupFinding::pass(
-                "private-install-claude-code-ags-global",
-                "Claude Code global MCP includes connected ags",
-            ))
+    if claude_selected {
+        match claude_mcp_list_line_at("ags", home) {
+            Ok(Some(line)) if line.contains("Connected") => {
+                report.add(crate::setup::SetupFinding::pass(
+                    "runtime-install-claude-code-ags-global",
+                    "Claude Code global MCP includes connected ags",
+                ))
+            }
+            Ok(Some(line)) => report.add(crate::setup::SetupFinding::fail(
+                "runtime-install-claude-code-ags-global",
+                "Claude Code global MCP ags is configured but not connected",
+                line,
+            )),
+            Ok(None) => report.add(crate::setup::SetupFinding::fail(
+                "runtime-install-claude-code-ags-global",
+                "Claude Code global MCP does not include ags",
+                "run `/ags setup` or `ags setup --yes`",
+            )),
+            Err(e) => report.add(crate::setup::SetupFinding::fail(
+                "runtime-install-claude-code-ags-global",
+                "cannot verify Claude Code global MCP ags entry",
+                e,
+            )),
         }
-        Ok(Some(line)) => report.add(crate::setup::SetupFinding::fail(
-            "private-install-claude-code-ags-global",
-            "Claude Code global MCP ags is configured but not connected",
-            line,
-        )),
-        Ok(None) => report.add(crate::setup::SetupFinding::fail(
-            "private-install-claude-code-ags-global",
-            "Claude Code global MCP does not include ags",
-            "run `/ags setup` or `ags setup --yes --register-claude`",
-        )),
-        Err(e) => report.add(crate::setup::SetupFinding::fail(
-            "private-install-claude-code-ags-global",
-            "cannot verify Claude Code global MCP ags entry",
-            e,
-        )),
-    }
 
-    match (claude_mcp_get_at("ags", home), command_in_path("ags")) {
-        (Ok(detail), Ok(ags_path))
-            if detail.contains(&ags_path)
-                || (cfg!(windows)
-                    && detail
-                        .to_ascii_lowercase()
-                        .contains(&ags_path.to_ascii_lowercase())) =>
-        {
-            report.add(crate::setup::SetupFinding::pass(
-                "private-install-claude-code-ags-command",
-                "Claude Code ags MCP uses installed AGS binary",
-            ));
+        match (claude_mcp_get_at("ags", home), command_in_path("ags")) {
+            (Ok(detail), Ok(ags_path))
+                if detail.contains(&ags_path)
+                    || (cfg!(windows)
+                        && detail
+                            .to_ascii_lowercase()
+                            .contains(&ags_path.to_ascii_lowercase())) =>
+            {
+                report.add(crate::setup::SetupFinding::pass(
+                    "runtime-install-claude-code-ags-command",
+                    "Claude Code ags MCP uses installed AGS binary",
+                ));
+            }
+            (Ok(detail), Ok(ags_path)) => report.add(crate::setup::SetupFinding::fail(
+                "runtime-install-claude-code-ags-command",
+                "Claude Code ags MCP does not use the installed AGS binary",
+                format!("expected command: {ags_path}\n{detail}"),
+            )),
+            (Ok(detail), Err(e)) => report.add(crate::setup::SetupFinding::fail(
+                "runtime-install-claude-code-ags-command",
+                "cannot confirm installed AGS binary path",
+                format!("{e}\n{detail}"),
+            )),
+            (Err(e), _) => report.add(crate::setup::SetupFinding::fail(
+                "runtime-install-claude-code-ags-command",
+                "cannot inspect Claude Code ags MCP command",
+                e,
+            )),
         }
-        (Ok(detail), Ok(ags_path)) => report.add(crate::setup::SetupFinding::fail(
-            "private-install-claude-code-ags-command",
-            "Claude Code ags MCP does not use the installed AGS binary",
-            format!("expected command: {ags_path}\n{detail}"),
-        )),
-        (Ok(detail), Err(e)) => report.add(crate::setup::SetupFinding::fail(
-            "private-install-claude-code-ags-command",
-            "cannot confirm installed AGS binary path",
-            format!("{e}\n{detail}"),
-        )),
-        (Err(e), _) => report.add(crate::setup::SetupFinding::fail(
-            "private-install-claude-code-ags-command",
-            "cannot inspect Claude Code ags MCP command",
-            e,
-        )),
+    } else {
+        report.add(crate::setup::SetupFinding::skip(
+            "runtime-install-claude-code-mcp-not-selected",
+            "Claude Code MCP verification is outside this installation's approved Host set",
+        ));
     }
-
-    add_codegraph_claude_checks(&mut report, home);
 
     for rel in [
         "install-manifest.json",
@@ -498,17 +462,16 @@ pub(in crate::setup) fn private_install_health_report(
         "hosts/tencent-agent.mcp.snippet.json",
         "hosts/workbuddy.mcp.snippet.json",
         "hosts/codebuddy-code.mcp.snippet.json",
-        "hooks/codex-planner-recall.json",
     ] {
         let path = target.join(rel);
         if path.exists() {
             match json_file_ok(&path) {
                 Ok(()) => report.add(crate::setup::SetupFinding::pass(
-                    format!("private-install-json-{}", sanitize_name(rel)),
+                    format!("runtime-install-json-{}", sanitize_name(rel)),
                     format!("valid JSON: {rel}"),
                 )),
                 Err(e) => report.add(crate::setup::SetupFinding::fail(
-                    format!("private-install-json-{}", sanitize_name(rel)),
+                    format!("runtime-install-json-{}", sanitize_name(rel)),
                     format!("invalid JSON: {rel}"),
                     e,
                 )),
@@ -524,18 +487,16 @@ pub(in crate::setup) fn private_install_health_report(
         "hosts/tencent-agent.mcp.snippet.json",
         "hosts/workbuddy.mcp.snippet.json",
         "hosts/codebuddy-code.mcp.snippet.json",
-        "manifests/runtime-profiles.yaml",
-        "hooks/codex-planner-recall.json",
     ] {
         let path = target.join(rel);
         if path.exists() {
             match text_file_contains_no_secret_markers(&path) {
                 Ok(()) => report.add(crate::setup::SetupFinding::pass(
-                    format!("private-install-secret-scan-{}", sanitize_name(rel)),
+                    format!("runtime-install-secret-scan-{}", sanitize_name(rel)),
                     format!("secret marker scan OK: {rel}"),
                 )),
                 Err(e) => report.add(crate::setup::SetupFinding::fail(
-                    format!("private-install-secret-scan-{}", sanitize_name(rel)),
+                    format!("runtime-install-secret-scan-{}", sanitize_name(rel)),
                     format!("secret marker scan failed: {rel}"),
                     e,
                 )),
@@ -546,18 +507,18 @@ pub(in crate::setup) fn private_install_health_report(
     if run_mcp_smoke {
         match mcp_smoke_current_exe() {
             Ok(()) => report.add(crate::setup::SetupFinding::pass(
-                "private-install-mcp-smoke",
+                "runtime-install-mcp-smoke",
                 "ags mcp serve stdio smoke OK",
             )),
             Err(e) => report.add(crate::setup::SetupFinding::fail(
-                "private-install-mcp-smoke",
+                "runtime-install-mcp-smoke",
                 "ags mcp serve stdio smoke failed",
                 e,
             )),
         }
     } else {
         report.add(crate::setup::SetupFinding::skip(
-            "private-install-mcp-smoke",
+            "runtime-install-mcp-smoke",
             "live MCP smoke is excluded from read-only Doctor; daemon health is inspected without starting or restarting it",
         ));
     }
@@ -595,6 +556,22 @@ mod tests {
             ]
         );
         assert!(!spec_names().contains(&"ags-capability"));
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap();
+        let authority = workspace.join("global-skills/ags-skill/SKILL.md");
+        let projected = workspace.join("templates/command-skills/ags-skill/SKILL.md");
+        let body = std::fs::read_to_string(if authority.is_file() {
+            authority
+        } else {
+            projected
+        })
+        .unwrap();
+        assert!(
+            super::codex_command_skill_is_current(&body, "ags-skill"),
+            "the host-neutral canonical ags-skill body must satisfy Codex verification"
+        );
     }
 
     #[test]
@@ -606,7 +583,7 @@ mod tests {
             .join("../..")
             .canonicalize()
             .unwrap();
-        let plan = super::super::plan::private_install_plan(&source, &target, &home);
+        let plan = super::super::plan::runtime_install_plan(&source, &target, &home);
         for file in plan.files.iter().filter(|file| {
             super::super::apply::codex_skill_thin_index_ancestor(&file.path).is_none()
         }) {

@@ -16,6 +16,7 @@ pub use ags_host_integration::{
 pub struct ConsoleContext {
     pub repo_root: PathBuf,
     pub home: PathBuf,
+    pub runtime_home: PathBuf,
     pub(super) runner: Box<dyn CommandRunner>,
 }
 
@@ -26,9 +27,28 @@ impl ConsoleContext {
         home: impl Into<PathBuf>,
         runner: Box<dyn CommandRunner>,
     ) -> Self {
+        let home = home.into();
+        Self {
+            repo_root: repo_root.into(),
+            runtime_home: ags_platform::runtime_home_at(&home),
+            home,
+            runner,
+        }
+    }
+
+    /// Build a context against an explicit machine state root. Snapshot
+    /// compilation uses this seam so the InstalledSkillIndex participates in
+    /// the same inventory observation as suite and catalog capabilities.
+    pub fn new_with_runtime_home(
+        repo_root: impl Into<PathBuf>,
+        home: impl Into<PathBuf>,
+        runtime_home: impl Into<PathBuf>,
+        runner: Box<dyn CommandRunner>,
+    ) -> Self {
         Self {
             repo_root: repo_root.into(),
             home: home.into(),
+            runtime_home: runtime_home.into(),
             runner,
         }
     }
@@ -38,6 +58,7 @@ impl ConsoleContext {
         Self {
             repo_root: repo_root.into(),
             home: default_home(),
+            runtime_home: ags_platform::runtime_home(),
             runner: Box::new(SystemCommandRunner),
         }
     }
@@ -73,7 +94,7 @@ pub enum ManagedKind {
 pub enum ManagedStatus {
     /// Adopted into the suite manifest (required/optional/personal).
     SuiteManaged,
-    /// A governed third-party MCP (in `mcps:`).
+    /// A governed third-party capability with canonical catalog metadata.
     Governed,
     /// AGS self — host initialization adapter (governance authority).
     SuiteInterface,
@@ -101,7 +122,7 @@ pub enum ManagedStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RegistryStatus {
-    /// Present in suite.yaml or mcp-registry.yaml.
+    /// Present in a canonical suite, capability catalog, or installed index.
     Registered,
     /// Not in any AGS registry.
     NotRegistered,
@@ -252,8 +273,10 @@ pub struct EntrypointRef {
     pub name: String,
 }
 
-/// Stable routing facts declared in a manifest (`skills-registry.yaml` /
-/// `mcp-registry.yaml`) and read into the inventory. This is the SINGLE source
+/// Stable routing facts declared in a canonical manifest and read into the
+/// inventory. Third-party parent routes come from the capability catalog;
+/// suite Skill and internal-entrypoint routes come from their typed registries.
+/// This is the SINGLE source
 /// of truth for deterministic skill eligibility — there is no built-in fallback
 /// table. Only *stable facts* live here; the runtime `auth_status` (whether an
 /// account is actually configured) is DERIVED at route time and is NEVER stored

@@ -109,31 +109,111 @@ pub(crate) enum CapabilityAction {
         format: String,
     },
 }
-/// Static skill catalog commands.
+/// Skill discovery and machine-local lifecycle commands.
 #[derive(Subcommand)]
 pub(crate) enum SkillAction {
-    /// Plan or explicitly adopt one audited local Skill directory into the
-    /// machine-private registry. The default is plan-only.
-    Adopt {
-        /// Local Skill directory or its SKILL.md file.
-        source: PathBuf,
-        /// Optional machine-private YAML routing metadata. It is audited and
-        /// hash-bound to the reviewed plan, but never copied into AGS Git.
+    /// Browse the AGS recommendation catalog. Recommendations are discovery
+    /// facts, never an installation allowlist.
+    Recommend {
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Inspect a catalog id, GitHub URL, or local path and
+    /// produce a hash-bound plan without applying it.
+    Inspect {
+        source: String,
+        #[arg(long)]
+        requested_ref: Option<String>,
         #[arg(long)]
         metadata: Option<PathBuf>,
-        /// Target host id; repeatable. Empty or `all` selects all supported hosts.
         #[arg(long = "host")]
         host: Vec<String>,
-        /// Exact hash from the reviewed plan. Required with --yes.
+        #[arg(long, default_value = "notify", value_parser = ["notify", "manual", "pinned"])]
+        update_policy: String,
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Plan or apply installation from a catalog id or arbitrary GitHub URL.
+    Install {
+        source: String,
+        #[arg(long)]
+        requested_ref: Option<String>,
+        #[arg(long)]
+        metadata: Option<PathBuf>,
+        #[arg(long = "host")]
+        host: Vec<String>,
+        #[arg(long, default_value = "notify", value_parser = ["notify", "manual", "pinned"])]
+        update_policy: String,
+        /// Exact risk acknowledgement id from the reviewed plan; repeatable.
+        #[arg(long = "ack-risk")]
+        acknowledged_risks: Vec<String>,
         #[arg(long)]
         plan_hash: Option<String>,
-        /// Confirm the reviewed machine-private writes.
         #[arg(long)]
         yes: bool,
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
     },
-    /// Plan or explicitly remove one machine-private adopted Skill. Immutable
+    /// Resolve a candidate for one installed Skill without applying it.
+    Check {
+        skill_id: Option<String>,
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Plan or apply one installed Skill update.
+    Update {
+        skill_id: String,
+        #[arg(long = "ack-risk")]
+        acknowledged_risks: Vec<String>,
+        #[arg(long)]
+        plan_hash: Option<String>,
+        #[arg(long)]
+        yes: bool,
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Plan or apply rollback to a retained immutable body revision. Without
+    /// --revision, selects the most recent revision before the current body.
+    Rollback {
+        skill_id: String,
+        #[arg(long)]
+        revision: Option<String>,
+        #[arg(long)]
+        plan_hash: Option<String>,
+        #[arg(long)]
+        yes: bool,
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Plan or explicitly adopt one audited local Skill directory into the
+    /// machine-local installed index. The default is plan-only.
+    Adopt {
+        /// Local Skill directory or its SKILL.md file.
+        source: PathBuf,
+        /// Optional machine-local YAML routing metadata. It is audited and
+        /// hash-bound to the reviewed plan, but never copied into AGS Git.
+        #[arg(long)]
+        metadata: Option<PathBuf>,
+        /// Target host id; repeatable. Empty selects the Hosts approved by setup;
+        /// `all` explicitly selects every supported Host.
+        #[arg(long = "host")]
+        host: Vec<String>,
+        #[arg(long, default_value = "notify", value_parser = ["notify", "manual", "pinned"])]
+        update_policy: String,
+        /// Exact hash from the reviewed plan. Required with --yes.
+        #[arg(long)]
+        plan_hash: Option<String>,
+        /// Acknowledge one deterministic risk finding from the reviewed plan;
+        /// repeat once per accepted finding.
+        #[arg(long = "ack-risk")]
+        acknowledged_risks: Vec<String>,
+        /// Confirm the reviewed machine-local writes.
+        #[arg(long)]
+        yes: bool,
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Plan or explicitly remove one machine-local adopted Skill. Immutable
     /// body revisions remain available for recoverable rollback.
     Remove {
         skill_id: String,
@@ -145,23 +225,21 @@ pub(crate) enum SkillAction {
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
     },
-    /// Inspect private registry, immutable body, host indexes, and active snapshots.
+    /// Inspect catalog, installed index, immutable body, host indexes, and active snapshots.
     Status {
-        skill_id: String,
+        skill_id: Option<String>,
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
     },
-    /// Verify host visibility against the installed static catalog.
+    /// Verify one installed Skill's exact routes, or reverify a closed
+    /// maintenance plan.
     Verify {
-        #[arg(long, default_value = "claude-code")]
-        host: String,
+        skill_id: Option<String>,
+        /// Verify the full apply/activate/preflight/route loop for this Plan.
+        #[arg(long)]
+        plan_hash: Option<String>,
         #[arg(long)]
         strict: bool,
-        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
-        format: String,
-    },
-    /// Read the canonical skill inventory.
-    Inventory {
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
     },
@@ -209,70 +287,57 @@ pub(crate) enum AgentsAction {
         format: String,
     },
 }
-/// Update lane selector. Only `core` / `runtime` auto-execute locally; the rest
-/// are plan + advice + receipt only.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-pub(crate) enum UpdateLane {
-    Core,
-    Runtime,
-    Agents,
-    Skills,
-    Projects,
-    Public,
-}
-/// Unified update — five-segment stage 5 (统一更新). check/plan read-only;
-/// apply/repair-local write only AGS-owned dirs under --apply.
+/// Signed AGS core update. The shared npm launcher owns network, artifact and
+/// pointer mutations before the Rust kernel starts; the Rust command remains a
+/// fail-closed fallback for direct, unlaunched binaries.
 #[derive(Subcommand)]
 pub(crate) enum UpdateAction {
-    /// Read-only drift report across all six lanes. 只读六 lane 漂移报告。
+    /// Check the signed release index without applying anything.
     Check {
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
     },
-    /// Structured six-lane plan + suggested commands + receipt outline. 结构化计划。
+    /// Configure lazy signed update notices without applying an update.
+    Config {
+        #[arg(long)]
+        enabled: Option<bool>,
+        #[arg(long)]
+        ignore_version: Option<String>,
+        #[arg(long)]
+        snooze_until_unix: Option<u64>,
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Download and verify the candidate, then seal an immutable update plan.
     Plan {
-        /// Limit to one lane.
-        #[arg(long, value_enum)]
-        lane: Option<UpdateLane>,
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
     },
-    /// Execute local lanes (core build, runtime rewrite, managed-project AGS
-    /// projection refresh); agents/skills/public stay plan+advice. Requires
-    /// --apply; risk follows the selected lane.
-    /// 执行本机 lane；其余仅出计划+建议。需显式 --apply。
+    /// Read one exact persisted plan and its current receipt state.
+    Status {
+        #[arg(long)]
+        plan_hash: String,
+        #[arg(long, default_value = "text", value_parser = ["text", "json"])]
+        format: String,
+    },
+    /// Apply one exact signed update plan.
     Apply {
-        #[arg(long, value_enum)]
-        lane: Option<UpdateLane>,
         #[arg(long)]
-        target: Option<PathBuf>,
-        /// Confirm writes. Without it, dry-run plan only.
-        #[arg(long)]
-        apply: bool,
-        #[arg(long)]
-        force: bool,
+        plan_hash: String,
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
     },
-    /// Re-check post-update state: version, runtime, host visibility.
-    /// 复核更新后状态。--strict 有漂移即非零退出。
+    /// Verify the active pointer and executable against an applied receipt.
     Verify {
         #[arg(long)]
-        target: Option<PathBuf>,
-        #[arg(long)]
-        strict: bool,
+        plan_hash: String,
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
     },
-    /// Repair local runtime/agent/skill visibility drift only. No git pull, no
-    /// cargo build. 只修本机可见性漂移：重写 AGS 自有 runtime/thin-index。
-    RepairLocal {
-        #[arg(long)]
-        target: Option<PathBuf>,
-        #[arg(long)]
-        apply: bool,
-        #[arg(long)]
-        force: bool,
+    /// Recover the previous verified public launcher version. The npm CLI
+    /// intercepts this before entering Rust and atomically switches the shared
+    /// current/previous pointer.
+    Recover {
         #[arg(long, default_value = "text", value_parser = ["text", "json"])]
         format: String,
     },

@@ -124,18 +124,6 @@ fn plan_or_exit(target: &Path, host: &str) -> OnboardingPlan {
                 eprintln!("ags onboarding: {error}");
                 std::process::exit(1);
             });
-    let active_skill_ids = ags_capability_governance::load_static_snapshot(
-        &ags_capability_governance::locate_runtime_home(),
-        host,
-    )
-    .map(|(_, table)| {
-        table
-            .active_skills()
-            .into_iter()
-            .map(|skill| skill.skill_id)
-            .collect::<Vec<_>>()
-    })
-    .unwrap_or_default();
     assess_public_with_resolution(
         &AssessContext {
             source_root: &source_root,
@@ -146,7 +134,6 @@ fn plan_or_exit(target: &Path, host: &str) -> OnboardingPlan {
             mcp_connected: false,
             host_registered: probe_ags_registration(host),
             registered_mcp_ids: &registered_mcp_ids,
-            active_skill_ids: &active_skill_ids,
         },
         &third_party,
     )

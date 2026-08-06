@@ -10,6 +10,11 @@ pub const TOOL_TASK_VALIDATE: &str = "ags_task_validate";
 pub const TOOL_POLICY_RESOLVE: &str = "ags_policy_resolve";
 pub const TOOL_ROUTE_REQUEST: &str = "ags_route_request";
 pub const TOOL_APPLY_ACTION: &str = "ags_apply_action";
+pub const TOOL_MAINTENANCE_STATUS: &str = "ags_maintenance_status";
+pub const TOOL_MAINTENANCE_PLAN: &str = "ags_maintenance_plan";
+pub const TOOL_MAINTENANCE_APPLY: &str = "ags_maintenance_apply";
+pub const TOOL_MAINTENANCE_VERIFY: &str = "ags_maintenance_verify";
+pub const TOOL_MAINTENANCE_RECOVER: &str = "ags_maintenance_recover";
 
 pub const CURRENT_HOST_CAPABILITIES_URI: &str = "ags://capabilities/current-host";
 
@@ -66,6 +71,10 @@ pub fn is_onboarding_bootstrap_tool_name(name: &str) -> bool {
 }
 
 pub fn list_tools() -> ToolListResult {
+    let mut skill_host_ids = ags_host_integration::supported_skill_hosts()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    skill_host_ids.push("all".to_string());
     ToolListResult {
         tools: vec![
             tool_def(
@@ -260,7 +269,7 @@ pub fn list_tools() -> ToolListResult {
                                         "source": { "type": "string", "minLength": 1, "maxLength": 4096 },
                                         "host": {
                                             "type": "string",
-                                            "enum": ["codex", "claude-code", "omp", "codebuddy-code", "cursor", "all"]
+                                            "enum": skill_host_ids
                                         },
                                         "apply": { "type": "boolean" }
                                     }
@@ -297,6 +306,31 @@ pub fn list_tools() -> ToolListResult {
                     "required": ["lease_id", "action_id"],
                     "additionalProperties": false
                 }),
+            ),
+            tool_def(
+                TOOL_MAINTENANCE_STATUS,
+                "Read one immutable maintenance plan bound to this MCP connection.",
+                maintenance::plan_hash_schema(),
+            ),
+            tool_def(
+                TOOL_MAINTENANCE_PLAN,
+                "Create a typed, expiring, connection-bound Skill maintenance plan. Planning may resolve a remote source but never applies it.",
+                maintenance::maintenance_plan_schema(),
+            ),
+            tool_def(
+                TOOL_MAINTENANCE_APPLY,
+                "Apply exactly one current connection-bound maintenance plan after explicit per-finding acknowledgements.",
+                maintenance::plan_hash_schema(),
+            ),
+            tool_def(
+                TOOL_MAINTENANCE_VERIFY,
+                "Verify immutable body, host projection, active snapshots and exact Skill visibility for a maintenance plan.",
+                maintenance::plan_hash_schema(),
+            ),
+            tool_def(
+                TOOL_MAINTENANCE_RECOVER,
+                "Recover the prior immutable Skill revision or remove a newly installed Skill using the plan recovery point.",
+                maintenance::plan_hash_schema(),
             ),
         ],
     }
@@ -347,7 +381,32 @@ pub fn call_tool(
             arguments,
             required_binding(binding)?,
             routing_session,
-            &ags_capability_governance::locate_runtime_home(),
+            &ags_platform::runtime_home(),
+        ),
+        TOOL_MAINTENANCE_STATUS => maintenance::tool_maintenance_status(
+            arguments,
+            required_binding(binding)?,
+            routing_session,
+        ),
+        TOOL_MAINTENANCE_PLAN => maintenance::tool_maintenance_plan(
+            arguments,
+            required_binding(binding)?,
+            routing_session,
+        ),
+        TOOL_MAINTENANCE_APPLY => maintenance::tool_maintenance_apply(
+            arguments,
+            required_binding(binding)?,
+            routing_session,
+        ),
+        TOOL_MAINTENANCE_VERIFY => maintenance::tool_maintenance_verify(
+            arguments,
+            required_binding(binding)?,
+            routing_session,
+        ),
+        TOOL_MAINTENANCE_RECOVER => maintenance::tool_maintenance_recover(
+            arguments,
+            required_binding(binding)?,
+            routing_session,
         ),
         other => Err(format!("Unknown tool: {other}")),
     }
@@ -357,4 +416,32 @@ pub(super) fn required_binding(
     binding: Option<&PreflightBinding>,
 ) -> Result<&PreflightBinding, String> {
     binding.ok_or_else(|| "preflight_binding_missing".to_string())
+}
+
+#[cfg(test)]
+mod maintenance_wire_tests {
+    use super::*;
+
+    #[test]
+    fn maintenance_tools_are_typed_and_listed_once() {
+        let tools = list_tools().tools;
+        for expected in [
+            TOOL_MAINTENANCE_STATUS,
+            TOOL_MAINTENANCE_PLAN,
+            TOOL_MAINTENANCE_APPLY,
+            TOOL_MAINTENANCE_VERIFY,
+            TOOL_MAINTENANCE_RECOVER,
+        ] {
+            let matching = tools
+                .iter()
+                .filter(|definition| definition.name == expected)
+                .collect::<Vec<_>>();
+            assert_eq!(matching.len(), 1, "{expected} must be listed exactly once");
+            assert_eq!(matching[0].inputSchema["type"], "object");
+            assert_eq!(
+                matching[0].inputSchema["additionalProperties"],
+                serde_json::Value::Bool(false)
+            );
+        }
+    }
 }

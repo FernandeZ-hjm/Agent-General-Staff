@@ -353,13 +353,11 @@ pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
             "docs/architecture.md",
             format!("# AGS v{VERSION} Architecture"),
         ),
-        ("packages/ags-mcp/README.md", format!("`v{VERSION}` GitHub")),
         ("SECURITY.md", supported_series),
         (
             "SECURITY.md",
             "AGS v0.3.6 hashes the complete running MCP executable".to_string(),
         ),
-        ("protocol/mcp-server.md", format!("AGS {VERSION} MCP")),
     ];
     for (relative, marker) in required_text {
         match std::fs::read_to_string(repo_root.join(relative)) {
@@ -444,7 +442,7 @@ pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
         ),
         (
             "crates/ags-lifecycle/src/setup/mod.rs",
-            "0.4.1-private-install",
+            "0.5.0-runtime-install",
         ),
         (
             "crates/ags-lifecycle/src/workspace_lifecycle.rs",
@@ -477,10 +475,6 @@ pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
         (
             "crates/ags-verification/src/orchestrator.rs",
             "0.3.6-verification-report",
-        ),
-        (
-            "crates/ags-verification/src/bootstrap.rs",
-            "0.3.6-bootstrap-plan",
         ),
         (
             "crates/ags-verification/src/release_package.rs",

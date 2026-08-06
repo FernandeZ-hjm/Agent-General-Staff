@@ -136,8 +136,7 @@ mod tests {
         )
         .expect("canonical test workspace");
         let workspace = Arc::new(
-            WorkspaceState::new(root, ags_capability_governance::locate_runtime_home())
-                .expect("test workspace state"),
+            WorkspaceState::new(root, ags_platform::runtime_home()).expect("test workspace state"),
         );
         WorkspaceClientSession::new(workspace, session_id.to_string(), host_home)
     }

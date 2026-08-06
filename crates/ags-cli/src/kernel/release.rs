@@ -83,6 +83,113 @@ fn cmd_release_package(profile: &str, dry_run: bool, format: &str) {
 
 pub(crate) fn run(action: ReleaseAction) {
     match action {
+        ReleaseAction::ProjectCapabilities {
+            source,
+            target,
+            apply,
+            plan_hash,
+            format,
+        } => {
+            if apply {
+                let approved = plan_hash.unwrap_or_else(|| {
+                    eprintln!("release project-capabilities: --plan-hash is required with --apply");
+                    std::process::exit(2);
+                });
+                let receipt = ags_verification::public_capability_projection::apply_public_capability_projection(
+                    &source,
+                    &target,
+                    &approved,
+                )
+                .unwrap_or_else(|error| {
+                    eprintln!("release project-capabilities: {error}");
+                    std::process::exit(1);
+                });
+                crate::output::emit(&format, &receipt, || {
+                    format!(
+                        "Public capability projection applied\nplan_hash: {}\nfiles: {}",
+                        receipt.plan_hash,
+                        receipt.written_files.join(", ")
+                    )
+                });
+            } else {
+                let plan = ags_verification::public_capability_projection::plan_public_capability_projection(
+                    &source,
+                    &target,
+                );
+                let blocked = !plan.blocking_findings.is_empty();
+                crate::output::emit(&format, &plan, || {
+                    let changes = plan
+                        .generated_files
+                        .iter()
+                        .filter(|file| file.changed)
+                        .count();
+                    format!(
+                        "Public capability projection plan\nplan_hash: {}\nchanged: {}\nblocking: {}",
+                        plan.plan_hash,
+                        changes,
+                        plan.blocking_findings.len()
+                    )
+                });
+                if blocked {
+                    std::process::exit(1);
+                }
+            }
+        }
+        ReleaseAction::ProjectPublic {
+            source,
+            target,
+            apply,
+            plan_hash,
+            format,
+        } => {
+            if apply {
+                let approved = plan_hash.unwrap_or_else(|| {
+                    eprintln!("release project-public: --plan-hash is required with --apply");
+                    std::process::exit(2);
+                });
+                let receipt =
+                    ags_verification::public_source_projection::apply_public_source_projection(
+                        &source, &target, &approved,
+                    )
+                    .unwrap_or_else(|error| {
+                        eprintln!("release project-public: {error}");
+                        std::process::exit(1);
+                    });
+                crate::output::emit(&format, &receipt, || {
+                    format!(
+                        "Public source projection applied and verified\nplan_hash: {}\nwritten: {}\ndeleted: {}",
+                        receipt.plan_hash,
+                        receipt.written_files.len() + receipt.capability_projection.written_files.len(),
+                        receipt.deleted_files.len()
+                    )
+                });
+            } else {
+                let plan =
+                    ags_verification::public_source_projection::plan_public_source_projection(
+                        &source, &target,
+                    );
+                let blocked = !plan.blocking_findings.is_empty();
+                crate::output::emit(&format, &plan, || {
+                    let generated = plan
+                        .capability_projection
+                        .generated_files
+                        .iter()
+                        .filter(|file| file.changed)
+                        .count();
+                    format!(
+                        "Public source projection plan\nplan_hash: {}\nshared writes: {}\ngenerated writes: {}\nretired deletes: {}\nblocking: {}",
+                        plan.plan_hash,
+                        plan.writes.len(),
+                        generated,
+                        plan.deletes.len(),
+                        plan.blocking_findings.len()
+                    )
+                });
+                if blocked {
+                    std::process::exit(1);
+                }
+            }
+        }
         ReleaseAction::Package {
             profile,
             dry_run,

@@ -1,11 +1,5 @@
 use super::*;
 
-pub(super) fn yaml_get<'a>(value: &'a YamlValue, key: &str) -> Option<&'a YamlValue> {
-    value
-        .as_mapping()
-        .and_then(|map| map.get(YamlValue::String(key.to_string())))
-}
-
 // ── Public check functions ───────────────────────────────────────────────
 
 /// Run `git status --porcelain` and report uncommitted changes.

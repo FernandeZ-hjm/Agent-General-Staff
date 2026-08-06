@@ -20,7 +20,7 @@ fn runtime_home_preserves_existing_environment_precedence() {
     std::env::set_var("AGS_RUNTIME_HOME", "/tmp/ags-runtime-priority");
     std::env::set_var("AGS_HOME", "/tmp/ags-home-fallback");
     assert_eq!(
-        ags_capability_governance::locate_runtime_home(),
+        ags_platform::runtime_home(),
         std::path::PathBuf::from("/tmp/ags-runtime-priority")
     );
 

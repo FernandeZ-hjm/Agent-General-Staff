@@ -13,9 +13,8 @@ struct SystemObservation {
 impl SystemObservation {
     fn collect(repo_root: &Path, home: &Path) -> Self {
         let mcp_reports = collect_mcp_reports(repo_root, home);
-        let approved_hosts = ags_lifecycle::setup::approved_lifecycle_hosts(
-            &ags_capability_governance::locate_runtime_home(),
-        );
+        let approved_hosts =
+            ags_lifecycle::setup::approved_lifecycle_hosts(&ags_platform::runtime_home());
         let mut required_hosts = mcp_reports
             .iter()
             // A disabled or stale AGS registration still enables conformance
@@ -92,7 +91,7 @@ fn lifecycle_host_approval_current(observation: &SystemObservation) -> Finding {
                 "installed lifecycle host approval is invalid",
                 "supported host ids in the current install manifest",
                 error,
-                "Run `ags setup`, review detected hosts, then apply with `--lifecycle-hosts <ids|detected|none>`.",
+                "Run `ags setup --yes` to select detected Hosts, or override with `--lifecycle-hosts <ids|detected>`; at least one Host is required.",
             )
         }
     };
@@ -362,7 +361,7 @@ fn managed_projection_current(repo_root: &Path, observation: &SystemObservation)
             "none",
         );
     }
-    let runtime = ags_capability_governance::locate_runtime_home();
+    let runtime = ags_platform::runtime_home();
     let source = match capability_authority_root(repo_root, &runtime) {
         Ok(path) => path,
         Err(error) => {
@@ -394,7 +393,7 @@ fn managed_projection_current(repo_root: &Path, observation: &SystemObservation)
             refresh.changed_files, refresh.blocked_reasons
         ),
         format!(
-            "Run `ags update apply --lane projects --apply --target '{}'`.",
+            "Run `ags init --target '{}'` to refresh this managed project.",
             repo_root.display()
         ),
     )
@@ -412,7 +411,7 @@ fn capability_snapshot_current(
             "current static snapshots for every enabled host",
         );
     }
-    let runtime = ags_capability_governance::locate_runtime_home();
+    let runtime = ags_platform::runtime_home();
     let source = match capability_authority_root(repo_root, &runtime) {
         Ok(path) => path,
         Err(error) => {
@@ -607,7 +606,7 @@ fn remote_latest_advisory() -> Finding {
     {
         return remote_latest_finding(current, None, true);
     }
-    let cache = ags_capability_governance::locate_runtime_home()
+    let cache = ags_platform::runtime_home()
         .join("cache")
         .join("remote-latest.json");
     let now = std::time::SystemTime::now()
