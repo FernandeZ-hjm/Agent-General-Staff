@@ -27,6 +27,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
+          evidence_dir="$RUNNER_TEMP/ci-evidence"
+          mkdir -p "$evidence_dir"
           run_id="$(gh run list \
             --repo "$GITHUB_REPOSITORY" \
             --workflow ci.yml \
@@ -39,21 +41,22 @@ jobs:
           gh run download "$run_id" \
             --repo "$GITHUB_REPOSITORY" \
             --name public-verification-evidence \
-            --dir ci-evidence
-          chmod +x ci-evidence/ags-verifier
-          ci-evidence/ags-verifier verify bundle validate \
+            --dir "$evidence_dir"
+          chmod +x "$evidence_dir/ags-verifier"
+          "$evidence_dir/ags-verifier" verify bundle validate \
             --target . \
             --source-scope public-full \
-            --bundle ci-evidence/verification-bundle.json \
+            --bundle "$evidence_dir/verification-bundle.json" \
             --format json
       - name: Verify one aligned version
         shell: bash
         run: |
+          ci_verifier="$RUNNER_TEMP/ci-evidence/ags-verifier"
           git fetch origin main
           tag_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
           main_commit="$(git rev-parse "origin/main^{commit}")"
           test "$tag_commit" = "$main_commit"
-          version="$(ci-evidence/ags-verifier --version)"
+          version="$("$ci_verifier" --version)"
           version="${version##* }"
           launcher_version="$(node -p "require('./packages/ags-launcher/package.json').version")"
           cli_version="$(node -p "require('./packages/ags-cli/package.json').version")"
@@ -68,7 +71,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: public-release-plan
-          path: ci-evidence/public-release-plan.json
+          path: ${{ runner.temp }}/ci-evidence/public-release-plan.json
           if-no-files-found: error
 
   build:

@@ -1711,7 +1711,9 @@ mod tests {
         let workflow =
             std::fs::read_to_string(workspace.join(".github/workflows/release.yml")).unwrap();
         assert!(workflow.contains("verify bundle validate"));
-        assert!(workflow.contains("ci-evidence/public-release-plan.json"));
+        assert!(workflow.contains("$RUNNER_TEMP/ci-evidence"));
+        assert!(workflow.contains("${{ runner.temp }}/ci-evidence/public-release-plan.json"));
+        assert!(!workflow.contains("--dir ci-evidence"));
         assert!(workflow.contains("release stage-runtime"));
         assert!(!workflow.contains("python"));
         assert!(!workflow.contains("cp manifests/{"));
