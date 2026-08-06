@@ -29,3 +29,12 @@ pub use runtime_setup::{
 pub use service::{MaintenanceBackend, MaintenanceService, ServiceClock, ServiceContext};
 pub use skill::{maintenance_source_from_spec, SkillMaintenanceBackend};
 pub use suite::SuiteSkillMaintenanceBackend;
+
+/// Content identity safe for use as a recovery filename on every supported OS.
+///
+/// Canonical evidence hashes retain the `sha256:` scheme prefix. Recovery
+/// filenames deliberately use the bare hexadecimal encoding because `:` is an
+/// invalid filename character on Windows.
+pub(crate) fn recovery_file_identity(transaction_id: &str) -> String {
+    ags_platform::sha256_hex(transaction_id.as_bytes())
+}

@@ -94,7 +94,7 @@ impl SuiteSkillMaintenanceBackend {
     }
 
     fn snapshot_recovery_path(&self, transaction_id: &str) -> PathBuf {
-        let identity = ags_platform::sha256(transaction_id.as_bytes());
+        let identity = super::recovery_file_identity(transaction_id);
         ags_platform::RuntimeLayout::new(&self.runtime_home)
             .maintenance()
             .join("recovery")
@@ -709,5 +709,37 @@ mod runtime_preflight_tests {
         assert!(backend.runtime_activation_preflight("claude-code").is_err());
         assert!(!source.join("Cargo.toml").exists());
         assert!(!source.join("crates").exists());
+    }
+
+    #[test]
+    fn suite_recovery_filenames_are_windows_portable() {
+        let temp = tempfile::tempdir().unwrap();
+        let backend = SuiteSkillMaintenanceBackend {
+            source_root: temp.path().join("source"),
+            runtime_home: temp.path().join("runtime"),
+            host_home: temp.path().join("home"),
+            policy: SuiteSkillProjectionPolicy {
+                required_authority_root: None,
+                target_hosts: vec!["codex".to_string()],
+            },
+            activation: offline_capability_runtime_activator(),
+            prepared_change: None,
+        };
+        let transaction_id = "sha256:plan-bound-transaction";
+        for path in [
+            backend.snapshot_recovery_path(transaction_id),
+            crate::suite_skill_projection::suite_skill_recovery_path(
+                &backend.runtime_home,
+                transaction_id,
+            ),
+        ] {
+            let name = path.file_name().unwrap().to_string_lossy();
+            assert!(
+                !name
+                    .chars()
+                    .any(|character| "<>:\"/\\|?*".contains(character)),
+                "recovery filename is not Windows portable: {name}"
+            );
+        }
     }
 }

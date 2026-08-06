@@ -1268,7 +1268,7 @@ fn recover_entries(entries: &[(PathBuf, PreviousEntry)]) -> Result<(), String> {
 }
 
 pub(crate) fn suite_skill_recovery_path(runtime_home: &Path, transaction_id: &str) -> PathBuf {
-    let identity = ags_platform::sha256(transaction_id.as_bytes());
+    let identity = crate::maintenance::recovery_file_identity(transaction_id);
     ags_platform::RuntimeLayout::new(runtime_home)
         .maintenance()
         .join("recovery")

@@ -137,7 +137,7 @@ fn recovery_path(runtime_home: &Path, transaction_id: &str) -> PathBuf {
         .join("recovery")
         .join(format!(
             "runtime-setup-{}.json",
-            ags_platform::sha256_hex(transaction_id.as_bytes())
+            super::recovery_file_identity(transaction_id)
         ))
 }
 
@@ -310,7 +310,7 @@ fn prune_superseded_recovery(runtime_home: &Path, current: &str) -> Result<(), S
         if recovery.transaction_id == current || recovery.phase != RecoveryPhase::Applied {
             continue;
         }
-        let identity = ags_platform::sha256(recovery.transaction_id.as_bytes());
+        let identity = super::recovery_file_identity(&recovery.transaction_id);
         for obsolete in [
             path,
             directory.join(format!("suite-snapshots-{identity}.json")),
