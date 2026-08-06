@@ -2,9 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-pub const MAINTENANCE_INTENT_SCHEMA: &str = "0.5.0-maintenance-intent";
-pub const MAINTENANCE_PLAN_SCHEMA: &str = "0.5.0-maintenance-plan";
-pub const MAINTENANCE_RECEIPT_SCHEMA: &str = "0.5.0-maintenance-receipt";
+pub const MAINTENANCE_INTENT_SCHEMA: &str = "0.4.13-maintenance-intent";
+pub const MAINTENANCE_PLAN_SCHEMA: &str = "0.4.13-maintenance-plan";
+pub const MAINTENANCE_RECEIPT_SCHEMA: &str = "0.4.13-maintenance-receipt";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

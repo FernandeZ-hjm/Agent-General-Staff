@@ -293,7 +293,7 @@ fn project_status(
     }
     .to_string();
     SkillStatusProjection {
-        schema_version: "0.5.0-skill-status-projection",
+        schema_version: "0.4.13-skill-status-projection",
         skill_id: skill_id.to_string(),
         catalog: CatalogLayer {
             state: if catalog_entry.is_some() {

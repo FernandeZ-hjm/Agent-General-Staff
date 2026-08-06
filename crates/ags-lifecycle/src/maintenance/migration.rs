@@ -7,7 +7,7 @@ use serde_json::{Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const RUNTIME_MIGRATION_RECEIPT_SCHEMA: &str = "0.5.0-runtime-state-migration";
+pub const RUNTIME_MIGRATION_RECEIPT_SCHEMA: &str = "0.4.13-runtime-state-migration";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

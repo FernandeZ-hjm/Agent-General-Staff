@@ -261,15 +261,24 @@ pub(super) fn check_public_ci_release_invocation(repo_root: &Path) -> Vec<String
         return Vec::new();
     }
 
-    let required = "cargo run -q -p ags-cli -- verify --scope release --format text";
     let stale_binary = "./target/release/ags verify --scope release";
     match std::fs::read_to_string(&path) {
         Ok(content) => {
             let mut errors = Vec::new();
-            if !content.contains(required) {
-                errors.push(format!(
-                    ".github/workflows/ci.yml must build the release verifier from current source: {required}"
-                ));
+            let compact = content.split_whitespace().collect::<Vec<_>>().join(" ");
+            for required in [
+                "cargo run -q --locked -p ags-cli -- verify",
+                "--scope release",
+                "--format json",
+                "verify bundle create",
+                "verify bundle validate",
+                "--source-scope public-full",
+            ] {
+                if !compact.contains(required) {
+                    errors.push(format!(
+                        ".github/workflows/ci.yml must preserve the exact-input public gate marker: {required}"
+                    ));
+                }
             }
             if content.contains(stale_binary) {
                 errors.push(
@@ -442,7 +451,7 @@ pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
         ),
         (
             "crates/ags-lifecycle/src/setup/mod.rs",
-            "0.5.0-runtime-install",
+            "0.4.13-runtime-install",
         ),
         (
             "crates/ags-lifecycle/src/workspace_lifecycle.rs",

@@ -1,8 +1,8 @@
 # Agent Governance Suite Release Notes
 
-## Release 0.5.0
+## Release 0.4.13
 
-0.5.0 closes the public installation, third-party Skill, host activation and
+0.4.13 closes the public installation, third-party Skill, host activation and
 self-update lifecycles around one typed maintenance transaction. It is a
 breaking cleanup release: retired update lanes, setup aliases and legacy Skill
 JSON readers are removed rather than kept as compatibility layers.
@@ -14,8 +14,9 @@ JSON readers are removed rather than kept as compatibility layers.
   recommended entry, arbitrary GitHub HTTPS source or audited local directory;
   all remote bodies resolve to immutable commits and all mutations require the
   exact Plan hash and explicit risk acknowledgements.
-- Installed Skill state, immutable bodies and five Host snapshots live under
-  one stable runtime fact root. Old local layouts are migrated once with
+- Installed Skill state, immutable bodies and the selected Host snapshots live
+  under one stable runtime fact root. Setup requires at least one Host and does
+  not require all five supported Hosts. Old local layouts are migrated once with
   rollback-safe archival and are never read by normal code.
 - Setup projects required suite Skills to Claude Code, Codex, Cursor, OMP and
   CodeBuddy-Code, migrates renamed entries, removes retired AGS symlinks,

@@ -10,8 +10,8 @@ admission, exact capability routing, authorization, maintenance transactions,
 verification, receipts, and recovery. It is not an agent scheduler, task queue,
 or natural-language classifier.
 
-The current source candidate is **v0.5.0**; the latest published release is
-**v0.5.0**.
+The current source candidate is **v0.4.13**; the latest published release is
+**v0.4.13**.
 
 ## Choose CLI, MCP, or both
 

@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const RUNTIME_SETUP_RECOVERY_SCHEMA: &str = "0.5.0-runtime-setup-recovery";
+const RUNTIME_SETUP_RECOVERY_SCHEMA: &str = "0.4.13-runtime-setup-recovery";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "kebab-case")]
@@ -477,7 +477,7 @@ impl MaintenanceBackend for RuntimeSetupMaintenanceBackend {
             verification_steps: vec![VerificationStep {
                 id: "runtime-setup-closure".to_string(),
                 description:
-                    "verify runtime files, retired entries, five Host snapshots and exact routes"
+                    "verify runtime files, retired entries, every selected Host snapshot and exact route"
                         .to_string(),
             }],
             activation: change

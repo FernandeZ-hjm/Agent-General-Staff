@@ -48,7 +48,7 @@ test("publishes the ags bin and exact shared launcher dependency version", () =>
   const packageJson = JSON.parse(
     fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")
   );
-  assert.equal(packageJson.version, "0.5.0");
+  assert.equal(packageJson.version, "0.4.13");
   assert.equal(packageJson.bin.ags, "bin/ags.js");
   assert.equal(packageJson.dependencies["@agent-governance-suite/launcher"], packageJson.version);
   assert.match(

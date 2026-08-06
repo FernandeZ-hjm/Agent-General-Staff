@@ -172,3 +172,27 @@ fn untracked_dirty_worktree_is_rejected_for_creation_and_reuse() {
     .unwrap_err();
     assert!(create_error.contains("worktree is dirty"), "{create_error}");
 }
+
+#[test]
+fn hidden_index_flags_are_rejected_even_when_git_status_looks_clean() {
+    let repo = fixture_repo();
+    let bundle = valid_bundle(repo.path());
+
+    run_git(
+        repo.path(),
+        &["update-index", "--skip-worktree", "tracked.txt"],
+    );
+    let error = bundle.validate_reuse(repo.path()).unwrap_err();
+    assert!(error.contains("skip-worktree"), "{error}");
+
+    run_git(
+        repo.path(),
+        &["update-index", "--no-skip-worktree", "tracked.txt"],
+    );
+    run_git(
+        repo.path(),
+        &["update-index", "--assume-unchanged", "tracked.txt"],
+    );
+    let error = bundle.validate_reuse(repo.path()).unwrap_err();
+    assert!(error.contains("assume-unchanged"), "{error}");
+}

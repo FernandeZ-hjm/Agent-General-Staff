@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
-const SNAPSHOT_RECOVERY_SCHEMA: &str = "0.5.0-suite-snapshot-recovery";
+const SNAPSHOT_RECOVERY_SCHEMA: &str = "0.4.13-suite-snapshot-recovery";
 
 /// Required suite Skill projection is a runtime maintenance subject. Setup and
 /// update use this same backend instead of owning separate link/snapshot

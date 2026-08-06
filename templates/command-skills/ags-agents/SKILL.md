@@ -68,4 +68,4 @@ ags agents verify --host <host>
 
 不要绕过 AGS 做临时初始化。不要把 AGS MCP 当作普通第三方 MCP；它是 host initialization adapter。只有用户明确要求任务卡/交接、handoff contract 已独立确认，且不存在未决或重开的 solution work 时，才可生成可执行任务卡；缺少任一条件都不得生成。
 
-此技能期望的 AGS 产品版本：0.5.0。
+此技能期望的 AGS 产品版本：0.4.13。

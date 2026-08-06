@@ -172,20 +172,35 @@ fn release_version_surfaces_accept_the_real_workspace_tree() {
 }
 
 #[test]
-fn public_ci_release_gate_rejects_a_cached_release_binary() {
+fn public_ci_release_gate_requires_current_source_and_verification_bundle() {
     let dir = tempfile::tempdir().unwrap();
     let workflow = dir.path().join(".github/workflows/ci.yml");
     std::fs::create_dir_all(workflow.parent().unwrap()).unwrap();
     std::fs::write(
         &workflow,
-        "run: ./target/release/ags verify --scope release --format text\n",
+        r#"run: |
+  cargo run -q --locked -p ags-cli -- verify \
+    --scope release --format json
+  cargo run -q --locked -p ags-cli -- verify bundle create \
+    --source-scope public-full
+  cargo run -q --locked -p ags-cli -- verify bundle validate \
+    --source-scope public-full
+"#,
     )
     .unwrap();
 
     let errors = super::version::check_public_ci_release_invocation(dir.path());
+    assert!(errors.is_empty(), "{errors:?}");
+
+    std::fs::write(
+        &workflow,
+        "run: ./target/release/ags verify --scope release --format json\n",
+    )
+    .unwrap();
+    let errors = super::version::check_public_ci_release_invocation(dir.path());
     assert!(errors
         .iter()
-        .any(|error| error.contains("must build the release verifier from current source")));
+        .any(|error| error.contains("exact-input public gate marker")));
     assert!(errors
         .iter()
         .any(|error| error.contains("must not execute a cached target/release/ags")));

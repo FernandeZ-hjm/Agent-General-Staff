@@ -690,6 +690,15 @@ fn render_bundled_skills(
         match fs::read(&authority_path) {
             Ok(body) => {
                 let actual = ags_platform::sha256(&body);
+                let projected_body_hash =
+                    ags_capability_governance::hash_single_file_skill_source("SKILL.md", &body)
+                        .unwrap_or_else(|error| {
+                            errors.push(format!(
+                                "cannot hash projected Skill body for {}: {error}",
+                                skill.id
+                            ));
+                            String::new()
+                        });
                 if actual != skill.public_sha256 {
                     errors.push(format!(
                         "bundled authority body hash mismatch for {}: expected {}, observed {}",
@@ -698,22 +707,24 @@ fn render_bundled_skills(
                 } else if contents.insert(generated_path.clone(), body).is_some() {
                     errors.push(format!("duplicate generated public path: {generated_path}"));
                 }
+                bundled.push(PublicBundledSkill {
+                    name: skill.id.clone(),
+                    version: context.version.to_string(),
+                    source: skill.public_path.clone(),
+                    hash: projected_body_hash
+                        .trim_start_matches("sha256:")
+                        .to_string(),
+                });
             }
-            Err(error) => errors.push(format!(
-                "bundled authority body is unavailable for {} at {}: {error}",
-                skill.id,
-                authority_path.display()
-            )),
+            Err(error) => {
+                errors.push(format!(
+                    "bundled authority body is unavailable for {} at {}: {error}",
+                    skill.id,
+                    authority_path.display()
+                ));
+                continue;
+            }
         }
-        bundled.push(PublicBundledSkill {
-            name: skill.id.clone(),
-            version: context.version.to_string(),
-            source: skill.public_path.clone(),
-            hash: skill
-                .public_sha256
-                .trim_start_matches("sha256:")
-                .to_string(),
-        });
     }
     bundled
 }
@@ -846,7 +857,7 @@ mod tests {
         let target = TempDir::new().unwrap();
         write(
             &source.path().join("Cargo.toml"),
-            "[workspace]\n[workspace.package]\nversion = \"0.5.0\"\nlicense = \"GPL-3.0-only\"\n",
+            "[workspace]\n[workspace.package]\nversion = \"0.4.13\"\nlicense = \"GPL-3.0-only\"\n",
         );
         let ids = [
             "ags-agents",
@@ -955,6 +966,12 @@ mod tests {
             .unwrap(),
             fs::read(source.path().join("global-skills/ags-setup/SKILL.md")).unwrap()
         );
+        let projected_body = target.path().join("templates/command-skills/ags-setup");
+        let projected_hash = ags_capability_governance::hash_skill_source(&projected_body)
+            .unwrap()
+            .trim_start_matches("sha256:")
+            .to_string();
+        assert!(suite.contains(&format!("hash: {projected_hash}")));
         assert!(verify_public_capability_projection(source.path(), target.path()).is_empty());
     }
 

@@ -130,7 +130,7 @@ enum PreviousEntry {
     Symlink(PathBuf),
 }
 
-const PROJECTION_RECOVERY_SCHEMA: &str = "0.5.0-suite-skill-recovery";
+const PROJECTION_RECOVERY_SCHEMA: &str = "0.4.13-suite-skill-recovery";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -735,7 +735,7 @@ fn confined_skill_source(root: &Path, skill: &ManifestSkill) -> Result<PathBuf, 
             skill.name
         ));
     }
-    let observed_hash = ags_platform::sha256_file(&source.join("SKILL.md"))?;
+    let observed_hash = ags_capability_governance::hash_skill_source(&source)?;
     let expected_hash = skill.hash.strip_prefix("sha256:").unwrap_or(&skill.hash);
     let observed_hash = observed_hash
         .strip_prefix("sha256:")
@@ -1205,7 +1205,7 @@ mod tests {
         .unwrap();
         for entry in document["suite"]["required"].as_sequence_mut().unwrap() {
             let source = entry["source"].as_str().unwrap();
-            let hash = ags_platform::sha256_file(&root.join(source).join("SKILL.md")).unwrap();
+            let hash = ags_capability_governance::hash_skill_source(&root.join(source)).unwrap();
             entry["hash"] = serde_yaml::Value::String(
                 hash.strip_prefix("sha256:").unwrap_or(&hash).to_string(),
             );
@@ -1302,6 +1302,37 @@ mod tests {
             plan.projected_links["codex/alpha"].link_path,
             home.join(".agents/skills/alpha")
         );
+    }
+
+    #[test]
+    fn required_skill_integrity_covers_metadata_and_assets_not_only_skill_markdown() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("suite");
+        let runtime = temp.path().join("runtime");
+        let home = temp.path().join("home");
+        skill(&root, "alpha");
+        manifest(
+            &root,
+            "    - name: alpha\n      source: global-skills/alpha\n",
+        );
+        let metadata = root.join("global-skills/alpha/agents/openai.yaml");
+        fs::create_dir_all(metadata.parent().unwrap()).unwrap();
+        fs::write(metadata, "interface:\n  display_name: tampered\n").unwrap();
+
+        let plan = plan_required_suite_skill_projection(
+            &root,
+            &runtime,
+            &home,
+            &SuiteSkillProjectionPolicy {
+                required_authority_root: None,
+                target_hosts: vec!["codex".to_string()],
+            },
+        )
+        .unwrap();
+        assert!(plan
+            .blocking_findings
+            .iter()
+            .any(|finding| finding.contains("content hash mismatch")));
     }
 
     #[test]

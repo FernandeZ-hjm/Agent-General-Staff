@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-pub const INSTALLED_SKILL_INDEX_SCHEMA: &str = "0.5.0-installed-skill-index";
+pub const INSTALLED_SKILL_INDEX_SCHEMA: &str = "0.4.13-installed-skill-index";
 pub const TRANSACTION_JOURNAL_SCHEMA: &str = "0.1.0-skill-adoption-transaction-journal";
 
 #[derive(Debug, Clone)]

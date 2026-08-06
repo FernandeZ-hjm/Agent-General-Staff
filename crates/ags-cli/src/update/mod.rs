@@ -80,7 +80,7 @@ fn cached_check(format: &str) {
         now,
     );
     let output = serde_json::json!({
-        "schema_version": "0.5.0-core-update-check",
+        "schema_version": "0.4.13-core-update-check",
         "status": "cached",
         "current_version": AGS_VERSION,
         "notice": notice,
@@ -96,7 +96,7 @@ fn cached_check(format: &str) {
 
 fn launcher_required(action: &str, plan_hash: Option<&str>, format: &str) -> ! {
     let output = serde_json::json!({
-        "schema_version": "0.5.0-core-update-launcher-required",
+        "schema_version": "0.4.13-core-update-launcher-required",
         "command": format!("update {action}"),
         "plan_hash": plan_hash,
         "status": "launcher_required",

@@ -23,4 +23,4 @@ pub use build::{
     write_capability_snapshot_with_roots,
 };
 pub use model::task_card_skill_tags_from_registry_yaml;
-pub use source::hash_skill_source;
+pub use source::{hash_single_file_skill_source, hash_skill_source};

@@ -169,7 +169,7 @@ fn skill_adoption_cli_requires_a_reviewed_plan_and_persists_private_state() {
         &run(&["skill", "status", "cli-adopted-team", "--format", "json"]),
         "skill adoption status",
     );
-    assert_eq!(status["schema_version"], "0.5.0-skill-status-projection");
+    assert_eq!(status["schema_version"], "0.4.13-skill-status-projection");
     assert_eq!(status["catalog"]["state"], "unlisted");
     assert_eq!(status["installation"]["state"], "installed");
     assert_eq!(status["activation"]["state"], "route-verified");

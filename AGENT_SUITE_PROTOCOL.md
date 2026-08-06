@@ -3,7 +3,7 @@
 This document summarizes the Agent General Staff public governance contract.
 Canonical details live under `protocol/` and are self-contained.
 
-Current product version: **0.5.0**. Product, wire/schema, and historical release
+Current product version: **0.4.13**. Product, wire/schema, and historical release
 versions are independent.
 
 ## Product boundary

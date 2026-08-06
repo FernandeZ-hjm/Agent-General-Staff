@@ -14,7 +14,7 @@ export const RELEASE_REPOSITORY = "FernandeZ-hjm/Agent-General-Staff";
 export const MAX_DOWNLOAD_BYTES = 128 * 1024 * 1024;
 export const DOWNLOAD_TIMEOUT_MS = 30_000;
 export const UPDATE_CHECK_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
-export const UPDATE_CHECK_STATE_SCHEMA = "0.5.0-update-check-state";
+export const UPDATE_CHECK_STATE_SCHEMA = "0.4.13-update-check-state";
 export const UPDATE_STATE_FILE = "update-check.json";
 export const UPDATE_PLAN_SCHEMA = "1.1-launcher-update-plan";
 export const UPDATE_RECEIPT_SCHEMA = "1.1-launcher-update-receipt";
@@ -463,7 +463,7 @@ export function statusUpdate(planHash, options = {}) {
   }
   const receipt = readJsonIfPresent(receiptPath);
   return {
-    schema_version: "0.5.0-core-update-status",
+    schema_version: "0.4.13-core-update-status",
     plan,
     receipt,
     active: readJsonIfPresent(paths.currentPath)
@@ -501,7 +501,7 @@ export async function verifyUpdate(planHash, options = {}) {
   const runtimeHome = resolveRuntimeHome(paths, env, options);
   await verifyRuntimeSetup(active, runtimeHome, receipt.runtime_setup, options);
   return {
-    schema_version: "0.5.0-core-update-verification",
+    schema_version: "0.4.13-core-update-verification",
     status: "verified",
     plan_hash: planHash,
     active_version: active.version,

@@ -43,9 +43,13 @@ fn check_first_party_language_boundary(repo_root: &Path) -> CheckItem {
                 match entry.file_type() {
                     Ok(file_type)
                         if file_type.is_file()
-                            && relative == "scripts/ags-memory-lifecycle-omp.js" => {}
+                            && matches!(
+                                relative.as_str(),
+                                "scripts/ags-memory-lifecycle-omp.js"
+                                    | "scripts/sign-release-index.mjs"
+                            ) => {}
                     Ok(_) => violations.push(format!(
-                        "{relative}: scripts/ may contain only the thin OMP lifecycle adapter"
+                        "{relative}: scripts/ may contain only reviewed, bounded runtime adapters"
                     )),
                     Err(error) => {
                         violations.push(format!("{relative}: cannot inspect file type: {error}"))
@@ -105,11 +109,47 @@ fn check_first_party_language_boundary(repo_root: &Path) -> CheckItem {
         )),
     }
 
+    let signer = scripts.join("sign-release-index.mjs");
+    match std::fs::read_to_string(&signer) {
+        Ok(body) => {
+            for required in [
+                "node:crypto",
+                "crypto.sign(null",
+                "crypto.verify(null",
+                "release-index.json",
+                "release-index.sig",
+                "AGS_RELEASE_SIGNING_PRIVATE_KEY",
+            ] {
+                if !body.contains(required) {
+                    violations.push(format!(
+                        "scripts/sign-release-index.mjs: missing release-signing adapter marker `{required}`"
+                    ));
+                }
+            }
+            for forbidden in [
+                "node:child_process",
+                "node:http",
+                "node:https",
+                "fetch(",
+                "eval(",
+            ] {
+                if body.contains(forbidden) {
+                    violations.push(format!(
+                        "scripts/sign-release-index.mjs: bounded signer contains forbidden capability `{forbidden}`"
+                    ));
+                }
+            }
+        }
+        Err(error) => violations.push(format!(
+            "scripts/sign-release-index.mjs: cannot read required adapter: {error}"
+        )),
+    }
+
     if violations.is_empty() {
         CheckItem::pass(
             "first-party-language-boundary",
             "release",
-            "Rust owns first-party governance, lifecycle, verification, release, and safety logic; scripts/ contains only the thin OMP adapter.",
+            "Rust owns first-party governance, lifecycle, verification, release planning, and safety logic; scripts/ contains only reviewed, bounded host and cryptographic adapters.",
         )
     } else {
         CheckItem::fail(

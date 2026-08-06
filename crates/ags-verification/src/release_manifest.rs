@@ -1043,7 +1043,7 @@ mod tests {
             ags_platform::sha256_file(&root.join(public_path).join("SKILL.md")).unwrap();
         std::fs::write(
             root.join("Cargo.toml"),
-            "[workspace]\n[workspace.package]\nversion = \"0.5.0\"\nlicense = \"GPL-3.0-only\"\n",
+            "[workspace]\n[workspace.package]\nversion = \"0.4.13\"\nlicense = \"GPL-3.0-only\"\n",
         )
         .unwrap();
         std::fs::write(

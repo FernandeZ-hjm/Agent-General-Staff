@@ -1,4 +1,4 @@
-# Agent General Staff 0.5.0 — Public Edition
+# Agent General Staff 0.4.13 — Public Edition
 
 @AGENTS.md
 

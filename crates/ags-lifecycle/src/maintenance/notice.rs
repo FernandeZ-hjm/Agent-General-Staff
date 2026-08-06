@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const UPDATE_CHECK_STATE_SCHEMA: &str = "0.5.0-update-check-state";
+pub const UPDATE_CHECK_STATE_SCHEMA: &str = "0.4.13-update-check-state";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -286,7 +286,7 @@ mod tests {
     fn projects_verified_launcher_state_without_network() {
         let root = state_root();
         let state = UpdateCheckState {
-            latest_version: Some("0.5.0".to_string()),
+            latest_version: Some("0.4.13".to_string()),
             release_index_hash: Some("a".repeat(64)),
             last_checked_at_unix: Some(100),
             ..UpdateCheckState::default()
@@ -295,7 +295,7 @@ mod tests {
         let notice = cached_update_notice(root.path(), "0.4.12", 101);
         assert_eq!(notice.status, UpdateNoticeStatus::Available);
 
-        ignore_update_version(root.path(), "0.5.0").unwrap();
+        ignore_update_version(root.path(), "0.4.13").unwrap();
         assert_eq!(
             cached_update_notice(root.path(), "0.4.12", 102).status,
             UpdateNoticeStatus::Ignored
@@ -324,7 +324,7 @@ mod tests {
     fn snooze_and_disable_are_projected() {
         let root = state_root();
         let state = UpdateCheckState {
-            latest_version: Some("0.5.0".to_string()),
+            latest_version: Some("0.4.13".to_string()),
             release_index_hash: Some("b".repeat(64)),
             ..UpdateCheckState::default()
         };

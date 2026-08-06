@@ -89,7 +89,7 @@ impl TestEnvironment {
         fs::write(
             runtime.join("install-manifest.json"),
             serde_json::to_vec_pretty(&json!({
-                "schema_version": "0.5.0-runtime-install",
+                "schema_version": "0.4.13-runtime-install",
                 "producer_version": env!("CARGO_PKG_VERSION"),
                 "source_root": source_root.to_string_lossy(),
                 "target": runtime.to_string_lossy(),
@@ -681,7 +681,7 @@ fn init_projects_the_approved_host_subset_and_preserves_user_hooks() {
     fs::write(
         environment.runtime.join("install-manifest.json"),
         serde_json::to_vec_pretty(&json!({
-            "schema_version": "0.5.0-runtime-install",
+            "schema_version": "0.4.13-runtime-install",
             "source_root": environment.source_root,
             "lifecycle": {
                 "approved_hosts": HOSTS,

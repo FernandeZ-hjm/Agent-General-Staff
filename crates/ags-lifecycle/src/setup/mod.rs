@@ -28,7 +28,7 @@ use plan::{
 };
 use recommendations::{render_third_party_recommendations_text, third_party_recommendations_json};
 
-pub const RUNTIME_INSTALL_SCHEMA: &str = "0.5.0-runtime-install";
+pub const RUNTIME_INSTALL_SCHEMA: &str = "0.4.13-runtime-install";
 const AGS_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub fn approved_lifecycle_hosts(target: &Path) -> Result<Vec<String>, String> {
@@ -815,27 +815,34 @@ fn claude_ags_command_path(home: &Path) -> PathBuf {
     home.join(".claude").join("commands").join("ags.md")
 }
 
-fn codex_ags_named_skill_dir(home: &Path, name: &str) -> PathBuf {
+fn codex_shared_ags_named_skill_dir(home: &Path, name: &str) -> PathBuf {
+    home.join(".agents").join("skills").join(name)
+}
+
+fn codex_native_ags_named_skill_dir(home: &Path, name: &str) -> PathBuf {
     home.join(".codex").join("skills").join(name)
 }
 
 fn codex_ags_named_skill_path(home: &Path, name: &str) -> PathBuf {
-    codex_ags_named_skill_dir(home, name).join("SKILL.md")
+    codex_shared_ags_named_skill_dir(home, name).join("SKILL.md")
 }
 
 fn codex_ags_named_skill_agent_metadata_path(home: &Path, name: &str) -> PathBuf {
-    codex_ags_named_skill_dir(home, name)
+    codex_shared_ags_named_skill_dir(home, name)
         .join("agents")
         .join("openai.yaml")
 }
 
 fn retired_codex_ags_skill_dirs(home: &Path) -> Vec<PathBuf> {
-    vec![
-        codex_ags_named_skill_dir(home, "ags"),
-        codex_ags_named_skill_dir(home, "ags-preflight"),
-        codex_ags_named_skill_dir(home, "ags-verify"),
-        codex_ags_named_skill_dir(home, "ags-capability"),
-    ]
+    ["ags", "ags-preflight", "ags-verify", "ags-capability"]
+        .into_iter()
+        .flat_map(|name| {
+            [
+                codex_shared_ags_named_skill_dir(home, name),
+                codex_native_ags_named_skill_dir(home, name),
+            ]
+        })
+        .collect()
 }
 
 fn retired_ags_memory_script_paths(home: &Path) -> Vec<PathBuf> {

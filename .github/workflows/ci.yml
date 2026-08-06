@@ -67,9 +67,13 @@ jobs:
       - name: Verify public release boundary once
         shell: bash
         run: |
-          cargo run -q --locked -p ags-cli -- verify \
+          release_report="$RUNNER_TEMP/public-verification-evidence/release-report.json"
+          if ! cargo run -q --locked -p ags-cli -- verify \
             --scope release \
-            --format json > "$RUNNER_TEMP/public-verification-evidence/release-report.json"
+            --format json > "$release_report"; then
+            cat "$release_report"
+            exit 1
+          fi
       - name: Freeze canonical public release plan
         shell: bash
         run: |

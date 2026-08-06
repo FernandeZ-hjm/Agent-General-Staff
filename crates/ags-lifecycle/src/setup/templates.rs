@@ -81,6 +81,8 @@ pub(in crate::setup) fn codex_ags_command_skill_specs() -> &'static [(
     // without a second front-stage command skill (see
     // `retired_codex_ags_skill_dirs`). Private-only command skills (e.g. the
     // public-edition sync skill) are machine-local and never generated here.
+    // Codex reads these bodies from the shared `.agents/skills` projection;
+    // setup must not restore the retired `.codex/skills` duplicate.
     &[
         (
             "ags-setup",

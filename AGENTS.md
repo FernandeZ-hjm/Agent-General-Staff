@@ -3,7 +3,7 @@
 ## Repository contract
 
 This checkout is the self-contained public distributable edition of Agent
-Governance Suite 0.5.0. It must not depend on private repositories,
+Governance Suite 0.4.13. It must not depend on private repositories,
 machine-local state, credentials, or unpublished Skill bodies.
 
 Before AGS-governed work, call MCP `ags_preflight` or run:

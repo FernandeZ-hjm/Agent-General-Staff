@@ -221,7 +221,7 @@ pub(super) fn maintenance_plan_schema() -> serde_json::Value {
             "intent": {
                 "type": "object",
                 "properties": {
-                    "schema_version": { "const": "0.5.0-maintenance-intent" },
+                    "schema_version": { "const": "0.4.13-maintenance-intent" },
                     "request_id": { "type": "string", "minLength": 1 },
                     "subject": { "type": "string", "enum": ["ags", "skill", "runtime"] },
                     "operation": { "type": "string", "enum": ["check", "install", "update", "remove", "rollback", "repair"] },

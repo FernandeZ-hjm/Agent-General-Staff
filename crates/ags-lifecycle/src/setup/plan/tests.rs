@@ -147,6 +147,9 @@ fn codex_visible_command_skills_are_exactly_the_canonical_five() {
         5,
         "exactly five visible Codex command skills"
     );
+    assert!(command_skills.iter().all(|path| path
+        .as_str()
+        .is_some_and(|path| path.contains("/.agents/skills/"))));
     for expected in [
         "ags-setup",
         "ags-agents",

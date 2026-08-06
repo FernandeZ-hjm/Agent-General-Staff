@@ -14,7 +14,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Schema version for serialized verification bundles.
-pub const VERIFICATION_BUNDLE_SCHEMA_VERSION: &str = "0.5.0-verification-bundle";
+pub const VERIFICATION_BUNDLE_SCHEMA_VERSION: &str = "0.4.13-verification-bundle";
 
 /// Version of the verification policy whose tests are represented by a
 /// bundle.  A policy change must invalidate old evidence even when the source
@@ -342,6 +342,7 @@ pub fn current_input_identity(repo_root: &Path) -> Result<VerificationInputIdent
 }
 
 fn ensure_clean_worktree(repo_root: &Path) -> Result<(), String> {
+    ensure_no_hidden_index_entries(repo_root)?;
     let output = Command::new("git")
         .arg("-C")
         .arg(repo_root)
@@ -358,6 +359,38 @@ fn ensure_clean_worktree(repo_root: &Path) -> Result<(), String> {
         return Err(format!(
             "verification worktree is dirty; commit or remove tracked/untracked changes before creating or reusing a bundle: {}",
             String::from_utf8_lossy(&output.stdout).trim_end()
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_no_hidden_index_entries(repo_root: &Path) -> Result<(), String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["ls-files", "-v", "-z"])
+        .output()
+        .map_err(|error| format!("cannot inspect verification index flags: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git ls-files failed while checking verification index flags: {}",
+            output_summary(&output.stdout, &output.stderr)
+        ));
+    }
+    let hidden = output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|record| {
+            record
+                .first()
+                .is_some_and(|tag| *tag == b'S' || tag.is_ascii_lowercase())
+        })
+        .map(|record| String::from_utf8_lossy(record).into_owned())
+        .collect::<Vec<_>>();
+    if !hidden.is_empty() {
+        return Err(format!(
+            "verification index contains skip-worktree or assume-unchanged entries that can hide tested bytes from the commit tree: {}",
+            hidden.join(", ")
         ));
     }
     Ok(())

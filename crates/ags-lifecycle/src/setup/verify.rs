@@ -528,8 +528,8 @@ pub(in crate::setup) fn runtime_install_health_report(
 
 #[cfg(test)]
 mod tests {
-    use super::super::retired_codex_ags_skill_dirs;
     use super::super::templates::codex_ags_command_skill_specs;
+    use super::super::{codex_ags_named_skill_path, retired_codex_ags_skill_dirs};
     use super::*;
 
     fn spec_names() -> Vec<&'static str> {
@@ -556,6 +556,14 @@ mod tests {
             ]
         );
         assert!(!spec_names().contains(&"ags-capability"));
+        let home = Path::new("/fixture-home");
+        assert_eq!(
+            codex_ags_named_skill_path(home, "ags-skill"),
+            home.join(".agents/skills/ags-skill/SKILL.md")
+        );
+        assert!(
+            retired_codex_ags_skill_dirs(home).contains(&home.join(".codex/skills/ags-capability"))
+        );
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(Path::parent)

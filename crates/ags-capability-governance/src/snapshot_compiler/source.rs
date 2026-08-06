@@ -60,6 +60,26 @@ pub fn hash_skill_source(path: &Path) -> Result<String, String> {
     }
 }
 
+/// Hash a Skill body that consists of exactly one regular file using the same
+/// canonical encoding as [`hash_skill_source`]. Public projection uses this
+/// before the generated body exists on disk, so its manifest can bind the
+/// complete projected body instead of confusing a raw file checksum with a
+/// Skill source hash.
+pub fn hash_single_file_skill_source(file_name: &str, bytes: &[u8]) -> Result<String, String> {
+    let path = Path::new(file_name);
+    if path.components().count() != 1
+        || !matches!(
+            path.components().next(),
+            Some(std::path::Component::Normal(_))
+        )
+    {
+        return Err("single-file Skill source requires one safe file name".to_string());
+    }
+    let mut canonical = b"ags-skill-source-v1\n".to_vec();
+    append_source_file_bytes(file_name, bytes, &mut canonical);
+    Ok(ags_platform::sha256(&canonical))
+}
+
 /// Hash the complete skill body without timestamps or absolute paths. This
 /// catches changes in referenced scripts/assets as well as `SKILL.md`. Symlinks
 /// are represented by their link target and are never followed, avoiding
@@ -110,13 +130,35 @@ pub(super) fn append_source_node(root: &Path, path: &Path, canonical: &mut Vec<u
         let Ok(bytes) = std::fs::read(path) else {
             return false;
         };
-        canonical.extend_from_slice(b"F\0");
-        canonical.extend_from_slice(relative.as_bytes());
-        canonical.push(0);
-        canonical.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
-        canonical.extend_from_slice(&bytes);
+        append_source_file_bytes(&relative, &bytes, canonical);
         true
     } else {
         false
+    }
+}
+
+fn append_source_file_bytes(relative: &str, bytes: &[u8], canonical: &mut Vec<u8>) {
+    canonical.extend_from_slice(b"F\0");
+    canonical.extend_from_slice(relative.as_bytes());
+    canonical.push(0);
+    canonical.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+    canonical.extend_from_slice(bytes);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn virtual_single_file_hash_matches_the_filesystem_body_hash() {
+        let root = tempfile::tempdir().unwrap();
+        let body = b"---\nname: fixture\n---\n";
+        std::fs::write(root.path().join("SKILL.md"), body).unwrap();
+        assert_eq!(
+            hash_single_file_skill_source("SKILL.md", body).unwrap(),
+            hash_skill_source(root.path()).unwrap()
+        );
+        assert!(hash_single_file_skill_source("nested/SKILL.md", body).is_err());
+        assert!(hash_single_file_skill_source("../SKILL.md", body).is_err());
     }
 }
