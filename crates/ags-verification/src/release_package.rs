@@ -29,12 +29,20 @@ fn matches_path_boundary(relative: &str, boundary: &str) -> bool {
 fn is_public_release_profile(profile: &str) -> bool {
     profile == "public-full" || profile == "public-core"
 }
-fn public_release_forbidden_patterns() -> Vec<&'static str> {
-    crate::release_manifest::PUBLIC_FORBIDDEN_PAYLOAD
+const RELEASE_ONLY_FORBIDDEN_PAYLOAD: &[&str] =
+    &["proposals/", "graphify-out/", ".claude/", ".codegraph/"];
+
+fn public_release_forbidden_pattern(relative: &str) -> Option<&'static str> {
+    if crate::release_manifest::is_public_forbidden_payload(relative) {
+        return crate::release_manifest::PUBLIC_FORBIDDEN_PAYLOAD
+            .iter()
+            .copied()
+            .find(|pattern| matches_path_boundary(relative, pattern));
+    }
+    RELEASE_ONLY_FORBIDDEN_PAYLOAD
         .iter()
         .copied()
-        .chain(["proposals/", "graphify-out/", ".claude/", ".codegraph/"])
-        .collect()
+        .find(|pattern| matches_path_boundary(relative, pattern))
 }
 fn walk_release_files(root: &Path, prefix: &str, files: &mut Vec<String>) {
     if let Ok(entries) = std::fs::read_dir(root.join(prefix)) {
@@ -105,7 +113,6 @@ pub fn release_package_plan(
     profile: &str,
     dry_run: bool,
 ) -> (serde_json::Value, bool) {
-    let public_full_forbidden_patterns = public_release_forbidden_patterns();
     let mut included: Vec<String> = Vec::new();
     let mut excluded: Vec<String> = Vec::new();
     let mut exclusion_reasons: Vec<(String, String)> = Vec::new();
@@ -137,10 +144,8 @@ pub fn release_package_plan(
             if included_set.contains(f) {
                 continue;
             }
-            let reason = public_full_forbidden_patterns
-                .iter()
-                .find(|pat| matches_path_boundary(f, pat))
-                .map(|pat| format!("matches forbidden pattern: {pat}"))
+            let reason = public_release_forbidden_pattern(f)
+                .map(|pattern| format!("matches forbidden pattern: {pattern}"))
                 .unwrap_or_else(|| "outside canonical public payload authority".to_string());
             excluded.push(f.clone());
             exclusion_reasons.push((f.clone(), reason));
@@ -154,11 +159,7 @@ pub fn release_package_plan(
     let forbidden_included: Vec<String> = if is_public_release_profile(profile) {
         included
             .iter()
-            .filter(|file| {
-                public_full_forbidden_patterns
-                    .iter()
-                    .any(|pat| matches_path_boundary(file, pat))
-            })
+            .filter(|file| public_release_forbidden_pattern(file).is_some())
             .cloned()
             .collect()
     } else {
@@ -448,8 +449,9 @@ fn ensure_target_parent(root: &Path, relative: &Path) -> Result<PathBuf, String>
 #[cfg(test)]
 mod tests {
     use super::{
-        is_public_release_profile, matches_path_boundary, release_file_list, release_package_plan,
-        stage_release_runtime, RELEASE_PLAN_SCHEMA_VERSION,
+        is_public_release_profile, matches_path_boundary, public_release_forbidden_pattern,
+        release_file_list, release_package_plan, stage_release_runtime,
+        RELEASE_PLAN_SCHEMA_VERSION,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -633,6 +635,19 @@ mod tests {
         assert!(is_public_release_profile("public-core"));
         assert!(is_public_release_profile("public-full"));
         assert!(!is_public_release_profile("private-full"));
+    }
+
+    #[test]
+    fn public_release_forbidden_patterns_preserve_the_reviewed_adapter_exception() {
+        let adapter = "skill-packs/optional/ags-superpowers-adapter/LICENSE";
+        assert!(
+            public_release_forbidden_pattern(adapter).is_none(),
+            "the reviewed adapter must not be re-forbidden by the package planner"
+        );
+        assert!(
+            public_release_forbidden_pattern("skill-packs/personal/example/SKILL.md").is_some()
+        );
+        assert!(public_release_forbidden_pattern("proposals/private.md").is_some());
     }
 
     #[test]
