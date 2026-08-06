@@ -45,6 +45,66 @@ pub use ags_session::{
     WORKSPACE_DAEMON_STATUS_SCHEMA_VERSION,
 };
 
+#[derive(Debug, Default)]
+pub struct WorkspaceCapabilityRuntimeActivator;
+
+impl ags_lifecycle::maintenance::CapabilityRuntimeActivator
+    for WorkspaceCapabilityRuntimeActivator
+{
+    fn activate(
+        &self,
+        request: &ags_lifecycle::maintenance::CapabilityRuntimeActivationRequest,
+    ) -> Result<ags_lifecycle::maintenance::CapabilityRuntimeActivationResult, String> {
+        if ags_platform::normalize_path(&request.runtime_home)
+            != ags_platform::normalize_path(&ags_platform::runtime_home())
+            || ags_session::inspect_existing_workspace_service(&request.workspace)?.is_none()
+        {
+            return Ok(
+                ags_lifecycle::maintenance::CapabilityRuntimeActivationResult {
+                    activated_snapshot_hashes: request.active_snapshot_hashes.clone(),
+                    loaded_snapshot_hashes: None,
+                    runtime_identity: None,
+                },
+            );
+        }
+        let wire_request = ags_session::WorkspaceCapabilityActivationRequest {
+            schema_version: ags_session::WORKSPACE_CAPABILITY_ACTIVATION_SCHEMA_VERSION.to_string(),
+            active_hosts: request.active_hosts(),
+            retired_hosts: request.retired_hosts.clone(),
+            replace_all: request.replace_all,
+        };
+        let value = ags_session::dispatch_workspace_command(
+            &request.workspace,
+            ags_session::WORKSPACE_COMMAND_ACTIVATE_CAPABILITIES,
+            serde_json::to_value(wire_request)
+                .map_err(|error| format!("cannot encode capability activation: {error}"))?,
+        )?;
+        let wire_result: ags_session::WorkspaceCapabilityActivationResult =
+            serde_json::from_value(value)
+                .map_err(|error| format!("capability activation result invalid: {error}"))?;
+        if wire_result.schema_version != ags_session::WORKSPACE_CAPABILITY_ACTIVATION_SCHEMA_VERSION
+        {
+            return Err("capability activation result schema mismatch".to_string());
+        }
+        let inspection = ags_session::inspect_existing_workspace_service(&request.workspace)?
+            .ok_or_else(|| {
+                "workspace daemon disappeared after capability activation".to_string()
+            })?;
+        Ok(
+            ags_lifecycle::maintenance::CapabilityRuntimeActivationResult {
+                activated_snapshot_hashes: wire_result.activated_snapshot_hashes,
+                loaded_snapshot_hashes: Some(inspection.loaded_snapshot_hashes),
+                runtime_identity: Some(inspection.workspace_identity),
+            },
+        )
+    }
+}
+
+pub fn workspace_capability_runtime_activator(
+) -> std::sync::Arc<dyn ags_lifecycle::maintenance::CapabilityRuntimeActivator> {
+    std::sync::Arc::new(WorkspaceCapabilityRuntimeActivator)
+}
+
 use std::io::BufReader;
 use std::net::TcpStream;
 use std::path::Path;
@@ -97,6 +157,47 @@ impl ags_session::WorkspaceSessionHandler for McpSessionHandler {
                 loaded_snapshot_hashes: workspace.loaded_snapshot_hashes()?,
             })
             .map_err(|error| format!("workspace daemon status encode failed: {error}"));
+        }
+        if kind == ags_session::WORKSPACE_COMMAND_ACTIVATE_CAPABILITIES {
+            let request: ags_session::WorkspaceCapabilityActivationRequest =
+                serde_json::from_value(payload)
+                    .map_err(|error| format!("capability activation request invalid: {error}"))?;
+            if request.schema_version != ags_session::WORKSPACE_CAPABILITY_ACTIVATION_SCHEMA_VERSION
+            {
+                return Err("capability activation schema mismatch".to_string());
+            }
+            let active_hosts = request
+                .active_hosts
+                .iter()
+                .map(|host| {
+                    ags_host_integration::platform_spec(host).ok_or_else(|| {
+                        format!("unsupported capability activation Host `{host}`")
+                    })?;
+                    Ok(host.clone())
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let retired_hosts = request
+                .retired_hosts
+                .iter()
+                .map(|host| {
+                    ags_host_integration::platform_spec(host)
+                        .ok_or_else(|| format!("unsupported retired capability Host `{host}`"))?;
+                    Ok(host.clone())
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let activated_snapshot_hashes = workspace.activate_host_snapshots(
+                &active_hosts,
+                &retired_hosts,
+                request.replace_all,
+            )?;
+            let result = ags_session::WorkspaceCapabilityActivationResult {
+                schema_version: ags_session::WORKSPACE_CAPABILITY_ACTIVATION_SCHEMA_VERSION
+                    .to_string(),
+                activated_snapshot_hashes,
+                loaded_snapshot_hashes: workspace.loaded_snapshot_hashes()?,
+            };
+            return serde_json::to_value(result)
+                .map_err(|error| format!("capability activation encode failed: {error}"));
         }
         if kind != "lifecycle" {
             return Err(format!("unsupported workspace command `{kind}`"));

@@ -36,6 +36,7 @@ struct RuntimeSetupRecovery {
 pub struct RuntimeSetupMaintenanceBackend {
     pub runtime_home: PathBuf,
     pub prepared_change: Option<PreparedRuntimeSetup>,
+    pub activation: std::sync::Arc<dyn CapabilityRuntimeActivator>,
 }
 
 pub fn path_state_hash(path: &Path) -> Result<String, String> {
@@ -163,8 +164,18 @@ fn restore_recovery(runtime_home: &Path, recovery: &RuntimeSetupRecovery) -> Res
 }
 
 pub fn recover_incomplete_runtime_setups(runtime_home: &Path) -> Result<(), String> {
+    recover_incomplete_runtime_setups_with_activation(
+        runtime_home,
+        offline_capability_runtime_activator(),
+    )
+}
+
+pub fn recover_incomplete_runtime_setups_with_activation(
+    runtime_home: &Path,
+    activation: std::sync::Arc<dyn CapabilityRuntimeActivator>,
+) -> Result<(), String> {
     let _lock = ags_platform::MaintenanceLock::acquire(runtime_home)?;
-    recover_incomplete_runtime_setups_locked(runtime_home)
+    recover_incomplete_runtime_setups_locked(runtime_home, activation)
 }
 
 /// Resume the exact persisted setup transaction for an explicit rollback.
@@ -173,6 +184,18 @@ pub fn recover_incomplete_runtime_setups(runtime_home: &Path) -> Result<(), Stri
 pub fn recover_runtime_setup_plan(
     runtime_home: &Path,
     plan_hash: &str,
+) -> Result<MaintenanceReceipt, String> {
+    recover_runtime_setup_plan_with_activation(
+        runtime_home,
+        plan_hash,
+        offline_capability_runtime_activator(),
+    )
+}
+
+pub fn recover_runtime_setup_plan_with_activation(
+    runtime_home: &Path,
+    plan_hash: &str,
+    activation: std::sync::Arc<dyn CapabilityRuntimeActivator>,
 ) -> Result<MaintenanceReceipt, String> {
     let plan = super::store::load_plan(runtime_home, plan_hash)?;
     plan.verify_hash()?;
@@ -198,12 +221,16 @@ pub fn recover_runtime_setup_plan(
         RuntimeSetupMaintenanceBackend {
             runtime_home: runtime_home.to_path_buf(),
             prepared_change: None,
+            activation,
         },
     )?;
     service.recover(plan_hash)
 }
 
-fn recover_incomplete_runtime_setups_locked(runtime_home: &Path) -> Result<(), String> {
+fn recover_incomplete_runtime_setups_locked(
+    runtime_home: &Path,
+    activation: std::sync::Arc<dyn CapabilityRuntimeActivator>,
+) -> Result<(), String> {
     let directory = ags_platform::RuntimeLayout::new(runtime_home)
         .maintenance()
         .join("recovery");
@@ -249,6 +276,7 @@ fn recover_incomplete_runtime_setups_locked(runtime_home: &Path) -> Result<(), S
                     required_authority_root: Some(change.suite_skills.authority_root.clone()),
                     target_hosts: change.suite_skills.hosts.clone(),
                 },
+                activation: std::sync::Arc::clone(&activation),
                 prepared_change: None,
             }
             .recover_incomplete_change(&plan, &change.suite_skills)?;
@@ -315,6 +343,7 @@ impl RuntimeSetupMaintenanceBackend {
                 required_authority_root: Some(change.suite_skills.authority_root.clone()),
                 target_hosts: change.suite_skills.hosts.clone(),
             },
+            activation: std::sync::Arc::clone(&self.activation),
             prepared_change: None,
         }
     }
@@ -505,7 +534,10 @@ impl MaintenanceBackend for RuntimeSetupMaintenanceBackend {
 
     fn apply(&self, plan: &MaintenancePlan) -> Result<MaintenanceExecution, String> {
         let _lock = ags_platform::MaintenanceLock::acquire(&self.runtime_home)?;
-        recover_incomplete_runtime_setups_locked(&self.runtime_home)?;
+        recover_incomplete_runtime_setups_locked(
+            &self.runtime_home,
+            std::sync::Arc::clone(&self.activation),
+        )?;
         let change = self.change(plan)?;
         let mut paths = change
             .files

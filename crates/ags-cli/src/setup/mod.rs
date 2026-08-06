@@ -184,14 +184,17 @@ pub(crate) fn run_runtime_apply(
     let source_root = source_root_or_exit("ags setup");
     let target = runtime_install_target(target);
     guard_writable_target("ags setup", &target);
-    ags_lifecycle::setup::apply_runtime(ags_lifecycle::setup::RuntimeApplyRequest {
-        source_root: &source_root,
-        target: &target,
-        home: &home_dir(),
-        force,
-        approved_lifecycle_hosts,
-        suite_skill_authority_root: required_skill_authority_root,
-    })
+    ags_lifecycle::setup::apply_runtime_with_activation(
+        ags_lifecycle::setup::RuntimeApplyRequest {
+            source_root: &source_root,
+            target: &target,
+            home: &home_dir(),
+            force,
+            approved_lifecycle_hosts,
+            suite_skill_authority_root: required_skill_authority_root,
+        },
+        ags_mcp::workspace_capability_runtime_activator(),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -212,12 +215,15 @@ pub(crate) fn cmd_setup(
         }
         let runtime_target = runtime_install_target(target);
         guard_writable_target("ags setup recovery", &runtime_target);
-        let receipt =
-            ags_lifecycle::maintenance::recover_runtime_setup_plan(&runtime_target, plan_hash)
-                .unwrap_or_else(|error| {
-                    eprintln!("ags setup recovery: {error}");
-                    std::process::exit(1);
-                });
+        let receipt = ags_lifecycle::maintenance::recover_runtime_setup_plan_with_activation(
+            &runtime_target,
+            plan_hash,
+            ags_mcp::workspace_capability_runtime_activator(),
+        )
+        .unwrap_or_else(|error| {
+            eprintln!("ags setup recovery: {error}");
+            std::process::exit(1);
+        });
         crate::output::emit(format, &receipt, || {
             format!(
                 "Recovered runtime setup plan {}\nReceipt: {}",

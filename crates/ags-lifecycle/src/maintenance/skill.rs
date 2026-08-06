@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 pub struct SkillMaintenanceBackend {
     pub adoption: AdoptionContext,
     pub preflight_target: PathBuf,
+    pub activation: std::sync::Arc<dyn CapabilityRuntimeActivator>,
 }
 
 impl SkillMaintenanceBackend {
@@ -221,6 +222,37 @@ impl MaintenanceBackend for SkillMaintenanceBackend {
             .iter()
             .map(|activation| activation.host.clone())
             .collect::<BTreeSet<_>>();
+        let affected_hosts = expected_hosts.iter().cloned().collect::<Vec<_>>();
+        let activation_request = CapabilityRuntimeActivationRequest::from_runtime(
+            &self.preflight_target,
+            &self.adoption.runtime_home,
+            &affected_hosts,
+            false,
+        )?;
+        let runtime_activation = self.activation.activate(&activation_request)?;
+        if runtime_activation.activated_snapshot_hashes != activation_request.active_snapshot_hashes
+        {
+            return Err(format!(
+                "Skill runtime activation hashes differ: expected {:?}, observed {:?}",
+                activation_request.active_snapshot_hashes,
+                runtime_activation.activated_snapshot_hashes
+            ));
+        }
+        if let Some(loaded) = &runtime_activation.loaded_snapshot_hashes {
+            for (host, hash) in &activation_request.active_snapshot_hashes {
+                if loaded.get(host) != Some(hash) {
+                    return Err(format!(
+                        "Skill runtime loaded stale `{host}` snapshot: expected {hash}, observed {:?}",
+                        loaded.get(host)
+                    ));
+                }
+            }
+            for host in &activation_request.retired_hosts {
+                if loaded.contains_key(host) {
+                    return Err(format!("Skill runtime retained retired `{host}` snapshot"));
+                }
+            }
+        }
         let repreflight = expected_hosts
             .iter()
             .map(|host| {
@@ -264,6 +296,7 @@ impl MaintenanceBackend for SkillMaintenanceBackend {
                         evidence: serde_json::json!({
                             "activation": activation,
                             "preflight": preflight.map(|(_, _, result)| result),
+                            "runtime_identity": runtime_activation.runtime_identity,
                         })
                         .to_string(),
                         host,
@@ -279,9 +312,16 @@ impl MaintenanceBackend for SkillMaintenanceBackend {
     }
 
     fn recover(&self, plan: &MaintenancePlan) -> Result<MaintenanceExecution, String> {
+        let change = self.skill_change(plan)?;
         let evidence =
-            recover_applied_change(&self.adoption, self.skill_change(plan)?, &plan.plan_hash)?
-                .transaction_id;
+            recover_applied_change(&self.adoption, change, &plan.plan_hash)?.transaction_id;
+        let activation_request = CapabilityRuntimeActivationRequest::from_runtime(
+            &self.preflight_target,
+            &self.adoption.runtime_home,
+            &change.target_hosts,
+            false,
+        )?;
+        self.activation.activate(&activation_request)?;
         Ok(MaintenanceExecution {
             status: MaintenanceStatus::Recovered,
             applied_writes: Vec::new(),

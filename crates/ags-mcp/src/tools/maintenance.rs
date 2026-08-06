@@ -180,6 +180,7 @@ fn service(
                     snapshot_discovery: SnapshotDiscovery::Live,
                 },
                 preflight_target: binding.target.clone(),
+                activation: crate::workspace_capability_runtime_activator(),
             },
             suite_skills: SuiteSkillMaintenanceBackend {
                 source_root: authority_root,
@@ -188,6 +189,7 @@ fn service(
                     target_hosts: ags_lifecycle::setup::approved_lifecycle_hosts(&runtime_home)
                         .unwrap_or_default(),
                 },
+                activation: crate::workspace_capability_runtime_activator(),
                 runtime_home,
                 host_home: binding.host_home.clone(),
                 prepared_change: None,

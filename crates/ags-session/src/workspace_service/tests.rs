@@ -90,6 +90,41 @@ fn workspace_daemon_keeps_one_static_snapshot_for_its_lifetime() {
 }
 
 #[test]
+fn maintenance_activation_atomically_replaces_the_exact_host_snapshot_set() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = canonical_workspace_root(&root).unwrap();
+    let fixture = tempfile::tempdir().unwrap();
+    let runtime = fixture.path().join("runtime");
+    let home = fixture.path().join("home");
+    let snapshot = ags_capability_governance::write_capability_snapshot_with_roots(
+        &root, "codex", &runtime, &home,
+    )
+    .unwrap();
+    let state = WorkspaceState::new(root, runtime).unwrap();
+
+    assert!(state.loaded_snapshot_hashes().unwrap().is_empty());
+    let activated = state
+        .activate_host_snapshots(&["codex".to_string()], &[], true)
+        .unwrap();
+    assert_eq!(activated.get("codex"), Some(&snapshot.snapshot_hash));
+    assert_eq!(
+        state.loaded_snapshot_hashes().unwrap().get("codex"),
+        Some(&snapshot.snapshot_hash)
+    );
+
+    let before = state.loaded_snapshot_hashes().unwrap();
+    assert!(state
+        .activate_host_snapshots(&["codex".to_string(), "claude-code".to_string()], &[], true,)
+        .is_err());
+    assert_eq!(state.loaded_snapshot_hashes().unwrap(), before);
+
+    state
+        .activate_host_snapshots(&[], &["codex".to_string()], false)
+        .unwrap();
+    assert!(state.loaded_snapshot_hashes().unwrap().is_empty());
+}
+
+#[test]
 fn abandoned_start_lock_is_reclaimed() {
     let root = tempfile::tempdir().unwrap();
     let lock = root.path().join("workspace.lock");

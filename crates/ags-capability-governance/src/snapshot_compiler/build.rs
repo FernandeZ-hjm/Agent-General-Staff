@@ -169,14 +169,56 @@ pub fn build_capability_snapshot_with_live_roots(
     )
 }
 
-/// Scan the machine and resolve immutable manifests once, then compile one
-/// host-specific snapshot per requested Host from that shared observation.
-/// This is the canonical setup/update path for multi-Host activation.
+/// Resolve immutable manifests once, then compile one isolated observation per
+/// requested Host. Host skill directories are install surfaces, not a shared
+/// catalog: merging them would leak one Host's local Skills into every other
+/// Host snapshot.
+///
+/// This is the canonical setup/update path for multi-Host activation when the
+/// caller's current directory is the workspace being activated.
 pub fn build_capability_snapshots_with_live_roots(
     manifest_root: &Path,
     active_hosts: &[String],
     runtime_home: &Path,
     host_home: &Path,
+) -> Result<Vec<(String, HostCapabilitySnapshot)>, SnapshotBuildError> {
+    build_capability_snapshots_with_live_roots_and_runner(
+        manifest_root,
+        active_hosts,
+        runtime_home,
+        host_home,
+        Box::new(SystemCommandRunner),
+    )
+}
+
+/// Multi-Host counterpart of
+/// [`build_capability_snapshot_with_live_roots_at`]. Setup/update uses this
+/// entrypoint so Host-native discovery is evaluated from the same workspace as
+/// an explicit `ags capability snapshot --target ...` refresh.
+pub fn build_capability_snapshots_with_live_roots_at(
+    manifest_root: &Path,
+    active_hosts: &[String],
+    runtime_home: &Path,
+    host_home: &Path,
+    workspace: &Path,
+) -> Result<Vec<(String, HostCapabilitySnapshot)>, SnapshotBuildError> {
+    build_capability_snapshots_with_live_roots_and_runner(
+        manifest_root,
+        active_hosts,
+        runtime_home,
+        host_home,
+        Box::new(WorkspaceCommandRunner {
+            current_dir: workspace.to_path_buf(),
+        }),
+    )
+}
+
+fn build_capability_snapshots_with_live_roots_and_runner(
+    manifest_root: &Path,
+    active_hosts: &[String],
+    runtime_home: &Path,
+    host_home: &Path,
+    runner: Box<dyn CommandRunner>,
 ) -> Result<Vec<(String, HostCapabilitySnapshot)>, SnapshotBuildError> {
     let third_party = crate::third_party_manifest::resolve_third_party_manifest(manifest_root)
         .map_err(SnapshotBuildError::Manifest)?;
@@ -184,10 +226,8 @@ pub fn build_capability_snapshots_with_live_roots(
         manifest_root.to_path_buf(),
         host_home.to_path_buf(),
         runtime_home.to_path_buf(),
-        Box::new(SystemCommandRunner),
+        runner,
     );
-    let host_refs = active_hosts.iter().map(String::as_str).collect::<Vec<_>>();
-    let inventory = build_inventory(&context, &host_refs);
     let registry_document =
         load_registry_document(manifest_root).map_err(SnapshotBuildError::Registry)?;
     let registry_bytes = std::fs::read(manifest_root.join("manifests/skills-registry.yaml"))
@@ -195,6 +235,7 @@ pub fn build_capability_snapshots_with_live_roots(
     active_hosts
         .iter()
         .map(|host| {
+            let inventory = build_inventory(&context, &[host]);
             compile_snapshot_from_inventory(
                 manifest_root,
                 host,
@@ -688,6 +729,85 @@ mod tests {
                         .to_string(),
             }
         }
+    }
+
+    fn write_test_skill(path: &Path, name: &str) {
+        std::fs::create_dir_all(path).unwrap();
+        std::fs::write(
+            path.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: isolated host test\n---\n"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn multi_host_refresh_matches_canonical_single_host_snapshots() {
+        let manifest_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let base = std::env::temp_dir().join(format!(
+            "ags-multi-host-snapshot-isolation-{}",
+            std::process::id()
+        ));
+        let runtime_home = base.join("runtime");
+        let host_home = base.join("home");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&runtime_home).unwrap();
+        write_test_skill(
+            &host_home.join(".codex/skills/test-codex-only"),
+            "test-codex-only",
+        );
+        write_test_skill(
+            &host_home.join(".claude/skills/test-claude-only"),
+            "test-claude-only",
+        );
+
+        let hosts = vec!["codex".to_string(), "claude-code".to_string()];
+        let batch = build_capability_snapshots_with_live_roots_and_runner(
+            &manifest_root,
+            &hosts,
+            &runtime_home,
+            &host_home,
+            Box::new(NoProcessDiscovery),
+        )
+        .unwrap()
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+        let third_party =
+            crate::third_party_manifest::resolve_third_party_manifest(&manifest_root).unwrap();
+
+        for host in &hosts {
+            let context = ConsoleContext::new_with_runtime_home(
+                &manifest_root,
+                &host_home,
+                &runtime_home,
+                Box::new(NoProcessDiscovery),
+            );
+            let single = build_capability_snapshot_with_context_and_manifest(
+                &manifest_root,
+                host,
+                &runtime_home,
+                &context,
+                &third_party,
+            )
+            .unwrap();
+            assert_eq!(batch[host].snapshot_hash, single.snapshot_hash);
+        }
+
+        let codex_ids = batch["codex"]
+            .catalog
+            .iter()
+            .map(|card| card.skill_id.as_str())
+            .collect::<Vec<_>>();
+        assert!(codex_ids.contains(&"test-codex-only"));
+        assert!(!codex_ids.contains(&"test-claude-only"));
+        let claude_ids = batch["claude-code"]
+            .catalog
+            .iter()
+            .map(|card| card.skill_id.as_str())
+            .collect::<Vec<_>>();
+        assert!(claude_ids.contains(&"test-claude-only"));
+        assert!(!claude_ids.contains(&"test-codex-only"));
+
+        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]

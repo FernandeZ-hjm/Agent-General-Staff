@@ -477,6 +477,16 @@ pub struct RuntimeApplyRequest<'a> {
 /// The caller owns target protection and confirmation. This function owns the
 /// mutation sequence and returns evidence instead of rendering or exiting.
 pub fn apply_runtime(request: RuntimeApplyRequest<'_>) -> RuntimeApplyResult {
+    apply_runtime_with_activation(
+        request,
+        crate::maintenance::offline_capability_runtime_activator(),
+    )
+}
+
+pub fn apply_runtime_with_activation(
+    request: RuntimeApplyRequest<'_>,
+    activation: std::sync::Arc<dyn crate::maintenance::CapabilityRuntimeActivator>,
+) -> RuntimeApplyResult {
     let mut report = crate::setup::SetupReport::new("runtime-install-apply");
     let selected_hosts = request
         .approved_lifecycle_hosts
@@ -518,7 +528,10 @@ pub fn apply_runtime(request: RuntimeApplyRequest<'_>) -> RuntimeApplyResult {
             migration.status, migration.stable_root, migration.state_hash
         ),
     ));
-    if let Err(error) = crate::maintenance::recover_incomplete_runtime_setups(request.target) {
+    if let Err(error) = crate::maintenance::recover_incomplete_runtime_setups_with_activation(
+        request.target,
+        std::sync::Arc::clone(&activation),
+    ) {
         report.add(crate::setup::SetupFinding::fail(
             "runtime-setup-wal-recovery",
             "could not recover the previous incomplete runtime transaction",
@@ -734,6 +747,7 @@ pub fn apply_runtime(request: RuntimeApplyRequest<'_>) -> RuntimeApplyResult {
     let backend = crate::maintenance::RuntimeSetupMaintenanceBackend {
         runtime_home: request.target.to_path_buf(),
         prepared_change: Some(prepared_setup),
+        activation,
     };
     let service = match crate::maintenance::MaintenanceService::new(
         crate::maintenance::ServiceContext {

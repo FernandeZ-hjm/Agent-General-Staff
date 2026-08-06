@@ -19,6 +19,26 @@ mod upgrade_recycle;
 pub use capability_snapshot::WorkspaceState;
 
 pub const WORKSPACE_DAEMON_STATUS_SCHEMA_VERSION: &str = "0.4.0-workspace-daemon-status";
+pub const WORKSPACE_CAPABILITY_ACTIVATION_SCHEMA_VERSION: &str =
+    "0.4.13-workspace-capability-activation";
+pub const WORKSPACE_COMMAND_ACTIVATE_CAPABILITIES: &str = "activate-capabilities";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceCapabilityActivationRequest {
+    pub schema_version: String,
+    pub active_hosts: Vec<String>,
+    pub retired_hosts: Vec<String>,
+    pub replace_all: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceCapabilityActivationResult {
+    pub schema_version: String,
+    pub activated_snapshot_hashes: BTreeMap<String, String>,
+    pub loaded_snapshot_hashes: BTreeMap<String, String>,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceServiceStatus {

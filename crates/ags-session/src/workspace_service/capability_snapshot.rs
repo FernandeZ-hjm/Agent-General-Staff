@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
@@ -53,6 +53,51 @@ impl WorkspaceState {
             .iter()
             .map(|(host, catalog)| (host.clone(), catalog.snapshot.snapshot_hash.clone()))
             .collect())
+    }
+
+    /// Validate every candidate before atomically publishing a complete or
+    /// partial Host catalog change. Maintenance activation uses this typed seam
+    /// so CLI and MCP updates never need recursive subprocesses or self-restarts.
+    pub fn activate_host_snapshots(
+        &self,
+        active_hosts: &[String],
+        retired_hosts: &[String],
+        replace_all: bool,
+    ) -> Result<BTreeMap<String, String>, String> {
+        let mut prepared = HashMap::new();
+        let mut hashes = BTreeMap::new();
+        for host in active_hosts {
+            if prepared.contains_key(host) {
+                return Err(format!("duplicate Host in capability activation: `{host}`"));
+            }
+            let catalog = self
+                .load_fresh_host_catalog(host)
+                .map_err(CapabilityLoadFailure::into_error_message)?;
+            hashes.insert(host.clone(), catalog.snapshot.snapshot_hash.clone());
+            prepared.insert(host.clone(), catalog);
+        }
+        let retired = retired_hosts
+            .iter()
+            .collect::<std::collections::HashSet<_>>();
+        if retired.len() != retired_hosts.len() {
+            return Err("duplicate retired Host in capability activation".to_string());
+        }
+        if active_hosts.iter().any(|host| retired.contains(host)) {
+            return Err("capability activation Host cannot be both active and retired".to_string());
+        }
+        let mut catalogs = self
+            .catalogs
+            .write()
+            .map_err(|_| "workspace catalog lock poisoned".to_string())?;
+        if replace_all {
+            *catalogs = prepared;
+        } else {
+            for host in retired_hosts {
+                catalogs.remove(host);
+            }
+            catalogs.extend(prepared);
+        }
+        Ok(hashes)
     }
 
     pub fn read_catalog(
@@ -113,24 +158,7 @@ impl WorkspaceState {
             return Ok(catalog.clone());
         }
 
-        let (snapshot, _) =
-            ags_capability_governance::load_static_snapshot(&self.runtime_home, &binding.host)
-                .map_err(|error| {
-                    classify_snapshot_load_error(error, &self.runtime_home, &binding.host)
-                })?;
-        let tables = snapshot
-            .validate_integrity(&binding.host)
-            .map_err(|error| {
-                unavailable(
-                    CapabilityDiagnosticCode::SnapshotInvalid,
-                    format!("active capability table is invalid: {error:?}"),
-                )
-            })?;
-        let catalog = ValidatedCapabilityCatalog {
-            binding: self.capability_binding(&snapshot.snapshot_hash),
-            snapshot,
-            tables,
-        };
+        let catalog = self.load_fresh_host_catalog(&binding.host)?;
         let mut catalogs = self.catalogs.write().map_err(|_| {
             unavailable(
                 CapabilityDiagnosticCode::StateLockUnavailable,
@@ -141,6 +169,27 @@ impl WorkspaceState {
             .entry(binding.host.clone())
             .or_insert(catalog)
             .clone())
+    }
+
+    fn load_fresh_host_catalog(
+        &self,
+        host: &str,
+    ) -> Result<ValidatedCapabilityCatalog, CapabilityLoadFailure> {
+        let (snapshot, _) =
+            ags_capability_governance::load_static_snapshot(&self.runtime_home, host)
+                .map_err(|error| classify_snapshot_load_error(error, &self.runtime_home, host))?;
+        let tables = snapshot.validate_integrity(host).map_err(|error| {
+            unavailable(
+                CapabilityDiagnosticCode::SnapshotInvalid,
+                format!("active capability table is invalid: {error:?}"),
+            )
+        })?;
+        let catalog = ValidatedCapabilityCatalog {
+            binding: self.capability_binding(&snapshot.snapshot_hash),
+            snapshot,
+            tables,
+        };
+        Ok(catalog)
     }
 
     fn capability_binding(&self, snapshot_hash: &str) -> CapabilityBinding {

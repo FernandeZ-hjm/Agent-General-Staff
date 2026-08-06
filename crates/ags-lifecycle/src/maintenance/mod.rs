@@ -5,6 +5,7 @@
 //! maintenance surface: immutable plan, binding/expiry checks, explicit risk
 //! acknowledgement, durable receipt, and recoverable backend execution.
 
+mod activation;
 mod migration;
 mod model;
 mod notice;
@@ -15,13 +16,15 @@ mod skill;
 mod store;
 mod suite;
 
+pub use activation::*;
 pub use migration::*;
 pub use model::*;
 pub use notice::*;
 pub use router::MaintenanceBackendRouter;
 pub use runtime_setup::{
-    path_state_hash, recover_incomplete_runtime_setups, recover_runtime_setup_plan,
-    RuntimeSetupMaintenanceBackend,
+    path_state_hash, recover_incomplete_runtime_setups,
+    recover_incomplete_runtime_setups_with_activation, recover_runtime_setup_plan,
+    recover_runtime_setup_plan_with_activation, RuntimeSetupMaintenanceBackend,
 };
 pub use service::{MaintenanceBackend, MaintenanceService, ServiceClock, ServiceContext};
 pub use skill::{maintenance_source_from_spec, SkillMaintenanceBackend};

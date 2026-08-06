@@ -19,6 +19,7 @@ pub struct SuiteSkillMaintenanceBackend {
     pub runtime_home: PathBuf,
     pub host_home: PathBuf,
     pub policy: SuiteSkillProjectionPolicy,
+    pub activation: std::sync::Arc<dyn CapabilityRuntimeActivator>,
     /// Setup may already have rendered this exact change for user review. In
     /// that case the same value is sealed into MaintenancePlan instead of
     /// rescanning and creating a second, potentially different preview.
@@ -196,11 +197,12 @@ impl SuiteSkillMaintenanceBackend {
         &self,
         change: &PreparedSuiteSkillProjection,
     ) -> Result<BTreeMap<String, String>, String> {
-        let snapshots = ags_capability_governance::build_capability_snapshots_with_live_roots(
+        let snapshots = ags_capability_governance::build_capability_snapshots_with_live_roots_at(
             &change.authority_root,
             &change.hosts,
             &self.runtime_home,
             &self.host_home,
+            &change.authority_root,
         )
         .map_err(|error| format!("capability snapshot build failed: {error:?}"))?;
         for (host, snapshot) in &snapshots {
@@ -314,6 +316,46 @@ impl SuiteSkillMaintenanceBackend {
         change: &PreparedSuiteSkillProjection,
     ) -> Result<MaintenanceExecution, String> {
         verify_required_suite_skill_projection_with_runtime(change, Some(&self.runtime_home))?;
+        let expected_hashes = change
+            .hosts
+            .iter()
+            .map(|host| {
+                let (snapshot, _) =
+                    ags_capability_governance::load_static_snapshot(&self.runtime_home, host)
+                        .map_err(|error| {
+                            format!("cannot load `{host}` capability snapshot: {error:?}")
+                        })?;
+                Ok((host.clone(), snapshot.snapshot_hash))
+            })
+            .collect::<Result<BTreeMap<_, _>, String>>()?;
+        let activation_request = CapabilityRuntimeActivationRequest::from_runtime(
+            &change.authority_root,
+            &self.runtime_home,
+            &Self::affected_hosts(change),
+            true,
+        )?;
+        let runtime_activation = self.activation.activate(&activation_request)?;
+        if runtime_activation.activated_snapshot_hashes != expected_hashes {
+            return Err(format!(
+                "runtime activated snapshot hashes differ: expected {expected_hashes:?}, observed {:?}",
+                runtime_activation.activated_snapshot_hashes
+            ));
+        }
+        if runtime_activation
+            .loaded_snapshot_hashes
+            .as_ref()
+            .is_some_and(|loaded| loaded != &expected_hashes)
+        {
+            return Err(format!(
+                "runtime loaded Host table differs after activation: expected {expected_hashes:?}, observed {:?}",
+                runtime_activation.loaded_snapshot_hashes
+            ));
+        }
+        let daemon_evidence = runtime_activation
+            .runtime_identity
+            .as_ref()
+            .map(|identity| format!("activated:{identity}"))
+            .unwrap_or_else(|| "not-running".to_string());
         let mut results = Vec::new();
         let mut activations = Vec::new();
         let mut all_passed = true;
@@ -335,8 +377,8 @@ impl SuiteSkillMaintenanceBackend {
                 id: format!("suite-skill-route-{host}"),
                 passed,
                 evidence: format!(
-                    "snapshot={} routes={} runtime_preflight={}",
-                    snapshot.snapshot_hash, routes_passed, preflight_passed
+                    "snapshot={} routes={} runtime_preflight={} daemon={}",
+                    snapshot.snapshot_hash, routes_passed, preflight_passed, daemon_evidence
                 ),
             });
             activations.push(ActivationResult {
@@ -371,6 +413,13 @@ impl SuiteSkillMaintenanceBackend {
         let snapshots = self.load_snapshot_recovery(&plan.plan_hash, &affected_hosts)?;
         recover_required_suite_skill_projection(&self.runtime_home, change, &plan.plan_hash)?;
         self.restore_snapshots(&snapshots)?;
+        let activation_request = CapabilityRuntimeActivationRequest::from_runtime(
+            &change.authority_root,
+            &self.runtime_home,
+            &affected_hosts,
+            true,
+        )?;
+        self.activation.activate(&activation_request)?;
         self.remove_snapshot_recovery(&plan.plan_hash)?;
         Ok(MaintenanceExecution {
             status: MaintenanceStatus::Recovered,
@@ -403,6 +452,13 @@ impl SuiteSkillMaintenanceBackend {
             let affected_hosts = Self::affected_hosts(change);
             let snapshots = self.load_snapshot_recovery(&plan.plan_hash, &affected_hosts)?;
             self.restore_snapshots(&snapshots)?;
+            let activation_request = CapabilityRuntimeActivationRequest::from_runtime(
+                &change.authority_root,
+                &self.runtime_home,
+                &affected_hosts,
+                true,
+            )?;
+            self.activation.activate(&activation_request)?;
             self.remove_snapshot_recovery(&plan.plan_hash)?;
         }
         Ok(())
@@ -645,6 +701,7 @@ mod runtime_preflight_tests {
                 required_authority_root: None,
                 target_hosts: vec!["codex".to_string()],
             },
+            activation: offline_capability_runtime_activator(),
             prepared_change: None,
         };
 

@@ -96,6 +96,7 @@ fn maintenance_service(command: &str) -> MaintenanceService<SkillMaintenanceBack
         SkillMaintenanceBackend {
             adoption,
             preflight_target,
+            activation: ags_mcp::workspace_capability_runtime_activator(),
         },
     )
     .unwrap_or_else(|error| {
