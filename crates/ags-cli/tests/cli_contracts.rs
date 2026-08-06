@@ -63,6 +63,344 @@ fn run_ags_isolated(args: &[&str]) -> Output {
 }
 
 #[test]
+fn metadata_inline_yaml_is_a_structured_file_usage_error() {
+    let fixture = TestDir::new("metadata-file-usage");
+    let source = fixture.path().join("skill");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(
+        source.join("SKILL.md"),
+        "---\nname: metadata-fixture\ndescription: Fixture.\n---\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ags"))
+        .args(["skill", "adopt"])
+        .arg(&source)
+        .args([
+            "--metadata",
+            "summary: inline is not a file",
+            "--host",
+            "codex",
+            "--format",
+            "json",
+        ])
+        .current_dir(repo_root())
+        .env("HOME", fixture.path().join("home"))
+        .env("AGS_HOME", fixture.path().join("runtime"))
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let diagnostic: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        diagnostic["error"]["code"],
+        "metadata_argument_requires_file"
+    );
+    assert!(diagnostic["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("existing YAML file path (<FILE>)"));
+}
+
+#[test]
+fn manifest_unknown_field_json_keeps_path_field_allowlist_and_location() {
+    let fixture = TestDir::new("manifest-diagnostic");
+    let authority = fixture.path().join("authority");
+    let manifests = authority.join("manifests");
+    std::fs::create_dir_all(&manifests).unwrap();
+    for name in [
+        "onboarding-public.yaml",
+        "skills-registry.yaml",
+        "mcp-registry.yaml",
+    ] {
+        std::fs::copy(
+            repo_root().join("manifests").join(name),
+            manifests.join(name),
+        )
+        .unwrap();
+    }
+    std::fs::write(
+        manifests.join("third-party-capabilities.yaml"),
+        "schema_version: \"1.0\"\ncapabilities:\n  - id: invalid\n    kind: cli\n    profiles: [public]\n    notes: unsupported\n",
+    )
+    .unwrap();
+    let target = fixture.path().join("project");
+    std::fs::create_dir_all(&target).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ags"))
+        .args(["onboarding", "plan", "--target"])
+        .arg(&target)
+        .args(["--host", "codex", "--format", "json"])
+        .current_dir(&authority)
+        .env("HOME", fixture.path().join("home"))
+        .env("AGS_HOME", fixture.path().join("runtime"))
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let diagnostic: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(diagnostic["error"]["code"], "manifest_unknown_field");
+    let message = diagnostic["error"]["message"].as_str().unwrap();
+    assert!(message.contains("third-party-capabilities.yaml"));
+    assert!(message.contains("yaml_path=capabilities[0].notes"));
+    assert!(message.contains("field=notes"));
+    assert!(message.contains("allowed_fields=["));
+    assert!(message.contains("line=6 column=5"));
+}
+
+#[test]
+fn setup_json_reports_adapter_decision_without_implicit_skill_state() {
+    let fixture = TestDir::new("setup-adapter-decision");
+    let home = fixture.path().join("home");
+    let runtime = fixture.path().join("runtime");
+    std::fs::create_dir_all(&home).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ags"))
+        .args(["setup", "--format", "json"])
+        .current_dir(repo_root())
+        .env("HOME", &home)
+        .env("AGS_HOME", &runtime)
+        .env("AGS_SOURCE_ROOT", repo_root())
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .unwrap();
+    assert_success(&output, "setup JSON adapter decision");
+    let plan: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(plan["superpowers_adapter"]["decision_required"], true);
+    assert_eq!(
+        plan["superpowers_adapter"]["distribution_id"],
+        "ags-superpowers-adapter"
+    );
+    assert_eq!(
+        plan["superpowers_adapter"]["compatibility_parent"],
+        "superpowers"
+    );
+    assert_eq!(plan["superpowers_adapter"]["implicit_install"], false);
+    assert!(!ags_platform::RuntimeLayout::new(&runtime)
+        .installed_skills()
+        .exists());
+}
+
+#[test]
+fn init_local_succeeds_without_creating_git_repository() {
+    let fixture = TestDir::new("init-non-git");
+    let home = fixture.path().join("home");
+    let runtime = fixture.path().join("runtime");
+    let project = fixture.path().join("project");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&project).unwrap();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_ags"))
+            .args(args)
+            .current_dir(repo_root())
+            .env("HOME", &home)
+            .env("AGS_HOME", &runtime)
+            .env("AGS_SOURCE_ROOT", repo_root())
+            .env("PATH", "/usr/bin:/bin")
+            .output()
+            .unwrap()
+    };
+    let setup = run(&[
+        "setup",
+        "--yes",
+        "--force",
+        "--lifecycle-hosts",
+        "codex",
+        "--format",
+        "json",
+    ]);
+    assert_success(&setup, "isolated setup before non-Git init");
+    let init = run(&[
+        "init",
+        "--target",
+        project.to_str().unwrap(),
+        "--mode",
+        "local",
+        "--format",
+        "json",
+    ]);
+    assert_success(&init, "local init in non-Git workspace");
+    let output: Value = serde_json::from_slice(&init.stdout).unwrap();
+    assert_eq!(output["overlay"]["applicability"], "not-applicable");
+    assert!(!project.join(".git").exists());
+}
+
+#[test]
+fn bundled_adapter_plan_and_receipt_preserve_distribution_identity() {
+    let fixture = TestDir::new("adapter-distribution-identity");
+    let home = fixture.path().join("home");
+    let runtime = fixture.path().join("runtime");
+    std::fs::create_dir_all(&home).unwrap();
+    let command = || {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ags"));
+        command
+            .current_dir(repo_root())
+            .env("HOME", &home)
+            .env("AGS_HOME", &runtime)
+            .env("AGS_RUNTIME_HOME", &runtime)
+            .env("AGS_SOURCE_ROOT", repo_root())
+            .env("PATH", "/usr/bin:/bin");
+        command
+    };
+    let setup = command()
+        .args([
+            "setup",
+            "--yes",
+            "--force",
+            "--lifecycle-hosts",
+            "codex",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert_success(&setup, "isolated setup before adapter installation");
+
+    let recommended = command()
+        .args(["skill", "recommend", "--format", "json"])
+        .output()
+        .unwrap();
+    assert_success(&recommended, "adapter catalog recommendation");
+    let recommendations: Value = serde_json::from_slice(&recommended.stdout).unwrap();
+    let adapter_recommendation = recommendations
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["id"] == "ags-superpowers-adapter")
+        .expect("adapter must be present in the public catalog snapshot");
+
+    let planned = command()
+        .args([
+            "skill",
+            "install",
+            "ags-superpowers-adapter",
+            "--host",
+            "codex",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert_success(&planned, "adapter install plan");
+    let plan: Value = serde_json::from_slice(&planned.stdout).unwrap();
+    assert_eq!(
+        plan["metadata"]["catalog_distribution_id"],
+        "ags-superpowers-adapter"
+    );
+    assert_eq!(
+        plan["metadata"]["catalog_display_name"],
+        "AGS Superpowers Adapter"
+    );
+    assert_eq!(plan["metadata"]["skill_id"], "superpowers");
+    assert_eq!(
+        plan["metadata"]["catalog_hash"],
+        adapter_recommendation["catalog_hash"]
+    );
+    assert_eq!(
+        plan["metadata"]["catalog_release"],
+        adapter_recommendation["catalog_release"]
+    );
+
+    let mut apply_args = vec![
+        "skill".to_string(),
+        "install".to_string(),
+        "ags-superpowers-adapter".to_string(),
+        "--host".to_string(),
+        "codex".to_string(),
+        "--plan-hash".to_string(),
+        plan["plan_hash"].as_str().unwrap().to_string(),
+    ];
+    for risk in plan["required_acknowledgements"].as_array().unwrap() {
+        apply_args.push("--ack-risk".to_string());
+        apply_args.push(risk.as_str().unwrap().to_string());
+    }
+    apply_args.extend([
+        "--yes".to_string(),
+        "--format".to_string(),
+        "json".to_string(),
+    ]);
+    let applied = command().args(&apply_args).output().unwrap();
+    assert_success(&applied, "adapter install apply");
+    let receipt: Value = serde_json::from_slice(&applied.stdout).unwrap();
+    assert_eq!(receipt["status"], "verified");
+    let distribution = receipt["verification_results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|result| result["id"] == "catalog-distribution-identity")
+        .expect("receipt must retain catalog distribution identity");
+    assert_eq!(distribution["passed"], true);
+    let evidence: Value = serde_json::from_str(distribution["evidence"].as_str().unwrap()).unwrap();
+    assert_eq!(evidence["distribution_id"], "ags-superpowers-adapter");
+    assert_eq!(evidence["compatibility_parent"], "superpowers");
+}
+
+#[test]
+fn absent_host_cli_is_non_blocking_for_doctor_but_strict_verify_fails_closed() {
+    let fixture = TestDir::new("absent-host-cli-matrix");
+    let home = fixture.path().join("home");
+    let runtime = fixture.path().join("runtime");
+    std::fs::create_dir_all(&home).unwrap();
+    let command = || {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ags"));
+        command
+            .current_dir(repo_root())
+            .env("HOME", &home)
+            .env("AGS_HOME", &runtime)
+            .env("AGS_RUNTIME_HOME", &runtime)
+            .env("AGS_SOURCE_ROOT", repo_root())
+            .env("PATH", "/usr/bin:/bin");
+        command
+    };
+    let setup = command()
+        .args([
+            "setup",
+            "--yes",
+            "--force",
+            "--lifecycle-hosts",
+            "codex",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert_success(&setup, "isolated setup before absent-host doctor");
+
+    let doctor = command()
+        .args(["doctor", "--target", ".", "--format", "json"])
+        .output()
+        .unwrap();
+    let report: Value = serde_json::from_slice(&doctor.stdout).unwrap();
+    let mcp = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|finding| finding["check_name"] == "mcp-registration-current")
+        .expect("doctor must report the native MCP applicability decision");
+    assert_eq!(mcp["status"], "skip");
+    assert!(!report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|finding| {
+            finding["check_name"]
+                .as_str()
+                .is_some_and(|name| name.contains("codex-command-skill-metadata"))
+        }));
+
+    let strict = command()
+        .args([
+            "agents", "verify", "--host", "codex", "--strict", "--format", "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(!strict.status.success());
+    let strict_report: Value = serde_json::from_slice(&strict.stdout).unwrap();
+    assert_eq!(strict_report["strict_ready"], false);
+    assert_eq!(
+        strict_report["host_native_mcp"]["status"],
+        "host-unavailable"
+    );
+}
+
+#[test]
 fn skill_adoption_cli_requires_a_reviewed_plan_and_persists_private_state() {
     let fixture = TestDir::new("private-skill-adoption");
     let home = fixture.path().join("home");
@@ -673,6 +1011,38 @@ fn capability_snapshot_target_controls_workspace_scoped_host_probe() {
         from_caller["snapshot_hash"], from_workspace["snapshot_hash"],
         "--target must make the host probe independent of the caller's current directory"
     );
+}
+
+#[test]
+fn capability_snapshot_write_json_stdout_is_one_strict_json_document() {
+    let fixture = TestDir::new("snapshot-write-json");
+    let runtime = fixture.path().join("runtime");
+    let home = fixture.path().join("home");
+    std::fs::create_dir_all(&runtime).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ags"))
+        .args([
+            "capability",
+            "snapshot",
+            "--host",
+            "codex",
+            "--target",
+            ".",
+            "--write",
+            "--format",
+            "json",
+        ])
+        .current_dir(repo_root())
+        .env("HOME", &home)
+        .env("AGS_HOME", &runtime)
+        .env("AGS_SOURCE_ROOT", repo_root())
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .unwrap();
+    assert_success(&output, "capability snapshot --write --format json");
+    let snapshot: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(snapshot["host"], "codex");
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("Static capability snapshot"));
 }
 
 #[test]

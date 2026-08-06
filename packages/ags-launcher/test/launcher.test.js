@@ -100,7 +100,7 @@ function releaseFetcher(metadata, archive, calls) {
   };
 }
 
-function signedIndex(version = "0.4.14") {
+function signedIndex(version = "0.4.15") {
   return Buffer.from(JSON.stringify({
     schema_version: "1.0-signed-release-index",
     version,
@@ -207,7 +207,7 @@ test("switching versions writes previous pointer and never overwrites old conten
   const root = temporaryRoot();
   try {
     const first = releaseMetadata({ version: "0.4.12" });
-    const second = releaseMetadata({ version: "0.4.14" });
+    const second = releaseMetadata({ version: "0.4.15" });
     const firstArchive = releaseArchive();
     const secondArchive = tarGz([
       { name: "ags", body: "second binary\n" },
@@ -218,7 +218,7 @@ test("switching versions writes previous pointer and never overwrites old conten
     ]);
     const calls = [];
     const fetchImpl = async (url, options) => {
-      const metadata = url.includes("v0.4.14") ? second : first;
+      const metadata = url.includes("v0.4.15") ? second : first;
       const archive = metadata === second ? secondArchive : firstArchive;
       return releaseFetcher(metadata, archive, calls)(url, options);
     };
@@ -233,7 +233,7 @@ test("switching versions writes previous pointer and never overwrites old conten
     const secondPath = cachePaths(root, second);
     const current = JSON.parse(fs.readFileSync(secondPath.currentPath, "utf8"));
     const previous = JSON.parse(fs.readFileSync(secondPath.previousPath, "utf8"));
-    assert.equal(current.version, "0.4.14");
+    assert.equal(current.version, "0.4.15");
     assert.equal(previous.version, "0.4.12");
     assert.equal(sha256File(firstPath.binaryPath), firstHash);
     assert.notEqual(fs.realpathSync(firstPath.versionDir), fs.realpathSync(secondPath.versionDir));
@@ -347,7 +347,7 @@ test("explicitly recovers a verified previous pointer when current is invalid", 
   const root = temporaryRoot();
   try {
     const first = releaseMetadata({ version: "0.4.12" });
-    const second = releaseMetadata({ version: "0.4.14" });
+    const second = releaseMetadata({ version: "0.4.15" });
     const firstArchive = releaseArchive();
     const secondArchive = tarGz([
       { name: "ags", body: "second binary\n" },
@@ -358,7 +358,7 @@ test("explicitly recovers a verified previous pointer when current is invalid", 
     ]);
     const calls = [];
     const fetchImpl = async (url, options) => {
-      const metadata = url.includes("v0.4.14") ? second : first;
+      const metadata = url.includes("v0.4.15") ? second : first;
       const archive = metadata === second ? secondArchive : firstArchive;
       return releaseFetcher(metadata, archive, calls)(url, options);
     };
@@ -408,7 +408,7 @@ test("older package invocation keeps a newer compatible current pointer", async 
   const root = temporaryRoot();
   try {
     const older = releaseMetadata({ version: "0.4.12" });
-    const newer = releaseMetadata({ version: "0.4.14" });
+    const newer = releaseMetadata({ version: "0.4.15" });
     const olderArchive = releaseArchive();
     const newerArchive = tarGz([
       { name: "ags", body: "newer binary\n" },
@@ -419,7 +419,7 @@ test("older package invocation keeps a newer compatible current pointer", async 
     ]);
     const calls = [];
     const fetchImpl = async (url, options) => {
-      const metadata = url.includes("v0.4.14") ? newer : older;
+      const metadata = url.includes("v0.4.15") ? newer : older;
       const archive = metadata === newer ? newerArchive : olderArchive;
       return releaseFetcher(metadata, archive, calls)(url, options);
     };
@@ -450,7 +450,7 @@ test("core update plan binds signed source and apply switches only after verific
   const root = temporaryRoot();
   try {
     const first = releaseMetadata({ version: "0.4.12" });
-    const second = releaseMetadata({ version: "0.4.14" });
+    const second = releaseMetadata({ version: "0.4.15" });
     const firstArchive = releaseArchive();
     const secondArchive = tarGz([
       { name: "ags", body: "#!/bin/sh\nexit 0\n" },
@@ -473,7 +473,7 @@ test("core update plan binds signed source and apply switches only after verific
     const fetchImpl = async (url) => {
       if (url.includes("/latest/download/release-index.json")) return response(secondIndex);
       if (url.includes("/latest/download/release-index.sig")) return response("test-signature");
-      const useSecond = url.includes("/v0.4.14/");
+      const useSecond = url.includes("/v0.4.15/");
       const metadata = useSecond ? second : first;
       const archive = useSecond ? secondArchive : firstArchive;
       const index = useSecond ? secondIndex : firstIndex;
@@ -540,7 +540,7 @@ test("core update plan binds signed source and apply switches only after verific
     await launch({ ...common, spawnImpl: () => fakeChild() });
     const plan = await planUpdate(common);
     assert.equal(plan.current_version, "0.4.12");
-    assert.equal(plan.target_version, "0.4.14");
+    assert.equal(plan.target_version, "0.4.15");
     assert.equal(plan.asset_name, second.assetName);
     assert.equal(plan.runtime_setup.required, true);
     assert.deepEqual(plan.runtime_setup.approved_lifecycle_hosts, ["codex"]);
@@ -559,12 +559,12 @@ test("core update plan binds signed source and apply switches only after verific
       ...common,
       verifyArtifact: async () => true
     });
-    assert.equal(receipt.active_version, "0.4.14");
+    assert.equal(receipt.active_version, "0.4.15");
     assert.equal(receipt.verified, true);
     assert.equal(receipt.runtime_setup.verified, true);
     assert.equal(receipt.runtime_setup.plan_hash, "f".repeat(64));
     const paths = cachePaths(root, first);
-    assert.equal(JSON.parse(fs.readFileSync(paths.currentPath, "utf8")).version, "0.4.14");
+    assert.equal(JSON.parse(fs.readFileSync(paths.currentPath, "utf8")).version, "0.4.15");
     assert.equal(JSON.parse(fs.readFileSync(paths.previousPath, "utf8")).version, "0.4.12");
     assert.ok(fs.existsSync(receipt.receipt_path));
     const status = statusUpdate(plan.plan_hash, common);
@@ -715,7 +715,7 @@ test("update state is shared-schema, lazy, offline-safe, and signature fail-clos
     assert.equal(fetches, 2);
 
     writeUpdateState(root, { ...readUpdateState(root), last_checked_at_unix: null, last_error: null });
-    ignoreVersion(root, "0.4.14");
+    ignoreVersion(root, "0.4.15");
     const ignored = await maybeCheckForUpdate({
       stateRoot: root,
       currentVersion: "0.4.12",
@@ -724,8 +724,8 @@ test("update state is shared-schema, lazy, offline-safe, and signature fail-clos
       verifyReleaseIndex: async () => true
     });
     assert.equal(ignored.available, null);
-    assert.equal(ignored.state.latest_version, "0.4.14");
-    assert.deepEqual(ignored.state.ignored_versions, ["0.4.14"]);
+    assert.equal(ignored.state.latest_version, "0.4.15");
+    assert.deepEqual(ignored.state.ignored_versions, ["0.4.15"]);
 
     snoozeUpdates(root, now + 60 * 60 * 1000);
     const snoozed = await maybeCheckForUpdate({
@@ -752,6 +752,63 @@ test("update check records offline without blocking", async () => {
     assert.equal(result.offline, true);
     assert.equal(result.available, null);
     assert.equal(readUpdateState(root).last_error, "offline");
+  } finally {
+    removeTemporaryRoot(root);
+  }
+});
+
+test("signed update check atomically caches only the hash-bound catalog", async () => {
+  const root = temporaryRoot();
+  try {
+    const version = "0.4.15";
+    const catalog = Buffer.from("schema_version: \"1.0\"\nprinciple: fixture\ncapabilities: []\n");
+    const catalogName = `ags-third-party-catalog-v${version}.yaml`;
+    const index = Buffer.from(JSON.stringify({
+      schema_version: "1.0-signed-release-index",
+      version,
+      channel: "stable",
+      repository: "FernandeZ-hjm/Agent-General-Staff",
+      tag: `v${version}`,
+      commit: "a".repeat(40),
+      assets: [{ name: "ags-v0.4.15-test.tar.gz", sha256: "b".repeat(64) }],
+      catalog: {
+        name: catalogName,
+        sha256: sha256Buffer(catalog)
+      }
+    }));
+    const fetchImpl = async (url) => {
+      if (url.endsWith("release-index.json")) return response(index);
+      if (url.endsWith("release-index.sig")) return response("test-signature");
+      if (url.endsWith(catalogName)) return response(catalog);
+      throw new Error(`unexpected URL: ${url}`);
+    };
+    const result = await maybeCheckForUpdate({
+      stateRoot: root,
+      currentVersion: "0.4.15",
+      force: true,
+      fetchImpl,
+      verifyReleaseIndex: async () => true
+    });
+    assert.equal(result.state.catalog_release, version);
+    assert.equal(result.state.catalog_hash, sha256Buffer(catalog));
+    const marker = JSON.parse(fs.readFileSync(path.join(root, "catalog/current.json"), "utf8"));
+    assert.equal(marker.schema_version, "0.4.15-verified-catalog");
+    assert.equal(marker.content_hash, `sha256:${sha256Buffer(catalog)}`);
+    assert.deepEqual(
+      fs.readFileSync(path.join(root, `catalog/${marker.catalog_file}`)),
+      catalog
+    );
+
+    const rejectedRoot = path.join(root, "rejected");
+    const rejected = await maybeCheckForUpdate({
+      stateRoot: rejectedRoot,
+      currentVersion: "0.4.15",
+      force: true,
+      fetchImpl: async (url) => url.endsWith(catalogName) ? response("tampered") : fetchImpl(url),
+      verifyReleaseIndex: async () => true
+    });
+    assert.equal(rejected.offline, true);
+    assert.equal(fs.existsSync(path.join(rejectedRoot, "catalog/current.json")), false);
   } finally {
     removeTemporaryRoot(root);
   }

@@ -306,7 +306,8 @@ fn render_projection(source_root: &Path, target_root: &Path) -> RenderedProjecti
             &mut blocking,
         );
         bundled_ids = bundled.iter().map(|skill| skill.name.clone()).collect();
-        let recommendations = render_catalog_skills(&catalog.capabilities, &mut blocking);
+        let recommendations =
+            render_catalog_skills(source_root, &catalog.capabilities, &mut blocking);
         catalog_ids = recommendations
             .iter()
             .map(|skill| skill.name.clone())
@@ -730,6 +731,7 @@ fn render_bundled_skills(
 }
 
 fn render_catalog_skills(
+    source_root: &Path,
     capabilities: &[ThirdPartyCapability],
     errors: &mut Vec<String>,
 ) -> Vec<PublicCatalogSkill> {
@@ -747,31 +749,64 @@ fn render_catalog_skills(
         let repository = source.repository.as_deref().unwrap_or_default();
         let revision = source.revision.as_deref().unwrap_or_default();
         let subdir = source.subdir.as_deref().unwrap_or_default();
+        let bundled_path = source.bundled_path.as_deref().unwrap_or_default();
         let license = source.license.as_deref().unwrap_or_default();
         let body_hash = source.integrity.as_deref().unwrap_or_default();
-        if source.manager != "git"
-            || !repository.starts_with("https://github.com/")
+        let common_source_invalid = !repository.starts_with("https://github.com/")
             || !ags_platform::is_git_commit(revision)
             || license.trim().is_empty()
-            || !ags_platform::is_sha256(body_hash)
-        {
+            || !ags_platform::is_sha256(body_hash);
+        if common_source_invalid {
             errors.push(format!(
-                "catalog Skill {id} requires git GitHub repository, immutable commit, license, and reviewed sha256 body hash"
+                "catalog Skill {id} requires a GitHub repository, immutable commit, license, and reviewed sha256 body hash"
             ));
         }
-        validate_relative(subdir, "catalog subdirectory", errors);
+        let (projected_source, projected_subdirectory) = match source.manager.as_str() {
+            "git" => {
+                if !subdir.is_empty() {
+                    validate_relative(subdir, "catalog subdirectory", errors);
+                }
+                let tree = format!("{}/tree/{}", repository.trim_end_matches('/'), revision);
+                let source = if subdir.is_empty() {
+                    tree
+                } else {
+                    format!("{tree}/{subdir}")
+                };
+                (source, subdir.to_string())
+            }
+            "bundled" => {
+                validate_relative(bundled_path, "bundled catalog path", errors);
+                if !subdir.is_empty() {
+                    errors.push(format!(
+                        "bundled catalog Skill {id} must not declare a Git subdirectory"
+                    ));
+                }
+                let body = source_root.join(bundled_path);
+                match ags_capability_governance::hash_skill_source(&body) {
+                    Ok(observed) if observed == body_hash => {}
+                    Ok(observed) => errors.push(format!(
+                        "bundled catalog Skill {id} body hash mismatch: expected {body_hash}, observed {observed}"
+                    )),
+                    Err(error) => errors.push(format!(
+                        "bundled catalog Skill {id} body is unavailable: {error}"
+                    )),
+                }
+                (format!("bundled:{bundled_path}"), bundled_path.to_string())
+            }
+            manager => {
+                errors.push(format!(
+                    "catalog Skill {id} uses unsupported source manager: {manager}"
+                ));
+                (String::new(), String::new())
+            }
+        };
         rendered.push(PublicCatalogSkill {
             name: id.clone(),
             version: revision.to_string(),
-            source: format!(
-                "{}/tree/{}/{}",
-                repository.trim_end_matches('/'),
-                revision,
-                subdir
-            ),
+            source: projected_source,
             description: capability.purpose.trim().to_string(),
             repository: repository.to_string(),
-            subdirectory: subdir.to_string(),
+            subdirectory: projected_subdirectory,
             resolved_commit: revision.to_string(),
             body_hash: body_hash.to_string(),
             license: license.to_string(),
@@ -973,6 +1008,51 @@ mod tests {
             .to_string();
         assert!(suite.contains(&format!("hash: {projected_hash}")));
         assert!(verify_public_capability_projection(source.path(), target.path()).is_empty());
+    }
+
+    #[test]
+    fn bundled_adapter_and_root_git_skill_are_valid_public_catalog_sources() {
+        let (source, target) = fixture();
+        let adapter = source
+            .path()
+            .join("skill-packs/optional/ags-superpowers-adapter");
+        write(
+            &adapter.join("SKILL.md"),
+            "---\nname: superpowers\ndescription: Adapter fixture.\n---\n",
+        );
+        write(&adapter.join("LICENSE"), "MIT fixture\n");
+        let adapter_hash = ags_capability_governance::hash_skill_source(&adapter).unwrap();
+        let manifest = source
+            .path()
+            .join("manifests/third-party-capabilities.yaml");
+        let content = fs::read_to_string(&manifest)
+            .unwrap()
+            .replace("      subdir: skills/diagnosing-bugs\n", "");
+        fs::write(
+            &manifest,
+            format!(
+                "{content}  - id: ags-superpowers-adapter\n    compatibility_parent: superpowers\n    kind: skill\n    name: AGS Superpowers Adapter\n    profiles: [public]\n    purpose: adapter\n    source:\n      manager: bundled\n      bundled_path: skill-packs/optional/ags-superpowers-adapter\n      revision: cccccccccccccccccccccccccccccccccccccccc\n      integrity: {adapter_hash}\n      repository: https://github.com/obra/superpowers\n      license: MIT\n    install:\n      strategy: none\n    routing:\n      route_state: routable\n      invoke_hint: adapter\n      intent_tags: [adapter]\n      positive_examples: [use adapter]\n      negative_examples: [use official plugin]\n"
+            ),
+        )
+        .unwrap();
+
+        let plan = plan_public_capability_projection(source.path(), target.path());
+        assert!(
+            plan.blocking_findings.is_empty(),
+            "{:?}",
+            plan.blocking_findings
+        );
+        assert!(plan
+            .catalog_skill_ids
+            .iter()
+            .any(|id| id == "ags-superpowers-adapter"));
+        apply_public_capability_projection(source.path(), target.path(), &plan.plan_hash).unwrap();
+        let suite = fs::read_to_string(target.path().join("manifests/suite.yaml")).unwrap();
+        assert!(suite.contains("source: bundled:skill-packs/optional/ags-superpowers-adapter"));
+        assert!(suite.contains("subdirectory: skill-packs/optional/ags-superpowers-adapter"));
+        assert!(suite.contains(
+            "https://github.com/example/skills/tree/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ));
     }
 
     #[test]

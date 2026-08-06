@@ -7,7 +7,80 @@ use crate::host_platforms::{
     cross_platform_init_json, cross_platform_init_plan, render_cross_platform_init_text,
     AGENT_PLATFORM_SPECS,
 };
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
+
+const SUPERPOWERS_ADAPTER_INSTALL_COMMAND: &str =
+    "ags skill install ags-superpowers-adapter --host <host>";
+
+fn superpowers_adapter_decision_json(target_hosts: &[String]) -> serde_json::Value {
+    serde_json::json!({
+        "decision_required": true,
+        "distribution_id": "ags-superpowers-adapter",
+        "display_name": "AGS Superpowers Adapter",
+        "compatibility_parent": "superpowers",
+        "upstream": "obra/superpowers",
+        "upstream_commit": "44c9b2d6e889982ac18c27d05a19fefe335194e1",
+        "license": "MIT",
+        "modified": true,
+        "official": false,
+        "endorsed": false,
+        "implicit_install": false,
+        "target_hosts": target_hosts,
+        "risks": [
+            "modified upstream-derived content; verify package provenance and MIT notice",
+            "retained script or executable files require explicit acknowledgement in the Skill plan and are never executed by adoption",
+            "apply projects the canonical compatibility parent only to explicitly selected hosts"
+        ],
+        "choices": ["install-adapter", "preserve-existing", "skip"],
+        "next_command": SUPERPOWERS_ADAPTER_INSTALL_COMMAND,
+        "transaction": "review plan hash, acknowledge required risks, then explicitly apply"
+    })
+}
+
+fn superpowers_adapter_decision_text(target_hosts: &[String]) -> String {
+    let hosts = if target_hosts.is_empty() {
+        "<host>".to_string()
+    } else {
+        target_hosts.join(", ")
+    };
+    format!(
+        "Optional parent capability decision (no Skill state is changed by setup):\n\
+         decision_required: true\n\
+         可选父能力选择（setup 不会修改技能状态）：\n\
+           1. 安装 AGS 适配父包 — AGS Superpowers Adapter\n\
+              Modified, non-official adapter derived from obra/superpowers@44c9b2d6e889982ac18c27d05a19fefe335194e1 under MIT; no endorsement.\n\
+              Target hosts: {hosts}. Risks: upstream-derived modifications and retained script/executable files require exact plan review and acknowledgements; adoption never executes them.\n\
+           2. 保留现有开发技能\n\
+           3. 跳过\n\
+         Selecting 1 only prepares the next governed command; review its plan hash before apply:\n\
+           `{SUPERPOWERS_ADAPTER_INSTALL_COMMAND}`"
+    )
+}
+
+fn prompt_superpowers_adapter_decision() {
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        return;
+    }
+    print!("选择 [1/2/3]（默认 3）：");
+    let _ = std::io::stdout().flush();
+    let mut answer = String::new();
+    if std::io::stdin().read_line(&mut answer).is_err() {
+        println!("未读取选择；已跳过，不修改技能状态。");
+        return;
+    }
+    println!("{}", superpowers_adapter_choice_text(answer.trim()));
+}
+
+fn superpowers_adapter_choice_text(answer: &str) -> String {
+    match answer {
+        "1" => format!(
+            "下一步仅生成治理计划：`{SUPERPOWERS_ADAPTER_INSTALL_COMMAND}`；审核 plan hash 后再显式 apply。"
+        ),
+        "2" => "保留现有开发技能；未写入 AGS Skill 状态。".to_string(),
+        _ => "已跳过；未写入 AGS Skill 状态。".to_string(),
+    }
+}
 
 fn detected_lifecycle_hosts() -> Vec<String> {
     let home = home_dir();
@@ -116,6 +189,7 @@ pub(crate) fn cmd_runtime_plan(
     } else {
         detected.clone()
     };
+    let adapter_target_hosts = planned_hosts.clone();
     let presentation = ags_lifecycle::setup::runtime_plan_presentation(
         &source_root,
         &target,
@@ -131,7 +205,7 @@ pub(crate) fn cmd_runtime_plan(
         .cloned()
         .collect::<Vec<_>>();
     let text = format!(
-        "{}\nLifecycle approval: approved=[{}] pending=[{}]{}\n\n{}\n\n{}\n\n{}",
+        "{}\nLifecycle approval: approved=[{}] pending=[{}]{}\n\n{}\n\n{}\n\n{}\n\n{}",
         presentation.install_text,
         approved.join(", "),
         pending.join(", "),
@@ -142,7 +216,8 @@ pub(crate) fn cmd_runtime_plan(
         },
         render_cross_platform_init_text(&wizard),
         presentation.global_entry_text,
-        presentation.recommendations_text
+        presentation.recommendations_text,
+        superpowers_adapter_decision_text(&adapter_target_hosts)
     );
     let mut value = presentation.install_json;
     if let Some(object) = value.as_object_mut() {
@@ -168,8 +243,15 @@ pub(crate) fn cmd_runtime_plan(
             "third_party_recommendations".to_string(),
             presentation.recommendations_json,
         );
+        object.insert(
+            "superpowers_adapter".to_string(),
+            superpowers_adapter_decision_json(&adapter_target_hosts),
+        );
     }
     crate::output::emit(format, &value, || text);
+    if !crate::output::is_json(format) {
+        prompt_superpowers_adapter_decision();
+    }
 }
 
 /// Core runtime-install apply without exiting. Output and exit policy remain in
@@ -245,6 +327,8 @@ pub(crate) fn cmd_setup(
             Some(&approved),
             required_skill_authority_root.as_deref(),
         );
+        let adapter_decision = superpowers_adapter_decision_json(&approved);
+        let adapter_decision_text = superpowers_adapter_decision_text(&approved);
         let output = serde_json::json!({
             "schema_version": ags_lifecycle::setup::RUNTIME_INSTALL_SCHEMA,
             "profile": "runtime",
@@ -252,6 +336,7 @@ pub(crate) fn cmd_setup(
             "approved_lifecycle_hosts": approved,
             "force": force,
             "result": result,
+            "superpowers_adapter": adapter_decision,
         });
         crate::output::emit(format, &output, || {
             format!(
@@ -261,6 +346,9 @@ pub(crate) fn cmd_setup(
             )
         });
         if !crate::output::is_json(format) {
+            println!();
+            println!("{adapter_decision_text}");
+            prompt_superpowers_adapter_decision();
             print_setup_agent_governance_next_step();
         }
         std::process::exit(result.report.exit_code());
@@ -297,7 +385,10 @@ fn print_setup_agent_governance_next_step() {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_lifecycle_selection_with_detected;
+    use super::{
+        resolve_lifecycle_selection_with_detected, superpowers_adapter_choice_text,
+        superpowers_adapter_decision_json, superpowers_adapter_decision_text,
+    };
 
     #[test]
     fn lifecycle_selection_defaults_to_detected_then_preserves_and_deduplicates() {
@@ -349,5 +440,24 @@ mod tests {
             &[],
         )
         .is_err());
+    }
+
+    #[test]
+    fn adapter_decision_is_explicit_and_never_claims_an_implicit_install() {
+        let decision = superpowers_adapter_decision_json(&["codex".to_string()]);
+        assert_eq!(decision["decision_required"], true);
+        assert_eq!(decision["distribution_id"], "ags-superpowers-adapter");
+        assert_eq!(decision["compatibility_parent"], "superpowers");
+        assert_eq!(decision["implicit_install"], false);
+        assert_eq!(decision["official"], false);
+        assert_eq!(decision["target_hosts"][0], "codex");
+        assert!(decision["risks"]
+            .as_array()
+            .is_some_and(|risks| !risks.is_empty()));
+        assert!(superpowers_adapter_decision_text(&["codex".to_string()])
+            .contains("review its plan hash"));
+        assert!(superpowers_adapter_choice_text("1").contains("仅生成治理计划"));
+        assert!(superpowers_adapter_choice_text("2").contains("保留现有开发技能"));
+        assert!(superpowers_adapter_choice_text("3").contains("已跳过"));
     }
 }

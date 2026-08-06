@@ -1,5 +1,40 @@
 # Agent Governance Suite Release Notes
 
+## Release 0.4.15
+
+0.4.15 keeps the 0.4.14 plan-hash, risk acknowledgement, WAL, and route
+verification kernel intact while closing the confirmed installer, migration,
+diagnostic, catalog, and optional-parent compatibility gaps.
+
+- Remote Skill candidates now have unique staging directories and sealed
+  repository/commit/subdir/body-hash identities. Reuse is a verified cache
+  optimization; drift, partial candidates, or nested Git metadata are
+  quarantined and rebuilt fail-closed.
+- Setup migrates only byte-exact or previously recorded AGS-owned legacy
+  command directories, preserves recovery backups, and blocks unknown or
+  modified content. Legacy parent links are preserved until the user explicitly
+  selects an adapter migration.
+- Setup and Doctor share the current artifact model. Missing host CLIs and
+  non-Git workspaces are classified as absent/not-applicable in ordinary Doctor
+  runs, while installed-but-broken hosts and strict verification remain
+  fail-closed.
+- Manifest and `--metadata <FILE>` failures expose stable diagnostic codes and
+  actionable field/path details. Snapshot JSON writes retain a strict JSON-only
+  stdout contract.
+- The bundled third-party catalog pins Context7 3.2.5. A backward-compatible
+  optional catalog field in the signed release index lets `ags update check`
+  cache a hash-bound, signature-verified catalog; offline and verification
+  failures use the bundled snapshot with explicit provenance.
+- The optional public distribution `ags-superpowers-adapter` provides the
+  installed compatibility parent `superpowers` only after an explicit Skill
+  plan/apply. The modified adapter is pinned to
+  `obra/superpowers@44c9b2d6e889982ac18c27d05a19fefe335194e1`, retains the
+  Jesse Vincent 2025 MIT notice and file-level provenance, excludes visual
+  companion/telemetry assets, and makes no official or endorsement claim.
+- Product versions advance to 0.4.15. Existing wire and installed-state schema
+  identifiers remain unchanged unless the corresponding data contract actually
+  changed.
+
 ## Release 0.4.14
 
 0.4.14 repairs the npm launcher boundary discovered by a real clean-machine

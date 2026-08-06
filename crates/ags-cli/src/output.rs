@@ -70,6 +70,45 @@ pub(crate) fn yes_no(b: bool) -> &'static str {
     }
 }
 
+pub(crate) fn error_exit(command: &str, error: impl AsRef<str>, format: &str, exit_code: i32) -> ! {
+    let error = error.as_ref();
+    if is_json(format) {
+        println!(
+            "{}",
+            pretty_json(&serde_json::json!({
+                "schema_version": "0.4.15-cli-error",
+                "command": command,
+                "error": {
+                    "code": stable_error_code(error),
+                    "message": error,
+                }
+            }))
+            .unwrap_or_else(|serialization| format!(
+                "{{\"error\":{{\"code\":\"serialization_failed\",\"message\":{serialization:?}}}}}"
+            ))
+        );
+    } else {
+        eprintln!("{command}: {error}");
+    }
+    std::process::exit(exit_code);
+}
+
+fn stable_error_code(error: &str) -> &'static str {
+    for code in [
+        "manifest_unknown_field",
+        "manifest_yaml_syntax",
+        "manifest_yaml_merge",
+        "manifest_schema_invalid",
+        "metadata_argument_requires_file",
+        "metadata_file_not_found",
+    ] {
+        if error.contains(code) {
+            return code;
+        }
+    }
+    "command_failed"
+}
+
 // ── Receipt bridge (AGS-owned receipts) ──────────────────────────────────────
 
 #[cfg(test)]
@@ -94,6 +133,14 @@ mod tests {
         assert_eq!(
             pretty_json(&Fails).unwrap_err(),
             "cannot serialize CLI JSON output: injected serialization failure"
+        );
+        assert_eq!(
+            stable_error_code("cannot parse file: manifest_unknown_field: field=notes"),
+            "manifest_unknown_field"
+        );
+        assert_eq!(
+            stable_error_code("metadata_argument_requires_file: inline YAML"),
+            "metadata_argument_requires_file"
         );
     }
 }

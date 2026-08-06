@@ -31,6 +31,15 @@ const assets = names.map((name) => ({
   name,
   sha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(directory, name))).digest("hex")
 }));
+const catalogName = `ags-third-party-catalog-v${version}.yaml`;
+const catalogPath = path.join(directory, catalogName);
+if (!fs.statSync(catalogPath).isFile()) {
+  throw new Error(`signed catalog asset is missing: ${catalogName}`);
+}
+const catalog = {
+  name: catalogName,
+  sha256: crypto.createHash("sha256").update(fs.readFileSync(catalogPath)).digest("hex")
+};
 const index = {
   schema_version: "1.0-signed-release-index",
   version,
@@ -38,7 +47,8 @@ const index = {
   repository,
   tag: `v${version}`,
   commit,
-  assets
+  assets,
+  catalog
 };
 const bytes = Buffer.from(`${JSON.stringify(index, null, 2)}\n`);
 const signature = crypto.sign(null, bytes, crypto.createPrivateKey(privateKey));

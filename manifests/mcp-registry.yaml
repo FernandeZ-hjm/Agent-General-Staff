@@ -12,7 +12,7 @@ suite_interfaces:
   package:
     manager: cargo
     name: ags-mcp
-    version: 0.4.14
+    version: 0.4.15
     repository: this-repository
     license: GPL-3.0-only
   install:

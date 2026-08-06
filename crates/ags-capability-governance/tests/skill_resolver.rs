@@ -140,7 +140,7 @@ fn resolves_an_exact_mcp_and_tool_without_reading_natural_language() {
 
 #[cfg(unix)]
 #[test]
-fn snapshot_projects_registered_playbook_entrypoints_into_the_parent_skill() {
+fn snapshot_registers_optional_parent_entrypoints_without_activating_an_uninstalled_adapter() {
     let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let base = temp_path("registered-parent-entrypoints");
     let root = base.join("authority");
@@ -216,16 +216,18 @@ fn snapshot_projects_registered_playbook_entrypoints_into_the_parent_skill() {
         .iter()
         .find(|card| card.skill_id == "superpowers")
         .expect("superpowers card");
-    assert_eq!(
-        card.availability,
-        AvailabilityState::Ready,
-        "superpowers card was not ready: {card:?}"
+    assert!(
+        matches!(card.availability, AvailabilityState::Unavailable { .. }),
+        "an unmanaged optional adapter must not become routable: {card:?}"
     );
-    let active = snapshot
-        .active_skills
-        .iter()
-        .find(|skill| skill.skill_id == "superpowers")
-        .expect("active superpowers skill");
+    assert!(
+        snapshot
+            .active_skills
+            .iter()
+            .all(|skill| skill.skill_id != "superpowers"),
+        "an unmanaged optional adapter leaked into the active route table"
+    );
+    let active = snapshot.validate_integrity("codex").unwrap().skills;
 
     for entrypoint in [
         "verification-before-completion",
@@ -239,24 +241,14 @@ fn snapshot_projects_registered_playbook_entrypoints_into_the_parent_skill() {
                 .any(|candidate| candidate == entrypoint),
             "catalog omitted {entrypoint}"
         );
-        assert!(
-            active
-                .allowed_entrypoints
-                .iter()
-                .any(|candidate| candidate == entrypoint),
-            "active table omitted {entrypoint}"
-        );
         assert_eq!(
             resolve_skill(
                 "superpowers",
                 Some(entrypoint),
                 &snapshot.snapshot_hash,
-                &snapshot.validate_integrity("codex").unwrap().skills,
-            )
-            .unwrap()
-            .entrypoint
-            .as_deref(),
-            Some(entrypoint)
+                &active
+            ),
+            Err(ResolveError::GovernancePrecondition("skill_not_active"))
         );
     }
     assert!(card
@@ -267,19 +259,19 @@ fn snapshot_projects_registered_playbook_entrypoints_into_the_parent_skill() {
         .positive_examples
         .iter()
         .any(|example| example == "做完了验证一下"));
-    assert!(!active
-        .allowed_entrypoints
+    assert!(!card
+        .entrypoints
         .iter()
         .any(|entrypoint| entrypoint == "systematic-debugging"));
-    assert!(matches!(
+    assert_eq!(
         resolve_skill(
             "superpowers",
             Some("systematic-debugging"),
             &snapshot.snapshot_hash,
-            &snapshot.validate_integrity("codex").unwrap().skills,
+            &active,
         ),
-        Err(ResolveError::EntrypointNotAllowed { .. })
-    ));
+        Err(ResolveError::GovernancePrecondition("skill_not_active"))
+    );
 
     let _ = std::fs::remove_dir_all(base);
 }

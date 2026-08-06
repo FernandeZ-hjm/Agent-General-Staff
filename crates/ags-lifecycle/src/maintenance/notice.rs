@@ -27,6 +27,10 @@ pub struct UpdateCheckState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_index_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_release: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
 }
 
@@ -41,6 +45,8 @@ impl Default for UpdateCheckState {
             last_checked_at_unix: None,
             latest_version: None,
             release_index_hash: None,
+            catalog_release: None,
+            catalog_hash: None,
             last_error: None,
         }
     }
@@ -288,10 +294,18 @@ mod tests {
         let state = UpdateCheckState {
             latest_version: Some("0.4.13".to_string()),
             release_index_hash: Some("a".repeat(64)),
+            catalog_release: Some("0.4.15".to_string()),
+            catalog_hash: Some("b".repeat(64)),
             last_checked_at_unix: Some(100),
             ..UpdateCheckState::default()
         };
         save_update_state(root.path(), &state).unwrap();
+        let loaded = load_update_state(root.path()).unwrap();
+        assert_eq!(loaded.catalog_release.as_deref(), Some("0.4.15"));
+        assert_eq!(
+            loaded.catalog_hash.as_deref(),
+            Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        );
         let notice = cached_update_notice(root.path(), "0.4.12", 101);
         assert_eq!(notice.status, UpdateNoticeStatus::Available);
 

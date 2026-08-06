@@ -1,8 +1,5 @@
 use super::templates::codex_ags_command_skill_specs;
-use super::{
-    claude_ags_command_path, codex_ags_named_skill_agent_metadata_path, codex_ags_named_skill_path,
-    retired_codex_ags_skill_dirs,
-};
+use super::{claude_ags_command_path, codex_ags_named_skill_path, retired_codex_ags_skill_dirs};
 use super::{claude_mcp_list_line_at, command_in_path, sanitize_name, AGS_VERSION};
 use std::path::Path;
 
@@ -356,36 +353,6 @@ pub(in crate::setup) fn runtime_install_health_report(
                     skill_path.display().to_string(),
                 ));
             }
-
-            let metadata_path = codex_ags_named_skill_agent_metadata_path(home, name);
-            if metadata_path.exists() {
-                match std::fs::read_to_string(&metadata_path) {
-                    Ok(content)
-                        if content.contains(&format!("display_name: \"{display_name}\"")) =>
-                    {
-                        report.add(crate::setup::SetupFinding::pass(
-                            format!("runtime-install-codex-command-skill-metadata-{check_suffix}"),
-                            format!("Codex command skill metadata present: {name}"),
-                        ));
-                    }
-                    Ok(_) => report.add(crate::setup::SetupFinding::fail(
-                        format!("runtime-install-codex-command-skill-metadata-{check_suffix}"),
-                        format!("Codex command skill metadata is stale: {name}"),
-                        metadata_path.display().to_string(),
-                    )),
-                    Err(e) => report.add(crate::setup::SetupFinding::fail(
-                        format!("runtime-install-codex-command-skill-metadata-{check_suffix}"),
-                        format!("cannot read Codex command skill metadata: {name}"),
-                        e.to_string(),
-                    )),
-                }
-            } else {
-                report.add(crate::setup::SetupFinding::fail(
-                    format!("runtime-install-codex-command-skill-metadata-{check_suffix}"),
-                    format!("missing Codex command skill metadata: {name}"),
-                    metadata_path.display().to_string(),
-                ));
-            }
         }
     } else {
         report.add(crate::setup::SetupFinding::skip(
@@ -394,7 +361,16 @@ pub(in crate::setup) fn runtime_install_health_report(
         ));
     }
 
-    if claude_selected {
+    if claude_selected && command_in_path("claude").is_err() {
+        report.add(crate::setup::SetupFinding::skip(
+            "runtime-install-claude-code-ags-global-host-absent",
+            "Claude Code CLI is not installed; static setup artifacts remain checked",
+        ));
+        report.add(crate::setup::SetupFinding::skip(
+            "runtime-install-claude-code-ags-command-host-absent",
+            "Claude Code native MCP probe is not applicable without the host CLI",
+        ));
+    } else if claude_selected {
         match claude_mcp_list_line_at("ags", home) {
             Ok(Some(line)) if line.contains("Connected") => {
                 report.add(crate::setup::SetupFinding::pass(

@@ -260,10 +260,6 @@ pub fn compute_overlay_plan_with_paths(
     }
 
     if !is_git_repo {
-        warnings.push(
-            "target is not a git repository; cannot write a local overlay to .git/info/exclude. Run `git init` first or use --mode shared."
-                .to_string(),
-        );
         return OverlayPlan {
             mode,
             is_git_repo,
@@ -314,13 +310,10 @@ pub fn apply_overlay(plan: &OverlayPlan) -> Vec<super::InitFinding> {
     }
 
     if !plan.is_git_repo {
-        for warning in &plan.warnings {
-            findings.push(Finding::warn(
-                "overlay-no-git",
-                warning.clone(),
-                "AGS local overlay not applied",
-            ));
-        }
+        findings.push(Finding::info(
+            "overlay-not-applicable",
+            "target is not a Git worktree; local .git/info/exclude overlay is not applicable",
+        ));
         return findings;
     }
 
@@ -440,6 +433,11 @@ pub fn render_overlay_text(plan: &OverlayPlan) -> String {
         format!("  Mode:    {}", plan.mode.as_str()),
         format!("  Git:     {}", if plan.is_git_repo { "yes" } else { "no" }),
     ];
+    if plan.mode == OverlayMode::Local && !plan.is_git_repo {
+        lines.push(
+            "  Applicability: not-applicable (no Git worktree; no .git created).".to_string(),
+        );
+    }
     if plan.mode == OverlayMode::Local && plan.is_git_repo {
         if let Some(path) = &plan.exclude_path {
             lines.push(format!("  Exclude: {}", path.display()));
@@ -467,6 +465,11 @@ pub fn overlay_json(plan: &OverlayPlan) -> serde_json::Value {
         "entries": plan.entries,
         "tracked_entries": plan.tracked_entries,
         "warnings": plan.warnings,
+        "applicability": if plan.mode == OverlayMode::Local && !plan.is_git_repo {
+            "not-applicable"
+        } else {
+            "applicable"
+        },
     })
 }
 #[cfg(test)]

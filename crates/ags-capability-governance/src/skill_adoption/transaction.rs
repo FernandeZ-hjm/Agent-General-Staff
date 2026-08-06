@@ -488,7 +488,7 @@ pub fn plan_install_with_backend(
     if record.catalog_review == CatalogReviewStatus::Unreviewed {
         add_catalog_review_risk(&mut record.risk_findings);
     }
-    reject_official_collision(&context.authority_root, &record.skill_id)?;
+    reject_official_collision(&context.authority_root, &record)?;
     let previous = existing_registry.skills.get(&record.skill_id).cloned();
     if let Some(existing) = &previous {
         target_hosts.extend(existing.target_hosts.iter().cloned());
@@ -501,6 +501,8 @@ pub fn plan_install_with_backend(
     if let Some(existing) = &previous {
         record.body_revisions = existing.body_revisions.clone();
     }
+    let allow_legacy_authority_indexes = matches!(source, SourceSpec::Local { .. })
+        && record.catalog_review == CatalogReviewStatus::Reviewed;
     let plan = build_plan(
         context,
         "install",
@@ -511,7 +513,7 @@ pub fn plan_install_with_backend(
             candidate_path: Some(candidate_path),
             previous_body_revision: previous.as_ref().map(|record| record.body_revision.clone()),
             rollback_revision: None,
-            allow_legacy_authority_indexes: false,
+            allow_legacy_authority_indexes,
         },
     )?;
     Ok(plan)
@@ -1419,6 +1421,40 @@ fn index_points_to_legacy_authority(
     index_points_to(index, &expected)
 }
 
+const LEGACY_SUPERPOWERS_ENTRYPOINTS: &[&str] = &[
+    "brainstorming",
+    "dispatching-parallel-agents",
+    "executing-plans",
+    "finishing-a-development-branch",
+    "receiving-code-review",
+    "requesting-code-review",
+    "subagent-driven-development",
+    "systematic-debugging",
+    "test-driven-development",
+    "using-git-worktrees",
+    "using-superpowers",
+    "verification-before-completion",
+    "writing-plans",
+    "writing-skills",
+];
+
+fn index_points_to_legacy_parent_entrypoint(
+    context: &AdoptionContext,
+    record: &InstalledSkillRecord,
+    index: &Path,
+) -> bool {
+    record.skill_id == "superpowers"
+        && LEGACY_SUPERPOWERS_ENTRYPOINTS.iter().any(|entrypoint| {
+            index_points_to(
+                index,
+                &context
+                    .authority_root
+                    .join("global-skills/superpowers/playbooks")
+                    .join(entrypoint),
+            )
+        })
+}
+
 fn build_plan(
     context: &AdoptionContext,
     operation: &str,
@@ -1471,6 +1507,14 @@ fn build_plan(
         .filter(|path| !canonical.contains(path))
         .filter(|path| fs::symlink_metadata(path).is_ok())
         .collect::<Vec<_>>();
+    if binding.allow_legacy_authority_indexes && record.skill_id == "superpowers" {
+        retired_indexes.extend(target_hosts.iter().flat_map(|host| {
+            LEGACY_SUPERPOWERS_ENTRYPOINTS
+                .iter()
+                .flat_map(|entrypoint| host_index_paths(&context.host_home, host, entrypoint))
+                .filter(|path| fs::symlink_metadata(path).is_ok())
+        }));
+    }
     retired_indexes.sort();
     retired_indexes.dedup();
     for index in &retired_indexes {
@@ -1484,7 +1528,8 @@ fn build_plan(
             .as_deref()
             .is_some_and(|body| index_points_to(index, body));
         let legacy_owned = binding.allow_legacy_authority_indexes
-            && index_points_to_legacy_authority(context, record, index);
+            && (index_points_to_legacy_authority(context, record, index)
+                || index_points_to_legacy_parent_entrypoint(context, record, index));
         if !metadata.file_type().is_symlink() || (!previous_owned && !legacy_owned) {
             return Err(format!(
                 "duplicate host index is not owned by this installed Skill: {}",
@@ -1651,6 +1696,47 @@ fn bind_catalog_review(
     authority_root: &Path,
     record: &mut InstalledSkillRecord,
 ) -> Result<(), String> {
+    if let SourceSpec::Local { path } = &record.source_spec {
+        let resolution = crate::third_party_manifest::resolve_third_party_manifest(authority_root)?;
+        let source = std::fs::canonicalize(path)
+            .map_err(|error| format!("cannot resolve bundled Skill source {path}: {error}"))?;
+        let authority = std::fs::canonicalize(authority_root).map_err(|error| {
+            format!(
+                "cannot resolve capability authority {}: {error}",
+                authority_root.display()
+            )
+        })?;
+        let mut matches = resolution
+            .manifest
+            .capabilities
+            .iter()
+            .filter(|capability| {
+                let Some(bundled_path) = capability.source.bundled_path.as_deref() else {
+                    return false;
+                };
+                capability.kind == crate::third_party_manifest::CapabilityKind::Skill
+                    && capability.source.manager == "bundled"
+                    && authority.join(bundled_path) == source
+            });
+        let Some(catalog) = matches.next() else {
+            return Ok(());
+        };
+        if matches.next().is_some() {
+            return Err("catalog bundled source identity is duplicated".to_string());
+        }
+        let expected_skill_id = catalog
+            .compatibility_parent
+            .as_deref()
+            .unwrap_or(&catalog.id);
+        if expected_skill_id != record.skill_id {
+            return Err(format!(
+                "catalog_skill_id_mismatch: `{}` distributes compatibility parent `{expected_skill_id}` but body declares `{}`",
+                catalog.id, record.skill_id
+            ));
+        }
+        bind_catalog_integrity(catalog, record)?;
+        return Ok(());
+    }
     let SourceSpec::GitHub { url, subdir, .. } = &record.source_spec else {
         return Ok(());
     };
@@ -1662,7 +1748,8 @@ fn bind_catalog_review(
     let Some(observed_revision) = observed_revision else {
         return Ok(());
     };
-    let manifest = crate::third_party_manifest::read_third_party_manifest(authority_root)?;
+    let manifest =
+        crate::third_party_manifest::resolve_third_party_manifest(authority_root)?.manifest;
     let mut matches = manifest.capabilities.iter().filter(|capability| {
         capability.kind == crate::third_party_manifest::CapabilityKind::Skill
             && capability.source.repository.as_deref() == Some(url.as_str())
@@ -1681,6 +1768,14 @@ fn bind_catalog_review(
             catalog.id, record.skill_id
         ));
     }
+    bind_catalog_integrity(catalog, record)?;
+    Ok(())
+}
+
+fn bind_catalog_integrity(
+    catalog: &crate::third_party_manifest::ThirdPartyCapability,
+    record: &mut InstalledSkillRecord,
+) -> Result<(), String> {
     let expected = catalog
         .source
         .integrity
@@ -1750,7 +1845,11 @@ fn normalize_hosts(requested: &[String]) -> Result<Vec<String>, String> {
     Ok(hosts)
 }
 
-fn reject_official_collision(authority_root: &Path, skill_id: &str) -> Result<(), String> {
+fn reject_official_collision(
+    authority_root: &Path,
+    record: &InstalledSkillRecord,
+) -> Result<(), String> {
+    let skill_id = &record.skill_id;
     let path = authority_root.join("manifests/skills-registry.yaml");
     let content = fs::read_to_string(&path).map_err(|error| {
         format!(
@@ -1764,14 +1863,23 @@ fn reject_official_collision(authority_root: &Path, skill_id: &str) -> Result<()
         .as_sequence()
         .into_iter()
         .flatten()
-        .any(|skill| skill["name"].as_str() == Some(skill_id));
+        .any(|skill| skill["name"].as_str() == Some(skill_id.as_str()));
     if collision {
-        Err(format!(
+        return Err(format!(
             "third-party adoption cannot shadow suite Skill id: {skill_id}"
-        ))
-    } else {
-        Ok(())
+        ));
     }
+    let manifest = crate::third_party_manifest::resolve_third_party_manifest(authority_root)?;
+    let reserved =
+        manifest.manifest.capabilities.iter().any(|capability| {
+            capability.compatibility_parent.as_deref() == Some(skill_id.as_str())
+        });
+    if reserved && record.catalog_review != CatalogReviewStatus::Reviewed {
+        return Err(format!(
+            "third-party adoption cannot shadow catalog compatibility parent: {skill_id}; install its reviewed distribution id instead"
+        ));
+    }
+    Ok(())
 }
 
 fn install_body(source: &Path, body: &Path, expected_hash: &str) -> Result<bool, String> {

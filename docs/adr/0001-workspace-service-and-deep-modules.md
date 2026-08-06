@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Introduced in: 0.3.1
-- Current implementation: 0.4.14
+- Current implementation: 0.4.15
 
 ## Context
 

@@ -51,13 +51,15 @@ jobs:
             "ags-${tag}-aarch64-unknown-linux-gnu.tar.gz" \
             "ags-${tag}-x86_64-pc-windows-msvc.zip" \
           )
-          for name in "${asset_names[@]}" SHA256SUMS release-index.json release-index.sig
+          catalog_name="ags-third-party-catalog-${tag}.yaml"
+          for name in "${asset_names[@]}" "$catalog_name" SHA256SUMS release-index.json release-index.sig
           do
             grep -Fqx "$name" <<<"$assets"
           done
           mkdir -p "$RUNNER_TEMP/ags-release-check"
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
             --pattern 'ags-v*' \
+            --pattern 'ags-third-party-catalog-v*.yaml' \
             --pattern SHA256SUMS \
             --pattern release-index.json \
             --pattern release-index.sig \
@@ -67,12 +69,16 @@ jobs:
           for name in "${asset_names[@]}"; do
             grep -Fq "  $name" SHA256SUMS
           done
+          grep -Fq "  $catalog_name" SHA256SUMS
           sha256sum --check SHA256SUMS
           for name in "${asset_names[@]}"; do
             gh attestation verify "$name" \
               --repo "$GITHUB_REPOSITORY" \
               --signer-workflow "$signer_workflow"
           done
+          gh attestation verify "$catalog_name" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$signer_workflow"
           node --input-type=module <<'NODE'
           import crypto from "node:crypto";
           import fs from "node:fs";
@@ -83,6 +89,9 @@ jobs:
           if (!crypto.verify(null, indexBytes, publicKey, signature)) process.exit(1);
           const index = JSON.parse(indexBytes);
           if (index.version !== process.env.INPUT_VERSION || index.tag !== `v${process.env.INPUT_VERSION}`) process.exit(1);
+          const catalogName = `ags-third-party-catalog-v${process.env.INPUT_VERSION}.yaml`;
+          const catalog = fs.readFileSync(directory + "/" + catalogName);
+          if (index.catalog?.name !== catalogName || index.catalog.sha256 !== crypto.createHash("sha256").update(catalog).digest("hex")) process.exit(1);
           NODE
         env:
           GH_TOKEN: ${{ github.token }}

@@ -501,13 +501,51 @@ fn compile_snapshot_from_inventory(
         catalog.push(card);
     }
 
-    let installed_projection = crate::skill_adoption::project_installed_skills(
+    let mut installed_projection = crate::skill_adoption::project_installed_skills(
         runtime_home,
         &context.home,
         active_host,
         &official_ids,
     )
     .map_err(SnapshotBuildError::Manifest)?;
+    // Installed third-party parents are authoritative for activation, while
+    // the registry remains authoritative for their routable child playbooks.
+    // Merge the sealed route-target projection back into the installed card
+    // after adoption projection replaces the discovered host row. Without
+    // this seam an explicitly installed compatibility parent is active but
+    // cannot resolve any of its registered playbooks.
+    for card in &mut installed_projection.cards {
+        let Some(projection) = entrypoint_projections.get(&card.skill_id) else {
+            continue;
+        };
+        card.entrypoints.extend(projection.entrypoints.clone());
+        card.entrypoints.sort();
+        card.entrypoints.dedup();
+        card.intent_tags.extend(projection.intent_tags.clone());
+        card.intent_tags.sort();
+        card.intent_tags.dedup();
+        card.positive_examples
+            .extend(projection.positive_examples.clone());
+        card.positive_examples.sort();
+        card.positive_examples.dedup();
+        card.negative_examples
+            .extend(projection.negative_examples.clone());
+        card.negative_examples.sort();
+        card.negative_examples.dedup();
+    }
+    for skill in &mut installed_projection.active {
+        let Some(projection) = entrypoint_projections.get(&skill.skill_id) else {
+            continue;
+        };
+        skill
+            .allowed_entrypoints
+            .extend(projection.entrypoints.clone());
+        skill.allowed_entrypoints.sort();
+        skill.allowed_entrypoints.dedup();
+        skill.intent_tags.extend(projection.intent_tags.clone());
+        skill.intent_tags.sort();
+        skill.intent_tags.dedup();
+    }
     let installed_skill_catalog = installed_projection.cards.clone();
     for card in installed_projection.cards {
         catalog.retain(|candidate| candidate.skill_id != card.skill_id);

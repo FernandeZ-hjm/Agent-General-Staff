@@ -859,12 +859,6 @@ fn codex_ags_named_skill_path(home: &Path, name: &str) -> PathBuf {
     codex_shared_ags_named_skill_dir(home, name).join("SKILL.md")
 }
 
-fn codex_ags_named_skill_agent_metadata_path(home: &Path, name: &str) -> PathBuf {
-    codex_shared_ags_named_skill_dir(home, name)
-        .join("agents")
-        .join("openai.yaml")
-}
-
 fn retired_codex_ags_skill_dirs(home: &Path) -> Vec<PathBuf> {
     ["ags", "ags-preflight", "ags-verify", "ags-capability"]
         .into_iter()
@@ -1049,6 +1043,16 @@ mod runtime_transaction_tests {
             suite_skill_authority_root: Some(&source),
         });
         assert!(result.report.passed(), "{:#?}", result.report.findings);
+        assert!(result
+            .report
+            .findings
+            .iter()
+            .all(|finding| { !finding.check_name.contains("command-skill-metadata-ags-") }));
+        let doctor = runtime_install_health_report(&runtime, &home, false);
+        assert!(doctor
+            .findings
+            .iter()
+            .all(|finding| { !finding.check_name.contains("command-skill-metadata-ags-") }));
         let manifest: serde_json::Value =
             serde_json::from_slice(&std::fs::read(runtime.join("install-manifest.json")).unwrap())
                 .unwrap();

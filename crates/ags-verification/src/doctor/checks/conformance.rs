@@ -505,6 +505,7 @@ fn mcp_registration_current(repo_root: &Path, observation: &SystemObservation) -
         .as_deref()
         .and_then(|path| ags_platform::executable_content_hash(path).ok());
     let mut failures = Vec::new();
+    let mut absent = Vec::new();
     let mut probed = 0;
     for host in &observation.enabled_hosts {
         let Some(spec) = ags_host_integration::platform_spec(host) else {
@@ -514,11 +515,15 @@ fn mcp_registration_current(repo_root: &Path, observation: &SystemObservation) -
         if spec.mcp_probe.is_none() {
             continue;
         }
-        probed += 1;
         let Some(report) = observation.mcp_reports.get(host) else {
             failures.push(format!("{host}: MCP probe produced no observation"));
             continue;
         };
+        if report.status == ags_host_integration::HostProbeStatus::HostUnavailable {
+            absent.push(format!("{host}: {}", report.evidence));
+            continue;
+        }
+        probed += 1;
         let current = report.find("ags").is_some_and(|registration| {
             mcp_registration_matches(registration, current_hash.as_deref())
         });
@@ -529,12 +534,31 @@ fn mcp_registration_current(repo_root: &Path, observation: &SystemObservation) -
     if probed == 0 {
         return Finding::skip(
             "mcp-registration-current",
-            "enabled hosts do not expose a read-only MCP registration probe",
+            if absent.is_empty() {
+                "enabled hosts do not expose a read-only MCP registration probe".to_string()
+            } else {
+                format!(
+                    "selected host CLIs are absent; native MCP probes are not applicable ({})",
+                    absent.join(", ")
+                )
+            },
         )
         .with_conformance(
             "current AGS MCP registration for every probeable enabled host",
             "zero probeable enabled hosts",
             "verify the host registration manually",
+        );
+    }
+    if failures.is_empty() && !absent.is_empty() {
+        return Finding::warn(
+            "mcp-registration-current",
+            "available host MCP registrations are current; absent host CLIs were not probed",
+            absent.join(", "),
+        )
+        .with_conformance(
+            "current AGS MCP registration for every installed probeable host",
+            format!("{probed} installed host probes passed; absent={absent:?}"),
+            "Install an absent host CLI before requiring its native MCP probe.",
         );
     }
     conformance_verdict(
@@ -822,5 +846,39 @@ mod tests {
             ),
             None
         ));
+    }
+
+    #[test]
+    fn absent_host_probe_skips_but_installed_broken_probe_fails() {
+        let root = tempfile::tempdir().unwrap();
+        let report = |status| ags_host_integration::HostMcpReport {
+            host: "claude-code".to_string(),
+            status,
+            evidence_source: "fixture".to_string(),
+            servers: Vec::new(),
+            evidence: "fixture host probe".to_string(),
+        };
+        let observation = |report| SystemObservation {
+            lifecycle: Err("unused fixture".to_string()),
+            enabled_hosts: vec!["claude-code".to_string()],
+            approved_hosts: Err("unused fixture".to_string()),
+            mcp_reports: BTreeMap::from([("claude-code".to_string(), report)]),
+            daemon_status: None,
+            daemon: None,
+        };
+        let absent = mcp_registration_current(
+            root.path(),
+            &observation(report(
+                ags_host_integration::HostProbeStatus::HostUnavailable,
+            )),
+        );
+        assert_eq!(absent.status, CheckStatus::Skip);
+        let broken = mcp_registration_current(
+            root.path(),
+            &observation(report(
+                ags_host_integration::HostProbeStatus::ConnectionFailed,
+            )),
+        );
+        assert_eq!(broken.status, CheckStatus::Fail);
     }
 }

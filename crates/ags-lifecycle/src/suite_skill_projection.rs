@@ -269,7 +269,13 @@ pub fn plan_required_suite_skill_projection(
                     target: source.clone(),
                 },
             );
-            match inspect_projection_entry(&link, source, &owned_roots, prior.as_ref()) {
+            match inspect_projection_entry(
+                &link,
+                source,
+                &owned_roots,
+                prior.as_ref(),
+                runtime_home,
+            ) {
                 Ok(LinkDisposition::Current) => {}
                 Ok(LinkDisposition::Create) => operations.push(operation(
                     ProjectionOperationKind::Create,
@@ -298,6 +304,7 @@ pub fn plan_required_suite_skill_projection(
                 &mut blocking,
                 prior.as_ref(),
                 &owned_roots,
+                runtime_home,
                 host,
                 old,
                 &link,
@@ -316,6 +323,7 @@ pub fn plan_required_suite_skill_projection(
                     &mut blocking,
                     prior.as_ref(),
                     &owned_roots,
+                    runtime_home,
                     host,
                     skill_id,
                     &legacy_root.join(skill_id),
@@ -329,6 +337,7 @@ pub fn plan_required_suite_skill_projection(
                     &mut blocking,
                     prior.as_ref(),
                     &owned_roots,
+                    runtime_home,
                     host,
                     old,
                     &legacy_root.join(old),
@@ -394,6 +403,12 @@ pub fn plan_required_suite_skill_projection(
                 blocking.push(format!("invalid prior projection key `{key}`"));
                 continue;
             };
+            // 0.4.15 makes the upstream-derived parent an explicitly selected
+            // catalog adapter. Setup must not silently remove or replace the
+            // previously projected parent before that governance decision.
+            if skill_id == "superpowers" && !current.contains(skill_id) {
+                continue;
+            }
             if target.as_os_str().is_empty() {
                 blocking.push(format!("prior projection target is empty for `{key}`"));
                 continue;
@@ -408,6 +423,7 @@ pub fn plan_required_suite_skill_projection(
                     &mut blocking,
                     prior.as_ref(),
                     &owned_roots,
+                    runtime_home,
                     host,
                     skill_id,
                     &link,
@@ -802,6 +818,7 @@ fn inspect_projection_entry(
     desired: &Path,
     owned_roots: &[PathBuf],
     prior: Option<&ProjectionState>,
+    runtime_home: &Path,
 ) -> Result<LinkDisposition, String> {
     let metadata = match fs::symlink_metadata(link) {
         Ok(metadata) => metadata,
@@ -810,16 +827,21 @@ fn inspect_projection_entry(
         }
         Err(error) => return Err(format!("cannot inspect {}: {error}", link.display())),
     };
-    if metadata.is_dir() && cfg!(windows) {
-        if !prior_owns_entry(link, prior) {
+    if metadata.is_dir() {
+        let actual = ags_capability_governance::hash_skill_source(link)?;
+        let expected = ags_capability_governance::hash_skill_source(desired)?;
+        let current_exact = actual == expected;
+        let prior_exact =
+            prior_owned_directory_hash(link, prior)?.is_some_and(|hash| hash == actual);
+        let legacy_exact = legacy_setup_directory_is_owned(link, runtime_home)?;
+        let native_directory_projection = cfg!(windows) && current_exact;
+        if !native_directory_projection && !prior_exact && !legacy_exact {
             return Err(format!(
-                "required Skill host directory is not AGS-owned: {}",
+                "required Skill host directory ownership is unknown or content diverged; preserved unchanged: {}",
                 link.display()
             ));
         }
-        let actual = ags_capability_governance::hash_skill_source(link)?;
-        let expected = ags_capability_governance::hash_skill_source(desired)?;
-        return Ok(if actual == expected {
+        return Ok(if current_exact && cfg!(windows) {
             LinkDisposition::Current
         } else {
             LinkDisposition::Replace
@@ -854,6 +876,7 @@ fn plan_removal(
     blocking: &mut Vec<String>,
     prior: Option<&ProjectionState>,
     owned_roots: &[PathBuf],
+    runtime_home: &Path,
     host: &str,
     skill_id: &str,
     link: &Path,
@@ -868,8 +891,29 @@ fn plan_removal(
             return;
         }
     };
-    if metadata.is_dir() && cfg!(windows) {
-        if prior_owns_entry(link, prior) {
+    if metadata.is_dir() {
+        let actual = match ags_capability_governance::hash_skill_source(link) {
+            Ok(hash) => hash,
+            Err(error) => {
+                blocking.push(error);
+                return;
+            }
+        };
+        let prior_exact = match prior_owned_directory_hash(link, prior) {
+            Ok(hash) => hash.is_some_and(|hash| hash == actual),
+            Err(error) => {
+                blocking.push(error);
+                false
+            }
+        };
+        let legacy_exact = match legacy_setup_directory_is_owned(link, runtime_home) {
+            Ok(owned) => owned,
+            Err(error) => {
+                blocking.push(error);
+                false
+            }
+        };
+        if prior_exact || legacy_exact {
             operations.push(operation(
                 kind,
                 host,
@@ -959,15 +1003,147 @@ fn link_matches_host_skill_path(link: &Path, host: &str, skill: &str) -> bool {
         .any(|root| link.ends_with(root.join(skill)))
 }
 
-fn prior_owns_entry(link: &Path, prior: Option<&ProjectionState>) -> bool {
-    prior.is_some_and(|state| {
-        state.projected_links.keys().any(|key| {
-            let Some((host, skill)) = key.split_once('/') else {
-                return false;
-            };
-            link_matches_host_skill_path(link, host, skill)
+fn prior_owned_directory_hash(
+    link: &Path,
+    prior: Option<&ProjectionState>,
+) -> Result<Option<String>, String> {
+    let Some(state) = prior else {
+        return Ok(None);
+    };
+    let Some(target) = state.projected_links.iter().find_map(|(key, target)| {
+        let (host, skill) = key.split_once('/')?;
+        link_matches_host_skill_path(link, host, skill).then_some(target)
+    }) else {
+        return Ok(None);
+    };
+    if !target.is_dir() {
+        return Err(format!(
+            "prior AGS projection source is unavailable; preserved directory unchanged: {}",
+            link.display()
+        ));
+    }
+    ags_capability_governance::hash_skill_source(target).map(Some)
+}
+
+fn legacy_setup_directory_is_owned(link: &Path, runtime_home: &Path) -> Result<bool, String> {
+    let manifest_path = runtime_home.join("install-manifest.json");
+    let manifest = match fs::read(&manifest_path) {
+        Ok(bytes) => serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|error| {
+            format!(
+                "cannot parse legacy install manifest {}: {error}",
+                manifest_path.display()
+            )
+        })?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(format!(
+                "cannot read legacy install manifest {}: {error}",
+                manifest_path.display()
+            ))
+        }
+    };
+    if manifest
+        .pointer("/producer_version")
+        .and_then(|value| value.as_str())
+        != Some("0.4.12")
+    {
+        return Ok(false);
+    }
+    let Some(name) = link.file_name().and_then(|name| name.to_str()) else {
+        return Ok(false);
+    };
+    let skill_md = link.join("SKILL.md");
+    let declared = manifest
+        .pointer("/host_commands/codex/command_skills")
+        .and_then(|value| value.as_array())
+        .is_some_and(|paths| {
+            paths.iter().any(|path| {
+                path.as_str()
+                    .is_some_and(|path| Path::new(path) == skill_md.as_path())
+            })
+        });
+    if !declared {
+        return Ok(false);
+    }
+    let Some((display_name, short_description, default_prompt, summary)) =
+        legacy_command_skill_spec(name)
+    else {
+        return Ok(false);
+    };
+    if exact_directory_entries(link, &["SKILL.md", "agents"])?
+        && exact_directory_entries(&link.join("agents"), &["openai.yaml"])?
+        && fs::read_to_string(&skill_md).is_ok_and(|content| {
+            content == legacy_command_skill_content(name, display_name, summary, "0.4.12")
         })
-    })
+        && fs::read_to_string(link.join("agents/openai.yaml")).is_ok_and(|content| {
+            content
+                == legacy_command_skill_metadata(display_name, short_description, default_prompt)
+        })
+    {
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn exact_directory_entries(directory: &Path, expected: &[&str]) -> Result<bool, String> {
+    let metadata = match fs::symlink_metadata(directory) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("cannot inspect {}: {error}", directory.display())),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Ok(false);
+    }
+    let mut observed = fs::read_dir(directory)
+        .map_err(|error| format!("cannot read {}: {error}", directory.display()))?
+        .map(|entry| {
+            entry
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .map_err(|error| format!("cannot read {}: {error}", directory.display()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    observed.sort();
+    let mut expected = expected
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect::<Vec<_>>();
+    expected.sort();
+    Ok(observed == expected)
+}
+
+fn legacy_command_skill_spec(
+    name: &str,
+) -> Option<(&'static str, &'static str, &'static str, &'static str)> {
+    match name {
+        "ags-setup" => Some(("AGS Setup", "初始化本机 AGS 环境", "用 $ags-setup 初始化本机 AGS 环境。", "初始化本机 AGS 环境：先运行 `ags setup` 查看宿主，再运行 `ags setup --yes --force --register-claude --lifecycle-hosts <ids|detected|none>`，然后用 `ags verify --profile private` 校验")),
+        "ags-agents" => Some(("AGS Agents", "纳管本机 Agent 宿主", "用 $ags-agents 纳管本机 Agent 宿主。", "纳管本机 Agent 宿主：运行 `ags agents scan` 盘点宿主与 AGS MCP 注册，先用 `ags agents govern --agent <host>` 预览，再经用户确认运行 `--apply` 安装该宿主的 AGS 原生记忆生命周期适配器；MCP 注册仍为 advise-only；最后用 `ags agents verify --host <host>` 复核")),
+        "ags-skill" => Some(("AGS Skill", "管理第三方技能", "用 $ags-skill 管理第三方技能。", "管理第三方技能：运行 `ags skill inventory` 查看静态目录；第三方来源只在明确的安装或升级流程中更新，完成后运行 `ags capability snapshot --write --host <host>` 刷新一次静态快照，并用 `ags skill verify --strict` 复核")),
+        "ags-init" => Some(("AGS Init", "纳管当前项目", "用 $ags-init 纳管当前项目。", "纳管当前仓库：运行 `ags init --target .`，然后运行 `ags session preflight --for codex --target .`")),
+        "ags-doctor" => Some(("AGS Doctor", "诊断 AGS 状态", "用 $ags-doctor 诊断 AGS 状态。", "诊断 AGS 安装和项目状态：运行 `ags doctor --target .` 并优先汇总失败项")),
+        _ => None,
+    }
+}
+
+fn legacy_command_skill_content(
+    name: &str,
+    display_name: &str,
+    summary: &str,
+    version: &str,
+) -> String {
+    let route = name.strip_prefix("ags-").unwrap_or(name);
+    format!(
+        "---\nname: \"{name}\"\ndescription: \"当用户提到 /ags {route}、{display_name}、AGS {route}，或需要{summary}时使用。\"\n---\n\n# {display_name}\n\n这是 Codex 顶层 AGS 命令技能，用来把明确的 AGS 操作路由到已安装的 `ags` CLI 和 AGS 初始化门禁。\n\n## 必须先执行\n\n对目标仓库先运行 AGS preflight：\n\n```bash\nags session preflight --for codex --target .\n```\n\n如果目标项目不明确，先询问仓库路径，不要误把桌面工作区当成项目。\n\n## 路由\n\n{summary}.\n\n## 安全边界\n\n不要绕过 AGS 做临时初始化。只有用户明确要求任务卡/交接、handoff contract 已独立确认，且不存在未决或重开的 solution work 时，才可生成可执行任务卡；缺少任一条件都不得生成。\n\n此技能期望的 AGS 版本：{version}。\n"
+    )
+}
+
+fn legacy_command_skill_metadata(
+    display_name: &str,
+    short_description: &str,
+    default_prompt: &str,
+) -> String {
+    format!(
+        "interface:\n  display_name: \"{display_name}\"\n  short_description: \"{short_description}\"\n  default_prompt: \"{default_prompt}\"\n\npolicy:\n  allow_implicit_invocation: true\n"
+    )
 }
 
 fn operation(
@@ -1037,7 +1213,7 @@ fn capture_previous(path: &Path, transaction_id: &str) -> Result<PreviousEntry, 
         Ok(metadata) if metadata.file_type().is_symlink() => fs::read_link(path)
             .map(PreviousEntry::Symlink)
             .map_err(|error| format!("cannot read {}: {error}", path.display())),
-        Ok(metadata) if metadata.is_dir() && cfg!(windows) => Ok(PreviousEntry::DirectoryBackup(
+        Ok(metadata) if metadata.is_dir() => Ok(PreviousEntry::DirectoryBackup(
             projection_backup_path(path, transaction_id)?,
         )),
         Ok(_) => Err(format!(
@@ -1076,6 +1252,38 @@ fn replace_projection_entry(
     create_projection_stage(target, &stage)?;
     #[cfg(unix)]
     {
+        if let Ok(metadata) = fs::symlink_metadata(link) {
+            if metadata.file_type().is_symlink() {
+                fs::remove_file(link).map_err(|error| {
+                    let _ = fs::remove_file(&stage);
+                    format!("cannot replace {}: {error}", link.display())
+                })?;
+            } else if metadata.is_dir() {
+                let backup = projection_backup_path(link, transaction_id)?;
+                if fs::symlink_metadata(&backup).is_ok() {
+                    let _ = fs::remove_file(&stage);
+                    return Err(format!(
+                        "projection recovery backup already exists: {}",
+                        backup.display()
+                    ));
+                }
+                if let Some(parent) = backup.parent() {
+                    fs::create_dir_all(parent).map_err(|error| {
+                        format!("cannot create projection recovery directory: {error}")
+                    })?;
+                }
+                fs::rename(link, &backup).map_err(|error| {
+                    let _ = fs::remove_file(&stage);
+                    format!("cannot preserve {} for recovery: {error}", link.display())
+                })?;
+            } else {
+                let _ = fs::remove_file(&stage);
+                return Err(format!(
+                    "cannot replace unsupported projection entry: {}",
+                    link.display()
+                ));
+            }
+        }
         fs::rename(&stage, link).map_err(|error| {
             let _ = fs::remove_file(&stage);
             format!("cannot publish Skill link {}: {error}", link.display())
@@ -1124,7 +1332,7 @@ fn remove_owned_entry(link: &Path, transaction_id: &str) -> Result<(), String> {
     match fs::symlink_metadata(link) {
         Ok(metadata) if metadata.file_type().is_symlink() => fs::remove_file(link)
             .map_err(|error| format!("cannot unlink {}: {error}", link.display())),
-        Ok(metadata) if metadata.is_dir() && cfg!(windows) => {
+        Ok(metadata) if metadata.is_dir() => {
             let backup = projection_backup_path(link, transaction_id)?;
             if fs::symlink_metadata(&backup).is_ok() {
                 return Err(format!(
@@ -1598,6 +1806,218 @@ mod tests {
     }
 
     #[test]
+    fn v0412_exact_generated_directory_migrates_with_backup_and_is_idempotent() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("suite");
+        let runtime = temp.path().join("runtime");
+        let home = temp.path().join("home");
+        skill(&root, "ags-doctor");
+        manifest(
+            &root,
+            "    - name: ags-doctor\n      source: global-skills/ags-doctor\n",
+        );
+        let legacy = home.join(".codex/skills/ags-doctor");
+        fs::create_dir_all(legacy.join("agents")).unwrap();
+        let (display, short, prompt, summary) = legacy_command_skill_spec("ags-doctor").unwrap();
+        fs::write(
+            legacy.join("SKILL.md"),
+            legacy_command_skill_content("ags-doctor", display, summary, "0.4.12"),
+        )
+        .unwrap();
+        fs::write(
+            legacy.join("agents/openai.yaml"),
+            legacy_command_skill_metadata(display, short, prompt),
+        )
+        .unwrap();
+        fs::create_dir_all(&runtime).unwrap();
+        fs::write(
+            runtime.join("install-manifest.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "producer_version": "0.4.12",
+                "host_commands": { "codex": { "command_skills": [legacy.join("SKILL.md")] } }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let first = plan_required_suite_skill_projection(
+            &root,
+            &runtime,
+            &home,
+            &SuiteSkillProjectionPolicy {
+                required_authority_root: None,
+                target_hosts: vec!["codex".to_string()],
+            },
+        )
+        .unwrap();
+        assert!(
+            first.blocking_findings.is_empty(),
+            "{:?}",
+            first.blocking_findings
+        );
+        assert!(first.operations.iter().any(|operation| {
+            operation.kind == ProjectionOperationKind::RemoveRetired
+                && operation.link_path == legacy
+        }));
+        drop(apply_required_suite_skill_projection(&runtime, &first, "v0412-upgrade").unwrap());
+        assert!(fs::symlink_metadata(&legacy).is_err());
+        assert!(fs::symlink_metadata(home.join(".agents/skills/ags-doctor"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        let backup = projection_backup_path(&legacy, "v0412-upgrade").unwrap();
+        assert!(backup.join("SKILL.md").is_file());
+
+        let second = plan_required_suite_skill_projection(
+            &root,
+            &runtime,
+            &home,
+            &SuiteSkillProjectionPolicy {
+                required_authority_root: None,
+                target_hosts: vec!["codex".to_string()],
+            },
+        )
+        .unwrap();
+        assert!(second.blocking_findings.is_empty());
+        assert!(second.operations.is_empty());
+    }
+
+    #[test]
+    fn v0412_modified_generated_directory_is_blocked_and_preserved() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("suite");
+        let runtime = temp.path().join("runtime");
+        let home = temp.path().join("home");
+        skill(&root, "ags-doctor");
+        manifest(
+            &root,
+            "    - name: ags-doctor\n      source: global-skills/ags-doctor\n",
+        );
+        let legacy = home.join(".codex/skills/ags-doctor");
+        fs::create_dir_all(legacy.join("agents")).unwrap();
+        let (display, short, prompt, summary) = legacy_command_skill_spec("ags-doctor").unwrap();
+        fs::write(
+            legacy.join("SKILL.md"),
+            format!(
+                "{}\nuser modification\n",
+                legacy_command_skill_content("ags-doctor", display, summary, "0.4.12")
+            ),
+        )
+        .unwrap();
+        fs::write(
+            legacy.join("agents/openai.yaml"),
+            legacy_command_skill_metadata(display, short, prompt),
+        )
+        .unwrap();
+        fs::create_dir_all(&runtime).unwrap();
+        fs::write(
+            runtime.join("install-manifest.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "producer_version": "0.4.12",
+                "host_commands": { "codex": { "command_skills": [legacy.join("SKILL.md")] } }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let plan = plan_required_suite_skill_projection(
+            &root,
+            &runtime,
+            &home,
+            &SuiteSkillProjectionPolicy {
+                required_authority_root: None,
+                target_hosts: vec!["codex".to_string()],
+            },
+        )
+        .unwrap();
+        assert!(plan
+            .blocking_findings
+            .iter()
+            .any(|finding| finding.contains("unowned Skill directory")));
+        assert!(legacy.join("SKILL.md").is_file());
+    }
+
+    #[test]
+    fn v0413_and_v0414_superpowers_parent_is_preserved_until_optional_adapter_decision() {
+        let temp = tempfile::tempdir().unwrap();
+        for version in ["0.4.13", "0.4.14"] {
+            let fixture = temp.path().join(version);
+            let root = fixture.join("suite");
+            let runtime = fixture.join("runtime");
+            let home = fixture.join("home");
+            skill(&root, "superpowers");
+            manifest(
+                &root,
+                "    - name: superpowers\n      source: global-skills/superpowers\n",
+            );
+            fs::create_dir_all(&runtime).unwrap();
+            fs::write(
+                runtime.join("install-manifest.json"),
+                serde_json::to_vec(&serde_json::json!({
+                    "producer_version": version,
+                    "suite_skill_projection": {
+                        "mode": "suite_source_root",
+                        "hosts": ["codex"]
+                    }
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            let initial = plan_required_suite_skill_projection(
+                &root,
+                &runtime,
+                &home,
+                &SuiteSkillProjectionPolicy {
+                    required_authority_root: None,
+                    target_hosts: vec!["codex".to_string()],
+                },
+            )
+            .unwrap();
+            drop(
+                apply_required_suite_skill_projection(
+                    &runtime,
+                    &initial,
+                    &format!("v{}-setup", version.replace('.', "")),
+                )
+                .unwrap(),
+            );
+            let link = home.join(".agents/skills/superpowers");
+            assert!(fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink());
+
+            fs::write(
+                root.join("manifests/suite.yaml"),
+                "schema_version: \"1.0\"\nsuite:\n  name: fixture\n  required: []\n",
+            )
+            .unwrap();
+            let upgrade = plan_required_suite_skill_projection(
+                &root,
+                &runtime,
+                &home,
+                &SuiteSkillProjectionPolicy {
+                    required_authority_root: None,
+                    target_hosts: vec!["codex".to_string()],
+                },
+            )
+            .unwrap();
+            assert!(upgrade.blocking_findings.is_empty());
+            assert!(!upgrade
+                .operations
+                .iter()
+                .any(|operation| operation.link_path == link));
+            drop(apply_required_suite_skill_projection(&runtime, &upgrade, "v0415-setup").unwrap());
+            assert_eq!(
+                link.canonicalize().unwrap(),
+                root.join("global-skills/superpowers")
+                    .canonicalize()
+                    .unwrap()
+            );
+        }
+    }
+
+    #[test]
     fn rename_migrates_only_owned_symlinks_and_removes_old_name() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("suite");
@@ -1667,6 +2087,11 @@ mod tests {
         create_dir_symlink(&outside.join("global-skills/alpha"), &codex).unwrap();
         let claude = home.join(".claude/skills/alpha");
         fs::create_dir_all(&claude).unwrap();
+        fs::copy(
+            root.join("global-skills/alpha/SKILL.md"),
+            claude.join("SKILL.md"),
+        )
+        .unwrap();
 
         let plan = plan(&root, &runtime, &home);
         assert!(plan
@@ -1676,11 +2101,7 @@ mod tests {
         assert!(plan
             .blocking_findings
             .iter()
-            .any(|finding| finding.contains(if cfg!(windows) {
-                "not AGS-owned"
-            } else {
-                "not an AGS-owned symlink"
-            })));
+            .any(|finding| finding.contains("ownership is unknown or content diverged")));
         assert!(apply_required_suite_skill_projection(&runtime, &plan, "test-plan").is_err());
     }
 

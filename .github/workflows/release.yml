@@ -209,9 +209,14 @@ jobs:
           pattern: ags-*
           merge-multiple: true
           path: dist
+      - name: Stage reviewed catalog asset
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          cp manifests/third-party-capabilities.yaml "dist/ags-third-party-catalog-v${version}.yaml"
       - name: Generate checksums
         working-directory: dist
-        run: sha256sum ags-v* > SHA256SUMS
+        run: sha256sum ags-v* ags-third-party-catalog-v*.yaml > SHA256SUMS
       - name: Generate and verify signed release index
         env:
           AGS_RELEASE_VERSION: ${{ github.ref_name }}
@@ -225,7 +230,12 @@ jobs:
       - name: Attest release assets
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
-          subject-path: "dist/ags-v*"
+          subject-path: |
+            dist/ags-v*
+            dist/ags-third-party-catalog-v*.yaml
+            dist/SHA256SUMS
+            dist/release-index.json
+            dist/release-index.sig
       - name: Create release with binary assets
         env:
           GH_TOKEN: ${{ github.token }}

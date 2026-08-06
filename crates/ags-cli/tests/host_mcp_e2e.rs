@@ -295,6 +295,49 @@ impl TestEnvironment {
         }
     }
 
+    fn install_superpowers_adapter(&self) {
+        let mut plan_args = vec![
+            "skill".to_string(),
+            "install".to_string(),
+            "ags-superpowers-adapter".to_string(),
+        ];
+        for host in HOSTS {
+            plan_args.push("--host".to_string());
+            plan_args.push((*host).to_string());
+        }
+        plan_args.extend(["--format".to_string(), "json".to_string()]);
+        let planned = self.command().args(&plan_args).output().unwrap();
+        assert!(
+            planned.status.success(),
+            "adapter plan failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&planned.stdout),
+            String::from_utf8_lossy(&planned.stderr)
+        );
+        let plan: Value = serde_json::from_slice(&planned.stdout).unwrap();
+
+        let mut apply_args = plan_args[..plan_args.len() - 2].to_vec();
+        apply_args.push("--plan-hash".to_string());
+        apply_args.push(plan["plan_hash"].as_str().unwrap().to_string());
+        for risk in plan["required_acknowledgements"].as_array().unwrap() {
+            apply_args.push("--ack-risk".to_string());
+            apply_args.push(risk.as_str().unwrap().to_string());
+        }
+        apply_args.extend([
+            "--yes".to_string(),
+            "--format".to_string(),
+            "json".to_string(),
+        ]);
+        let applied = self.command().args(&apply_args).output().unwrap();
+        assert!(
+            applied.status.success(),
+            "adapter apply failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&applied.stdout),
+            String::from_utf8_lossy(&applied.stderr)
+        );
+        let receipt: Value = serde_json::from_slice(&applied.stdout).unwrap();
+        assert_eq!(receipt["status"], "verified");
+    }
+
     fn connect(&self, cwd: &Path) -> McpClient {
         self.connect_with_executable(cwd, &self.ags)
     }
@@ -809,7 +852,7 @@ fn typed_mcp_route_resolves_to_host_native_dispatch_without_server_action() {
 fn hermetic_host_adapters_share_one_workspace_service_but_keep_sessions_and_leases_isolated() {
     let environment = TestEnvironment::new();
     environment.install_test_skill("ags-skill");
-    environment.install_test_skill("superpowers");
+    environment.install_superpowers_adapter();
 
     let mut expected_hashes = Vec::new();
     for host in HOSTS {

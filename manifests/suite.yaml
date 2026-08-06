@@ -1,30 +1,42 @@
 schema_version: 2.0-skill
 suite:
   name: agent-general-staff
-  version: 0.4.14
+  version: 0.4.15
   description: Public AGS governance control plane. Bundled command Skills are shipped with the release; reviewed third-party entries are discovery metadata only.
   required:
   - name: ags-agents
-    version: 0.4.14
+    version: 0.4.15
     source: templates/command-skills/ags-agents
-    hash: 8563bddbd09743d5ee9ddd6568a865905d54d9ea40ff33968c7a650540c5501b
+    hash: cf364bdd4a54f3b3a87d07a9658d373a792b8145ecfb12cb9bfc9b8937d66cee
   - name: ags-doctor
-    version: 0.4.14
+    version: 0.4.15
     source: templates/command-skills/ags-doctor
-    hash: ea28f6bb5572b5ebf77692ed9f42026fdc7bc8129ff75d4484153ae31822b868
+    hash: 11fef3f127dcc0fc8c838f17ba7daeca3c6a49d8d4f190ba23d304d6d2aa76b8
   - name: ags-init
-    version: 0.4.14
+    version: 0.4.15
     source: templates/command-skills/ags-init
-    hash: b6671694f406033f9f7ae9ab644c2c378219a88193eaa8ebaa492896df599592
+    hash: 301f1879234bff21993aa6e3f1ba1dad35a4279be4125c9a6c3740276227cefe
   - name: ags-setup
-    version: 0.4.14
+    version: 0.4.15
     source: templates/command-skills/ags-setup
-    hash: 4eba02145ea9e94a2609aab6cd0401f5581a6657a00e868e339d37f9ddce302c
+    hash: f0dec1075bd3deb2bb48734419a62b7f559aaec677dd731a26d8c47b0d09b1ae
   - name: ags-skill
-    version: 0.4.14
+    version: 0.4.15
     source: templates/command-skills/ags-skill
-    hash: 5ec972e74de249368cd08565aa16ec720ec0aa42116c9852f644d5e96616ac4e
+    hash: d53ace34ddd4a638ed1b7757dfeae12690670647a48715986ab9242287c1f7d4
   optional:
+  - name: ags-superpowers-adapter
+    version: 44c9b2d6e889982ac18c27d05a19fefe335194e1
+    source: bundled:skill-packs/optional/ags-superpowers-adapter
+    description: Provide the explicitly selected AGS compatibility parent for upstream-derived engineering playbooks.
+    repository: https://github.com/obra/superpowers
+    subdirectory: skill-packs/optional/ags-superpowers-adapter
+    resolved_commit: 44c9b2d6e889982ac18c27d05a19fefe335194e1
+    body_hash: sha256:cf95cd5c3e8ba8798480ddca0c81c283a5f2d6fa2ade4d2d26aa5b995ac11abf
+    license: MIT
+    catalog_review_status: reviewed
+    install_state: not-installed
+    route_state: not-routable-until-activated
   - name: grilling
     version: 2ffb184ffbb752faa664c0b204f3c9241b1428e9
     source: https://github.com/mattpocock/skills/tree/2ffb184ffbb752faa664c0b204f3c9241b1428e9/skills/productivity/grilling

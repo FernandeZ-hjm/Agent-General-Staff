@@ -356,11 +356,18 @@ fn adopt_apply_fails_closed_without_the_exact_plan_hash() {
         &["skill", "adopt", source_arg, "--format", "json"],
         &fixture,
     );
+    let no_target_error: Value =
+        serde_json::from_slice(&no_target.stdout).unwrap_or_else(|error| {
+            panic!(
+                "target-host rejection did not emit JSON: {error}\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&no_target.stdout),
+                String::from_utf8_lossy(&no_target.stderr)
+            )
+        });
     assert!(
         !no_target.status.success()
-            && String::from_utf8_lossy(&no_target.stderr)
-                .contains("skill_install_requires_target_host"),
-        "a Skill install must select an approved or explicit target Host"
+            && contains_string(&no_target_error, "skill_install_requires_target_host"),
+        "a Skill install must select an approved or explicit target Host: {no_target_error}"
     );
 
     let plan = parse_json(

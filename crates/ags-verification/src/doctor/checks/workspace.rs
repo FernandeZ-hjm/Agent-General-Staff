@@ -4,9 +4,62 @@ use super::*;
 
 /// Run `git status --porcelain` and report uncommitted changes.
 pub fn git_status_check(repo_root: &Path) -> Finding {
-    match Command::new("git")
+    git_status_check_with_command(repo_root, std::ffi::OsStr::new("git"))
+}
+
+fn git_status_check_with_command(repo_root: &Path, git: &std::ffi::OsStr) -> Finding {
+    let repository = match Command::new(git)
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .current_dir(repo_root)
+        .env("LC_ALL", "C")
+        .output()
+    {
+        Ok(output)
+            if output.status.success()
+                && String::from_utf8_lossy(&output.stdout).trim() == "true" =>
+        {
+            true
+        }
+        Ok(output)
+            if String::from_utf8_lossy(&output.stderr)
+                .to_ascii_lowercase()
+                .contains("not a git repository") =>
+        {
+            return Finding::skip(
+                "git-status",
+                "target is not a Git worktree; Git status is not applicable",
+            );
+        }
+        Ok(output) => {
+            return Finding::fail(
+                "git-status",
+                "Git repository detection failed",
+                format!(
+                    "git exited with {}: {}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+            );
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Finding::skip(
+                "git-status",
+                "Git CLI is not installed; Git status is not applicable",
+            );
+        }
+        Err(error) => {
+            return Finding::fail(
+                "git-status",
+                "Git repository detection failed",
+                format!("Failed to run git: {error}"),
+            );
+        }
+    };
+    debug_assert!(repository);
+    match Command::new(git)
         .args(["status", "--porcelain"])
         .current_dir(repo_root)
+        .env("LC_ALL", "C")
         .output()
     {
         Ok(output) => {
@@ -94,5 +147,65 @@ pub(super) fn project_protocol_check(repo_root: &Path) -> Finding {
                 status.files.len()
             ),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_git_workspace_is_not_applicable() {
+        let target = tempfile::tempdir().unwrap();
+        let finding = git_status_check(target.path());
+        assert_eq!(finding.status, ags_lifecycle::setup::SetupCheckStatus::Skip);
+        assert_eq!(finding.check_name, "git-status");
+    }
+
+    #[test]
+    fn missing_git_is_not_applicable() {
+        let target = tempfile::tempdir().unwrap();
+        let finding = git_status_check_with_command(
+            target.path(),
+            std::ffi::OsStr::new("ags-definitely-missing-git"),
+        );
+        assert_eq!(finding.status, ags_lifecycle::setup::SetupCheckStatus::Skip);
+    }
+
+    #[test]
+    fn real_git_worktree_with_changes_warns() {
+        let target = tempfile::tempdir().unwrap();
+        assert!(Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(target.path())
+            .status()
+            .unwrap()
+            .success());
+        std::fs::write(target.path().join("untracked.txt"), "fixture\n").unwrap();
+        let finding = git_status_check(target.path());
+        assert_eq!(finding.status, ags_lifecycle::setup::SetupCheckStatus::Warn);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn detected_repository_status_failure_is_a_product_failure() {
+        use std::os::unix::fs::PermissionsExt;
+        let target = tempfile::tempdir().unwrap();
+        let fake = target.path().join("git-fixture");
+        std::fs::write(
+            &fake,
+            "#!/bin/sh\nif [ \"$1\" = rev-parse ]; then echo true; exit 0; fi\necho injected-status-failure >&2\nexit 2\n",
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&fake).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake, permissions).unwrap();
+        let finding = git_status_check_with_command(target.path(), fake.as_os_str());
+        assert_eq!(finding.status, ags_lifecycle::setup::SetupCheckStatus::Fail);
+        assert!(finding
+            .detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("injected-status-failure"));
     }
 }

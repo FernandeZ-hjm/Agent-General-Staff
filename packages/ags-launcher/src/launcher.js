@@ -18,6 +18,7 @@ export const UPDATE_CHECK_STATE_SCHEMA = "0.4.13-update-check-state";
 export const UPDATE_STATE_FILE = "update-check.json";
 export const UPDATE_PLAN_SCHEMA = "1.1-launcher-update-plan";
 export const UPDATE_RECEIPT_SCHEMA = "1.1-launcher-update-receipt";
+export const VERIFIED_CATALOG_SCHEMA = "0.4.15-verified-catalog";
 export const MCP_ARGS = Object.freeze(["mcp", "serve", "--transport", "stdio"]);
 export function mcpRuntimeArgs(args) {
   if (args.length === 0) return [...MCP_ARGS];
@@ -918,6 +919,13 @@ export async function maybeCheckForUpdate({
       return { checked: true, unavailable: true, available: null, state };
     }
     const payload = parseSignedReleaseIndex(indexBytes, normalizedChannel);
+    const catalog = await refreshVerifiedCatalog({
+      payload,
+      indexEndpoint: endpoint,
+      stateRoot: resolvedStateRoot,
+      fetchImpl,
+      timeoutMs
+    });
     const latest = { version: payload.version, url: `https://github.com/${payload.repository}/releases/tag/${payload.tag}` };
     const available =
       latest && compareVersions(parseVersion(latest.version), parseVersion(currentVersion)) > 0
@@ -926,6 +934,8 @@ export async function maybeCheckForUpdate({
     state = {
       ...state,
       latest_version: latest?.version || null,
+      catalog_release: catalog?.release || state.catalog_release || null,
+      catalog_hash: catalog?.content_hash?.replace(/^sha256:/u, "") || state.catalog_hash || null,
       last_error: null
     };
     writeUpdateStateBestEffort(resolvedStateRoot, state);
@@ -1582,6 +1592,11 @@ function normalizeUpdateState(raw) {
     release_index_hash: HASH_PATTERN.test(raw?.release_index_hash || "")
       ? raw.release_index_hash
       : null,
+    catalog_release:
+      typeof raw?.catalog_release === "string" && VERSION_PATTERN.test(raw.catalog_release)
+        ? raw.catalog_release
+        : null,
+    catalog_hash: HASH_PATTERN.test(raw?.catalog_hash || "") ? raw.catalog_hash : null,
     last_error: typeof raw?.last_error === "string" ? raw.last_error : null
   };
 }
@@ -1646,6 +1661,53 @@ async function fetchReleaseIndexBytes(url, { fetchImpl, timeoutMs, label }) {
   throw new Error(`too many redirects checking ${url}`);
 }
 
+async function fetchApprovedAssetBytes(url, { fetchImpl, timeoutMs, label, maxBytes }) {
+  if (typeof fetchImpl !== "function") throw new Error("fetch is unavailable");
+  let currentUrl = approvedGitHubUrl(url, `${label} URL`).toString();
+  for (let redirects = 0; redirects <= 5; redirects += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    timer.unref?.();
+    try {
+      const response = await fetchImpl(currentUrl, {
+        redirect: "manual",
+        headers: {
+          accept: "application/octet-stream",
+          "user-agent": `@agent-governance-suite/mcp/${packageJson.version}`
+        },
+        signal: controller.signal
+      });
+      const status = Number(response?.status);
+      if (status >= 300 && status < 400) {
+        const location = response.headers?.get?.("location") || response.headers?.location;
+        if (!location) throw new Error(`${label} redirect has no location`);
+        if (redirects === 5) throw new Error(`too many redirects fetching ${label}`);
+        currentUrl = approvedGitHubUrl(
+          new URL(location, currentUrl).toString(),
+          `${label} redirect URL`
+        ).toString();
+        continue;
+      }
+      if (status !== 200) throw new Error(`${label} fetch failed (${status})`);
+      const length = Number(response.headers?.get?.("content-length"));
+      if (Number.isFinite(length) && length > maxBytes) {
+        throw new Error(`${label} exceeds ${maxBytes} bytes`);
+      }
+      const body = response.arrayBuffer
+        ? Buffer.from(await response.arrayBuffer())
+        : await readResponseBody(response);
+      if (body.length > maxBytes) throw new Error(`${label} exceeds ${maxBytes} bytes`);
+      return body;
+    } catch (error) {
+      if (controller.signal.aborted) throw new Error(`${label} fetch timed out`);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw new Error(`too many redirects fetching ${label}`);
+}
+
 export function verifySignedReleaseIndex(indexBytes, signatureBytes) {
   const signatureText = Buffer.from(signatureBytes).toString("utf8").trim();
   if (!/^[A-Za-z0-9+/]{86}==$/u.test(signatureText)) return false;
@@ -1687,7 +1749,47 @@ export function parseSignedReleaseIndex(indexBytes, expectedChannel = "stable") 
     }
     names.add(asset.name);
   }
+  if (index.catalog !== undefined) {
+    const expectedCatalog = `ags-third-party-catalog-v${index.version}.yaml`;
+    if (
+      index.catalog?.name !== expectedCatalog ||
+      index.catalog.name.includes("/") ||
+      index.catalog.name.includes("\\") ||
+      !HASH_PATTERN.test(index.catalog?.sha256 || "")
+    ) {
+      throw new Error("signed release index catalog identity is invalid");
+    }
+  }
   return index;
+}
+
+async function refreshVerifiedCatalog({ payload, indexEndpoint, stateRoot, fetchImpl, timeoutMs }) {
+  if (!payload.catalog) return null;
+  const catalogUrl = new URL(payload.catalog.name, indexEndpoint).toString();
+  const bytes = await fetchApprovedAssetBytes(catalogUrl, {
+    fetchImpl,
+    timeoutMs,
+    label: "signed catalog",
+    maxBytes: 1024 * 1024
+  });
+  const observed = crypto.createHash("sha256").update(bytes).digest("hex");
+  if (!timingSafeHexEqual(observed, payload.catalog.sha256)) {
+    throw new Error("signed catalog hash mismatch");
+  }
+  const catalogRoot = path.join(stateRoot, "catalog");
+  fs.mkdirSync(catalogRoot, { recursive: true, mode: 0o700 });
+  assertDirectory(catalogRoot, "verified catalog cache");
+  const catalogFile = `third-party-capabilities-${observed}.yaml`;
+  const catalogPath = path.join(catalogRoot, catalogFile);
+  atomicWriteBytes(catalogPath, bytes);
+  const marker = {
+    schema_version: VERIFIED_CATALOG_SCHEMA,
+    release: payload.version,
+    content_hash: `sha256:${observed}`,
+    catalog_file: catalogFile
+  };
+  atomicWriteJson(path.join(catalogRoot, "current.json"), marker);
+  return marker;
 }
 
 function parseVersion(version) {
@@ -1785,6 +1887,24 @@ function readJsonIfPresent(file) {
 function atomicWriteJson(file, value) {
   const temporary = `${file}.tmp-${process.pid}-${crypto.randomUUID()}`;
   fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+  const descriptor = fs.openSync(temporary, "r");
+  try {
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  try {
+    fs.renameSync(temporary, file);
+  } catch (error) {
+    if (process.platform !== "win32" || !["EEXIST", "EPERM"].includes(error.code)) throw error;
+    fs.rmSync(file, { force: true });
+    fs.renameSync(temporary, file);
+  }
+}
+
+function atomicWriteBytes(file, bytes) {
+  const temporary = `${file}.tmp-${process.pid}-${crypto.randomUUID()}`;
+  fs.writeFileSync(temporary, bytes, { mode: 0o600, flag: "wx" });
   const descriptor = fs.openSync(temporary, "r");
   try {
     fs.fsyncSync(descriptor);

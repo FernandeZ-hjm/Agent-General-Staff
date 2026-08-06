@@ -169,7 +169,6 @@ const APPROVED_PUBLIC_OVERLAY_PATHS: &[&str] = &[
     "CONTRIBUTING.md",
     "LICENSE",
     "NOTICE.md",
-    "THIRD_PARTY_NOTICES.md",
     "docs/comparison.md",
     "docs/philosophy.en.md",
     "docs/philosophy.md",
@@ -567,6 +566,11 @@ pub fn public_runtime_asset_files(root: &Path) -> Result<Vec<String>, Vec<String
 /// Whether a relative path is forbidden in public-full sanitized release payloads.
 pub fn is_public_forbidden_payload(relative: &str) -> bool {
     let relative = relative.trim_start_matches("./").replace('\\', "/");
+    if relative == "skill-packs/optional/ags-superpowers-adapter"
+        || relative.starts_with("skill-packs/optional/ags-superpowers-adapter/")
+    {
+        return false;
+    }
     PUBLIC_FORBIDDEN_PAYLOAD.iter().any(|forbidden| {
         if forbidden.ends_with('/') {
             relative == forbidden.trim_end_matches('/') || relative.starts_with(forbidden)

@@ -27,6 +27,8 @@ pub struct RecommendationsDoc {
 pub struct CatalogEntry {
     pub id: String,
     #[serde(default)]
+    pub compatibility_parent: Option<String>,
+    #[serde(default)]
     pub name: String,
     #[serde(default)]
     pub tier: String,
@@ -38,6 +40,8 @@ pub struct CatalogEntry {
     pub source_kind: String,
     #[serde(default)]
     pub source: Option<String>,
+    #[serde(default)]
+    pub bundled_path: Option<String>,
     #[serde(default)]
     pub upstream: Option<String>,
     #[serde(default)]
@@ -52,6 +56,12 @@ pub struct CatalogEntry {
     pub risk: Option<String>,
     #[serde(default)]
     pub install_location: Option<String>,
+    #[serde(default)]
+    pub catalog_source: String,
+    #[serde(default)]
+    pub catalog_hash: String,
+    #[serde(default)]
+    pub catalog_release: Option<String>,
 }
 
 /// Compatibility name for callers of the earlier recommendation surface.
@@ -134,9 +144,14 @@ pub struct UpdateLayer {
 /// Read public Skill entries from the unified third-party capability manifest.
 /// Missing or malformed manifest → an empty doc (setup degrades gracefully).
 pub fn read_recommendations(repo_root: &Path) -> RecommendationsDoc {
-    let Ok(manifest) = crate::third_party_manifest::read_third_party_manifest(repo_root) else {
+    let Ok(resolution) = crate::third_party_manifest::resolve_third_party_manifest(repo_root)
+    else {
         return RecommendationsDoc::default();
     };
+    let catalog_source = resolution.source;
+    let catalog_hash = resolution.content_hash;
+    let catalog_release = resolution.release;
+    let manifest = resolution.manifest;
     let skills = manifest
         .capabilities
         .into_iter()
@@ -145,25 +160,31 @@ pub fn read_recommendations(repo_root: &Path) -> RecommendationsDoc {
                 && capability.applies_to("public")
         })
         .map(|capability| {
-            let source = capability.source.repository.clone().map(|repository| {
-                let Some(revision) = capability.source.revision.as_deref() else {
-                    return repository;
-                };
-                let mut pinned = format!("{}/tree/{revision}", repository.trim_end_matches('/'));
-                if let Some(subdir) = capability.source.subdir.as_deref() {
-                    pinned.push('/');
-                    pinned.push_str(subdir.trim_start_matches('/'));
-                }
-                pinned
-            });
+            let source = (capability.source.manager != "bundled")
+                .then(|| capability.source.repository.clone())
+                .flatten()
+                .map(|repository| {
+                    let Some(revision) = capability.source.revision.as_deref() else {
+                        return repository;
+                    };
+                    let mut pinned =
+                        format!("{}/tree/{revision}", repository.trim_end_matches('/'));
+                    if let Some(subdir) = capability.source.subdir.as_deref() {
+                        pinned.push('/');
+                        pinned.push_str(subdir.trim_start_matches('/'));
+                    }
+                    pinned
+                });
             CatalogEntry {
                 id: capability.id,
+                compatibility_parent: capability.compatibility_parent,
                 name: capability.name,
                 tier: capability.tier,
                 purpose: capability.purpose,
                 recommendation_only: true,
                 source_kind: capability.source.manager,
                 source,
+                bundled_path: capability.source.bundled_path,
                 upstream: capability.source.repository,
                 revision: capability.source.revision,
                 tracking_ref: capability.source.tracking_ref,
@@ -171,6 +192,9 @@ pub fn read_recommendations(repo_root: &Path) -> RecommendationsDoc {
                 license: capability.source.license,
                 risk: Some(capability.risk),
                 install_location: capability.install.install_location,
+                catalog_source: catalog_source.clone(),
+                catalog_hash: catalog_hash.clone(),
+                catalog_release: catalog_release.clone(),
             }
         })
         .collect();
@@ -376,6 +400,7 @@ mod tests {
             "grill-with-docs",
             "writing-for-agents",
             "improve-codebase-architecture",
+            "ags-superpowers-adapter",
         ] {
             assert!(ids.contains(&want), "missing recommendation id: {want}");
         }
@@ -407,14 +432,28 @@ mod tests {
             "all entries must be recommendation_only"
         );
         assert!(doc.skills.iter().all(|skill| {
-            skill
-                .tracking_ref
-                .as_deref()
-                .is_some_and(|value| !value.is_empty())
+            let pinned_source = if skill.source_kind == "bundled" {
+                skill
+                    .bundled_path
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty())
+            } else {
+                skill
+                    .tracking_ref
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty())
+            };
+            pinned_source
                 && skill
                     .integrity
                     .as_deref()
                     .is_some_and(|value| value.starts_with("sha256:"))
+                && !skill.catalog_source.is_empty()
+                && skill.catalog_hash.starts_with("sha256:")
+                && skill
+                    .catalog_release
+                    .as_deref()
+                    .is_some_and(|release| !release.is_empty())
         }));
     }
 

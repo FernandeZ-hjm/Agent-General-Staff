@@ -188,8 +188,13 @@ pub fn migrate_runtime_state(runtime_home: &Path) -> Result<RuntimeMigrationRece
     let archive = match archive_legacy(runtime_home, &legacy) {
         Ok(archive) => archive,
         Err(error) => {
-            let _ = fs::remove_dir_all(layout.stable_capabilities());
-            return Err(error);
+            return match fs::remove_dir_all(layout.stable_capabilities()) {
+                Ok(()) => Err(error),
+                Err(cleanup_error) => Err(format!(
+                    "{error}; cannot remove failed stable capability activation {}: {cleanup_error}",
+                    layout.stable_capabilities().display()
+                )),
+            };
         }
     };
     let status = if had_legacy {
@@ -206,16 +211,10 @@ pub fn migrate_runtime_state(runtime_home: &Path) -> Result<RuntimeMigrationRece
         archived_legacy_paths: archive.archived_paths(),
     };
     if let Err(error) = persist_receipt(runtime_home, &receipt) {
-        let remove = fs::remove_dir_all(layout.stable_capabilities()).map_err(|remove_error| {
-            format!(
-                "cannot rollback stable capability activation {}: {remove_error}",
-                layout.stable_capabilities().display()
-            )
-        });
-        let restore = archive.rollback();
-        remove?;
-        restore?;
-        return Err(error);
+        return match rollback_activation(&layout.stable_capabilities(), &archive) {
+            Ok(()) => Err(error),
+            Err(rollback_error) => Err(format!("{error}; {rollback_error}")),
+        };
     }
     Ok(receipt)
 }
@@ -236,6 +235,12 @@ fn migrate_legacy_index(path: &Path) -> Result<(InstalledSkillIndex, Option<Stri
         .get("schema_version")
         .and_then(Value::as_str)
         .map(str::to_string);
+    if source_schema.as_deref() != Some("0.4.0-private-skill-registry") {
+        return Err(format!(
+            "retired Skill index has unsupported source schema: {}",
+            source_schema.as_deref().unwrap_or("missing")
+        ));
+    }
     document.insert(
         "schema_version".to_string(),
         Value::String(INSTALLED_SKILL_INDEX_SCHEMA.to_string()),
@@ -272,6 +277,25 @@ fn migrate_legacy_index(path: &Path) -> Result<(InstalledSkillIndex, Option<Stri
         }
     }
     Ok((index, source_schema))
+}
+
+fn rollback_activation(stable_root: &Path, archive: &LegacyArchive) -> Result<(), String> {
+    // Restore user-visible legacy paths first. Cleanup of the newly activated
+    // store may fail independently (for example, permissions); it must never
+    // prevent the archive rollback attempt.
+    let restore = archive.rollback();
+    let cleanup = fs::remove_dir_all(stable_root).map_err(|error| {
+        format!(
+            "cannot rollback stable capability activation {}: {error}",
+            stable_root.display()
+        )
+    });
+    match (restore, cleanup) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(restore), Ok(())) => Err(restore),
+        (Ok(()), Err(cleanup)) => Err(cleanup),
+        (Err(restore), Err(cleanup)) => Err(format!("{restore}; {cleanup}")),
+    }
 }
 
 fn normalize_legacy_record(skill_id: &str, value: &mut Value) -> Result<(), String> {
@@ -558,5 +582,39 @@ mod tests {
         assert!(load_installed_skills(temp.path())
             .unwrap_err()
             .contains("unsupported installed Skill index schema"));
+    }
+
+    #[test]
+    fn migration_rejects_an_unknown_legacy_source_schema() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("private-skills.json");
+        fs::write(
+            &path,
+            br#"{"schema_version":"not-ags","revision":0,"skills":{}}"#,
+        )
+        .unwrap();
+        assert!(migrate_legacy_index(&path)
+            .unwrap_err()
+            .contains("unsupported source schema"));
+    }
+
+    #[test]
+    fn archive_restore_is_attempted_even_when_activation_cleanup_fails() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("legacy/private-skills.json");
+        let archived = temp.path().join("archive/private-skills.json");
+        fs::create_dir_all(archived.parent().unwrap()).unwrap();
+        fs::write(&archived, b"legacy state\n").unwrap();
+        let stable_root = temp.path().join("stable-capabilities");
+        fs::write(&stable_root, b"not a directory\n").unwrap();
+        let archive = LegacyArchive {
+            root: Some(temp.path().join("archive")),
+            moves: vec![(source.clone(), archived)],
+        };
+
+        let error = rollback_activation(&stable_root, &archive).unwrap_err();
+        assert!(source.is_file(), "legacy archive was not restored");
+        assert_eq!(fs::read_to_string(source).unwrap(), "legacy state\n");
+        assert!(error.contains("cannot rollback stable capability activation"));
     }
 }

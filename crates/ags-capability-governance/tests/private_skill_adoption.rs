@@ -11,7 +11,8 @@ use ags_capability_governance::skill_adoption::{
     TRANSACTION_JOURNAL_SCHEMA,
 };
 use ags_capability_governance::{
-    hash_skill_source, load_static_snapshot, resolve_skill, snapshot_path,
+    build_capability_snapshot_with_roots, hash_skill_source, load_static_snapshot, resolve_skill,
+    snapshot_path,
 };
 use std::fs;
 use std::io::Write;
@@ -310,6 +311,52 @@ fn actual_git_source_fixture(temp: &TempDir, name: &str) -> (PathBuf, PathBuf, S
     (repository, skill, commit)
 }
 
+fn actual_git_monorepo_fixture(temp: &TempDir) -> (PathBuf, String) {
+    let repository = temp.path().join("multi-skill-git-source");
+    fs::create_dir_all(&repository).unwrap();
+    fs::write(repository.join("LICENSE"), "MIT fixture license\n").unwrap();
+    for name in ["alpha", "beta", "gamma"] {
+        let skill = repository.join("skills").join(name);
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(
+            skill.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: Multi-skill Git fixture.\n---\n\n# {name}\n"),
+        )
+        .unwrap();
+        fs::write(skill.join("REFERENCE.md"), format!("{name} body\n")).unwrap();
+    }
+    run_git(&repository, &["init", "--quiet"]);
+    run_git(&repository, &["config", "user.name", "fixture"]);
+    run_git(
+        &repository,
+        &["config", "user.email", "fixture@example.invalid"],
+    );
+    run_git(&repository, &["add", "--all"]);
+    run_git(&repository, &["commit", "--quiet", "-m", "fixture"]);
+    let commit = run_git(&repository, &["rev-parse", "HEAD"])
+        .trim()
+        .to_string();
+    (repository, commit)
+}
+
+fn contains_git_metadata(root: &Path) -> bool {
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        let Ok(entries) = fs::read_dir(directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if entry.file_name() == ".git" {
+                return true;
+            }
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                pending.push(entry.path());
+            }
+        }
+    }
+    false
+}
+
 #[cfg(unix)]
 #[test]
 fn private_adoption_is_plan_bound_recoverable_and_routable() {
@@ -469,12 +516,13 @@ fn shared_loading_hosts_use_one_index_and_retire_legacy_native_duplicates() {
 }
 
 #[test]
-fn private_adoption_cannot_shadow_the_official_registry() {
+fn private_adoption_cannot_shadow_the_reserved_compatibility_parent() {
     let temp = TempDir::new().unwrap();
     let context = context(&temp);
     let source = source_fixture(&temp, "superpowers");
     let error = plan_local(&context, &source, None, &["codex".to_string()]).unwrap_err();
-    assert!(error.contains("cannot shadow suite Skill id"));
+    assert!(error.contains("cannot shadow catalog compatibility parent"));
+    assert!(error.contains("install its reviewed distribution id"));
 }
 
 #[cfg(unix)]
@@ -540,6 +588,158 @@ fn system_git_accepts_an_exact_commit_requested_ref_hermetically() {
     let candidate = acquire_remote_candidate(&context, &source).unwrap();
     assert_eq!(candidate.resolved_source.resolved_commit, commit);
     assert!(candidate.skill_dir.join("SKILL.md").is_file());
+}
+
+#[test]
+fn system_git_materializes_a_complete_multi_file_root_skill() {
+    let temp = TempDir::new().unwrap();
+    let context = context(&temp);
+    let repository = temp.path().join("root-skill-git-source");
+    fs::create_dir_all(repository.join("scripts")).unwrap();
+    fs::write(repository.join("LICENSE"), "MIT fixture license\n").unwrap();
+    fs::write(
+        repository.join("SKILL.md"),
+        "---\nname: root-team\ndescription: Root Skill fixture.\n---\n",
+    )
+    .unwrap();
+    fs::write(repository.join("REFERENCE.md"), "root reference\n").unwrap();
+    fs::write(repository.join("scripts/helper.sh"), "#!/bin/sh\nexit 0\n").unwrap();
+    run_git(&repository, &["init", "--quiet"]);
+    run_git(&repository, &["config", "user.name", "fixture"]);
+    run_git(
+        &repository,
+        &["config", "user.email", "fixture@example.invalid"],
+    );
+    run_git(&repository, &["add", "--all"]);
+    run_git(&repository, &["commit", "--quiet", "-m", "root fixture"]);
+    let commit = run_git(&repository, &["rev-parse", "HEAD"])
+        .trim()
+        .to_string();
+    let source = SourceSpec::Git {
+        url: format!("file://{}", repository.display()),
+        requested_ref: Some(commit),
+        tracking_ref: Some("main".to_string()),
+        subdir: None,
+    };
+
+    let candidate = acquire_remote_candidate(&context, &source).unwrap();
+    assert!(candidate.skill_dir.join("SKILL.md").is_file());
+    assert!(candidate.skill_dir.join("REFERENCE.md").is_file());
+    assert!(candidate.skill_dir.join("scripts/helper.sh").is_file());
+    assert!(!contains_git_metadata(&candidate.checkout_root));
+}
+
+#[test]
+fn system_git_reuses_sealed_candidates_for_same_commit_and_subdir() {
+    let temp = TempDir::new().unwrap();
+    let context = context(&temp);
+    let (repository, commit) = actual_git_monorepo_fixture(&temp);
+    let mut identities = Vec::new();
+
+    for subdir in ["skills/alpha", "skills/beta", "skills/gamma"] {
+        let source = SourceSpec::Git {
+            url: format!("file://{}", repository.display()),
+            requested_ref: Some(commit.clone()),
+            tracking_ref: Some("main".to_string()),
+            subdir: Some(subdir.to_string()),
+        };
+        for _ in 0..2 {
+            let candidate = acquire_remote_candidate(&context, &source).unwrap();
+            assert!(candidate.skill_dir.join("SKILL.md").is_file());
+            assert!(!contains_git_metadata(&candidate.checkout_root));
+            assert!(candidate
+                .checkout_root
+                .parent()
+                .unwrap()
+                .join("candidate-manifest.json")
+                .is_file());
+            identities.push(candidate.resolved_source.candidate_identity);
+        }
+    }
+
+    assert_eq!(identities[0], identities[1]);
+    assert_eq!(identities[2], identities[3]);
+    assert_eq!(identities[4], identities[5]);
+    assert_ne!(identities[0], identities[2]);
+    assert_ne!(identities[2], identities[4]);
+
+    fs::remove_dir_all(context.runtime_home.join("candidates")).unwrap();
+    for (index, subdir) in ["skills/alpha", "skills/beta", "skills/gamma"]
+        .into_iter()
+        .enumerate()
+    {
+        let source = SourceSpec::Git {
+            url: format!("file://{}", repository.display()),
+            requested_ref: Some(commit.clone()),
+            tracking_ref: Some("main".to_string()),
+            subdir: Some(subdir.to_string()),
+        };
+        let rebuilt = acquire_remote_candidate(&context, &source).unwrap();
+        assert_eq!(
+            rebuilt.resolved_source.candidate_identity,
+            identities[index * 2]
+        );
+        assert!(!contains_git_metadata(&rebuilt.checkout_root));
+    }
+}
+
+#[test]
+fn candidate_identity_ignores_mutable_ref_spelling_after_commit_resolution() {
+    let temp = TempDir::new().unwrap();
+    let context = context(&temp);
+    let (repository, _skill, commit) = actual_git_source_fixture(&temp, "ref-alias-team");
+    let pinned = SourceSpec::Git {
+        url: format!("file://{}", repository.display()),
+        requested_ref: Some(commit.clone()),
+        tracking_ref: Some("main".to_string()),
+        subdir: Some("skill".to_string()),
+    };
+    let tracked = SourceSpec::Git {
+        url: format!("file://{}", repository.display()),
+        requested_ref: Some("master".to_string()),
+        tracking_ref: Some("master".to_string()),
+        subdir: Some("skill".to_string()),
+    };
+
+    let pinned = acquire_remote_candidate(&context, &pinned).unwrap();
+    let tracked = acquire_remote_candidate(&context, &tracked).unwrap();
+    assert_eq!(
+        pinned.resolved_source.candidate_identity,
+        tracked.resolved_source.candidate_identity
+    );
+}
+
+#[test]
+fn cached_candidate_body_drift_is_quarantined_and_rebuilt() {
+    let temp = TempDir::new().unwrap();
+    let context = context(&temp);
+    let (repository, _skill, commit) = actual_git_source_fixture(&temp, "cache-drift-team");
+    let source = SourceSpec::Git {
+        url: format!("file://{}", repository.display()),
+        requested_ref: Some(commit),
+        tracking_ref: Some("main".to_string()),
+        subdir: Some("skill".to_string()),
+    };
+
+    let first = acquire_remote_candidate(&context, &source).unwrap();
+    let expected_hash = first.record.source_hash;
+    fs::write(
+        first.skill_dir.join("SKILL.md"),
+        "---\nname: cache-drift-team\ndescription: Tampered cache.\n---\n",
+    )
+    .unwrap();
+    fs::create_dir_all(first.skill_dir.join("nested/.git/objects")).unwrap();
+    fs::write(
+        first.skill_dir.join("nested/.git/objects/injected"),
+        "untrusted cache metadata\n",
+    )
+    .unwrap();
+
+    let rebuilt = acquire_remote_candidate(&context, &source).unwrap();
+    assert_eq!(rebuilt.record.source_hash, expected_hash);
+    let quarantine = context.runtime_home.join("candidates/quarantine");
+    assert!(quarantine.read_dir().unwrap().next().is_some());
+    assert!(!contains_git_metadata(&quarantine));
 }
 
 #[test]
@@ -701,6 +901,148 @@ fn catalog_review_is_bound_to_exact_source_commit_subdir_and_body_hash() {
     )
     .unwrap_err();
     assert!(error.contains("catalog_integrity_mismatch"));
+}
+
+#[cfg(unix)]
+#[test]
+fn bundled_adapter_installs_distribution_id_as_compatibility_parent_and_migrates_legacy_index() {
+    let temp = TempDir::new().unwrap();
+    let authority = authority_fixture(&temp);
+    let source_registry = authority_root().join("manifests/skills-registry.yaml");
+    fs::copy(
+        &source_registry,
+        authority.join("manifests/skills-registry.yaml"),
+    )
+    .unwrap();
+    let registry: serde_yaml::Value =
+        serde_yaml::from_str(&fs::read_to_string(source_registry).unwrap()).unwrap();
+    let adapter = authority.join("skill-packs/optional/ags-superpowers-adapter");
+    fs::create_dir_all(&adapter).unwrap();
+    fs::write(
+        adapter.join("SKILL.md"),
+        "---\nname: superpowers\ndescription: Modified fixture adapter.\nintent_tags: [verify]\npositive_examples: [verify this]\nnegative_examples: [install official plugin]\n---\n",
+    )
+    .unwrap();
+    fs::write(
+        adapter.join("LICENSE"),
+        "MIT License\n\nCopyright (c) 2025 Jesse Vincent\n\nPermission is hereby granted, free of charge, to any person obtaining a copy.\n",
+    )
+    .unwrap();
+    for target in registry
+        .get("route_targets")
+        .and_then(serde_yaml::Value::as_sequence)
+        .into_iter()
+        .flatten()
+    {
+        let routing = &target["routing"];
+        if routing["parent"]["kind"].as_str() != Some("skill")
+            || routing["parent"]["name"].as_str() != Some("superpowers")
+            || routing["entrypoint"]["kind"].as_str() != Some("playbook")
+        {
+            continue;
+        }
+        let entrypoint = routing["entrypoint"]["name"].as_str().unwrap();
+        let playbook = adapter.join("playbooks").join(entrypoint);
+        fs::create_dir_all(&playbook).unwrap();
+        fs::write(
+            playbook.join("PLAYBOOK.md"),
+            format!("# Explicitly installed {entrypoint} fixture\n"),
+        )
+        .unwrap();
+    }
+    let adapter_hash = hash_skill_source(&adapter).unwrap();
+    fs::write(
+        authority.join("manifests/third-party-capabilities.yaml"),
+        format!(
+            r#"schema_version: "1.0"
+principle: fixture
+capabilities:
+  - id: ags-superpowers-adapter
+    compatibility_parent: superpowers
+    kind: skill
+    name: AGS Superpowers Adapter
+    profiles: [public]
+    required: false
+    tier: optional
+    purpose: Fixture adapter.
+    risk: medium
+    source:
+      manager: bundled
+      bundled_path: skill-packs/optional/ags-superpowers-adapter
+      integrity: "{adapter_hash}"
+      repository: "https://github.com/obra/superpowers"
+      license: MIT
+    install: {{ strategy: none }}
+    routing:
+      route_state: routable
+      invoke_hint: "[skill: superpowers]"
+      intent_tags: [verify]
+      mutation_surface: read-only
+      cost_class: free
+      positive_examples: ["verify this"]
+      negative_examples: ["install official plugin"]
+"#
+        ),
+    )
+    .unwrap();
+    let legacy = authority.join("global-skills/superpowers");
+    fs::create_dir_all(&legacy).unwrap();
+    fs::write(
+        legacy.join("SKILL.md"),
+        "---\nname: superpowers\ndescription: Legacy suite parent.\n---\n",
+    )
+    .unwrap();
+    let legacy_entrypoint = legacy.join("playbooks/using-superpowers");
+    fs::create_dir_all(&legacy_entrypoint).unwrap();
+    fs::write(
+        legacy_entrypoint.join("PLAYBOOK.md"),
+        "# Legacy entrypoint\n",
+    )
+    .unwrap();
+    let context = context_with_authority(&temp, authority);
+    let legacy_index = context.host_home.join(".agents/skills/superpowers");
+    fs::create_dir_all(legacy_index.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&legacy, &legacy_index).unwrap();
+    let legacy_entrypoint_index = context.host_home.join(".agents/skills/using-superpowers");
+    std::os::unix::fs::symlink(&legacy_entrypoint, &legacy_entrypoint_index).unwrap();
+
+    let plan = plan_local(&context, &adapter, None, &["codex".to_string()]).unwrap();
+    assert_eq!(plan.skill_id, "superpowers");
+    assert_eq!(plan.catalog_review, CatalogReviewStatus::Reviewed);
+    apply_install(&context, &plan, "install-adapter", &acknowledge_all(&plan)).unwrap();
+    let record = load_installed_skills(&context.runtime_home)
+        .unwrap()
+        .skills
+        .remove("superpowers")
+        .unwrap();
+    assert_eq!(record.source_hash, adapter_hash);
+    assert_eq!(
+        legacy_index.canonicalize().unwrap(),
+        body_path(&context.runtime_home, &record)
+            .canonicalize()
+            .unwrap()
+    );
+    assert!(fs::symlink_metadata(legacy_entrypoint_index).is_err());
+
+    let snapshot = build_capability_snapshot_with_roots(
+        &context.authority_root,
+        "codex",
+        &context.runtime_home,
+        &context.host_home,
+    )
+    .unwrap();
+    let active = snapshot.validate_integrity("codex").unwrap().skills;
+    let selection = resolve_skill(
+        "superpowers",
+        Some("verification-before-completion"),
+        &snapshot.snapshot_hash,
+        &active,
+    )
+    .unwrap();
+    assert_eq!(
+        selection.entrypoint.as_deref(),
+        Some("verification-before-completion")
+    );
 }
 
 #[test]

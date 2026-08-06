@@ -18,7 +18,7 @@ pub(crate) fn run(action: CliOnboardingAction) {
             host,
             format,
         } => {
-            let plan = plan_or_exit(&target, &host);
+            let plan = plan_or_exit(&target, &host, &format);
             print_plan(&plan, &format);
         }
         CliOnboardingAction::Apply {
@@ -35,7 +35,7 @@ pub(crate) fn run(action: CliOnboardingAction) {
                 );
                 std::process::exit(2);
             }
-            let plan = plan_or_exit(&target, &host);
+            let plan = plan_or_exit(&target, &host, &format);
             if plan_hash != plan.plan_hash {
                 eprintln!(
                     "ags onboarding apply: refused — plan hash changed (reviewed {plan_hash}, current {}); run `ags onboarding plan` again",
@@ -101,7 +101,7 @@ pub(crate) fn run(action: CliOnboardingAction) {
             host,
             format,
         } => {
-            let plan = plan_or_exit(&target, &host);
+            let plan = plan_or_exit(&target, &host, &format);
             print_plan(&plan, &format);
             if !plan.ready {
                 std::process::exit(1);
@@ -110,7 +110,7 @@ pub(crate) fn run(action: CliOnboardingAction) {
     }
 }
 
-fn plan_or_exit(target: &Path, host: &str) -> OnboardingPlan {
+fn plan_or_exit(target: &Path, host: &str, format: &str) -> OnboardingPlan {
     let source_root = std::env::current_dir()
         .ok()
         .filter(|root| root.join("manifests/onboarding-public.yaml").is_file())
@@ -121,8 +121,7 @@ fn plan_or_exit(target: &Path, host: &str) -> OnboardingPlan {
     let third_party =
         ags_capability_governance::third_party_manifest::resolve_third_party_manifest(&source_root)
             .unwrap_or_else(|error| {
-                eprintln!("ags onboarding: {error}");
-                std::process::exit(1);
+                crate::output::error_exit("ags onboarding", error, format, 1);
             });
     assess_public_with_resolution(
         &AssessContext {
@@ -138,8 +137,7 @@ fn plan_or_exit(target: &Path, host: &str) -> OnboardingPlan {
         &third_party,
     )
     .unwrap_or_else(|error| {
-        eprintln!("ags onboarding: {error}");
-        std::process::exit(1);
+        crate::output::error_exit("ags onboarding", error, format, 1);
     })
 }
 

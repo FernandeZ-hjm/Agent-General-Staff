@@ -358,12 +358,32 @@ fn load_routing_metadata(
     let Some(path) = path else {
         return Ok((None, None));
     };
-    let metadata = fs::symlink_metadata(path).map_err(|error| {
-        format!(
-            "cannot inspect routing metadata {}: {error}",
-            path.display()
-        )
-    })?;
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let value = path.to_string_lossy();
+            if value.contains('\n')
+                || value.trim_start().starts_with("---")
+                || value.contains(": ")
+                || value.trim_end().ends_with(':')
+            {
+                return Err(
+                    "metadata_argument_requires_file: --metadata accepts an existing YAML file path (<FILE>), not inline YAML"
+                        .to_string(),
+                );
+            }
+            return Err(format!(
+                "metadata_file_not_found: --metadata file does not exist: {}",
+                path.display()
+            ));
+        }
+        Err(error) => {
+            return Err(format!(
+                "cannot inspect routing metadata {}: {error}",
+                path.display()
+            ))
+        }
+    };
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(format!(
             "routing metadata must be a regular file: {}",

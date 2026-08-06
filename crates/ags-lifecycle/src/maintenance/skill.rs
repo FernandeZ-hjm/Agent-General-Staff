@@ -139,6 +139,49 @@ impl MaintenanceBackend for SkillMaintenanceBackend {
                 .and_then(|value| value.as_str().map(str::to_string))
                 .unwrap_or_else(|| "notify".to_string()),
         );
+        if let Ok(catalog) =
+            ags_capability_governance::third_party_manifest::resolve_third_party_manifest(
+                &self.adoption.authority_root,
+            )
+        {
+            if adoption.catalog_review
+                == ags_capability_governance::skill_adoption::CatalogReviewStatus::Reviewed
+            {
+                let mut distributions = catalog.manifest.capabilities.iter().filter(|capability| {
+                    capability.kind
+                        == ags_capability_governance::third_party_manifest::CapabilityKind::Skill
+                        && capability
+                            .source
+                            .integrity
+                            .as_deref()
+                            .is_some_and(|hash| hash == adoption.source_hash)
+                        && capability
+                            .compatibility_parent
+                            .as_deref()
+                            .unwrap_or(&capability.id)
+                            == adoption.skill_id
+                });
+                if let Some(distribution) = distributions.next() {
+                    if distributions.next().is_none() {
+                        metadata.insert(
+                            "catalog_distribution_id".to_string(),
+                            distribution.id.clone(),
+                        );
+                        if !distribution.name.is_empty() {
+                            metadata.insert(
+                                "catalog_display_name".to_string(),
+                                distribution.name.clone(),
+                            );
+                        }
+                    }
+                }
+            }
+            metadata.insert("catalog_source".to_string(), catalog.source);
+            metadata.insert("catalog_hash".to_string(), catalog.content_hash);
+            if let Some(release) = catalog.release {
+                metadata.insert("catalog_release".to_string(), release);
+            }
+        }
         Ok(PreparedMaintenance {
             current_version: adoption.previous_body_revision.clone(),
             target_version: Some(adoption.body_hash.clone()),
@@ -267,6 +310,25 @@ impl MaintenanceBackend for SkillMaintenanceBackend {
             && expected_hosts
                 .iter()
                 .all(|host| repreflight.iter().any(|(item, ok, _)| item == host && *ok));
+        let mut verification_results = vec![VerificationResult {
+            id: "skill-body-host-snapshot-route".to_string(),
+            passed,
+            evidence: serde_json::to_string(&route_status).unwrap_or_default(),
+        }];
+        if let Some(distribution_id) = plan.metadata.get("catalog_distribution_id") {
+            verification_results.push(VerificationResult {
+                id: "catalog-distribution-identity".to_string(),
+                passed,
+                evidence: serde_json::json!({
+                    "distribution_id": distribution_id,
+                    "display_name": plan.metadata.get("catalog_display_name"),
+                    "compatibility_parent": skill_id,
+                    "catalog_hash": plan.metadata.get("catalog_hash"),
+                    "catalog_release": plan.metadata.get("catalog_release"),
+                })
+                .to_string(),
+            });
+        }
         Ok(MaintenanceExecution {
             status: if passed {
                 MaintenanceStatus::Verified
@@ -274,11 +336,7 @@ impl MaintenanceBackend for SkillMaintenanceBackend {
                 MaintenanceStatus::Failed
             },
             applied_writes: Vec::new(),
-            verification_results: vec![VerificationResult {
-                id: "skill-body-host-snapshot-route".to_string(),
-                passed,
-                evidence: serde_json::to_string(&route_status).unwrap_or_default(),
-            }],
+            verification_results,
             activation_results: expected_hosts
                 .into_iter()
                 .map(|host| {

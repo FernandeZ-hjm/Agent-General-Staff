@@ -124,7 +124,8 @@ pub(crate) enum SkillAction {
         source: String,
         #[arg(long)]
         requested_ref: Option<String>,
-        #[arg(long)]
+        /// Existing YAML routing metadata file; inline YAML is not accepted.
+        #[arg(long, value_name = "FILE")]
         metadata: Option<PathBuf>,
         #[arg(long = "host")]
         host: Vec<String>,
@@ -138,7 +139,8 @@ pub(crate) enum SkillAction {
         source: String,
         #[arg(long)]
         requested_ref: Option<String>,
-        #[arg(long)]
+        /// Existing YAML routing metadata file; inline YAML is not accepted.
+        #[arg(long, value_name = "FILE")]
         metadata: Option<PathBuf>,
         #[arg(long = "host")]
         host: Vec<String>,
@@ -192,7 +194,7 @@ pub(crate) enum SkillAction {
         source: PathBuf,
         /// Optional machine-local YAML routing metadata. It is audited and
         /// hash-bound to the reviewed plan, but never copied into AGS Git.
-        #[arg(long)]
+        #[arg(long, value_name = "FILE")]
         metadata: Option<PathBuf>,
         /// Target host id; repeatable. Empty selects the Hosts approved by setup;
         /// `all` explicitly selects every supported Host.

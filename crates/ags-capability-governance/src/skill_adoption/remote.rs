@@ -5,9 +5,18 @@ use super::source::{
     audit_local_source_with_boundary, parse_github_url, validate_materialized_tree,
     validate_source_subdir,
 };
+use crate::hash_skill_source;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+const CANDIDATE_MANIFEST_SCHEMA: &str = "0.4.15-remote-candidate";
+const CANDIDATE_MANIFEST_FILE: &str = "candidate-manifest.json";
+const MAX_CANDIDATE_MANIFEST_BYTES: u64 = 64 * 1024;
+static CANDIDATE_STAGE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// The only process seam used by remote Skill acquisition.  Implementations
 /// receive discrete values; no shell command string is ever accepted.
@@ -76,6 +85,17 @@ pub struct RemoteCandidate {
     pub resolved_source: ResolvedSource,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CandidateManifest {
+    schema_version: String,
+    candidate_identity: String,
+    repository_url: String,
+    resolved_commit: String,
+    subdir: String,
+    body_hash: String,
+}
+
 pub fn acquire_remote_candidate(
     context: &AdoptionContext,
     source: &SourceSpec,
@@ -91,78 +111,49 @@ pub fn acquire_remote_candidate_with_backend(
     let (repository_url, requested_ref, subdir) = validate_remote_source(source)?;
     let resolved_commit = backend.resolve_commit(repository_url, requested_ref.as_deref())?;
     validate_commit(&resolved_commit)?;
+    let resolved_commit = resolved_commit.to_ascii_lowercase();
     let candidate_identity = ags_platform::sha256(
-        &serde_json::to_vec(&(source, &resolved_commit))
-            .map_err(|error| format!("cannot serialize candidate identity: {error}"))?,
+        &serde_json::to_vec(&(
+            CANDIDATE_MANIFEST_SCHEMA,
+            repository_url,
+            &resolved_commit,
+            &subdir,
+        ))
+        .map_err(|error| format!("cannot serialize candidate identity: {error}"))?,
     );
     let candidate_name = candidate_identity.trim_start_matches("sha256:");
     let candidates_root = context.runtime_home.join("candidates");
     let candidate_root = candidates_root.join(candidate_name);
     let checkout_root = candidate_root.join("checkout");
     ensure_directory_not_symlink(&candidates_root, "candidate store")?;
-    ensure_directory_not_symlink(&candidate_root, "candidate")?;
-    ensure_directory_not_symlink(&checkout_root, "candidate checkout")?;
-    if !checkout_root.exists() {
-        fs::create_dir_all(&candidates_root).map_err(|error| {
-            format!(
-                "cannot create candidate root {}: {error}",
-                candidates_root.display()
-            )
-        })?;
-        let stage =
-            candidates_root.join(format!(".stage-{}-{}", std::process::id(), candidate_name));
-        if fs::symlink_metadata(&stage).is_ok() {
-            fs::remove_dir_all(&stage).map_err(|error| {
-                format!("cannot clear candidate stage {}: {error}", stage.display())
-            })?;
-        }
-        fs::create_dir_all(&stage).map_err(|error| {
-            format!("cannot create candidate stage {}: {error}", stage.display())
-        })?;
-        let result = (|| -> Result<(), String> {
-            let tree_metadata =
-                backend.prepare_checkout(repository_url, &resolved_commit, &stage)?;
-            let license_paths = tree_metadata
-                .as_deref()
-                .map(|entries| preflight_selected_tree(entries, &subdir))
-                .transpose()?
-                .unwrap_or_default();
-            backend.materialize_selected(
-                repository_url,
-                &resolved_commit,
-                &stage,
-                &subdir,
-                &license_paths,
-            )?;
-            ensure_directory_not_symlink(&stage, "candidate checkout")?;
-            backend.validate_checkout(&stage)?;
-            remove_git_metadata(&stage)?;
-            if let Some(entries) = tree_metadata.as_deref() {
-                validate_materialized_tree_metadata(&stage, entries, &subdir)?;
-            }
-            let selected_stage = stage.join(&subdir);
-            validate_materialized_tree(&selected_stage)?;
-            validate_materialized_license_files(&stage, &license_paths)?;
-            fs::create_dir_all(&candidate_root).map_err(|error| {
-                format!(
-                    "cannot create candidate directory {}: {error}",
-                    candidate_root.display()
-                )
-            })?;
-            fs::rename(&stage, &checkout_root).map_err(|error| {
-                format!(
-                    "cannot publish candidate checkout {}: {error}",
-                    checkout_root.display()
-                )
-            })?;
-            Ok(())
-        })();
-        if let Err(error) = result {
-            let _ = fs::remove_dir_all(&stage);
-            let _ = fs::remove_dir(&candidates_root);
-            return Err(error);
+    let expected_manifest = CandidateManifest {
+        schema_version: CANDIDATE_MANIFEST_SCHEMA.to_string(),
+        candidate_identity: candidate_identity.clone(),
+        repository_url: repository_url.to_string(),
+        resolved_commit: resolved_commit.clone(),
+        subdir: subdir.clone(),
+        body_hash: String::new(),
+    };
+    if fs::symlink_metadata(&candidate_root).is_ok() {
+        ensure_directory_not_symlink(&candidate_root, "candidate")?;
+        if validate_cached_candidate(&candidate_root, &expected_manifest).is_err() {
+            quarantine_candidate(&candidates_root, &candidate_root, candidate_name)?;
         }
     }
+    if fs::symlink_metadata(&candidate_root).is_err() {
+        materialize_candidate(
+            &candidates_root,
+            &candidate_root,
+            candidate_name,
+            repository_url,
+            &resolved_commit,
+            &subdir,
+            &expected_manifest,
+            backend,
+        )?;
+    }
+    ensure_directory_not_symlink(&checkout_root, "candidate checkout")?;
+    validate_cached_candidate(&candidate_root, &expected_manifest)?;
     let skill_dir = checkout_root.join(&subdir);
     ensure_contained_directory(&checkout_root, &skill_dir)?;
     validate_materialized_tree(&skill_dir)?;
@@ -213,6 +204,189 @@ pub fn acquire_remote_candidate_with_backend(
         record,
         resolved_source,
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn materialize_candidate(
+    candidates_root: &Path,
+    candidate_root: &Path,
+    candidate_name: &str,
+    repository_url: &str,
+    resolved_commit: &str,
+    subdir: &str,
+    expected_manifest: &CandidateManifest,
+    backend: &dyn GitBackend,
+) -> Result<(), String> {
+    fs::create_dir_all(candidates_root).map_err(|error| {
+        format!(
+            "cannot create candidate root {}: {error}",
+            candidates_root.display()
+        )
+    })?;
+    let stage_root = candidates_root.join(format!(
+        ".stage-{}-{}-{candidate_name}",
+        std::process::id(),
+        unique_candidate_suffix()
+    ));
+    fs::create_dir(&stage_root).map_err(|error| {
+        format!(
+            "cannot create unique candidate stage {}: {error}",
+            stage_root.display()
+        )
+    })?;
+    let stage_checkout = stage_root.join("checkout");
+    let result = (|| -> Result<(), String> {
+        let tree_metadata =
+            backend.prepare_checkout(repository_url, resolved_commit, &stage_checkout)?;
+        let license_paths = tree_metadata
+            .as_deref()
+            .map(|entries| preflight_selected_tree(entries, subdir))
+            .transpose()?
+            .unwrap_or_default();
+        backend.materialize_selected(
+            repository_url,
+            resolved_commit,
+            &stage_checkout,
+            subdir,
+            &license_paths,
+        )?;
+        ensure_directory_not_symlink(&stage_checkout, "candidate checkout")?;
+        backend.validate_checkout(&stage_checkout)?;
+        remove_git_metadata(&stage_checkout)?;
+        ensure_no_git_metadata(&stage_checkout)?;
+        if let Some(entries) = tree_metadata.as_deref() {
+            validate_materialized_tree_metadata(&stage_checkout, entries, subdir)?;
+        }
+        let selected_stage = stage_checkout.join(subdir);
+        validate_materialized_tree(&selected_stage)?;
+        validate_materialized_license_files(&stage_checkout, &license_paths)?;
+        let mut manifest = expected_manifest.clone();
+        manifest.body_hash = hash_skill_source(&selected_stage)?;
+        write_candidate_manifest(&stage_root, &manifest)?;
+        fs::rename(&stage_root, candidate_root).map_err(|error| {
+            format!(
+                "cannot publish sealed candidate {}: {error}",
+                candidate_root.display()
+            )
+        })?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&stage_root);
+        // Preserve the pre-0.4.15 fail-closed contract: an acquisition that
+        // never publishes or quarantines a candidate must not leave an empty
+        // cache directory behind.
+        let _ = fs::remove_dir(candidates_root);
+    }
+    result
+}
+
+fn validate_cached_candidate(
+    candidate_root: &Path,
+    expected: &CandidateManifest,
+) -> Result<(), String> {
+    ensure_directory_not_symlink(candidate_root, "candidate")?;
+    let checkout_root = candidate_root.join("checkout");
+    ensure_directory_not_symlink(&checkout_root, "candidate checkout")?;
+    let manifest = read_candidate_manifest(candidate_root)?;
+    if manifest.schema_version != expected.schema_version
+        || manifest.candidate_identity != expected.candidate_identity
+        || manifest.repository_url != expected.repository_url
+        || manifest.resolved_commit != expected.resolved_commit
+        || manifest.subdir != expected.subdir
+        || manifest.body_hash.is_empty()
+    {
+        return Err("candidate_manifest_identity_mismatch".to_string());
+    }
+    ensure_no_git_metadata(&checkout_root)?;
+    let skill_dir = checkout_root.join(&manifest.subdir);
+    ensure_contained_directory(&checkout_root, &skill_dir)?;
+    validate_materialized_tree(&skill_dir)?;
+    let observed_hash = hash_skill_source(&skill_dir)?;
+    if observed_hash != manifest.body_hash {
+        return Err("candidate_manifest_body_hash_mismatch".to_string());
+    }
+    Ok(())
+}
+
+fn read_candidate_manifest(candidate_root: &Path) -> Result<CandidateManifest, String> {
+    let path = candidate_root.join(CANDIDATE_MANIFEST_FILE);
+    let metadata = fs::symlink_metadata(&path).map_err(|error| {
+        format!(
+            "cannot inspect candidate manifest {}: {error}",
+            path.display()
+        )
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("candidate_manifest_not_regular_file".to_string());
+    }
+    if metadata.len() > MAX_CANDIDATE_MANIFEST_BYTES {
+        return Err("candidate_manifest_too_large".to_string());
+    }
+    let bytes = fs::read(&path)
+        .map_err(|error| format!("cannot read candidate manifest {}: {error}", path.display()))?;
+    serde_json::from_slice(&bytes).map_err(|error| {
+        format!(
+            "cannot parse candidate manifest {}: {error}",
+            path.display()
+        )
+    })
+}
+
+fn write_candidate_manifest(
+    candidate_root: &Path,
+    manifest: &CandidateManifest,
+) -> Result<(), String> {
+    let path = candidate_root.join(CANDIDATE_MANIFEST_FILE);
+    let bytes = serde_json::to_vec_pretty(manifest)
+        .map_err(|error| format!("cannot serialize candidate manifest: {error}"))?;
+    fs::write(&path, bytes).map_err(|error| {
+        format!(
+            "cannot write candidate manifest {}: {error}",
+            path.display()
+        )
+    })
+}
+
+fn quarantine_candidate(
+    candidates_root: &Path,
+    candidate_root: &Path,
+    candidate_name: &str,
+) -> Result<(), String> {
+    let quarantine_root = candidates_root.join("quarantine");
+    ensure_directory_not_symlink(&quarantine_root, "candidate quarantine")?;
+    fs::create_dir_all(&quarantine_root).map_err(|error| {
+        format!(
+            "cannot create candidate quarantine {}: {error}",
+            quarantine_root.display()
+        )
+    })?;
+    let quarantined = quarantine_root.join(format!(
+        "{candidate_name}-{}-{}",
+        std::process::id(),
+        unique_candidate_suffix()
+    ));
+    fs::rename(candidate_root, &quarantined).map_err(|error| {
+        format!(
+            "cannot quarantine invalid candidate {}: {error}",
+            candidate_root.display()
+        )
+    })?;
+    let checkout = quarantined.join("checkout");
+    if fs::symlink_metadata(&checkout).is_ok() {
+        remove_git_metadata(&checkout)?;
+        ensure_no_git_metadata(&checkout)?;
+    }
+    Ok(())
+}
+
+fn unique_candidate_suffix() -> String {
+    let sequence = CANDIDATE_STAGE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("{nanos:x}-{sequence:x}")
 }
 
 fn validate_remote_source(source: &SourceSpec) -> Result<(&str, Option<String>, String), String> {
@@ -548,22 +722,117 @@ fn ensure_directory_not_symlink(path: &Path, label: &str) -> Result<(), String> 
 }
 
 fn remove_git_metadata(root: &Path) -> Result<(), String> {
-    let git = root.join(".git");
-    let Ok(metadata) = fs::symlink_metadata(&git) else {
+    const MAX_PASSES: usize = 4;
+    for _ in 0..MAX_PASSES {
+        let git_paths = find_git_metadata(root)?;
+        if git_paths.is_empty() {
+            return Ok(());
+        }
+        for git_path in git_paths {
+            remove_git_metadata_path(&git_path)?;
+        }
+        std::thread::yield_now();
+    }
+    ensure_no_git_metadata(root)
+}
+
+fn ensure_no_git_metadata(root: &Path) -> Result<(), String> {
+    let remaining = find_git_metadata(root)?;
+    if remaining.is_empty() {
         return Ok(());
-    };
-    if metadata.file_type().is_symlink() {
-        return Err("symlink_refused: .git".to_string());
     }
-    if metadata.is_dir() {
-        fs::remove_dir_all(&git)
-            .map_err(|error| format!("cannot remove isolated Git metadata: {error}"))
-    } else if metadata.is_file() {
-        fs::remove_file(&git)
-            .map_err(|error| format!("cannot remove isolated Git metadata: {error}"))
-    } else {
-        Err("special_file_refused: .git".to_string())
+    Err(format!(
+        "isolated Git metadata remains after cleanup: {}",
+        remaining
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
+}
+
+fn find_git_metadata(root: &Path) -> Result<Vec<PathBuf>, String> {
+    ensure_directory_not_symlink(root, "candidate checkout")?;
+    let mut pending = vec![root.to_path_buf()];
+    let mut found = Vec::new();
+    while let Some(directory) = pending.pop() {
+        let entries = fs::read_dir(&directory).map_err(|error| {
+            format!(
+                "cannot inspect isolated checkout {}: {error}",
+                directory.display()
+            )
+        })?;
+        for entry in entries {
+            let entry = entry.map_err(|error| {
+                format!(
+                    "cannot inspect isolated checkout entry under {}: {error}",
+                    directory.display()
+                )
+            })?;
+            let path = entry.path();
+            let file_type = entry.file_type().map_err(|error| {
+                format!(
+                    "cannot inspect isolated checkout entry {}: {error}",
+                    path.display()
+                )
+            })?;
+            if entry.file_name() == ".git" {
+                if !file_type.is_symlink() && !file_type.is_dir() && !file_type.is_file() {
+                    return Err(format!("special_file_refused: {}", path.display()));
+                }
+                found.push(path);
+            } else if file_type.is_dir() {
+                pending.push(path);
+            }
+        }
     }
+    found.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    Ok(found)
+}
+
+fn remove_git_metadata_path(path: &Path) -> Result<(), String> {
+    const MAX_ATTEMPTS: usize = 4;
+    for attempt in 0..MAX_ATTEMPTS {
+        let metadata = match fs::symlink_metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                return Err(format!(
+                    "cannot inspect isolated Git metadata {}: {error}",
+                    path.display()
+                ))
+            }
+        };
+        let result = if metadata.file_type().is_symlink() || metadata.is_file() {
+            fs::remove_file(path)
+        } else if metadata.is_dir() {
+            fs::remove_dir_all(path)
+        } else {
+            return Err(format!("special_file_refused: {}", path.display()));
+        };
+        match result {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if attempt + 1 < MAX_ATTEMPTS
+                    && matches!(
+                        error.kind(),
+                        std::io::ErrorKind::DirectoryNotEmpty | std::io::ErrorKind::Interrupted
+                    ) =>
+            {
+                std::thread::yield_now();
+            }
+            Err(error) => {
+                return Err(format!(
+                    "cannot remove isolated Git metadata {}: {error}",
+                    path.display()
+                ))
+            }
+        }
+    }
+    Err(format!(
+        "cannot remove isolated Git metadata {} after retries",
+        path.display()
+    ))
 }
 
 fn validate_commit(commit: &str) -> Result<(), String> {
@@ -676,7 +945,11 @@ impl GitBackend for SystemGitBackend {
         )?;
         let mut patterns = Vec::new();
         if subdir.is_empty() {
-            patterns.push("/SKILL.md".to_string());
+            // The repository root is the complete selected Skill body. A
+            // SKILL.md-only sparse checkout would make every referenced root
+            // file disappear and then fail metadata validation. Materialize
+            // the full tracked root so hashing and audit cover the exact body.
+            patterns.push("/*".to_string());
         } else {
             patterns.push(format!("/{subdir}/**"));
         }

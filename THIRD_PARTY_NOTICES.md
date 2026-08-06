@@ -1,44 +1,26 @@
 # Third-Party Notices
 
-This file lists third-party works referenced by or adapted into the Agent
-General Staff (AGS) public edition. AGS itself is licensed under GPL-3.0-only.
-Third-party components retain their original licenses as listed below.
+AGS itself is licensed under GPL-3.0-only. Third-party components retain their
+licenses below.
 
-## Superpowers
+## AGS Superpowers Adapter
 
-- Project: Superpowers
-- Repository: https://github.com/obra/superpowers
-- Description: Agentic skills framework and software development methodology
-- Authors: Jesse Vincent and Prime Radiant contributors
-- License: MIT License
+- Distribution id: `ags-superpowers-adapter`
+- Display name: AGS Superpowers Adapter
+- Host compatibility parent: `superpowers`
+- Upstream: https://github.com/obra/superpowers
+- Fixed upstream commit: `44c9b2d6e889982ac18c27d05a19fefe335194e1`
+- Upstream copyright: Copyright (c) 2025 Jesse Vincent
+- Upstream license: MIT
+- File-level provenance: `skill-packs/optional/ags-superpowers-adapter/PROVENANCE.yaml`
 
-AGS does not vendor the upstream Superpowers repository as an installed skill
-pack by default. AGS may include public-safe workflow references, compatibility
-language, optional skill recommendations, or adapted process concepts that are
-intended to interoperate with Superpowers-style agent skills.
+The adapter is modified by AGS and is not the upstream Superpowers package. It
+is not official and does not imply sponsorship, authorization, affiliation, or
+endorsement by Jesse Vincent, Prime Radiant, or the upstream project. No
+upstream logo or telemetry integration is included. Installation is optional
+and requires the normal explicit AGS Skill plan-hash/apply transaction.
 
-The upstream Superpowers license notice is reproduced below for attribution.
-
-```text
-MIT License
-
-Copyright (c) 2025 Jesse Vincent
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
+The complete upstream MIT license, including the 2025 Jesse Vincent copyright
+notice, is included at
+`skill-packs/optional/ags-superpowers-adapter/LICENSE` and must accompany all
+copies or substantial portions of the upstream-derived files.

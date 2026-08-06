@@ -182,14 +182,35 @@ fn resolve_remote_source(command: &str, value: &str, requested_ref: Option<&str>
             );
             std::process::exit(1);
         });
+    if recommendation.source_kind == "bundled" {
+        let bundled = recommendation.bundled_path.as_deref().unwrap_or_else(|| {
+            eprintln!("{command}: recommendation `{value}` has no bundled source path");
+            std::process::exit(1);
+        });
+        let root = authority(command);
+        let root = std::fs::canonicalize(&root).unwrap_or_else(|error| {
+            eprintln!("{command}: cannot resolve capability authority: {error}");
+            std::process::exit(1);
+        });
+        let candidate = root.join(bundled);
+        let candidate = std::fs::canonicalize(&candidate).unwrap_or_else(|error| {
+            eprintln!("{command}: bundled recommendation `{value}` is unavailable: {error}");
+            std::process::exit(1);
+        });
+        if !candidate.starts_with(&root) {
+            eprintln!("{command}: bundled recommendation `{value}` escapes capability authority");
+            std::process::exit(1);
+        }
+        return SourceSpec::local(candidate.to_string_lossy());
+    }
     let source = recommendation
         .source
         .as_deref()
-        .or(recommendation.upstream.as_deref())
-        .unwrap_or_else(|| {
-            eprintln!("{command}: recommendation `{value}` has no installable source identity");
-            std::process::exit(1);
-        });
+        .or(recommendation.upstream.as_deref());
+    let source = source.unwrap_or_else(|| {
+        eprintln!("{command}: recommendation `{value}` has no installable source identity");
+        std::process::exit(1);
+    });
     parse_github_source(source, requested_ref.or(recommendation.revision.as_deref()))
         .map(|source| source.with_tracking_ref(recommendation.tracking_ref.clone()))
         .unwrap_or_else(|error| {
@@ -232,8 +253,12 @@ fn inspect(
         let plan = maintenance_service("ags skill inspect")
             .plan(install_intent(&source_spec, metadata, hosts, policy))
             .unwrap_or_else(|error| {
-                eprintln!("ags skill inspect: refused — {error}");
-                std::process::exit(1);
+                crate::output::error_exit(
+                    "ags skill inspect",
+                    format!("refused — {error}"),
+                    format,
+                    1,
+                );
             });
         let observed_repository = observed_git_origin(&path);
         let output = serde_json::json!({
@@ -254,8 +279,7 @@ fn inspect(
     let plan = maintenance_service("ags skill inspect")
         .plan(install_intent(&source, metadata, hosts, policy))
         .unwrap_or_else(|error| {
-            eprintln!("ags skill inspect: refused — {error}");
-            std::process::exit(1);
+            crate::output::error_exit("ags skill inspect", format!("refused — {error}"), format, 1);
         });
     emit_maintenance_plan(&plan, format);
 }
@@ -299,8 +323,12 @@ fn install(command: InstallCommand<'_>) {
                 command.policy,
             ))
             .unwrap_or_else(|error| {
-                eprintln!("ags skill install: refused — {error}");
-                std::process::exit(1);
+                crate::output::error_exit(
+                    "ags skill install",
+                    format!("refused — {error}"),
+                    command.format,
+                    1,
+                );
             });
         emit_maintenance_plan(&plan, command.format);
     }
@@ -513,8 +541,12 @@ fn adopt(command: AdoptCommand<'_>) {
                 command.update_policy,
             ))
             .unwrap_or_else(|error| {
-                eprintln!("ags skill adopt: refused — {error}");
-                std::process::exit(1);
+                crate::output::error_exit(
+                    "ags skill adopt",
+                    format!("refused — {error}"),
+                    command.format,
+                    1,
+                );
             });
         emit_maintenance_plan(&plan, command.format);
     }
