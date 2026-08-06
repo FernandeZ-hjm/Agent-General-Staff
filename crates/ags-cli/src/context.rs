@@ -38,14 +38,7 @@ pub(crate) fn runtime_install_target(target: Option<PathBuf>) -> PathBuf {
     target.unwrap_or_else(ags_platform::runtime_home)
 }
 fn is_complete_source_root(root: &Path) -> bool {
-    let required = [
-        "protocol/agent-task-protocol.md",
-        "protocol/task-card-template.md",
-        "protocol/runtime-adapters.md",
-        "protocol/task-routing.md",
-        "crates/ags-cli/Cargo.toml",
-    ];
-    required.iter().all(|rel| root.join(rel).is_file())
+    ags_lifecycle::setup::is_runtime_source_root(root)
 }
 
 fn installed_source_root(runtime_home: &Path) -> Option<PathBuf> {
@@ -136,19 +129,48 @@ mod source_root_tests {
     use super::*;
 
     fn seed_suite(root: &Path) {
-        for rel in [
-            "manifests/skills-registry.yaml",
-            "manifests/mcp-registry.yaml",
-            "protocol/agent-task-protocol.md",
-            "protocol/task-card-template.md",
-            "protocol/runtime-adapters.md",
-            "protocol/task-routing.md",
-            "crates/ags-cli/Cargo.toml",
-        ] {
+        for rel in ags_lifecycle::setup::RUNTIME_SOURCE_REQUIRED_FILES {
             let path = root.join(rel);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, "fixture\n").unwrap();
         }
+    }
+
+    #[test]
+    fn signed_public_runtime_is_complete_without_rust_workspace_sources() {
+        let base = std::env::temp_dir().join(format!(
+            "ags-source-root-public-runtime-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        seed_suite(&base);
+
+        assert!(is_complete_source_root(&base));
+        assert!(!base.join("crates/ags-cli/Cargo.toml").exists());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn capability_manifests_without_setup_protocols_are_not_a_runtime_source() {
+        let base = std::env::temp_dir().join(format!(
+            "ags-source-root-incomplete-runtime-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("manifests")).unwrap();
+        for name in [
+            "suite.yaml",
+            "skills-registry.yaml",
+            "mcp-registry.yaml",
+            "third-party-capabilities.yaml",
+        ] {
+            std::fs::write(base.join("manifests").join(name), "fixture\n").unwrap();
+        }
+
+        assert!(!is_complete_source_root(&base));
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

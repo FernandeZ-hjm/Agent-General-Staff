@@ -18,7 +18,6 @@ pub struct SuiteSkillMaintenanceBackend {
     pub source_root: PathBuf,
     pub runtime_home: PathBuf,
     pub host_home: PathBuf,
-    pub preflight_target: PathBuf,
     pub policy: SuiteSkillProjectionPolicy,
     /// Setup may already have rendered this exact change for user review. In
     /// that case the same value is sealed into MaintenancePlan instead of
@@ -42,6 +41,39 @@ struct SnapshotRecoveryRecord {
 }
 
 impl SuiteSkillMaintenanceBackend {
+    fn runtime_activation_preflight(&self, host: &str) -> Result<(), String> {
+        if !crate::setup::is_runtime_source_root(&self.source_root) {
+            return Err(format!(
+                "runtime source is incomplete: {}",
+                self.source_root.display()
+            ));
+        }
+        let manifest_path = self.runtime_home.join("install-manifest.json");
+        let body = fs::read_to_string(&manifest_path)
+            .map_err(|error| format!("cannot read {}: {error}", manifest_path.display()))?;
+        let manifest: serde_json::Value = serde_json::from_str(&body)
+            .map_err(|error| format!("invalid {}: {error}", manifest_path.display()))?;
+        let installed_source = manifest
+            .get("source_root")
+            .and_then(serde_json::Value::as_str)
+            .map(PathBuf::from)
+            .ok_or_else(|| "runtime install manifest has no source_root".to_string())?;
+        if ags_platform::normalize_path(&installed_source)
+            != ags_platform::normalize_path(&self.source_root)
+        {
+            return Err(
+                "runtime install manifest source_root differs from activation source".to_string(),
+            );
+        }
+        let approved = crate::setup::approved_lifecycle_hosts(&self.runtime_home)?;
+        if !approved.iter().any(|approved_host| approved_host == host) {
+            return Err(format!(
+                "Host `{host}` is absent from the approved runtime Host set"
+            ));
+        }
+        Ok(())
+    }
+
     fn affected_hosts(change: &PreparedSuiteSkillProjection) -> Vec<String> {
         let mut hosts = change.hosts.clone();
         hosts.extend(change.deactivated_hosts.iter().cloned());
@@ -295,24 +327,22 @@ impl SuiteSkillMaintenanceBackend {
                 .map_err(|error| format!("invalid `{host}` capability snapshot: {error:?}"))?;
             let routes_passed =
                 verify_required_skills(&snapshot, &tables, &change.required_skills, host).is_ok();
-            let agent = ags_workspace_facts::AgentType::from_str(host)
-                .map_err(|error| format!("cannot map suite Host `{host}`: {error}"))?;
-            let preflight =
-                ags_workspace_facts::run_session_preflight(&self.preflight_target, &agent);
-            let passed = routes_passed && preflight.exit_code == 0;
+            let preflight = self.runtime_activation_preflight(host);
+            let preflight_passed = preflight.is_ok();
+            let passed = routes_passed && preflight_passed;
             all_passed &= passed;
             results.push(VerificationResult {
                 id: format!("suite-skill-route-{host}"),
                 passed,
                 evidence: format!(
-                    "snapshot={} routes={} preflight={}",
-                    snapshot.snapshot_hash, routes_passed, preflight.exit_code
+                    "snapshot={} routes={} runtime_preflight={}",
+                    snapshot.snapshot_hash, routes_passed, preflight_passed
                 ),
             });
             activations.push(ActivationResult {
                 host: host.clone(),
                 activated: true,
-                repreflight_passed: preflight.exit_code == 0,
+                repreflight_passed: preflight_passed,
                 route_verified: routes_passed,
                 evidence: snapshot.snapshot_hash,
             });
@@ -575,5 +605,52 @@ impl MaintenanceBackend for SuiteSkillMaintenanceBackend {
     fn recover(&self, plan: &MaintenancePlan) -> Result<MaintenanceExecution, String> {
         let change = self.change(plan)?;
         self.recover_change(plan, change)
+    }
+}
+
+#[cfg(test)]
+mod runtime_preflight_tests {
+    use super::*;
+
+    fn seed_source_free_runtime(root: &std::path::Path) {
+        for relative in crate::setup::RUNTIME_SOURCE_REQUIRED_FILES {
+            let path = root.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "fixture\n").unwrap();
+        }
+    }
+
+    #[test]
+    fn activation_preflight_accepts_a_source_free_runtime_and_exact_host_selection() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("signed-runtime");
+        let runtime = temp.path().join("installed-runtime");
+        let home = temp.path().join("home");
+        seed_source_free_runtime(&source);
+        std::fs::create_dir_all(&runtime).unwrap();
+        std::fs::write(
+            runtime.join("install-manifest.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "source_root": source,
+                "lifecycle": {"approved_hosts": ["codex"]}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let backend = SuiteSkillMaintenanceBackend {
+            source_root: source.clone(),
+            runtime_home: runtime,
+            host_home: home,
+            policy: SuiteSkillProjectionPolicy {
+                required_authority_root: None,
+                target_hosts: vec!["codex".to_string()],
+            },
+            prepared_change: None,
+        };
+
+        assert!(backend.runtime_activation_preflight("codex").is_ok());
+        assert!(backend.runtime_activation_preflight("claude-code").is_err());
+        assert!(!source.join("Cargo.toml").exists());
+        assert!(!source.join("crates").exists());
     }
 }

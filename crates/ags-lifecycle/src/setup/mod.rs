@@ -30,6 +30,25 @@ use recommendations::{render_third_party_recommendations_text, third_party_recom
 
 pub const RUNTIME_INSTALL_SCHEMA: &str = "0.4.13-runtime-install";
 const AGS_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const RUNTIME_SOURCE_REQUIRED_FILES: &[&str] = &[
+    "manifests/suite.yaml",
+    "manifests/skills-registry.yaml",
+    "manifests/mcp-registry.yaml",
+    "manifests/third-party-capabilities.yaml",
+    "protocol/agent-task-protocol.md",
+    "protocol/task-card-template.md",
+    "protocol/runtime-adapters.md",
+    "protocol/task-routing.md",
+];
+
+/// Whether `root` contains the complete typed input surface required by runtime
+/// setup. A signed public runtime is intentionally source-free, so Rust
+/// workspace files are not part of this product identity.
+pub fn is_runtime_source_root(root: &Path) -> bool {
+    RUNTIME_SOURCE_REQUIRED_FILES
+        .iter()
+        .all(|relative| root.join(relative).is_file())
+}
 
 pub fn approved_lifecycle_hosts(target: &Path) -> Result<Vec<String>, String> {
     let path = target.join("install-manifest.json");
@@ -714,7 +733,6 @@ pub fn apply_runtime(request: RuntimeApplyRequest<'_>) -> RuntimeApplyResult {
     );
     let backend = crate::maintenance::RuntimeSetupMaintenanceBackend {
         runtime_home: request.target.to_path_buf(),
-        preflight_target: request.source_root.to_path_buf(),
         prepared_change: Some(prepared_setup),
     };
     let service = match crate::maintenance::MaintenanceService::new(

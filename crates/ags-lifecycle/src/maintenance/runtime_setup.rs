@@ -35,7 +35,6 @@ struct RuntimeSetupRecovery {
 
 pub struct RuntimeSetupMaintenanceBackend {
     pub runtime_home: PathBuf,
-    pub preflight_target: PathBuf,
     pub prepared_change: Option<PreparedRuntimeSetup>,
 }
 
@@ -198,7 +197,6 @@ pub fn recover_runtime_setup_plan(
         },
         RuntimeSetupMaintenanceBackend {
             runtime_home: runtime_home.to_path_buf(),
-            preflight_target: change.source_root.clone(),
             prepared_change: None,
         },
     )?;
@@ -247,7 +245,6 @@ fn recover_incomplete_runtime_setups_locked(runtime_home: &Path) -> Result<(), S
                 source_root: change.source_root.clone(),
                 runtime_home: change.runtime_home.clone(),
                 host_home: change.host_home.clone(),
-                preflight_target: change.source_root.clone(),
                 policy: crate::suite_skill_projection::SuiteSkillProjectionPolicy {
                     required_authority_root: Some(change.suite_skills.authority_root.clone()),
                     target_hosts: change.suite_skills.hosts.clone(),
@@ -314,7 +311,6 @@ impl RuntimeSetupMaintenanceBackend {
             source_root: change.source_root.clone(),
             runtime_home: change.runtime_home.clone(),
             host_home: change.host_home.clone(),
-            preflight_target: self.preflight_target.clone(),
             policy: crate::suite_skill_projection::SuiteSkillProjectionPolicy {
                 required_authority_root: Some(change.suite_skills.authority_root.clone()),
                 target_hosts: change.suite_skills.hosts.clone(),

@@ -190,7 +190,6 @@ fn service(
                 },
                 runtime_home,
                 host_home: binding.host_home.clone(),
-                preflight_target: binding.target.clone(),
                 prepared_change: None,
             },
         },

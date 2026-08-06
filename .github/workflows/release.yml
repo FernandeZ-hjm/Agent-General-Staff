@@ -146,6 +146,18 @@ jobs:
           AGS_SOURCE_ROOT="$PWD/unpacked/runtime" \
             unpacked/ags skill recommend --format json > unpacked/recommendations.json
           grep -Fq '"diagnosing-bugs"' unpacked/recommendations.json
+          clean_home="$RUNNER_TEMP/ags-clean-home"
+          mkdir -p "$clean_home"
+          HOME="$clean_home" \
+            AGS_HOME="$clean_home/.ags/runtime" \
+            AGS_SOURCE_ROOT="$PWD/unpacked/runtime" \
+            unpacked/ags setup --yes --lifecycle-hosts codex --format json \
+            > unpacked/setup-one-host.json
+          node -e '
+            const fs = require("node:fs");
+            const value = JSON.parse(fs.readFileSync("unpacked/setup-one-host.json", "utf8"));
+            if (JSON.stringify(value.approved_lifecycle_hosts) !== JSON.stringify(["codex"])) process.exit(1);
+          '
       - name: Verify unpacked Windows asset and minimum user journey
         if: matrix.archive == 'zip'
         shell: pwsh
@@ -159,6 +171,17 @@ jobs:
           $recommendations = & "unpacked/ags.exe" skill recommend --format json
           if ($LASTEXITCODE -ne 0 -or -not ($recommendations -match '"diagnosing-bugs"')) {
             throw "unpacked recommendation journey failed"
+          }
+          $cleanHome = Join-Path $env:RUNNER_TEMP "ags-clean-home"
+          New-Item -ItemType Directory -Force -Path $cleanHome | Out-Null
+          $env:HOME = $cleanHome
+          $env:USERPROFILE = $cleanHome
+          $env:AGS_HOME = Join-Path $cleanHome ".ags/runtime"
+          $setupJson = & "unpacked/ags.exe" setup --yes --lifecycle-hosts codex --format json
+          if ($LASTEXITCODE -ne 0) { throw "unpacked one-host setup journey failed" }
+          $setup = ($setupJson -join "`n") | ConvertFrom-Json
+          if (@($setup.approved_lifecycle_hosts).Count -ne 1 -or $setup.approved_lifecycle_hosts[0] -ne "codex") {
+            throw "unpacked one-host setup did not select exactly codex"
           }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

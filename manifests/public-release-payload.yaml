@@ -102,7 +102,7 @@ public_overlay_files:
   - path: .github/workflows/npm-publish.yml
     target_sha256: "sha256:6bfbe4b053df013ad7c4ced2912bad3a9ba3b6db7836038a2c525b6e086aa320"
   - path: .github/workflows/release.yml
-    target_sha256: "sha256:d011a15e79febaa1a8d730aff5a3e8611f509ed44b1aba1f1f59dbba0f496c23"
+    target_sha256: "sha256:c7cdd518639b219f3828e5e8bc9f89161344d1f80f8d9a09176fa240a6aa2762"
   - path: COMMERCIAL.md
     target_sha256: "sha256:8035a28d9d06bc354f72a19b563dc26b8863b72d811577d862715e394f8c5ef0"
   - path: CONTRIBUTING.md
