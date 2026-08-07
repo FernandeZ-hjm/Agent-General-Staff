@@ -306,7 +306,12 @@ impl TestEnvironment {
             plan_args.push((*host).to_string());
         }
         plan_args.extend(["--format".to_string(), "json".to_string()]);
-        let planned = self.command().args(&plan_args).output().unwrap();
+        let planned = self
+            .command()
+            .current_dir(&self.project_a)
+            .args(&plan_args)
+            .output()
+            .unwrap();
         assert!(
             planned.status.success(),
             "adapter plan failed: stdout={} stderr={}",
@@ -327,7 +332,12 @@ impl TestEnvironment {
             "--format".to_string(),
             "json".to_string(),
         ]);
-        let applied = self.command().args(&apply_args).output().unwrap();
+        let applied = self
+            .command()
+            .current_dir(&self.project_a)
+            .args(&apply_args)
+            .output()
+            .unwrap();
         assert!(
             applied.status.success(),
             "adapter apply failed: stdout={} stderr={}",

@@ -523,6 +523,131 @@ fn skill_adoption_cli_requires_a_reviewed_plan_and_persists_private_state() {
 }
 
 #[test]
+fn catalog_skill_install_repreflights_the_current_project_not_the_authority_root() {
+    let fixture = TestDir::new("catalog-install-project-target");
+    let home = fixture.path().join("home");
+    let runtime = fixture.path().join("runtime");
+    let project = fixture.path().join("project");
+    let public_source = fixture.path().join("public-runtime");
+    std::fs::create_dir_all(&project).unwrap();
+    let source_root = repo_root();
+    let run_with_source = |args: &[&str], source: &Path| {
+        Command::new(env!("CARGO_BIN_EXE_ags"))
+            .args(args)
+            .current_dir(&project)
+            .env("HOME", &home)
+            .env("AGS_HOME", &runtime)
+            .env("AGS_RUNTIME_HOME", &runtime)
+            .env("AGS_SOURCE_ROOT", source)
+            .env("PATH", "/usr/bin:/bin")
+            .output()
+            .expect("run catalog install fixture command")
+    };
+    let run = |args: &[&str]| run_with_source(args, &source_root);
+
+    let setup = run(&[
+        "setup",
+        "--yes",
+        "--force",
+        "--lifecycle-hosts",
+        "codex",
+        "--target",
+        runtime.to_str().unwrap(),
+        "--format",
+        "json",
+    ]);
+    assert_success(&setup, "catalog install setup");
+
+    copy_tree(
+        &source_root.join("manifests"),
+        &public_source.join("manifests"),
+    );
+    copy_tree(
+        &source_root.join("protocol"),
+        &public_source.join("protocol"),
+    );
+    copy_tree(
+        &source_root.join("skill-packs/optional/ags-superpowers-adapter"),
+        &public_source.join("skill-packs/optional/ags-superpowers-adapter"),
+    );
+
+    // Model the public asset's installed manifest: its complete authority is
+    // the source-free runtime payload, not the private checkout used to seed
+    // this fixture.
+    let manifest_path = runtime.join("install-manifest.json");
+    let mut manifest: Value = serde_json::from_str(
+        &std::fs::read_to_string(&manifest_path).expect("read runtime install manifest"),
+    )
+    .unwrap();
+    manifest["source_root"] = Value::String(public_source.to_string_lossy().into_owned());
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let init = run(&[
+        "init",
+        "--target",
+        project.to_str().unwrap(),
+        "--mode",
+        "local",
+        "--format",
+        "json",
+    ]);
+    assert_success(&init, "catalog install project init");
+
+    // A public release uses the installed runtime as its catalog authority;
+    // that runtime is intentionally not a managed project. The CLI must still
+    // repreflight the current project that requested the Skill operation.
+    let run_public = |args: &[&str]| run_with_source(args, &public_source);
+
+    let plan = parse_json(
+        &run_public(&[
+            "skill",
+            "install",
+            "ags-superpowers-adapter",
+            "--host",
+            "codex",
+            "--format",
+            "json",
+        ]),
+        "catalog install plan",
+    );
+    let plan_hash = plan["plan_hash"].as_str().unwrap();
+    let mut apply_args = vec![
+        "skill",
+        "install",
+        "ags-superpowers-adapter",
+        "--host",
+        "codex",
+        "--yes",
+        "--plan-hash",
+        plan_hash,
+        "--format",
+        "json",
+    ];
+    let acknowledgements = plan["required_acknowledgements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect::<Vec<_>>();
+    for acknowledgement in acknowledgements {
+        apply_args.push("--ack-risk");
+        apply_args.push(acknowledgement);
+    }
+    let receipt = parse_json(&run_public(&apply_args), "catalog install apply");
+    assert_eq!(receipt["plan_hash"], plan["plan_hash"]);
+    assert_eq!(receipt["status"], "verified");
+    assert!(receipt["activation_results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|activation| activation["repreflight_passed"] == true));
+}
+
+#[test]
 fn retired_sync_and_full_scope_are_absent_from_the_cli_surface() {
     let root_help = run_ags(&["--help"]);
     assert_success(&root_help, "root help");

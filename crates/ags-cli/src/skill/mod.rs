@@ -77,7 +77,12 @@ fn adoption_context(command: &str) -> AdoptionContext {
 
 fn maintenance_service(command: &str) -> MaintenanceService<SkillMaintenanceBackend> {
     let adoption = adoption_context(command);
-    let preflight_target = adoption.authority_root.clone();
+    // Catalog authority and the workspace that requested the operation are
+    // separate facts. A public release resolves its catalog from the bundled
+    // runtime, which is intentionally not an AGS-managed project; repreflight
+    // must therefore validate the current workspace just like the MCP path.
+    let preflight_target =
+        std::env::current_dir().unwrap_or_else(|_| adoption.authority_root.clone());
     let binding_material = format!(
         "cli\n{}\n{}",
         adoption.runtime_home.display(),
