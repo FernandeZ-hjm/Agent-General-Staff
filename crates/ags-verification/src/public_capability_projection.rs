@@ -126,6 +126,8 @@ struct PublicCatalogSkill {
 struct PublicRegistryDocument {
     registry: PublicRegistryMetadata,
     skills: Vec<serde_yaml::Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    route_targets: Vec<serde_yaml::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -324,10 +326,11 @@ fn render_projection(source_root: &Path, target_root: &Path) -> RenderedProjecti
                 personal: BTreeMap::new(),
             },
         };
-        let bundled_routes = render_bundled_registry(
+        let bundled_registry = render_bundled_registry(
             source_root,
             target_root,
             spec,
+            &catalog.capabilities,
             enforce_source_binding,
             &mut blocking,
         );
@@ -339,7 +342,8 @@ fn render_projection(source_root: &Path, target_root: &Path) -> RenderedProjecti
                 installation_authority: "machine-local InstalledSkillRecord",
                 activation_authority: "machine-local ActivatedCapability after exact route verification",
             },
-            skills: bundled_routes,
+            skills: bundled_registry.skills,
+            route_targets: bundled_registry.route_targets,
         };
         let mcp_registry = PublicMcpRegistryDocument {
             schema_version: "2.0-layered-projection",
@@ -493,13 +497,19 @@ fn workspace_product(source_root: &Path, errors: &mut Vec<String>) -> Option<Wor
     }
 }
 
+struct BundledRegistryProjection {
+    skills: Vec<serde_yaml::Value>,
+    route_targets: Vec<serde_yaml::Value>,
+}
+
 fn render_bundled_registry(
     source_root: &Path,
     target_root: &Path,
     spec: &ProjectionSpec,
+    catalog: &[ThirdPartyCapability],
     enforce_source_binding: bool,
     errors: &mut Vec<String>,
-) -> Vec<serde_yaml::Value> {
+) -> BundledRegistryProjection {
     let registry_root = if enforce_source_binding {
         source_root
     } else {
@@ -517,7 +527,10 @@ fn render_bundled_registry(
                 "cannot load canonical bundled Skill registry {}: {error}",
                 path.display()
             ));
-            return Vec::new();
+            return BundledRegistryProjection {
+                skills: Vec::new(),
+                route_targets: Vec::new(),
+            };
         }
     };
     let Some(entries) = document
@@ -528,7 +541,10 @@ fn render_bundled_registry(
             "canonical bundled Skill registry has no skills sequence: {}",
             path.display()
         ));
-        return Vec::new();
+        return BundledRegistryProjection {
+            skills: Vec::new(),
+            route_targets: Vec::new(),
+        };
     };
 
     let mut projected = Vec::new();
@@ -604,7 +620,73 @@ fn render_bundled_registry(
         );
         projected.push(projected_entry);
     }
-    projected
+    let public_compatibility_parents = catalog
+        .iter()
+        .filter(|capability| {
+            capability.kind == CapabilityKind::Skill
+                && capability.applies_to("public")
+                && capability.compatibility_parent.is_some()
+        })
+        .filter_map(|capability| capability.compatibility_parent.as_deref())
+        .collect::<BTreeSet<_>>();
+    let mut route_targets = Vec::new();
+    if let Some(routes) = document
+        .get("route_targets")
+        .and_then(serde_yaml::Value::as_sequence)
+    {
+        for route in routes {
+            let parent = route
+                .get("routing")
+                .and_then(|routing| routing.get("parent"))
+                .and_then(|parent| parent.get("name"))
+                .and_then(serde_yaml::Value::as_str);
+            if !parent.is_some_and(|parent| public_compatibility_parents.contains(parent)) {
+                continue;
+            }
+            let entrypoint = route
+                .get("routing")
+                .and_then(|routing| routing.get("entrypoint"))
+                .and_then(|entrypoint| entrypoint.get("name"))
+                .and_then(serde_yaml::Value::as_str);
+            let Some(entrypoint) = entrypoint else {
+                errors.push(format!(
+                    "public compatibility route target is missing an entrypoint: {route:?}"
+                ));
+                continue;
+            };
+            let adapter_root = if enforce_source_binding {
+                source_root
+            } else {
+                target_root
+            };
+            let adapter_path = catalog
+                .iter()
+                .find(|capability| {
+                    capability.kind == CapabilityKind::Skill
+                        && capability.applies_to("public")
+                        && capability.compatibility_parent.as_deref() == parent
+                })
+                .and_then(|capability| capability.source.bundled_path.as_deref())
+                .map(|path| {
+                    adapter_root
+                        .join(path)
+                        .join("playbooks")
+                        .join(entrypoint)
+                        .join("PLAYBOOK.md")
+                });
+            if !adapter_path.as_deref().is_some_and(Path::is_file) {
+                errors.push(format!(
+                    "public compatibility route target `{entrypoint}` has no bundled PLAYBOOK.md"
+                ));
+                continue;
+            }
+            route_targets.push(route.clone());
+        }
+    }
+    BundledRegistryProjection {
+        skills: projected,
+        route_targets,
+    }
 }
 
 fn load_source_suite(source_root: &Path, errors: &mut Vec<String>) -> Option<SourceSuite> {
@@ -1021,6 +1103,10 @@ mod tests {
             "---\nname: superpowers\ndescription: Adapter fixture.\n---\n",
         );
         write(&adapter.join("LICENSE"), "MIT fixture\n");
+        write(
+            &adapter.join("playbooks/verification-before-completion/PLAYBOOK.md"),
+            "# Verification fixture\n",
+        );
         let adapter_hash = ags_capability_governance::hash_skill_source(&adapter).unwrap();
         let manifest = source
             .path()
@@ -1032,6 +1118,15 @@ mod tests {
             &manifest,
             format!(
                 "{content}  - id: ags-superpowers-adapter\n    compatibility_parent: superpowers\n    kind: skill\n    name: AGS Superpowers Adapter\n    profiles: [public]\n    purpose: adapter\n    source:\n      manager: bundled\n      bundled_path: skill-packs/optional/ags-superpowers-adapter\n      revision: cccccccccccccccccccccccccccccccccccccccc\n      integrity: {adapter_hash}\n      repository: https://github.com/obra/superpowers\n      license: MIT\n    install:\n      strategy: none\n    routing:\n      route_state: routable\n      invoke_hint: adapter\n      intent_tags: [adapter]\n      positive_examples: [use adapter]\n      negative_examples: [use official plugin]\n"
+            ),
+        )
+        .unwrap();
+        let registry = source.path().join("manifests/skills-registry.yaml");
+        let registry_content = fs::read_to_string(&registry).unwrap();
+        fs::write(
+            registry,
+            format!(
+                "{registry_content}\nroute_targets:\n  - name: verification-before-completion\n    routing:\n      route_state: routable\n      parent:\n        kind: skill\n        name: superpowers\n      entrypoint:\n        kind: playbook\n        name: verification-before-completion\n"
             ),
         )
         .unwrap();
@@ -1053,6 +1148,11 @@ mod tests {
         assert!(suite.contains(
             "https://github.com/example/skills/tree/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         ));
+        let registry =
+            fs::read_to_string(target.path().join("manifests/skills-registry.yaml")).unwrap();
+        assert!(registry.contains("route_targets:"));
+        assert!(registry.contains("name: verification-before-completion"));
+        assert!(registry.contains("name: superpowers"));
     }
 
     #[test]

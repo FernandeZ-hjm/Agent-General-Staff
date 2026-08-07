@@ -114,3 +114,358 @@ skills:
       - 直接运行这个 Skill 帮我完成设计
       - 解释一下 Skill 是什么
       - 不用 AGS 直接执行第三方安装脚本
+route_targets:
+- name: brainstorming
+  routing:
+    route_state: routable
+    parent:
+      kind: skill
+      name: superpowers
+    entrypoint:
+      kind: playbook
+      name: brainstorming
+    intent_tags:
+    - brainstorm
+    - system-architecture
+    scope_tags:
+    - '*'
+    mutation_surface: read-only
+    requires_auth: false
+    cost_class: free
+    invoke_hint: '[skill: superpowers]'
+    route_priority: 40
+    capability_group:
+    - engineering-process
+    upstream_group: obra/superpowers:brainstorming
+    examples:
+      positive:
+      - 帮我 brainstorm 一个方案
+      - 设计跨 MCP、CLI、Vault 的新架构，明确架构边界
+      negative:
+      - 设计一个登录功能
+      - 按已确认方案开始实现
+      - 解释一下什么是系统架构
+- name: dispatching-parallel-agents
+  routing:
+    route_state: not-routable
+    parent:
+      kind: skill
+      name: superpowers
+    entrypoint:
+      kind: playbook
+      name: dispatching-parallel-agents
+    intent_tags:
+    - parallel-agents
+    - delegate
+    - fanout
+    scope_tags:
+    - '*'
+    mutation_surface: read-only
+    requires_auth: false
+    cost_class: free
+    invoke_hint: '[skill: superpowers]'
+    route_priority: 55
+    capability_group:
+    - engineering-process
+    upstream_group: obra/superpowers:dispatching-parallel-agents
+- name: executing-plans
+  routing:
+    route_state: routable
+    parent:
+      kind: skill
+      name: superpowers
+    entrypoint:
+      kind: playbook
+      name: executing-plans
+    intent_tags:
+    - execute-plan
+    scope_tags:
+    - '*'
+    mutation_surface: local-write
+    requires_auth: false
+    cost_class: free
+    invoke_hint: '[skill: superpowers]'
+    route_priority: 60
+    capability_group:
+    - engineering-process
+    upstream_group: obra/superpowers:executing-plans
+    examples:
+      positive:
+      - 执行这份已经批准的实施计划
+      negative:
+      - 这个方案还没确认，先帮我梳理
+- name: finishing-a-development-branch
+  routing:
+    route_state: not-routable
+    parent:
+      kind: skill
+      name: superpowers
+    entrypoint:
+      kind: playbook
+      name: finishing-a-development-branch
+    intent_tags:
+    - finish-branch
+    - branch-completion
+    - development-closeout
+    scope_tags:
+    - '*'
+    mutation_surface: local-write
+    requires_auth: false
+    cost_class: free
+    invoke_hint: '[skill: superpowers]'
+    route_priority: 50
+    capability_group:
+    - engineering-process
+    - git-workflow
+    upstream_group: obra/superpowers:finishing-a-development-branch
+- name: receiving-code-review
+  routing:
+    route_state: not-routable
+    parent:
+      kind: skill
+      name: superpowers
+    entrypoint:
+      kind: playbook
+      name: receiving-code-review
+    intent_tags:
+    - address-review
+    - receive-review
+    - code-review-feedback
+    scope_tags:
+    - '*'
+    mutation_surface: read-only
+    requires_auth: false
+    cost_class: free
+    invoke_hint: '[skill: superpowers]'
+    route_priority: 55
+    capability_group:
+    - code-review
+    upstream_group: obra/superpowers:receiving-code-review
+- name: requesting-code-review
+  routing:
+    route_state: routable
+    parent:
+      kind: skill
+      name: superpowers
+    entrypoint:
+      kind: playbook
+      name: requesting-code-review
+    intent_tags:
+    - code-review
+    scope_tags:
+    - '*'
+    mutation_surface: read-only
+    requires_auth: false
+    cost_class: free
+    invoke_hint: '[skill: superpowers]'
+    route_priority: 45
+    capability_group:
+    - code-review
+    - verification
+    upstream_group: obra/superpowers:requesting-code-review
+    examples:
+      positive:
+      - 实现完成后请发起一次代码审查
+      negative:
+      - 我收到审查意见了，帮我逐条处理
+- name: subagent-driven-development
+  routing:
+    route_state: not-routable
+    parent:
+      kind: skill
+      name: superpowers
+    entrypoint:
+      kind: playbook
+      name: subagent-driven-development
+    intent_tags:
+    - subagent-development
+    - implementation-plan
+    - parallel-execution
+    scope_tags:
+    - '*'
+    mutation_surface: local-write
+    requires_auth: false
+    cost_class: free
+    invoke_hint: '[skill: superpowers]'
+    route_priority: 50
+    capability_group:
+    - engineering-process
+    upstream_group: obra/superpowers:subagent-driven-development
+- name: systematic-debugging
+  routing:
+    route_state: not-routable
+    parent:
+      kind: skill
+      name: superpowers
+    entrypoint:
+      kind: playbook
+      name: systematic-debugging
+    intent_tags:
+    - debug
+    scope_tags:
+    - '*'
+    mutation_surface: read-only
+    requires_auth: false
+    cost_class: free
+    invoke_hint: '[skill: superpowers]'
+    route_priority: 70
+    capability_group:
+    - engineering-process
+    upstream_group: obra/superpowers:systematic-debugging
+    examples:
+      positive:
+      - 显式调用 superpowers 的 systematic-debugging fallback
+      negative:
+      - 这个测试失败了，帮我系统排查
+- name: test-driven-development
+  routing:
+    route_state: routable
+    parent:
+      kind: skill
+      name: superpowers
+    entrypoint:
+      kind: playbook
+      name: test-driven-development
+    intent_tags:
+    - tdd
+    - test-first
+    scope_tags:
+    - '*'
+    mutation_surface: local-write
+    requires_auth: false
+    cost_class: free
+    invoke_hint: '[skill: superpowers]'
+    route_priority: 45
+    capability_group:
+    - engineering-process
+    - verification
+    upstream_group: obra/superpowers:test-driven-development
+    examples:
+      positive:
+      - 用测试驱动方式实现这个功能
+      negative:
+      - 功能已经实现，只补几个回归测试
+- name: using-git-worktrees
+  routing:
+    route_state: not-routable
+    parent:
+      kind: skill
+      name: superpowers
+    entrypoint:
+      kind: playbook
+      name: using-git-worktrees
+    intent_tags:
+    - git-worktree
+    - isolated-workspace
+    - branch-isolation
+    scope_tags:
+    - '*'
+    mutation_surface: local-write
+    requires_auth: false
+    cost_class: free
+    invoke_hint: '[skill: superpowers]'
+    route_priority: 50
+    capability_group:
+    - engineering-process
+    - git-workflow
+    upstream_group: obra/superpowers:using-git-worktrees
+- name: using-superpowers
+  routing:
+    route_state: not-routable
+    parent:
+      kind: skill
+      name: superpowers
+    entrypoint:
+      kind: playbook
+      name: using-superpowers
+    intent_tags:
+    - engineering-workflow-help
+    scope_tags:
+    - '*'
+    mutation_surface: read-only
+    requires_auth: false
+    cost_class: free
+    invoke_hint: '[skill: superpowers]'
+    route_priority: 80
+    capability_group:
+    - engineering-process
+    upstream_group: obra/superpowers:using-superpowers
+- name: verification-before-completion
+  routing:
+    route_state: routable
+    parent:
+      kind: skill
+      name: superpowers
+    entrypoint:
+      kind: playbook
+      name: verification-before-completion
+    intent_tags:
+    - verify
+    - completion-verification
+    scope_tags:
+    - '*'
+    mutation_surface: read-only
+    requires_auth: false
+    cost_class: free
+    invoke_hint: '[skill: superpowers]'
+    route_priority: 50
+    capability_group:
+    - engineering-process
+    - verification
+    upstream_group: obra/superpowers:verification-before-completion
+    examples:
+      positive:
+      - 做完了验证一下
+      - 提交前运行完成前验证
+      negative:
+      - 任务还没开始，先解释需求
+- name: writing-plans
+  routing:
+    route_state: routable
+    parent:
+      kind: skill
+      name: superpowers
+    entrypoint:
+      kind: playbook
+      name: writing-plans
+    intent_tags:
+    - planning
+    - implementation-planning
+    scope_tags:
+    - '*'
+    mutation_surface: local-write
+    requires_auth: false
+    cost_class: free
+    invoke_hint: '[skill: superpowers]'
+    route_priority: 60
+    capability_group:
+    - engineering-process
+    upstream_group: obra/superpowers:writing-plans
+    examples:
+      positive:
+      - 把已批准的设计整理成实施计划
+      - write an implementation plan
+      negative:
+      - implementation plan 是什么
+      - 执行已批准的实施计划
+- name: writing-skills
+  routing:
+    route_state: not-routable
+    parent:
+      kind: skill
+      name: superpowers
+    entrypoint:
+      kind: playbook
+      name: writing-skills
+    intent_tags:
+    - skill-authoring
+    scope_tags:
+    - '*'
+    mutation_surface: local-write
+    requires_auth: false
+    cost_class: free
+    invoke_hint: '[skill: superpowers]'
+    route_priority: 80
+    capability_group:
+    - skill-authoring
+    upstream_group: obra/superpowers:writing-skills
