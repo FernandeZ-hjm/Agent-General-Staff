@@ -1,6 +1,6 @@
 {
   "name": "@agent-governance-suite/launcher",
-  "version": "0.4.15",
+  "version": "0.4.16",
   "description": "Shared signed release launcher for Agent Governance Suite",
   "license": "GPL-3.0-only",
   "type": "module",

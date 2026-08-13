@@ -20,6 +20,7 @@ use super::{
 };
 
 pub(super) const WIRE_SCHEMA: &str = "ags-workspace-service/2";
+const PEER_CLOSED_BEFORE_HANDSHAKE: &str = "workspace daemon closed during handshake";
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -277,13 +278,19 @@ pub(super) fn spawn_workspace_connection(
     let _connection = std::thread::spawn(move || {
         let _activity = activity;
         if let Err(error) = handle_connection(stream, registry, state, shutdown, handler) {
-            let _ = writeln!(
-                std::io::stderr(),
-                "[ags-mcp] workspace daemon connection failed: {error}"
-            );
+            if connection_error_is_reportable(&error) {
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "[ags-mcp] workspace daemon connection failed: {error}"
+                );
+            }
         }
     });
     Ok(())
+}
+
+pub(super) fn connection_error_is_reportable(error: &str) -> bool {
+    error != PEER_CLOSED_BEFORE_HANDSHAKE
 }
 
 pub(super) fn handle_connection(
@@ -371,7 +378,7 @@ pub(super) fn read_json_line<T: for<'de> Deserialize<'de>>(
         .read_line(&mut line)
         .map_err(|error| format!("workspace wire read failed: {error}"))?;
     if read == 0 {
-        return Err("workspace daemon closed during handshake".to_string());
+        return Err(PEER_CLOSED_BEFORE_HANDSHAKE.to_string());
     }
     serde_json::from_str(&line).map_err(|error| format!("workspace wire invalid: {error}"))
 }

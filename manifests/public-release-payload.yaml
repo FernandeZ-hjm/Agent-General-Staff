@@ -1,5 +1,5 @@
 schema_version: "1.2"
-# Frozen for the reviewed v0.4.15 public candidate. Refresh only when every
+# Frozen for the reviewed v0.4.16 public candidate. Refresh only when every
 # changed B overlay/rewrite byte has been reviewed and pinned here.
 projection_state: "frozen"
 
@@ -230,15 +230,15 @@ public_rewrites:
   - path: AGENTS.md
     target_sha256: "sha256:d33013f339a1042f50dd3a55aa77332129522ccdef327c86cce3251b15346c97"
   - path: AGENT_SUITE_PROTOCOL.md
-    target_sha256: "sha256:dedaf500dd59b8962b0e326c6d1d6248aff4c61746e5b21f08d3c1edb533d2a5"
+    target_sha256: "sha256:3fd6450a3c987e75cd60e39ac141cb08f7d1cf533465103296bd82c609089f88"
   - path: CLAUDE.md
     target_sha256: "sha256:54248f658ee1668312762488429b4c3e07acfee8d0b6011fb9ea5cd2252623bd"
   - path: README.md
-    target_sha256: "sha256:432e404090c5ace56f58ab8204f092d1c0776eb13791ef377e734acf0f579b80"
+    target_sha256: "sha256:0e9ec9223e9b527ab691495c2ab713e115f57e2be84ae63d2edef90bdaabaed7"
   - path: README_EN.md
-    target_sha256: "sha256:12ecbb20b1f01e90341e952ad9cb3d1e01b76c2ad824bc4cd0852f054938c0dc"
+    target_sha256: "sha256:a29c9ab8644612f2ca0dd205b1be726b8d321e76c108ccfa8a15e9de07ef9edb"
   - path: WORKSPACE.md
-    target_sha256: "sha256:ffa3ee4489ebb6515673116533f82e2ec81009772362d78d62c9a5eda4af8d71"
+    target_sha256: "sha256:a46421b2d31b27d69a777769e0d3a65a2c55c3a2d968725236386c24208648d1"
 
 # Binary release assets contain only this runtime support subset. The workflow
 # obtains this list from `ags release package`; it must not repeat the paths.

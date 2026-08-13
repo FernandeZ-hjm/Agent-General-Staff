@@ -1992,7 +1992,8 @@ exit 2
     for check in [
         "lifecycle-adapter-claude-code-current",
         "workspace-daemon-current",
-        "capability-snapshot-current",
+        "capability-snapshot-persisted-current",
+        "capability-snapshot-loaded-current",
         "mcp-registration-current",
     ] {
         assert_eq!(finding_status(&current_report, check), "pass", "{check}");
@@ -2020,7 +2021,10 @@ exit 2
     assert_eq!(source_stale.status.code(), Some(1));
     let source_stale_report: Value = serde_json::from_slice(&source_stale.stdout).unwrap();
     assert_eq!(
-        finding_status(&source_stale_report, "capability-snapshot-current"),
+        finding_status(
+            &source_stale_report,
+            "capability-snapshot-persisted-current"
+        ),
         "fail"
     );
 
@@ -2035,7 +2039,7 @@ exit 2
     assert_eq!(daemon_stale.status.code(), Some(1));
     let daemon_stale_report: Value = serde_json::from_slice(&daemon_stale.stdout).unwrap();
     assert_eq!(
-        finding_status(&daemon_stale_report, "capability-snapshot-current"),
+        finding_status(&daemon_stale_report, "capability-snapshot-loaded-current"),
         "fail"
     );
 

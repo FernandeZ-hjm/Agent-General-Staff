@@ -21,8 +21,8 @@ use super::registry_ownership::{
     WorkspaceRegistry, REGISTRY_SCHEMA, START_TIMEOUT,
 };
 use super::transport_handshake::{
-    read_json_line, spawn_workspace_connection, write_json_line, Handshake, HandshakeResult,
-    WIRE_SCHEMA,
+    inspect_existing_workspace_service_at, read_json_line, spawn_workspace_connection,
+    write_json_line, Handshake, HandshakeResult, WIRE_SCHEMA,
 };
 use super::WorkspaceServiceStatus;
 use super::WorkspaceSessionHandler;
@@ -33,8 +33,15 @@ const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 pub(super) fn workspace_service_status_impl(
     workspace: &Path,
 ) -> Result<WorkspaceServiceStatus, String> {
+    workspace_service_status_at(&ags_platform::runtime_home(), workspace)
+}
+
+pub(super) fn workspace_service_status_at(
+    runtime_home: &Path,
+    workspace: &Path,
+) -> Result<WorkspaceServiceStatus, String> {
     let workspace = canonical_workspace_root(workspace)?;
-    let paths = ServicePaths::new(&ags_platform::runtime_home(), &workspace);
+    let paths = ServicePaths::new(runtime_home, &workspace);
     let current_hash = current_executable_hash()?;
     let Some(registry) = read_registry(&paths.registry)? else {
         return Ok(WorkspaceServiceStatus {
@@ -49,14 +56,16 @@ pub(super) fn workspace_service_status_impl(
         });
     };
     let alive = registry_matches_process(&registry);
-    let reachable = alive && TcpStream::connect(&registry.endpoint).is_ok();
+    let authenticated = alive
+        && inspect_existing_workspace_service_at(runtime_home, &workspace)
+            .is_ok_and(|inspection| inspection.is_some());
     Ok(WorkspaceServiceStatus {
         schema_version: "0.4.0-workspace-service-status".to_string(),
         workspace: workspace.display().to_string(),
-        state: if reachable { "running" } else { "stale" }.to_string(),
+        state: if authenticated { "running" } else { "stale" }.to_string(),
         pid: Some(registry.pid),
         endpoint: Some(registry.endpoint),
-        current_binary: reachable && registry.executable_hash == current_hash,
+        current_binary: authenticated && registry.executable_hash == current_hash,
         executable_hash: Some(registry.executable_hash),
         current_executable_hash: current_hash,
     })

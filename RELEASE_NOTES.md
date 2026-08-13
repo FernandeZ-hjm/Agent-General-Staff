@@ -1,5 +1,26 @@
 # Agent Governance Suite Release Notes
 
+## Release 0.4.16
+
+0.4.16 corrects workspace-daemon and Doctor diagnostics on macOS without
+changing the existing wire, launcher-state, or installed-runtime schemas.
+
+- `ags mcp status` now performs the same authenticated application handshake as
+  real clients. A successful TCP connect alone no longer marks a daemon healthy,
+  and a zero-byte health probe close no longer produces the misleading
+  `workspace daemon closed during handshake` protocol-failure log.
+- Doctor reports persisted capability snapshot freshness separately from the
+  daemon's lazy loaded-snapshot state. A Host that has not loaded its snapshot
+  is `SKIP`, while a snapshot already loaded with a stale hash remains `FAIL`.
+- Claude Code MCP executable checks compare canonical filesystem identities, so
+  `~/.local/bin/ags` and `~/.cargo/bin/ags` are accepted when one is a symlink to
+  the same installed binary; unrelated executables remain rejected.
+- Offline or missing signed launcher update state remains advisory and does not
+  block the installed AGS runtime.
+- Product versions advance to 0.4.16. Existing 0.3.6 wire, 0.4.13 runtime, and
+  0.4.15 catalog/candidate schema identifiers remain unchanged because their
+  serialized contracts did not change.
+
 ## Release 0.4.15
 
 0.4.15 keeps the 0.4.14 plan-hash, risk acknowledgement, WAL, and route

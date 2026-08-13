@@ -1,29 +1,29 @@
 schema_version: 2.0-skill
 suite:
   name: agent-general-staff
-  version: 0.4.15
+  version: 0.4.16
   description: Public AGS governance control plane. Bundled command Skills are shipped with the release; reviewed third-party entries are discovery metadata only.
   required:
   - name: ags-agents
-    version: 0.4.15
+    version: 0.4.16
     source: templates/command-skills/ags-agents
-    hash: cf364bdd4a54f3b3a87d07a9658d373a792b8145ecfb12cb9bfc9b8937d66cee
+    hash: aa5109528dcbcdfb580fcd33610ceb093c6643d846c39e22b2f1e8571be6c946
   - name: ags-doctor
-    version: 0.4.15
+    version: 0.4.16
     source: templates/command-skills/ags-doctor
-    hash: 11fef3f127dcc0fc8c838f17ba7daeca3c6a49d8d4f190ba23d304d6d2aa76b8
+    hash: cbe47721eb604d729de97c84e9f15e9edef05f7a88d30af4c283ba9a0806aed2
   - name: ags-init
-    version: 0.4.15
+    version: 0.4.16
     source: templates/command-skills/ags-init
-    hash: 301f1879234bff21993aa6e3f1ba1dad35a4279be4125c9a6c3740276227cefe
+    hash: bfe09a19231d07185f66299116c9edaada69d5f40e821c777b22e2b857b42d17
   - name: ags-setup
-    version: 0.4.15
+    version: 0.4.16
     source: templates/command-skills/ags-setup
-    hash: f0dec1075bd3deb2bb48734419a62b7f559aaec677dd731a26d8c47b0d09b1ae
+    hash: 1663e12837dbd70358a070b165778ac5190ef7fea7c9195b4b59a8d40bbbadc0
   - name: ags-skill
-    version: 0.4.15
+    version: 0.4.16
     source: templates/command-skills/ags-skill
-    hash: d53ace34ddd4a638ed1b7757dfeae12690670647a48715986ab9242287c1f7d4
+    hash: a1670b5d53fbe83a3a1d08071d5df27914a0ff0fce7f10ecc422e86c51bd77b3
   optional:
   - name: ags-superpowers-adapter
     version: 44c9b2d6e889982ac18c27d05a19fefe335194e1

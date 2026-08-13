@@ -48,4 +48,4 @@ MCP 并重新 preflight；旧 binding 必须 fail closed。
 OMP 是一等宿主。验证时使用 `--host omp`；其能力必须出现在 OMP 自己的静态快照中，
 不能借用 Codex 或 Claude 的可见性结论。
 
-此技能期望的 AGS 产品版本：0.4.15。
+此技能期望的 AGS 产品版本：0.4.16。

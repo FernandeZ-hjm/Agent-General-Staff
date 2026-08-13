@@ -6,10 +6,11 @@ use crate::workspace_service::registry_ownership::{
     ServicePaths, WorkspaceOwner, WorkspaceRegistry, REGISTRY_SCHEMA,
 };
 use crate::workspace_service::transport_handshake::{
-    finish_workspace_session, handle_connection, inspect_existing_workspace_service_at,
-    read_json_line, write_json_line, Handshake, HandshakeResult, WIRE_SCHEMA,
+    connection_error_is_reportable, finish_workspace_session, handle_connection,
+    inspect_existing_workspace_service_at, read_json_line, write_json_line, Handshake,
+    HandshakeResult, WIRE_SCHEMA,
 };
-use crate::workspace_service::upgrade_recycle::connect_registered;
+use crate::workspace_service::upgrade_recycle::{connect_registered, workspace_service_status_at};
 use crate::{CapabilityCatalogSource, PreflightBinding};
 use ags_platform::canonical_workspace_root;
 use std::fs;
@@ -395,6 +396,61 @@ fn existing_daemon_inspection_is_authenticated_and_never_mutates_registry() {
         .unwrap()
         .is_none());
     assert!(!paths.registry.exists());
+}
+
+#[test]
+fn workspace_status_uses_the_authenticated_read_only_probe() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    let runtime = root.path().join("runtime");
+    fs::create_dir_all(workspace.join(".git")).unwrap();
+    let workspace = canonical_workspace_root(&workspace).unwrap();
+    let state = Arc::new(WorkspaceState::new(workspace.clone(), runtime.clone()).unwrap());
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let registry = WorkspaceRegistry {
+        schema_version: REGISTRY_SCHEMA.to_string(),
+        workspace: workspace.clone(),
+        instance_key: workspace_key(&workspace),
+        endpoint: listener.local_addr().unwrap().to_string(),
+        token: "status-token".to_string(),
+        pid: std::process::id(),
+        executable_hash: current_executable_hash().unwrap(),
+        process_start_identity: current_process_start_identity().unwrap(),
+        daemon_nonce: "status-daemon-nonce".to_string(),
+    };
+    let paths = ServicePaths::new(&runtime, &workspace);
+    ensure_private_dir(&paths.dir).unwrap();
+    atomic_write_json(&paths.registry, &registry).unwrap();
+
+    let server_registry = registry.clone();
+    let server = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        handle_connection(
+            stream,
+            server_registry,
+            state,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(CapturingHandler::default()),
+        )
+    });
+
+    let status = workspace_service_status_at(&runtime, &workspace).unwrap();
+    assert_eq!(status.state, "running");
+    assert!(status.current_binary);
+    server
+        .join()
+        .unwrap()
+        .expect("status must complete a valid authenticated workspace command");
+}
+
+#[test]
+fn zero_byte_probe_close_is_not_reported_as_a_daemon_protocol_failure() {
+    assert!(!connection_error_is_reportable(
+        "workspace daemon closed during handshake"
+    ));
+    assert!(connection_error_is_reportable(
+        "workspace daemon authentication failed"
+    ));
 }
 
 #[test]

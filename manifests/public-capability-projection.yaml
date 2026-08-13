@@ -17,20 +17,20 @@ bundled_skills:
   - id: ags-agents
     source_path: global-skills/ags-agents
     public_path: templates/command-skills/ags-agents
-    public_sha256: "sha256:e82499f2ae33e8471a343b5815c7ba16b14a2561daa49bef8d7319f248fb1197"
+    public_sha256: "sha256:330ed3d89209e750f564be2bd9e11a561fae9b864e80a3019586c7a398e1fe99"
   - id: ags-doctor
     source_path: global-skills/ags-doctor
     public_path: templates/command-skills/ags-doctor
-    public_sha256: "sha256:7eeb1b7a26731ce4a7e222ebb7aca5cca43f8175dafd4d9cc2b82415a46f1086"
+    public_sha256: "sha256:e922f30056f8133f8afe65143575226e668c37e3dfc1a28f03c0108ee5793846"
   - id: ags-init
     source_path: global-skills/ags-init
     public_path: templates/command-skills/ags-init
-    public_sha256: "sha256:75fa9a6ec775b081890c8426c5137da29df2b2fc407c16198eca4f106299dcd5"
+    public_sha256: "sha256:583319978fda9596c949a647532b3f219ede2bbc4c2f7daf4ccfe5d5cd383d85"
   - id: ags-setup
     source_path: global-skills/ags-setup
     public_path: templates/command-skills/ags-setup
-    public_sha256: "sha256:6fdc1363263b3b4d2bc80420bba079fc5ca212b64ffb1eeb2ef2e06dd9194e47"
+    public_sha256: "sha256:1086456640a9f9d15dd6f8766d63354e87b34b928d689fee2fc0f8e7c5976f6a"
   - id: ags-skill
     source_path: global-skills/ags-skill
     public_path: templates/command-skills/ags-skill
-    public_sha256: "sha256:de421b6c87ff802f094de8e701a3ff116ccf155b7abc7b5a530db874b2390eea"
+    public_sha256: "sha256:37eb5b9e1a5397ca819eae406cdd1d65526086992524c426ff10cbbb0faf0705"

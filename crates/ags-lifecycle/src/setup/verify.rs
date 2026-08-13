@@ -206,6 +206,40 @@ fn claude_mcp_get_at(server: &str, current_dir: &Path) -> Result<String, String>
         Err(combined.trim().to_string())
     }
 }
+
+fn claude_mcp_command_matches(detail: &str, ags_path: &str) -> bool {
+    let expected = Path::new(ags_path);
+    detail.lines().any(|line| {
+        let line = line.trim();
+        let Some(command) = line
+            .strip_prefix("Command:")
+            .or_else(|| line.strip_prefix("ags command:"))
+        else {
+            return false;
+        };
+        let command = command
+            .trim()
+            .strip_suffix(" mcp serve --transport stdio")
+            .unwrap_or(command.trim())
+            .trim_matches('"');
+        executable_paths_equivalent(Path::new(command), expected)
+    })
+}
+
+fn executable_paths_equivalent(left: &Path, right: &Path) -> bool {
+    let Ok(left) = std::fs::canonicalize(left) else {
+        return false;
+    };
+    let Ok(right) = std::fs::canonicalize(right) else {
+        return false;
+    };
+    if cfg!(windows) {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    } else {
+        left == right
+    }
+}
 /// exiting so `ags doctor` can use the same diagnostic authority as setup
 /// verification.
 pub(in crate::setup) fn runtime_install_health_report(
@@ -396,13 +430,7 @@ pub(in crate::setup) fn runtime_install_health_report(
         }
 
         match (claude_mcp_get_at("ags", home), command_in_path("ags")) {
-            (Ok(detail), Ok(ags_path))
-                if detail.contains(&ags_path)
-                    || (cfg!(windows)
-                        && detail
-                            .to_ascii_lowercase()
-                            .contains(&ags_path.to_ascii_lowercase())) =>
-            {
+            (Ok(detail), Ok(ags_path)) if claude_mcp_command_matches(&detail, &ags_path) => {
                 report.add(crate::setup::SetupFinding::pass(
                     "runtime-install-claude-code-ags-command",
                     "Claude Code ags MCP uses installed AGS binary",
@@ -587,6 +615,45 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("mcp/ags.mcp.json:content-drift"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claude_mcp_command_accepts_a_symlink_to_the_installed_ags() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let installed = root.path().join("cargo-bin/ags");
+        let registered = root.path().join("local-bin/ags");
+        std::fs::create_dir_all(installed.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(registered.parent().unwrap()).unwrap();
+        std::fs::write(&installed, b"ags fixture").unwrap();
+        symlink(&installed, &registered).unwrap();
+
+        let detail = format!(
+            "Command: {}\nArgs: mcp serve --transport stdio",
+            registered.display()
+        );
+        assert!(claude_mcp_command_matches(
+            &detail,
+            &installed.display().to_string()
+        ));
+        let list_detail = format!(
+            "ags command: {} mcp serve --transport stdio",
+            registered.display()
+        );
+        assert!(claude_mcp_command_matches(
+            &list_detail,
+            &installed.display().to_string()
+        ));
+
+        let unrelated = root.path().join("other/ags");
+        std::fs::create_dir_all(unrelated.parent().unwrap()).unwrap();
+        std::fs::write(&unrelated, b"different ags fixture").unwrap();
+        assert!(!claude_mcp_command_matches(
+            &detail,
+            &unrelated.display().to_string()
+        ));
     }
 
     /// `ags-capability` is on the retired-Codex-skill list, so the verify gate

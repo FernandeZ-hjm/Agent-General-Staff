@@ -1,9 +1,9 @@
 # Agent Governance Suite Workspace
 
 This checkout is the self-contained public distributable edition of Agent
-Governance Suite (AGS), version **v0.4.15**.
+Governance Suite (AGS), version **v0.4.16**.
 
-Current source candidate: **v0.4.15**. Latest published release: **v0.4.14**.
+Current source candidate: **v0.4.16**. Latest published release: **v0.4.15**.
 
 ## Role and authority
 

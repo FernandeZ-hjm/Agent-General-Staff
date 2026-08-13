@@ -76,7 +76,7 @@ pub(super) fn canonical_conformance_checks(repo_root: &Path) -> Vec<Finding> {
     findings.push(lifecycle_executable_current(&observation));
     findings.push(workspace_daemon_current(repo_root, &observation));
     findings.push(managed_projection_current(repo_root, &observation));
-    findings.push(capability_snapshot_current(repo_root, &home, &observation));
+    findings.extend(capability_snapshot_current(repo_root, &home, &observation));
     findings.push(mcp_registration_current(repo_root, &observation));
     findings.push(remote_latest_advisory());
     findings
@@ -403,25 +403,42 @@ fn capability_snapshot_current(
     repo_root: &Path,
     home: &Path,
     observation: &SystemObservation,
-) -> Finding {
+) -> Vec<Finding> {
     if observation.enabled_hosts.is_empty() {
-        return disabled_host_skip(
-            "capability-snapshot-current",
-            "no enabled workspace host requires a capability snapshot",
-            "current static snapshots for every enabled host",
-        );
+        return vec![
+            disabled_host_skip(
+                "capability-snapshot-persisted-current",
+                "no enabled workspace host requires a persisted capability snapshot",
+                "current static snapshots for every enabled host",
+            ),
+            disabled_host_skip(
+                "capability-snapshot-loaded-current",
+                "no enabled workspace host can load a capability snapshot",
+                "every snapshot already loaded by the daemon matches its persisted canonical hash",
+            ),
+        ];
     }
     let runtime = ags_platform::runtime_home();
     let source = match capability_authority_root(repo_root, &runtime) {
         Ok(path) => path,
         Err(error) => {
-            return conformance_fail(
-                "capability-snapshot-current",
+            let persisted = conformance_fail(
+                "capability-snapshot-persisted-current",
                 "canonical capability source cannot be resolved",
                 "a current capability authority root",
                 error.to_string(),
                 "Restore the AGS runtime install manifest or set AGS_SOURCE_ROOT.",
+            );
+            let loaded = Finding::skip(
+                "capability-snapshot-loaded-current",
+                "daemon snapshot loading cannot be evaluated without a canonical capability source",
             )
+            .with_conformance(
+                "every snapshot already loaded by the daemon matches its persisted canonical hash",
+                "canonical capability source unavailable",
+                "resolve capability-snapshot-persisted-current first",
+            );
+            return vec![persisted, loaded];
         }
     };
     let mut expected_hashes = BTreeMap::new();
@@ -447,30 +464,12 @@ fn capability_snapshot_current(
             (_, Err(error)) => failures.push(format!("{host}: load failed: {error:?}")),
         }
     }
-    match observation.daemon.as_ref() {
-        Some(Ok(Some(daemon))) => {
-            for (host, expected) in &expected_hashes {
-                match daemon.loaded_snapshot_hashes.get(host) {
-                    Some(loaded) if loaded == expected => {}
-                    Some(loaded) => failures.push(format!(
-                        "{host}: daemon loaded {loaded}, expected {expected}"
-                    )),
-                    None => failures.push(format!(
-                        "{host}: daemon has not loaded the canonical snapshot"
-                    )),
-                }
-            }
-        }
-        Some(Ok(None)) => failures.push("workspace daemon is not running".to_string()),
-        Some(Err(error)) => failures.push(format!("daemon inspection failed: {error}")),
-        None => failures.push("daemon snapshot state is unavailable".to_string()),
-    }
-    conformance_verdict(
+    let persisted = conformance_verdict(
         failures.is_empty(),
-        "capability-snapshot-current",
-        "enabled host snapshots equal a fresh canonical rebuild and daemon state",
+        "capability-snapshot-persisted-current",
+        "enabled host snapshots equal a fresh canonical rebuild",
         format!(
-            "fresh canonical snapshot and matching daemon-loaded hash for {:?}",
+            "fresh canonical snapshot for {:?}",
             observation.enabled_hosts
         ),
         if failures.is_empty() {
@@ -479,10 +478,86 @@ fn capability_snapshot_current(
             failures.join("; ")
         },
         format!(
-            "Rebuild each failing host snapshot for target '{}', then restart or reconnect its workspace daemon session (home {}).",
+            "Rebuild each failing host snapshot for target '{}' (home {}).",
             repo_root.display(),
             home.display()
         ),
+    );
+    let loaded = capability_snapshot_loaded_current(&expected_hashes, &observation.daemon);
+    vec![persisted, loaded]
+}
+
+fn daemon_snapshot_failures(
+    expected_hashes: &BTreeMap<String, String>,
+    daemon: &ags_session::WorkspaceServiceInspection,
+) -> Vec<String> {
+    let mut failures = Vec::new();
+    for (host, expected) in expected_hashes {
+        match daemon.loaded_snapshot_hashes.get(host) {
+            Some(loaded) if loaded == expected => {}
+            Some(loaded) => failures.push(format!(
+                "{host}: daemon loaded {loaded}, expected {expected}"
+            )),
+            None => {}
+        }
+    }
+    failures
+}
+
+fn capability_snapshot_loaded_current(
+    expected_hashes: &BTreeMap<String, String>,
+    daemon: &Option<Result<Option<ags_session::WorkspaceServiceInspection>, String>>,
+) -> Finding {
+    let Some(Ok(Some(daemon))) = daemon.as_ref() else {
+        return Finding::skip(
+            "capability-snapshot-loaded-current",
+            "daemon snapshot loading is not evaluated because no authenticated daemon inspection is available",
+        )
+        .with_conformance(
+            "every snapshot already loaded by the daemon matches its persisted canonical hash",
+            "daemon inspection unavailable",
+            "resolve workspace-daemon-current first",
+        );
+    };
+    let failures = daemon_snapshot_failures(expected_hashes, daemon);
+    if !failures.is_empty() {
+        return conformance_fail(
+            "capability-snapshot-loaded-current",
+            "a host snapshot already loaded by the daemon is stale",
+            "every loaded host hash equals its persisted canonical hash",
+            failures.join("; "),
+            "Restart or explicitly reactivate the workspace daemon after publishing the current snapshots.",
+        );
+    }
+    let loaded = expected_hashes
+        .keys()
+        .filter(|host| daemon.loaded_snapshot_hashes.contains_key(*host))
+        .cloned()
+        .collect::<Vec<_>>();
+    let not_yet_loaded = expected_hashes
+        .keys()
+        .filter(|host| !daemon.loaded_snapshot_hashes.contains_key(*host))
+        .cloned()
+        .collect::<Vec<_>>();
+    if loaded.is_empty() {
+        return Finding::skip(
+            "capability-snapshot-loaded-current",
+            "host snapshots are loaded lazily and no governed host session has loaded one yet",
+        )
+        .with_conformance(
+            "every snapshot already loaded by the daemon matches its persisted canonical hash",
+            format!("loaded=[]; not_yet_loaded={not_yet_loaded:?}"),
+            "none; open a governed host session when that Host is needed",
+        );
+    }
+    Finding::pass(
+        "capability-snapshot-loaded-current",
+        "every host snapshot already loaded by the daemon matches its persisted canonical hash",
+    )
+    .with_conformance(
+        "every snapshot already loaded by the daemon matches its persisted canonical hash",
+        format!("loaded={loaded:?}; not_yet_loaded={not_yet_loaded:?}"),
+        "none",
     )
 }
 
@@ -798,6 +873,70 @@ mod tests {
         assert_eq!(newer.severity, Severity::Warn);
         let offline = remote_latest_finding("0.4.0", None, true);
         assert_eq!(offline.status, CheckStatus::Skip);
+    }
+
+    #[test]
+    fn unloaded_lazy_host_snapshot_is_not_a_daemon_failure() {
+        let expected = BTreeMap::from([("codex".to_string(), "sha256:current".to_string())]);
+        let daemon = ags_session::WorkspaceServiceInspection {
+            schema_version: ags_session::WORKSPACE_DAEMON_STATUS_SCHEMA_VERSION.to_string(),
+            canonical_workspace: "/workspace".to_string(),
+            workspace_identity: "workspace-id".to_string(),
+            loaded_snapshot_hashes: BTreeMap::new(),
+        };
+        assert!(daemon_snapshot_failures(&expected, &daemon).is_empty());
+    }
+
+    #[test]
+    fn loaded_stale_host_snapshot_remains_a_daemon_failure() {
+        let expected = BTreeMap::from([("codex".to_string(), "sha256:current".to_string())]);
+        let daemon = ags_session::WorkspaceServiceInspection {
+            schema_version: ags_session::WORKSPACE_DAEMON_STATUS_SCHEMA_VERSION.to_string(),
+            canonical_workspace: "/workspace".to_string(),
+            workspace_identity: "workspace-id".to_string(),
+            loaded_snapshot_hashes: BTreeMap::from([(
+                "codex".to_string(),
+                "sha256:stale".to_string(),
+            )]),
+        };
+        assert_eq!(
+            daemon_snapshot_failures(&expected, &daemon),
+            vec!["codex: daemon loaded sha256:stale, expected sha256:current"]
+        );
+    }
+
+    #[test]
+    fn lazy_loaded_snapshot_finding_skips_empty_and_passes_current_subset() {
+        let expected = BTreeMap::from([
+            ("codex".to_string(), "sha256:codex".to_string()),
+            ("claude-code".to_string(), "sha256:claude".to_string()),
+        ]);
+        let empty = Some(Ok(Some(ags_session::WorkspaceServiceInspection {
+            schema_version: ags_session::WORKSPACE_DAEMON_STATUS_SCHEMA_VERSION.to_string(),
+            canonical_workspace: "/workspace".to_string(),
+            workspace_identity: "workspace-id".to_string(),
+            loaded_snapshot_hashes: BTreeMap::new(),
+        })));
+        assert_eq!(
+            capability_snapshot_loaded_current(&expected, &empty).status,
+            CheckStatus::Skip
+        );
+
+        let current_subset = Some(Ok(Some(ags_session::WorkspaceServiceInspection {
+            schema_version: ags_session::WORKSPACE_DAEMON_STATUS_SCHEMA_VERSION.to_string(),
+            canonical_workspace: "/workspace".to_string(),
+            workspace_identity: "workspace-id".to_string(),
+            loaded_snapshot_hashes: BTreeMap::from([(
+                "codex".to_string(),
+                "sha256:codex".to_string(),
+            )]),
+        })));
+        let finding = capability_snapshot_loaded_current(&expected, &current_subset);
+        assert_eq!(finding.status, CheckStatus::Pass);
+        assert!(finding
+            .observed
+            .as_deref()
+            .is_some_and(|detail| detail.contains("claude-code")));
     }
 
     #[test]
