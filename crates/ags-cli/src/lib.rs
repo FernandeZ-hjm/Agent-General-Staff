@@ -97,7 +97,19 @@ fn execute_release(
     format: crate::cli::OutputFormat,
 ) -> Result<(String, bool), String> {
     use crate::cli::OutputFormat;
-    if release.project_public.source.as_os_str().is_empty() {
+    if !release.plan.source.as_os_str().is_empty() {
+        let (plan, _) = ags_verification::release_package::release_package_plan(
+            &release.plan.source,
+            "public-full",
+            false,
+        );
+        let json = serde_json::to_string_pretty(&plan)
+            .map_err(|e| format!("release plan: encode failed: {e}"))?;
+        return Ok((json, true));
+    }
+    if !release.stage_runtime.plan.as_os_str().is_empty()
+        || !release.stage_runtime.source.as_os_str().is_empty()
+    {
         let stage = &release.stage_runtime;
         // The workflow passes the check-report as --plan; when it is not a
         // release-plan, regenerate the plan from the source checkout so the

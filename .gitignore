@@ -18,6 +18,12 @@ benchmarks/
 # Maintainer-private sync tool — not part of the public edition
 /scripts/sync-public.sh
 
+# Release packaging scratch (created by the Release workflow build jobs)
+/stage/
+/public-release-plan.json
+/*.tar.gz
+/*.zip
+
 # Graphify local project-map outputs
 .graphifyignore
 graphify-out/

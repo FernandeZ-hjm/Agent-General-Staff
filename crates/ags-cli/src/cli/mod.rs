@@ -528,12 +528,24 @@ enum ReleaseAction {
         #[arg(long)]
         target: PathBuf,
     },
+    /// Emit the canonical public-full release plan as JSON (unix builds only).
+    Plan {
+        /// Public source checkout root.
+        #[arg(long)]
+        source: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub struct ReleaseInvocation {
     pub project_public: ReleaseProjectPublic,
     pub stage_runtime: ReleaseStageRuntime,
+    pub plan: ReleasePlanArgs,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReleasePlanArgs {
+    pub source: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -576,6 +588,8 @@ impl Cli {
         routes.insert(&release_path, syntax_template(&templates, &release_path));
         let stage_path = ["release", "stage-runtime"];
         routes.insert(&stage_path, syntax_template(&templates, &stage_path));
+        let plan_path = ["release", "plan"];
+        routes.insert(&plan_path, syntax_template(&templates, &plan_path));
         assert!(
             apply_inserted,
             "schema route must anchor the apply Interface"
@@ -748,6 +762,9 @@ impl Cli {
                                 source: PathBuf::new(),
                                 target: PathBuf::new(),
                             },
+                            plan: ReleasePlanArgs {
+                                source: PathBuf::new(),
+                            },
                         }),
                         ReleaseAction::StageRuntime { plan, source, target } => {
                             Invocation::Release(ReleaseInvocation {
@@ -758,8 +775,25 @@ impl Cli {
                                     plan_hash: None,
                                 },
                                 stage_runtime: ReleaseStageRuntime { plan, source, target },
+                                plan: ReleasePlanArgs {
+                                    source: PathBuf::new(),
+                                },
                             })
                         }
+                        ReleaseAction::Plan { source } => Invocation::Release(ReleaseInvocation {
+                            project_public: ReleaseProjectPublic {
+                                source: PathBuf::new(),
+                                target: PathBuf::new(),
+                                apply: false,
+                                plan_hash: None,
+                            },
+                            stage_runtime: ReleaseStageRuntime {
+                                plan: PathBuf::new(),
+                                source: PathBuf::new(),
+                                target: PathBuf::new(),
+                            },
+                            plan: ReleasePlanArgs { source },
+                        })
                     },
                 }
             }

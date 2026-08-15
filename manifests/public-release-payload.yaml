@@ -141,7 +141,7 @@ public_overlay_files:
   - path: .gitattributes
     target_sha256: "sha256:b10eef5d65afea50c501f1497529255b5634d626c55f4f0397c5f7524dfb575e"
   - path: .gitignore
-    target_sha256: "sha256:84412a88f01e89931a21a6ef8486465242e78bf9e38db9a75db61c86d0c22488"
+    target_sha256: "sha256:30ceb82e81a8b1b1bb58a307dfbba857c731fd71a1e2f9b298ed565f22bcf412"
   - path: .github/ISSUE_TEMPLATE/bug_report.yml
     target_sha256: "sha256:013774d788aa344b736c5298f501b3adf043770ef80aa6d9864888d00299def9"
   - path: .github/ISSUE_TEMPLATE/feature_request.yml
@@ -149,7 +149,7 @@ public_overlay_files:
   - path: .github/PULL_REQUEST_TEMPLATE.md
     target_sha256: "sha256:e2955b5d15b08657cab32477bba15b69a9657548d0617a7d34446156da035418"
   - path: .github/workflows/ci.yml
-    target_sha256: "sha256:f992a7ac0f0f60625825479b27cef8034f8c77bafad437dc913d9682e71d307a"
+    target_sha256: "sha256:0280fba15b63775bae8c1f5a856003dfb4ff16da3c2f1260ca6e1ba4a89470a4"
   - path: .github/workflows/npm-publish.yml
     target_sha256: "sha256:41243f14cd44d73ed9f3284afa58e71e27e0b02da1d7c350a54e479f96366c13"
   - path: .github/workflows/release.yml

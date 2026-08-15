@@ -79,9 +79,9 @@ jobs:
       - name: Freeze canonical public release plan
         shell: bash
         run: |
-          cargo run -q --locked -p ags-cli -- check release \
-            --workspace . \
-            --format json > "$RUNNER_TEMP/public-verification-evidence/public-release-plan.json"
+          cargo run -q --locked -p ags-cli -- release plan \
+            --source . \
+            > "$RUNNER_TEMP/public-verification-evidence/public-release-plan.json"
       - name: Build verifier artifact
         shell: bash
         run: |
