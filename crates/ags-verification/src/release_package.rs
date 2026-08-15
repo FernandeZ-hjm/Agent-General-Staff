@@ -108,6 +108,16 @@ fn release_file_list(source_root: &Path) -> Vec<String> {
     walk_release_files(source_root, "", &mut files);
     files
 }
+pub fn is_release_plan(plan_path: &std::path::Path) -> bool {
+    let Ok(bytes) = std::fs::read(plan_path) else {
+        return false;
+    };
+    let Ok(plan) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return false;
+    };
+    plan["schema_version"].as_str() == Some(RELEASE_PLAN_SCHEMA_VERSION)
+}
+
 pub fn release_package_plan(
     source_root: &Path,
     profile: &str,

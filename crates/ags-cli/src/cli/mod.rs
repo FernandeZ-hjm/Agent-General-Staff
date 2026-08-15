@@ -516,11 +516,31 @@ enum ReleaseAction {
         #[arg(long, requires = "apply")]
         plan_hash: Option<String>,
     },
+    /// Stage the release runtime asset payload from a frozen public release plan.
+    StageRuntime {
+        /// Release plan JSON produced by `ags check release --format json`.
+        #[arg(long)]
+        plan: PathBuf,
+        /// Public source checkout root.
+        #[arg(long)]
+        source: PathBuf,
+        /// Destination directory for the staged runtime payload.
+        #[arg(long)]
+        target: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub struct ReleaseInvocation {
     pub project_public: ReleaseProjectPublic,
+    pub stage_runtime: ReleaseStageRuntime,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReleaseStageRuntime {
+    pub plan: PathBuf,
+    pub source: PathBuf,
+    pub target: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -554,6 +574,8 @@ impl Cli {
         }
         let release_path = ["release", "project-public"];
         routes.insert(&release_path, syntax_template(&templates, &release_path));
+        let stage_path = ["release", "stage-runtime"];
+        routes.insert(&stage_path, syntax_template(&templates, &stage_path));
         assert!(
             apply_inserted,
             "schema route must anchor the apply Interface"
@@ -721,7 +743,23 @@ impl Cli {
                                 apply,
                                 plan_hash,
                             },
+                            stage_runtime: ReleaseStageRuntime {
+                                plan: PathBuf::new(),
+                                source: PathBuf::new(),
+                                target: PathBuf::new(),
+                            },
                         }),
+                        ReleaseAction::StageRuntime { plan, source, target } => {
+                            Invocation::Release(ReleaseInvocation {
+                                project_public: ReleaseProjectPublic {
+                                    source: PathBuf::new(),
+                                    target: PathBuf::new(),
+                                    apply: false,
+                                    plan_hash: None,
+                                },
+                                stage_runtime: ReleaseStageRuntime { plan, source, target },
+                            })
+                        }
                     },
                 }
             }

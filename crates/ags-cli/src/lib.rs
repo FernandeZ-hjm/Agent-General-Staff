@@ -97,6 +97,51 @@ fn execute_release(
     format: crate::cli::OutputFormat,
 ) -> Result<(String, bool), String> {
     use crate::cli::OutputFormat;
+    if release.project_public.source.as_os_str().is_empty() {
+        let stage = &release.stage_runtime;
+        // The workflow passes the check-report as --plan; when it is not a
+        // release-plan, regenerate the plan from the source checkout so the
+        // staged payload stays authoritative.
+        let plan_path = if ags_verification::release_package::is_release_plan(&stage.plan) {
+            stage.plan.clone()
+        } else {
+            let (plan, _) = ags_verification::release_package::release_package_plan(
+                &stage.source,
+                "public-full",
+                true,
+            );
+            let tmp = std::env::temp_dir().join(format!(
+                "ags-release-plan-{}.json",
+                std::process::id()
+            ));
+            std::fs::write(&tmp, serde_json::to_vec_pretty(&plan).map_err(|e| {
+                format!("release stage-runtime: plan encode failed: {e}")
+            })?)
+            .map_err(|e| format!("release stage-runtime: plan write failed: {e}"))?;
+            tmp
+        };
+        let result = ags_verification::release_package::stage_release_runtime(
+            &plan_path,
+            &stage.source,
+            &stage.target,
+        )
+        .map_err(|e| format!("release stage-runtime: {e}"))?;
+        let text = format!(
+            "Runtime staged\nstaged_files: {}\nsource_root: {}\ntarget_root: {}",
+            result.staged_files.len(),
+            result.source_root,
+            result.target_root,
+        );
+        let json = serde_json::to_string_pretty(&result)
+            .map_err(|e| format!("release stage-runtime: encode failed: {e}"))?;
+        return Ok((
+            match format {
+                OutputFormat::Json => json,
+                OutputFormat::Text => text,
+            },
+            true,
+        ));
+    }
     let plan = ags_verification::public_source_projection::plan_public_source_projection(
         &release.project_public.source,
         &release.project_public.target,
