@@ -1,5 +1,6 @@
 //! Fail-closed ownership planning and apply for lightweight v2 projection.
 
+#![allow(clippy::unnecessary_cast, clippy::useless_conversion)] // stat field widths differ per platform
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 #[cfg(unix)]

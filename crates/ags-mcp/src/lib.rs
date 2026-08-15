@@ -4,6 +4,7 @@
 //! Every Operation crosses an authenticated daemon session and the daemon owns
 //! the single control-plane state machine.
 
+#![allow(clippy::unnecessary_cast, clippy::useless_conversion)] // stat field widths differ per platform
 mod protocol;
 
 pub mod contract_v2;

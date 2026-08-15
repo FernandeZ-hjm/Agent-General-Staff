@@ -1,3 +1,4 @@
+#![allow(clippy::unnecessary_cast, clippy::useless_conversion)] // stat field widths differ per platform
 use rustix::fd::OwnedFd;
 use rustix::fs::FileType;
 use std::io::Read;

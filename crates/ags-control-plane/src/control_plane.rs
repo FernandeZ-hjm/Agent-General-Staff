@@ -4,6 +4,7 @@
 //! `decide`, and `apply`. Adapters authenticate a binding before `open`; they
 //! never echo binding fields back through `ApplyRequest`.
 
+#![allow(clippy::unnecessary_cast, clippy::useless_conversion)] // stat field widths differ per platform
 use ags_platform::sha256;
 #[cfg(unix)]
 use rustix::fd::OwnedFd;
