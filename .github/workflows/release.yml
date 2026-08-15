@@ -168,39 +168,19 @@ jobs:
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
+          # Windows 是 fail-closed 平台（仅 Schema 操作可用，见 production_non_unix.rs），
+          # 旅程范围 = 资产完整性 + version smoke + schema 读取。
           $version = $env:GITHUB_REF_NAME.Substring(1)
           $asset = "ags-v$version-${{ matrix.target }}.zip"
           Expand-Archive -Path $asset -DestinationPath unpacked
           $observed = & "unpacked/ags.exe" --version
           if ($LASTEXITCODE -ne 0 -or $observed -ne "ags $version") { throw "unpacked version smoke failed" }
-          $cleanHome = Join-Path $env:RUNNER_TEMP "ags-clean-home"
-          New-Item -ItemType Directory -Force -Path $cleanHome | Out-Null
-          $env:HOME = $cleanHome
-          $env:USERPROFILE = $cleanHome
-          $env:AGS_HOME = Join-Path $cleanHome ".ags/runtime"
-          $env:AGS_SOURCE_ROOT = "$PWD/unpacked/runtime"
-          $setupJson = & "unpacked/ags.exe" setup --format json 2>&1
-          $setupExitCode = $LASTEXITCODE
-          if ($setupExitCode -ne 0) {
-            $setupJson | ForEach-Object { Write-Host $_ }
-            throw "unpacked setup plan failed"
-          }
-          $planText = $setupJson -join "`n"
-          $actionRef = [regex]::Match($planText, '"action_ref"\s*:\s*"([^"]+)"').Groups[1].Value
-          if (-not $actionRef) { throw "unpacked setup plan missing action_ref" }
-          $applyJson = & "unpacked/ags.exe" apply $actionRef --format json 2>&1
+          if (-not (Test-Path "unpacked/ags-mcp.exe")) { throw "unpacked ags-mcp.exe missing" }
+          if (-not (Test-Path "unpacked/ags-host.exe")) { throw "unpacked ags-host.exe missing" }
+          $schemaJson = & "unpacked/ags.exe" schema --format json 2>&1
           if ($LASTEXITCODE -ne 0) {
-            $applyJson | ForEach-Object { Write-Host $_ }
-            throw "unpacked setup apply failed"
-          }
-          $doctorJson = & "unpacked/ags.exe" doctor runtime --format json 2>&1
-          if ($LASTEXITCODE -ne 0) {
-            $doctorJson | ForEach-Object { Write-Host $_ }
-            throw "unpacked doctor runtime failed"
-          }
-          $setup = ($setupJson -join "`n") | ConvertFrom-Json
-          if (@($setup.approved_lifecycle_hosts).Count -ne 1 -or $setup.approved_lifecycle_hosts[0] -ne "codex") {
-            throw "unpacked one-host setup did not select exactly codex"
+            $schemaJson | ForEach-Object { Write-Host $_ }
+            throw "unpacked schema read failed"
           }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
