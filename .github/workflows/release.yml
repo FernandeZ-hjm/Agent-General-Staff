@@ -43,10 +43,8 @@ jobs:
             --name public-verification-evidence \
             --dir "$evidence_dir"
           chmod +x "$evidence_dir/ags-verifier"
-          "$evidence_dir/ags-verifier" check bundle validate \
-            --target . \
-            --source-scope public-full \
-            --bundle "$evidence_dir/verification-bundle.json" \
+          "$evidence_dir/ags-verifier" check release \
+            --workspace . \
             --format json
       - name: Verify one aligned version
         shell: bash

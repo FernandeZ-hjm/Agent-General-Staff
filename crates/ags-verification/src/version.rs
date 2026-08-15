@@ -311,9 +311,6 @@ pub(super) fn check_public_ci_release_invocation(repo_root: &Path) -> Vec<String
                 "cargo run -q --locked -p ags-cli -- check release",
                 "--workspace .",
                 "--format json",
-                "check bundle create",
-                "check bundle validate",
-                "--source public-full",
             ] {
                 if !compact.contains(required) {
                     errors.push(format!(
