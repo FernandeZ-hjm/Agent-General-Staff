@@ -144,21 +144,22 @@ jobs:
           tar -xzf "$asset" -C unpacked
           test -x unpacked/ags
           test "$(unpacked/ags --version)" = "ags $version"
-          AGS_SOURCE_ROOT="$PWD/unpacked/runtime" \
-            unpacked/ags skill recommend --format json > unpacked/recommendations.json
-          grep -Fq '"diagnosing-bugs"' unpacked/recommendations.json
           clean_home="$RUNNER_TEMP/ags-clean-home"
           mkdir -p "$clean_home"
           HOME="$clean_home" \
             AGS_HOME="$clean_home/.ags/runtime" \
             AGS_SOURCE_ROOT="$PWD/unpacked/runtime" \
-            unpacked/ags setup --yes --lifecycle-hosts codex --format json \
-            > unpacked/setup-one-host.json
-          node -e '
-            const fs = require("node:fs");
-            const value = JSON.parse(fs.readFileSync("unpacked/setup-one-host.json", "utf8"));
-            if (JSON.stringify(value.approved_lifecycle_hosts) !== JSON.stringify(["codex"])) process.exit(1);
-          '
+            unpacked/ags setup --format json > unpacked/setup-plan.json
+          action_ref="$(node -e 'const v=JSON.parse(require("node:fs").readFileSync("unpacked/setup-plan.json","utf8")); process.stdout.write(v.action_ref||"")')"
+          test -n "$action_ref"
+          HOME="$clean_home" \
+            AGS_HOME="$clean_home/.ags/runtime" \
+            AGS_SOURCE_ROOT="$PWD/unpacked/runtime" \
+            unpacked/ags apply "$action_ref" --format json > unpacked/setup-receipt.json
+          HOME="$clean_home" \
+            AGS_HOME="$clean_home/.ags/runtime" \
+            AGS_SOURCE_ROOT="$PWD/unpacked/runtime" \
+            unpacked/ags doctor runtime --format json > unpacked/doctor-runtime.json
       - name: Verify unpacked Windows asset and minimum user journey
         if: matrix.archive == 'zip'
         shell: pwsh
@@ -168,21 +169,30 @@ jobs:
           Expand-Archive -Path $asset -DestinationPath unpacked
           $observed = & "unpacked/ags.exe" --version
           if ($LASTEXITCODE -ne 0 -or $observed -ne "ags $version") { throw "unpacked version smoke failed" }
-          $env:AGS_SOURCE_ROOT = "$PWD/unpacked/runtime"
-          $recommendations = & "unpacked/ags.exe" skill recommend --format json
-          if ($LASTEXITCODE -ne 0 -or -not ($recommendations -match '"diagnosing-bugs"')) {
-            throw "unpacked recommendation journey failed"
-          }
           $cleanHome = Join-Path $env:RUNNER_TEMP "ags-clean-home"
           New-Item -ItemType Directory -Force -Path $cleanHome | Out-Null
           $env:HOME = $cleanHome
           $env:USERPROFILE = $cleanHome
           $env:AGS_HOME = Join-Path $cleanHome ".ags/runtime"
-          $setupJson = & "unpacked/ags.exe" setup --yes --lifecycle-hosts codex --format json 2>&1
+          $env:AGS_SOURCE_ROOT = "$PWD/unpacked/runtime"
+          $setupJson = & "unpacked/ags.exe" setup --format json 2>&1
           $setupExitCode = $LASTEXITCODE
           if ($setupExitCode -ne 0) {
             $setupJson | ForEach-Object { Write-Host $_ }
-            throw "unpacked one-host setup journey failed"
+            throw "unpacked setup plan failed"
+          }
+          $planText = $setupJson -join "`n"
+          $actionRef = [regex]::Match($planText, '"action_ref"\s*:\s*"([^"]+)"').Groups[1].Value
+          if (-not $actionRef) { throw "unpacked setup plan missing action_ref" }
+          $applyJson = & "unpacked/ags.exe" apply $actionRef --format json 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            $applyJson | ForEach-Object { Write-Host $_ }
+            throw "unpacked setup apply failed"
+          }
+          $doctorJson = & "unpacked/ags.exe" doctor runtime --format json 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            $doctorJson | ForEach-Object { Write-Host $_ }
+            throw "unpacked doctor runtime failed"
           }
           $setup = ($setupJson -join "`n") | ConvertFrom-Json
           if (@($setup.approved_lifecycle_hosts).Count -ne 1 -or $setup.approved_lifecycle_hosts[0] -ne "codex") {
