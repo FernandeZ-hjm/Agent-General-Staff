@@ -149,11 +149,11 @@ public_overlay_files:
   - path: .github/PULL_REQUEST_TEMPLATE.md
     target_sha256: "sha256:e2955b5d15b08657cab32477bba15b69a9657548d0617a7d34446156da035418"
   - path: .github/workflows/ci.yml
-    target_sha256: "sha256:ac9f5bc6b91bc22d1ac51145203e6721def502d0ca6565f6ac17f5c1999ae3d6"
+    target_sha256: "sha256:86daf53910cd0c17823e2ac2865cc8dab397f3879a6e390bf2edf7cf82a7682e"
   - path: .github/workflows/npm-publish.yml
     target_sha256: "sha256:41243f14cd44d73ed9f3284afa58e71e27e0b02da1d7c350a54e479f96366c13"
   - path: .github/workflows/release.yml
-    target_sha256: "sha256:01197e0554f56ca2049215ff5f0c113211cf65d2b8dfb31d183af29ee3de9cc2"
+    target_sha256: "sha256:ca5527e5457ed4c386bef885e90001181d0abd7e1dc6ae62c54f51f361afbdc2"
   - path: COMMERCIAL.md
     target_sha256: "sha256:8035a28d9d06bc354f72a19b563dc26b8863b72d811577d862715e394f8c5ef0"
   - path: CONTRIBUTING.md
