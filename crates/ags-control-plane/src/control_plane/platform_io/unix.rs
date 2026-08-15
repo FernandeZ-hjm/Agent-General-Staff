@@ -66,9 +66,9 @@ pub(crate) fn read_regular_fd(
             mode: before.st_mode as u32,
             size: before.st_size as u64,
             mtime: before.st_mtime,
-            mtime_nsec: before.st_mtime_nsec,
+            mtime_nsec: before.st_mtime_nsec as i64,
             ctime: before.st_ctime,
-            ctime_nsec: before.st_ctime_nsec,
+            ctime_nsec: before.st_ctime_nsec as i64,
         },
     })
 }

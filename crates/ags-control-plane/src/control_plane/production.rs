@@ -5730,7 +5730,7 @@ fn exact_mode(mode: u32) -> Result<Mode, EffectError> {
     if mode & !0o7777 != 0 {
         return Err(blocked("transaction_mode_invalid", mode.to_string()));
     }
-    Ok(Mode::from_raw_mode(mode as u16))
+    Ok(Mode::from_raw_mode(mode as u16).into())
 }
 
 fn remove_exact_directory(
