@@ -45,6 +45,7 @@ jobs:
           chmod +x "$evidence_dir/ags-verifier"
           cargo build -q --locked -p ags-mcp
           cp target/debug/ags-mcp "$evidence_dir/ags-mcp"
+          cp target/debug/ags-host "$evidence_dir/ags-host"
           "$evidence_dir/ags-verifier" check release \
             --workspace . \
             --format json

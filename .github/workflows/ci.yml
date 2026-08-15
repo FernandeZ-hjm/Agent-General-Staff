@@ -89,6 +89,7 @@ jobs:
           cargo build -q --locked -p ags-mcp
           cp target/debug/ags "$RUNNER_TEMP/public-verification-evidence/ags-verifier"
           cp target/debug/ags-mcp "$RUNNER_TEMP/public-verification-evidence/ags-mcp"
+          cp target/debug/ags-host "$RUNNER_TEMP/public-verification-evidence/ags-host"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: public-verification-evidence
