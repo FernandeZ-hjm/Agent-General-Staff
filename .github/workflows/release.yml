@@ -107,7 +107,7 @@ jobs:
         with:
           name: public-release-plan
           path: .
-      - run: cargo build --release --locked --target ${{ matrix.target }} -p ags-cli
+      - run: cargo build --release --locked --target ${{ matrix.target }} -p ags-cli -p ags-mcp
       - name: Package Unix asset
         if: matrix.archive == 'tar'
         shell: bash
@@ -116,11 +116,13 @@ jobs:
           asset="ags-v${version}-${{ matrix.target }}.tar.gz"
           mkdir -p stage/runtime
           cp "target/${{ matrix.target }}/release/ags" stage/ags
+          cp "target/${{ matrix.target }}/release/ags-mcp" stage/ags-mcp
+          cp "target/${{ matrix.target }}/release/ags-host" stage/ags-host
           "target/${{ matrix.target }}/release/ags" release stage-runtime \
             --plan public-release-plan.json \
             --source . \
             --target stage/runtime
-          tar -C stage -czf "$asset" ags runtime
+          tar -C stage -czf "$asset" ags ags-mcp ags-host runtime
       - name: Package Windows asset
         if: matrix.archive == 'zip'
         shell: pwsh
@@ -129,6 +131,8 @@ jobs:
           $asset = "ags-v$version-${{ matrix.target }}.zip"
           New-Item -ItemType Directory -Force -Path stage/runtime | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/ags.exe" stage/ags.exe
+          Copy-Item "target/${{ matrix.target }}/release/ags-mcp.exe" stage/ags-mcp.exe
+          Copy-Item "target/${{ matrix.target }}/release/ags-host.exe" stage/ags-host.exe
           & "target/${{ matrix.target }}/release/ags.exe" release stage-runtime `
             --plan public-release-plan.json `
             --source . `
