@@ -1,165 +1,82 @@
-# Agent Task Protocol
+# Agent task protocol — contract v2
 
-> AGS 0.3.6 权威任务协议。宿主解释语义；AGS 校验结构化提案、权限与确定性能力准入。
+The host interprets human language once. AGS consumes typed Operations and a
+confirmed task card when the task uses handoff. It never reinterprets prose to
+choose task level, execution authority, capabilities, or commands.
 
-## 完整生命周期
+## Task authority
 
-### 1. Ambient Preflight（环境预检）
+A task card is executable only after schema validation and an explicit handoff.
+Its `Execution mode`, `Execution topology`, and `Delegation planning` tuple is
+the authority ceiling. Light, Medium, and Heavy are risk/review tiers; Heavy
+adds independent review and cannot alter the tuple.
 
-宿主第一步调用 MCP `ags_preflight`；MCP 不可用时才使用：
+The card binds goals (`G-*`), acceptance criteria (`AC-*`), verification
+commands (`V-*`), evidence (`EV-*`), stop conditions, write ownership, and
+commit/push/release constraints. Workflows and Skills must preserve those
+fields verbatim.
 
-```bash
-ags session preflight --for <agent> --target <path>
-```
-
-预检只建立 host/target、项目身份、协议状态、能力资源 URI 与 stop conditions。它不选择技能，也不从原始需求推断任务级别。新 preflight 会使当前连接旧租约失效。
-
-### 2. Host Semantic Proposal（宿主语义提案）
-
-```text
-人类需求
-→ 宿主保留完整对话上下文
-→ 读取/缓存 ags://capabilities/current-host
-→ HostRouteProposal
-→ ags_route_request（只读）
-→ RouteResolution
-```
-
-宿主负责语义理解与候选选择。AGS 不接收原始自然语言，不运行 substring/关键词、BM25、embedding 或另一套分类器。`{request: ...}` 必须返回 `raw_request_unsupported`。
-
-Proposal 必须提供 `schema_version`、`request_fingerprint`、`phase`、`solution_state`、`execution_authority`、`scope_hash` 和 `targets`。`DirectResponse` 独占；否则至多一个精确 `SkillTarget`、一个精确 `McpTarget`，加至多一个闭集 `MachineCliTarget`。
-
-### 3. Phase / Authority（阶段与授权）
-
-- `DirectResponse`：有界内容加工或普通解释，直接交付，不读技能快照、不规划、不分级。
-- `SolutionFormation`：只有关键设计仍开放时才进入；非简单任务按 `protocol/evolution-memory.md` 做 advisory recall。
-- `DirectEdit`：方案已确认，且同会话收到明确修改授权；宿主按已确认 scope 直接执行，不编译任务卡、不重复方案形成、不通过 MCP 代写仓库。
-- `TaskCardHandoff`：明确要求交接并且 handoff contract 已确认后才可编译。
-- 宿主 Plan mode：方案封闭后，最后一步直接编译唯一 canonical `## 任务卡`；
-  不再另写一份 prose final plan，也不再追加“是否生成任务卡”的确认。
-- 已有 `## 任务卡`：先 validate；合法卡直接进入 policy/gate/LaunchPlan，非法卡停止，不得落回任务卡生成。
-
-“方案 OK”仅确认设计，不独立授权 mutation 或 handoff。新问题若真正重开方案，才回到 SolutionFormation。
-
-### 4. Exact Capability Resolution（精确能力解析）
+## Execution lifecycle
 
 ```text
-skill_id + optional entrypoint + snapshot_hash
-→ validated ActiveSkillTable + ActiveMcpTable
-→ exact SkillSelection | blocked reason
+validate card
+  -> open typed Operation
+  -> immutable WorkspaceBinding
+  -> policy decision
+  -> sealed plan
+  -> host-native execution within authority
+  -> automatic verification and receipt
+  -> independent review when required
+  -> closure
 ```
 
-Capability Resolver 不读自然语言、不相似匹配、不 fallback，也不保留旧分类迁移层。Skill 只解析 canonical skill/entrypoint；MCP 只解析 canonical server/registered tool，返回宿主原生调用目标，AGS 不代理第三方服务器。静态目录规则见 `protocol/skill-governance.md`。
+Planning is not execution, and a plan reference is not completion. Effectful
+Operations require explicit apply. Replay, tamper, and cross-binding attempts
+fail closed.
 
-### 5. Read-only Resolve / Explicit Apply
+## Fanout
 
-`ags_route_request` 必须零进程启动、零文件写入。需要 AGS 机器动作时，服务器只保存当前 daemon client session 内的固定 action，返回 `action_id` 与 `DecisionLease`；宿主随后显式调用：
+`fanout-in-card` permits multiple writers only inside the same card.
+`fanout-cross-card` is required for separately authoritative cards. Parallel
+writers require `parallel` or `worktree` topology and non-overlapping owned
+paths. The main executor alone integrates lane diffs, runs combined checks and
+tests, owns final delivery, and closes the card.
 
-```text
-ags_apply_action(lease_id, action_id, optional outcome)
-```
+Under no-commit, lanes leave changes uncommitted and report tracked diff hashes
+plus exact untracked inventories. Integration and review cover the complete
+working-tree bytes; commit ranges alone are insufficient.
 
-调用方不能重传 capability、input 或 argv。租约绑定 preflight host/target 与 proposal/scope/registry/snapshot/policy hash。新 preflight、新 route、连接重置、绑定变化或一次消费均使旧 lease 失效；没有任意 TTL。重放、跨连接与篡改 fail closed。
+## Check and test
 
-### 6. Task-Card Handoff Gate（任务卡交接门槛）
+`ags check` evaluates governance, evidence, change, release, or promotion
+boundaries and always reports `project_tests_run=false`. It never executes a
+project test command.
 
-任务卡生成同时要求：明确 task-card/handoff 指令，以及已确认且封闭的 handoff contract。
+`ags test smoke|standard|full` consumes one structured `CommandSpec` containing
+`program`, `argv`, `cwd`, `env`, `timeout_ms`, and
+`allowed_write_paths`. It does not use shell interpolation. The closed
+`TestReceipt` binds canonical workspace, commit, tree, argv hash, exit code,
+duration, output digest, and observed write set. Test failure never rolls back
+source; unexpected writes produce `risk-escalated`.
 
-```bash
-ags task compile <contract> \
-  --task-card-requested \
-  --confirmed-handoff-contract
-```
+## Review and closure
 
-宿主 Plan mode 的最终产物使用等价的专用入口：
+- Light: risk-matched review.
+- Medium: complete diff review; independent review for high-impact modules.
+- Heavy: an independent non-author reviews the complete integrated diff,
+  interfaces, workspace isolation, failure semantics, and verification evidence.
 
-```bash
-ags task compile <contract> \
-  --host-plan-mode-final \
-  --confirmed-handoff-contract
-```
+Blocking findings are fixed and re-reviewed. If the gate cannot be satisfied,
+delivery is partial or blocked. Closure records card and plan identity, actual
+downscoped authority, G/AC/V/EV results, review evidence, diff summary, preserved
+state, and deliberately unperformed external actions. Only the contract v2
+kernel may issue the terminal receipt.
 
-Plan UI 可用 `<proposed_plan>` 包住任务卡供界面识别，但 envelope 内必须只有原始
-canonical task card。用户选择 Execute 后，宿主先退出 Plan mode，再把同一份任务卡正文与
-`task_card_hash` 原样派发；禁止重新生成、摘要或补写第二张卡。
-
-typed `HandoffContract` 必须显式声明 `task_level`；缺失即拒绝。Compiler 不重新解释原始聊天、不选择技能。
-Compiler 派生稳定 `Contract ID` 与 `Handoff source`；任务目标、验收标准、验证命令和证据
-分别使用 `G-*`、`AC-*`、`V-*`、`EV-*` 建立一一可校验的闭环映射。
-
-### 7. Validate / Policy / Gate / LaunchPlan
-
-`TaskPrepareExecution` 执行：
-
-```text
-validate → policy → gate → LaunchPlan → HOST_EXECUTION_REQUIRED
-```
-
-Runner 不启动宿主、不执行项目任务、不运行事后验证、不写最终 receipt，也不声称完成。宿主消费 LaunchPlan 后按任务卡执行、验证、review 和交付。执行面必须保留进入 LaunchPlan
-的原始任务卡字节与 `task_card_hash`，供交付报告精确回绑。direct-edit 不需要 route lease 或任务卡。
-
-### 8. Receipt
-
-收据 writer、reader 与 verifier 只接受当前 `0.3.6-task-receipt` schema。
-`governance_evidence` 只保存 decision/lease/proposal/scope/snapshot/policy hash
-与 skill selection，不保存原始请求。只有
-`ags task close <task-card> <launch-plan> <delivery-report> --receipt-out <receipt>`
-完成三方 hash 绑定与权限降权校验后，receipt 才可进入任务存档。
-
-## 任务级别与权限
-
-任务级别是风险/review 层，不是需求路由结果，也不能覆盖显式 execution authority：
-
-- `Execution mode`、`Execution topology`、`Delegation planning` 必须在任务卡中显式声明。
-- Light：边界小、验证快。
-- Medium：跨文件或需要完整集成验证。
-- Heavy：必须完成独立 review，但不能因此升级或降级执行权限。
-
-destructive、external-write、credential、migration、release 与 protected-path 是独立 stop conditions。
-
-## Review Gate
-
-- Light：按风险决定，可由主执行器完成针对性 diff 检查。
-- Medium：交付前必须做完整 diff review；高影响模块应由非作者 reviewer 复核。
-- Heavy：必须有独立 reviewer，对完整 diff、边界、失败语义和验证证据给出结论。作者自审、测试通过或计划确认都不能替代独立 review。
-- reviewer 发现 blocking finding 时停止交付；修复后必须重跑受影响验证并重新获得 review 结论。
-- 若任务卡禁止并行/外部 workflow，且当前执行面无法取得独立 reviewer，必须如实报告 review gate 未满足，不得宣称完整完成。
-
-## GovernanceStatus
-
-preflight、route、apply、CLI、Runner 与 receipt 共享 `GovernanceStatus`：`OK`、`NEEDS_USER_DECISION`、`BLOCKED_BY_POLICY`、`RISK_ESCALATED`、`DONE_WITH_RECEIPT`、`ADVISORY_NO_MUTATION`、`HOST_EXECUTION_REQUIRED`。它不折叠 task level、permission、review 或 stop condition。
-
-## 角色
-
-- 人类：提供需求、确认方案与授予明确 mutation/handoff 权限。
-- 宿主 Agent：保留上下文、做语义提案、执行 host-native 工作。
-- AGS Request Governance：验证 typed proposal，不解释自然语言。
-- Capability Resolver：验证精确 skill/entrypoint/snapshot 或 MCP/tool/snapshot。
-- AGS MCP：preflight、只读 resolve、daemon client session 内租约与显式 apply。
-- Compiler / Policy / Gate / Runner：只消费结构化输入。
-
-## 验证规则
-
-声称完成前至少提供与风险匹配的目标测试、workspace 测试、local/full verify、路由/租约/技能/projection 矩阵和 diff 证据。无法证明 route 零副作用、lease 不可篡改、静态 snapshot 绑定一致或 public-safe 排除有效时，停止交付。
-
-## 交付报告
-
-报告必须声明 `Closure schema: 1.1`，并精确回绑任务卡 `Contract ID`、
-`task-card-hash`、`launch-plan-hash` 与实际使用权限。`目标闭环`、`验收闭环`、`验证闭环` 的
-`G-*` / `AC-*` / `V-*` 集合必须与任务卡完全一致；`completed` 要求全部闭环、
-review gate 已通过或不适用、`未闭环项` 为 `none`。`partial` / `blocked` 必须逐项列出
-未闭环 ID 和原因。
-
-报告还必须列出：改动边界、接口迁移、验证命令与结果、review 证据、git diff 摘要、
-保留的外部/未跟踪状态、剩余风险，以及未执行的跨工作区、版本控制和发布动作。不得把
-LaunchPlan、dry-run 或“准备执行”写成已经执行完成。
-
-```bash
-ags task close <task-card> <launch-plan> <delivery-report> \
-  --receipt-out <receipt.json> --format json
-```
-
-receipt-id、receipt 与 session closure pointer 只由 Rust closure kernel
-生成；宿主技能和生命周期适配器不得重复实现 hash 或 receipt 逻辑。
-
-权威任务卡骨架为 `protocol/task-card-template.md`。
+A hash-bound canonical task card is immutable evidence, not a compatibility
+surface. If such a card was authored before the contract-v2 hard cut and its
+literal close command conflicts with that same card's hard-cut acceptance
+criteria, the executor must not edit the card or restore the removed command.
+The contract-v2 registry is authoritative: prepare closure with
+`ags govern task close`, then consume its sealed `action_ref` with `ags apply`.
+The delivery report records this protocol resolution and preserves the original
+task-card hash.

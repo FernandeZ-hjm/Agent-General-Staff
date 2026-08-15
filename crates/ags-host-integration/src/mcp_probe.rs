@@ -432,8 +432,8 @@ mod tests {
             serde_json::json!({
                 "mcpServers": {
                     "ags": {
-                        "command": "/usr/local/bin/ags",
-                        "args": ["mcp", "serve", "--transport", "stdio"]
+                        "command": "/usr/local/bin/ags-mcp",
+                        "args": []
                     }
                 }
             })
@@ -446,8 +446,11 @@ mod tests {
         assert_eq!(report.evidence_source, "CodeBuddy MCP config");
         let registration = report.find("ags").unwrap();
         assert!(registration.active);
-        assert_eq!(registration.command.as_deref(), Some("/usr/local/bin/ags"));
-        assert_eq!(registration.args, ["mcp", "serve", "--transport", "stdio"]);
+        assert_eq!(
+            registration.command.as_deref(),
+            Some("/usr/local/bin/ags-mcp")
+        );
+        assert!(registration.args.is_empty());
         assert_eq!(registration.transport.as_deref(), Some("stdio"));
         assert_eq!(registration.scope.as_deref(), Some("user"));
     }
@@ -463,8 +466,8 @@ mod tests {
             serde_json::json!({
                 "mcpServers": {
                     "ags": {
-                        "command": "/usr/local/bin/ags",
-                        "args": ["mcp", "serve", "--transport", "stdio"]
+                        "command": "/usr/local/bin/ags-mcp",
+                        "args": []
                     }
                 }
             })
@@ -475,8 +478,8 @@ mod tests {
         let cursor = inspect_exact_mcp_registration_at("cursor", "ags", &workspace, &home)
             .unwrap()
             .unwrap();
-        assert_eq!(cursor.command.as_deref(), Some("/usr/local/bin/ags"));
-        assert_eq!(cursor.args, ["mcp", "serve", "--transport", "stdio"]);
+        assert_eq!(cursor.command.as_deref(), Some("/usr/local/bin/ags-mcp"));
+        assert!(cursor.args.is_empty());
         assert_eq!(cursor.transport.as_deref(), Some("stdio"));
         assert_eq!(cursor.scope.as_deref(), Some("user"));
 
@@ -499,16 +502,16 @@ mod tests {
                 "enabled": true,
                 "transport": {
                     "type": "stdio",
-                    "command": "/usr/local/bin/ags",
-                    "args": ["mcp", "serve", "--transport", "stdio"]
+                    "command": "/usr/local/bin/ags-mcp",
+                    "args": []
                 }
             }"#,
         )
         .unwrap()
         .unwrap();
         assert!(codex.active);
-        assert_eq!(codex.command.as_deref(), Some("/usr/local/bin/ags"));
-        assert_eq!(codex.args, ["mcp", "serve", "--transport", "stdio"]);
+        assert_eq!(codex.command.as_deref(), Some("/usr/local/bin/ags-mcp"));
+        assert!(codex.args.is_empty());
         assert_eq!(codex.transport.as_deref(), Some("stdio"));
     }
 
@@ -516,19 +519,19 @@ mod tests {
     fn parsers_keep_registration_identity_and_active_state() {
         let claude = parse_mcp_list(
             McpListFormat::Claude,
-            "ags: /bin/ags mcp serve - ✔ Connected\nplugin:memory: node old - ✘ Failed\n",
+            "ags: /bin/ags-mcp - ✔ Connected\nplugin:memory: node old - ✘ Failed\n",
         );
         assert_eq!(claude[0].name, "ags");
         assert!(claude[0].active);
-        assert_eq!(claude[0].command.as_deref(), Some("/bin/ags"));
-        assert_eq!(claude[0].args, ["mcp", "serve"]);
+        assert_eq!(claude[0].command.as_deref(), Some("/bin/ags-mcp"));
+        assert!(claude[0].args.is_empty());
         assert_eq!(claude[0].transport.as_deref(), Some("stdio"));
         assert_eq!(claude[1].name, "plugin:memory");
         assert!(!claude[1].active);
 
         let codex = parse_mcp_list(
             McpListFormat::Codex,
-            "Name Command Args Status\nags ags mcp serve enabled\nold ags mcp serve disabled\n",
+            "Name Command Args Status\nags ags-mcp enabled\nold old-mcp disabled\n",
         );
         assert_eq!(
             codex
@@ -537,12 +540,12 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![("ags", true), ("old", false)]
         );
-        assert_eq!(codex[0].command.as_deref(), Some("ags"));
-        assert_eq!(codex[0].args, ["mcp", "serve"]);
+        assert_eq!(codex[0].command.as_deref(), Some("ags-mcp"));
+        assert!(codex[0].args.is_empty());
 
         let omp = parse_mcp_list(
             McpListFormat::Omp,
-            "ags | stdio | enabled | /usr/local/bin/ags mcp serve [user]\n\
+            "ags | stdio | enabled | /usr/local/bin/ags-mcp [user]\n\
              old | stdio | disabled | old mcp serve [project]\n",
         );
         assert_eq!(
@@ -553,6 +556,6 @@ mod tests {
         );
         assert_eq!(omp[0].transport.as_deref(), Some("stdio"));
         assert_eq!(omp[0].scope.as_deref(), Some("user"));
-        assert_eq!(omp[0].args, ["mcp", "serve"]);
+        assert!(omp[0].args.is_empty());
     }
 }

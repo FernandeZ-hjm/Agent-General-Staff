@@ -19,16 +19,12 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-mod action;
-mod action_model;
 /// Delivery-report closure against a canonical task contract.
 pub mod delivery_report;
 pub mod memory;
 mod receipt;
 mod receipt_model;
 
-pub use action::*;
-pub use action_model::*;
 pub use receipt::*;
 pub use receipt_model::*;
 

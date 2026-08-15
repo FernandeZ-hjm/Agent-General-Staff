@@ -1,56 +1,49 @@
-# ADR 0001: Workspace Service and Deep Module Boundaries
+# ADR 0001: Target-routed workspace services and the deep control plane
 
 - Status: Accepted
-- Introduced in: 0.3.1
-- Current implementation: 0.4.16
+- Current contract: v0.4.20 / contract v2
 
 ## Context
 
-Per-stdio governance state allowed multiple hosts in one project to observe
-different capability hashes and connection-bound leases. Large source files
-also mixed read models, host probes, lifecycle writes, snapshot publication,
-and rendering.
+Binding stdio transport, workspace identity, and action state as one object was
+safe only for per-project hosts. A Generic Agent may use one global MCP process
+for concurrent sessions in several workspaces. In that environment, daemon cwd
+or last-writer binding can route a correct request to the wrong project.
+
+Separately, human commands, hidden machine commands, MCP tools, and lifecycle
+handlers had accumulated parallel semantics. The command count and duplicated
+orchestration made both safety review and ordinary use harder.
 
 ## Decision
 
-Use one service per canonical workspace and make MCP stdio a thin
-`connect-or-start` proxy. Keep sessions, preflight bindings, and actions
-client-local. Publish one static snapshot per host by
-validate-then-atomic-replace during explicit lifecycle updates.
+Keep transport, workspace resolution, and security binding independent:
 
-Workspace lifecycle uses the same service boundary. Host-native
-SessionStart, Stop/guard, and SessionEnd adapters only translate their native
-event schema into the shared lifecycle envelope. Memory reads, idempotency,
-receipt-bound closure, and lifecycle state belong to the workspace service;
-the host and user-level configuration do not own a second state machine.
+1. The stdio connection owns transport identity and normalized host identity.
+2. Every request resolves a canonical workspace from explicit context, one
+   unique MCP root, or adapter cwd, in that order.
+3. The router authenticates or reuses a distinct session with that workspace's
+   daemon and creates an immutable `WorkspaceBinding`.
+4. `open` and `decide` seal the operation plan to the binding. `apply` consumes
+   only its action reference on the same binding.
 
-The request path never rebuilds or compares live capability observations.
-The daemon loads a host snapshot once, validates its sealed hashes, and reuses
-that same object for preflight, resource reads, route, and apply. There is no
-workspace capability bundle or bundle epoch. An explicit snapshot refresh
-becomes active only after daemon restart/reconnect, which also invalidates old
-sessions and leases.
+The router stores no global current workspace. Daemon process cwd, HOME,
+managed-project guesses, and fuzzy matching never decide governance identity.
 
-Split the four largest modules by cohesive change reason:
-
-- capability resolver: authority, catalog, snapshot compiler/validation,
-  local third-party manifest and hashing;
-- workspace facts: discovery, instruction projection, protocol audit,
-  preflight and rendering;
-- lifecycle: setup, project initialization, updates and onboarding assessment;
-- MCP tools: wire, preflight, decision, apply and tests.
-
-Cargo package names identify the twelve major architectural boundaries. In
-0.3.2 the former support-package implementations moved under those owners and
-their package manifests were removed. v0.3.6 exposes the current contract only;
-retired packages and aliases do not remain as alternate authorities.
+All domain orchestration moves into one deep `ags-control-plane` Module. A typed
+operation registry is the single declaration source for CLI, JSON, MCP schema,
+help metadata, policy, plan, and handler routing. The external behavioral
+Interface is only `open`, `decide`, and `apply`.
 
 ## Consequences
 
-Four hosts can share one workspace service without sharing decision authority.
-Capability scans occur only in explicit setup, update, or snapshot publication,
-never while serving a request. Cross-session, cross-host,
-cross-workspace, and replayed leases fail
-closed. `ags mcp serve --transport stdio` remains the host entry;
-connect-or-start is internal. Future refactors must preserve these boundaries
-without retaining obsolete compatibility paths.
+- One Generic Agent connection can interleave A -> B -> A safely while reusing
+  authenticated sessions after the first handshake.
+- Cross-workspace, cross-host, cross-connection, restarted-session, replayed,
+  and tampered action references fail closed.
+- Official host adapters remain useful probes/hooks but are not an admission
+  allowlist.
+- The CLI contracts to ten top-level commands and MCP to two tools.
+- Contract v2 removes older command, tool, wire, and schema surfaces instead of
+  carrying aliases or compatibility translation.
+- Stable/public promotion, release, installation, and third-party MCP
+  registration remain outside this decision and require their own authority.

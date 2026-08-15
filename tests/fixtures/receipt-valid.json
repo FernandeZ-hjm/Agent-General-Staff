@@ -1,9 +1,12 @@
 {
-  "schema_version": "0.3.6-task-receipt",
-  "receipt_id": "receipt-ebd47a7e5f7b",
+  "schema_version": "ags://schema/contract/v2/task-receipt",
+  "receipt_id": "receipt-c07e09d22f23",
   "timestamp": "unix-0",
   "task_card_hash": "ebd47a7e5f7bb784561478324c40fff52a024461476c5c0e7df186aab57a102a",
+  "launch_plan_hash": "1111111111111111111111111111111111111111111111111111111111111111",
   "task_card_path": "tests/fixtures/valid-full.md",
+  "launch_plan_path": "tests/fixtures/launch-plan-valid.json",
+  "delivery_report_path": "tests/fixtures/delivery-report-valid.md",
   "gate_result": {
     "decision": "allow"
   },
@@ -23,5 +26,12 @@
       "exit_code": 0,
       "output_hash": ""
     }
-  ]
+  ],
+  "delivery_report_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+  "execution_footprint": {
+    "execution_mode_used": "fanout-in-card",
+    "execution_topology_used": "worktree",
+    "delegation_used": "yes"
+  },
+  "closure_status": "completed"
 }

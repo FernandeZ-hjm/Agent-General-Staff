@@ -133,7 +133,7 @@ const PUBLIC_CRATE_ROOTS: &[&str] = &[
     "crates/ags-session",
     "crates/ags-evidence",
     "crates/ags-verification",
-    "crates/ags-lifecycle",
+    "crates/ags-control-plane",
     "crates/ags-cli",
     "crates/ags-mcp",
 ];
@@ -1036,18 +1036,18 @@ mod tests {
             std::fs::write(path, content).unwrap();
         }
         let ids = [
-            "ags-agents",
+            "ags-agent",
             "ags-doctor",
             "ags-init",
             "ags-setup",
-            "ags-skill",
+            "ags-govern",
         ];
         let public_path = "templates/command-skills/ags-setup";
         let body_hash =
             ags_platform::sha256_file(&root.join(public_path).join("SKILL.md")).unwrap();
         std::fs::write(
             root.join("Cargo.toml"),
-            "[workspace]\n[workspace.package]\nversion = \"0.4.13\"\nlicense = \"GPL-3.0-only\"\n",
+            "[workspace]\n[workspace.package]\nversion = \"0.4.20\"\nlicense = \"GPL-3.0-only\"\n",
         )
         .unwrap();
         std::fs::write(
@@ -1058,7 +1058,7 @@ mod tests {
         let registry_entries = ids
             .iter()
             .map(|id| {
-                let (route_state, routing_surface) = if *id == "ags-skill" {
+                let (route_state, routing_surface) = if *id == "ags-govern" {
                     ("routable", "skill_target")
                 } else {
                     ("not-routable", "host_command")
@@ -1437,16 +1437,14 @@ mod tests {
         }
         for path in [
             "crates/ags-host-integration/src/lifecycle_codec.rs",
-            "crates/ags-lifecycle/src/conformance.rs",
-            "crates/ags-lifecycle/src/lifecycle_projection.rs",
-            "crates/ags-lifecycle/src/workspace_lifecycle.rs",
-            "crates/ags-verification/src/doctor/checks/conformance.rs",
+            "crates/ags-control-plane/src/workspace_lifecycle.rs",
+            "crates/ags-control-plane/src/control_plane.rs",
         ] {
             assert!(files.contains(path), "public authority must include {path}");
         }
         for retired in [
-            "crates/ags-lifecycle/src/setup/memory/assets.rs",
-            "crates/ags-lifecycle/src/setup/memory/wire.rs",
+            "crates/ags-control-plane/src/setup/memory/assets.rs",
+            "crates/ags-control-plane/src/setup/memory/wire.rs",
         ] {
             assert!(
                 !files.contains(retired),

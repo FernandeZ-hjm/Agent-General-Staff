@@ -38,7 +38,7 @@ pub fn run_verify_with_options(
 ) -> VerificationReport {
     let repo_root = canonical_repo_root(repo_root);
     let items = match scope {
-        Scope::Local => {
+        Scope::Governance => {
             let identity = ags_workspace_facts::detect_project(&repo_root);
             let mut items = Vec::new();
             for group in local_check_plan(identity.is_ags_suite) {
@@ -59,6 +59,8 @@ pub fn run_verify_with_options(
             }
             items
         }
+        Scope::Changes => check_workspace_changes(&repo_root),
+        Scope::Evidence => check_evidence_contracts(&repo_root),
         Scope::Release => check_release_boundary(release_target_root(&repo_root, options)),
         Scope::Promotion => check_promotion_boundary(&repo_root, options.public_root.as_deref()),
     };
@@ -87,9 +89,10 @@ pub fn run_verify_with_options(
         .count();
 
     VerificationReport {
-        schema_version: "0.3.6-verification-report".to_string(),
+        schema_version: "ags://schema/contract/v2/check-report".to_string(),
         scope,
         repo_root: repo_root.to_string_lossy().to_string(),
+        project_tests_run: false,
         items,
         summary: VerificationSummary {
             total,

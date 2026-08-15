@@ -233,9 +233,34 @@ pub(super) fn workspace_key(workspace: &Path) -> String {
 }
 
 pub(super) fn current_executable_hash() -> Result<String, String> {
-    let executable =
-        std::env::current_exe().map_err(|error| format!("current_exe failed: {error}"))?;
+    let executable = workspace_daemon_executable()?;
     executable_content_hash(&executable)
+}
+
+pub(super) fn workspace_daemon_executable() -> Result<PathBuf, String> {
+    let current =
+        std::env::current_exe().map_err(|error| format!("current_exe failed: {error}"))?;
+    #[cfg(test)]
+    return Ok(current);
+
+    #[cfg(not(test))]
+    {
+        let is_mcp = current
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value == "ags-mcp");
+        if is_mcp {
+            return Ok(current);
+        }
+        let sibling = current.with_file_name(format!("ags-mcp{}", std::env::consts::EXE_SUFFIX));
+        if sibling.is_file() {
+            return Ok(sibling);
+        }
+        Err(format!(
+            "standalone ags-mcp executable not found beside {}",
+            current.display()
+        ))
+    }
 }
 
 pub(super) fn fresh_id(prefix: &str, workspace: &Path) -> String {

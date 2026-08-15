@@ -164,6 +164,36 @@ pub struct ThirdPartyCapabilityCard {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct SkillBodyRef {
+    pub body_revision: String,
+    pub source_digest: String,
+    pub runtime_uri: String,
+}
+
+impl SkillBodyRef {
+    pub fn new(
+        skill_id: &str,
+        body_revision: impl Into<String>,
+        source_digest: impl Into<String>,
+    ) -> Self {
+        let body_revision = body_revision.into();
+        Self {
+            runtime_uri: format!("ags://runtime/skills/{skill_id}/{body_revision}"),
+            body_revision,
+            source_digest: source_digest.into(),
+        }
+    }
+
+    fn is_valid_for(&self, skill_id: &str, source_hash: &str) -> bool {
+        !self.body_revision.trim().is_empty()
+            && self.source_digest == source_hash
+            && self.runtime_uri == format!("ags://runtime/skills/{skill_id}/{}", self.body_revision)
+            && !self.runtime_uri.starts_with('/')
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ActiveSkill {
     pub skill_id: String,
     pub invoke_hint: String,
@@ -172,6 +202,7 @@ pub struct ActiveSkill {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub intent_tags: Vec<String>,
     pub source_hash: String,
+    pub body_ref: SkillBodyRef,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -202,6 +233,9 @@ impl ActiveSkillTable {
         let mut skills = HashMap::with_capacity(active_skills.len());
         for skill in active_skills {
             let skill_id = skill.skill_id.clone();
+            if !skill.body_ref.is_valid_for(&skill_id, &skill.source_hash) {
+                return Err(ResolveError::InvalidBodyReference { skill_id });
+            }
             if skills.insert(skill_id.clone(), skill).is_some() {
                 return Err(ResolveError::DuplicateSkill { skill_id });
             }
@@ -277,6 +311,7 @@ pub struct SkillSelection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entrypoint: Option<String>,
     pub snapshot_hash: String,
+    pub body_ref: SkillBodyRef,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -309,6 +344,9 @@ pub enum ResolveError {
     SnapshotHashMismatch {
         expected: String,
         supplied: String,
+    },
+    InvalidBodyReference {
+        skill_id: String,
     },
 }
 
@@ -345,6 +383,7 @@ pub fn resolve_skill(
         invoke_hint: active.invoke_hint.clone(),
         entrypoint: entrypoint.map(str::to_string),
         snapshot_hash: snapshot_hash.to_string(),
+        body_ref: active.body_ref.clone(),
     })
 }
 
@@ -386,8 +425,12 @@ pub fn resolve_mcp(
 pub struct HostCapabilitySnapshot {
     pub schema_version: String,
     pub host: String,
+    pub surface: ags_host_integration::AgentSurface,
+    pub host_registration_hash: String,
     pub registry_hash: String,
-    pub runtime_hash: String,
+    pub runtime_observation_hash: String,
+    pub installed_skill_index_hash: String,
+    pub input_set_hash: String,
     pub snapshot_hash: String,
     pub catalog: Vec<SkillCard>,
     pub mcp_catalog: Vec<McpCard>,
@@ -410,9 +453,10 @@ pub enum SnapshotError {
 impl HostCapabilitySnapshot {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        host: impl Into<String>,
+        registration: &ags_host_integration::HostRegistration,
         registry_hash: impl Into<String>,
-        runtime_hash: impl Into<String>,
+        runtime_observation_hash: impl Into<String>,
+        installed_skill_index_hash: impl Into<String>,
         mut catalog: Vec<SkillCard>,
         mut mcp_catalog: Vec<McpCard>,
         third_party_registry_url: impl Into<String>,
@@ -421,7 +465,7 @@ impl HostCapabilitySnapshot {
         mut active_skills: Vec<ActiveSkill>,
         mut active_mcps: Vec<ActiveMcp>,
     ) -> Result<Self, ResolveError> {
-        let host = host.into();
+        let host = registration.host_id.as_str().to_string();
         sort_skill_cards(&mut catalog);
         sort_mcp_cards(&mut mcp_catalog);
         sort_third_party_cards(&mut third_party_catalog);
@@ -432,8 +476,12 @@ impl HostCapabilitySnapshot {
         let mut snapshot = Self {
             schema_version: HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION.to_string(),
             host,
+            surface: registration.surface,
+            host_registration_hash: registration.registration_hash.clone(),
             registry_hash: registry_hash.into(),
-            runtime_hash: runtime_hash.into(),
+            runtime_observation_hash: runtime_observation_hash.into(),
+            installed_skill_index_hash: installed_skill_index_hash.into(),
+            input_set_hash: String::new(),
             snapshot_hash: String::new(),
             catalog,
             mcp_catalog,
@@ -443,6 +491,7 @@ impl HostCapabilitySnapshot {
             active_skills,
             active_mcps,
         };
+        snapshot.input_set_hash = snapshot_input_set_hash(&snapshot);
         snapshot.snapshot_hash = snapshot_integrity_hash(&snapshot);
         Ok(snapshot)
     }
@@ -461,6 +510,9 @@ impl HostCapabilitySnapshot {
         {
             return Err(SnapshotError::SkillSnapshotStale);
         }
+        if self.input_set_hash != snapshot_input_set_hash(self) {
+            return Err(SnapshotError::SnapshotIntegrityFailed);
+        }
         if self.snapshot_hash != snapshot_integrity_hash(self) {
             return Err(SnapshotError::SnapshotIntegrityFailed);
         }
@@ -477,5 +529,94 @@ impl HostCapabilitySnapshot {
         )
         .map_err(SnapshotError::InvalidActiveTable)?;
         Ok(ActiveCapabilityTables { skills, mcps })
+    }
+
+    /// Recompute the two deterministic seals after a pure, already-authorized
+    /// catalog overlay. This never performs runtime discovery.
+    pub fn reseal(&mut self) {
+        sort_skill_cards(&mut self.catalog);
+        sort_mcp_cards(&mut self.mcp_catalog);
+        sort_third_party_cards(&mut self.third_party_catalog);
+        sort_active_skills(&mut self.active_skills);
+        sort_active_mcps(&mut self.active_mcps);
+        self.input_set_hash = snapshot_input_set_hash(self);
+        self.snapshot_hash = snapshot_integrity_hash(self);
+    }
+}
+
+#[cfg(test)]
+mod contract_v2_hard_cut_tests {
+    use super::*;
+
+    fn legacy_snapshot() -> serde_json::Value {
+        serde_json::json!({
+            "schema_version": HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION,
+            "host": "hermes",
+            "registry_hash": "sha256:registry",
+            "runtime_hash": "sha256:runtime",
+            "snapshot_hash": "sha256:snapshot",
+            "catalog": [],
+            "mcp_catalog": [],
+            "third_party_registry_url": "https://example.invalid/registry.json",
+            "third_party_manifest_hash": "sha256:third-party",
+            "third_party_catalog": [],
+            "active_skills": [],
+            "active_mcps": []
+        })
+    }
+
+    #[test]
+    fn snapshot_rejects_runtime_hash_legacy_wire() {
+        assert!(serde_json::from_value::<HostCapabilitySnapshot>(legacy_snapshot()).is_err());
+    }
+
+    #[test]
+    fn snapshot_requires_every_authority_input_seal() {
+        let registration = ags_host_integration::HostRegistration::new(
+            ags_host_integration::HostId::new("hermes").unwrap(),
+            ags_host_integration::AgentSurface::Hybrid,
+            None,
+        );
+        let snapshot = HostCapabilitySnapshot::new(
+            &registration,
+            "sha256:registry",
+            "sha256:runtime-observation",
+            "sha256:installed-index",
+            Vec::new(),
+            Vec::new(),
+            "https://example.invalid/registry.json",
+            "sha256:third-party",
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap();
+        let encoded = serde_json::to_value(snapshot).unwrap();
+        for required in [
+            "surface",
+            "host_registration_hash",
+            "runtime_observation_hash",
+            "installed_skill_index_hash",
+            "input_set_hash",
+        ] {
+            let mut incomplete = encoded.clone();
+            incomplete.as_object_mut().unwrap().remove(required);
+            assert!(
+                serde_json::from_value::<HostCapabilitySnapshot>(incomplete).is_err(),
+                "missing required snapshot field {required} was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn active_skill_requires_an_immutable_body_reference() {
+        let legacy = serde_json::json!({
+            "skill_id": "example",
+            "invoke_hint": "[skill: example]",
+            "allowed_entrypoints": [],
+            "intent_tags": [],
+            "source_hash": "sha256:source"
+        });
+        assert!(serde_json::from_value::<ActiveSkill>(legacy).is_err());
     }
 }

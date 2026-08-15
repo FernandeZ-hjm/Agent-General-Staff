@@ -8,10 +8,9 @@ use crate::workspace_service::registry_ownership::{
 use crate::workspace_service::transport_handshake::{
     connection_error_is_reportable, finish_workspace_session, handle_connection,
     inspect_existing_workspace_service_at, read_json_line, write_json_line, Handshake,
-    HandshakeResult, WIRE_SCHEMA,
+    HandshakeResult, WIRE_PROTOCOL,
 };
 use crate::workspace_service::upgrade_recycle::{connect_registered, workspace_service_status_at};
-use crate::{CapabilityCatalogSource, PreflightBinding};
 use ags_platform::canonical_workspace_root;
 use std::fs;
 use std::io::BufReader;
@@ -47,61 +46,29 @@ fn current_process_start_identity_is_stable_without_a_shell() {
 }
 
 #[test]
-fn workspace_daemon_keeps_one_static_snapshot_for_its_lifetime() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let root = canonical_workspace_root(&root).unwrap();
-    let fixture = tempfile::tempdir().unwrap();
-    let runtime = fixture.path().join("runtime");
-    let home = fixture.path().join("home");
-    let initial = ags_capability_governance::write_capability_snapshot_with_roots(
-        &root, "codex", &runtime, &home,
-    )
-    .unwrap();
-    let state = WorkspaceState::new(root.clone(), runtime.clone()).unwrap();
-    let mut binding = PreflightBinding {
-        host: "codex".to_string(),
-        target: root.clone(),
-        host_home: home.clone(),
-        capability: None,
-    };
-    let accepted = state.capability_reference(&binding);
-    assert_eq!(
-        accepted
-            .ready_binding()
-            .map(|binding| binding.snapshot_hash.as_str()),
-        Some(initial.snapshot_hash.as_str())
-    );
-    binding.capability = Some(accepted);
-
-    let added = home.join(".codex/skills/new-after-daemon-start/SKILL.md");
-    fs::create_dir_all(added.parent().unwrap()).unwrap();
-    fs::write(
-        &added,
-        "---\nname: new-after-daemon-start\ndescription: refresh-only fixture\n---\n",
-    )
-    .unwrap();
-    let refreshed = ags_capability_governance::write_capability_snapshot_with_roots(
-        &root, "codex", &runtime, &home,
-    )
-    .unwrap();
-    assert_ne!(refreshed.snapshot_hash, initial.snapshot_hash);
-
-    let loaded = state.read_catalog(&binding).unwrap();
-    assert_eq!(loaded.snapshot_hash, initial.snapshot_hash);
-}
-
-#[test]
 fn maintenance_activation_atomically_replaces_the_exact_host_snapshot_set() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let root = canonical_workspace_root(&root).unwrap();
     let fixture = tempfile::tempdir().unwrap();
     let runtime = fixture.path().join("runtime");
     let home = fixture.path().join("home");
+    let registration = ags_host_integration::HostRegistration::new(
+        ags_host_integration::HostId::new("codex").unwrap(),
+        ags_host_integration::AgentSurface::Hybrid,
+        Some("codex".to_string()),
+    );
+    let registration_path = runtime.join("hosts/codex/registration.json");
+    fs::create_dir_all(registration_path.parent().unwrap()).unwrap();
+    fs::write(
+        &registration_path,
+        serde_json::to_vec_pretty(&registration).unwrap(),
+    )
+    .unwrap();
     let snapshot = ags_capability_governance::write_capability_snapshot_with_roots(
         &root, "codex", &runtime, &home,
     )
     .unwrap();
-    let state = WorkspaceState::new(root, runtime).unwrap();
+    let state = WorkspaceState::new(root, runtime.clone()).unwrap();
 
     assert!(state.loaded_snapshot_hashes().unwrap().is_empty());
     let activated = state
@@ -114,6 +81,40 @@ fn maintenance_activation_atomically_replaces_the_exact_host_snapshot_set() {
     );
 
     let before = state.loaded_snapshot_hashes().unwrap();
+    let drifted_registration = ags_host_integration::HostRegistration::new(
+        ags_host_integration::HostId::new("codex").unwrap(),
+        ags_host_integration::AgentSurface::Cli,
+        Some("codex".to_string()),
+    );
+    fs::write(
+        &registration_path,
+        serde_json::to_vec_pretty(&drifted_registration).unwrap(),
+    )
+    .unwrap();
+    assert!(state
+        .activate_host_snapshots(&["codex".to_string()], &[], true)
+        .unwrap_err()
+        .contains("registration"));
+    assert_eq!(state.loaded_snapshot_hashes().unwrap(), before);
+    fs::write(
+        &registration_path,
+        serde_json::to_vec_pretty(&registration).unwrap(),
+    )
+    .unwrap();
+    let index = ags_capability_governance::skill_adoption::InstalledSkillIndex {
+        revision: 1,
+        ..Default::default()
+    };
+    let index_path =
+        ags_capability_governance::skill_adoption::installed_skill_index_path(&runtime);
+    fs::create_dir_all(index_path.parent().unwrap()).unwrap();
+    fs::write(&index_path, serde_json::to_vec_pretty(&index).unwrap()).unwrap();
+    assert!(state
+        .activate_host_snapshots(&["codex".to_string()], &[], true)
+        .unwrap_err()
+        .contains("installed Skill index"));
+    assert_eq!(state.loaded_snapshot_hashes().unwrap(), before);
+
     assert!(state
         .activate_host_snapshots(&["codex".to_string(), "claude-code".to_string()], &[], true,)
         .is_err());
@@ -283,10 +284,13 @@ fn reachable_reused_endpoint_is_reclaimed_after_handshake_mismatch() {
             &HandshakeResult {
                 status: "ready".to_string(),
                 workspace: fake_workspace,
-                instance_key: fake_registry.instance_key,
+                instance_key: fake_registry.instance_key.clone(),
                 executable_hash: fake_registry.executable_hash,
                 process_start_identity: fake_registry.process_start_identity,
                 daemon_nonce: "different-daemon-nonce".to_string(),
+                authenticated_session: "session-test".to_string(),
+                project_facts_hash: ags_platform::sha256("facts"),
+                registry_key: fake_registry.instance_key.clone(),
             },
         )
         .unwrap();
@@ -295,8 +299,17 @@ fn reachable_reused_endpoint_is_reclaimed_after_handshake_mismatch() {
     let (stream, connected_registry) = connect_registered(&paths, &canonical)
         .unwrap()
         .expect("the stale endpoint is reachable before authentication");
-    let error =
-        finish_workspace_session(stream, &connected_registry, &canonical, &paths).unwrap_err();
+    let error = finish_workspace_session(
+        stream,
+        &connected_registry,
+        &canonical,
+        &paths,
+        WorkspaceClientIdentity {
+            connection_id: "test-connection".to_string(),
+            host_id: "test-host".to_string(),
+        },
+    )
+    .unwrap_err();
     assert_eq!(error, "workspace daemon handshake mismatch");
     server.join().unwrap();
     assert!(
@@ -316,10 +329,13 @@ impl WorkspaceSessionHandler for CapturingHandler {
         _reader: BufReader<TcpStream>,
         _writer: TcpStream,
         _workspace: Arc<WorkspaceState>,
-        session_id: String,
+        context: WorkspaceSessionContext,
         _startup_executable_hash: String,
     ) {
-        self.session_ids.lock().unwrap().push(session_id);
+        self.session_ids
+            .lock()
+            .unwrap()
+            .push(context.authenticated_session);
     }
 
     fn run_workspace_command(
@@ -327,6 +343,7 @@ impl WorkspaceSessionHandler for CapturingHandler {
         kind: &str,
         _payload: serde_json::Value,
         workspace: Arc<WorkspaceState>,
+        _context: WorkspaceCommandContext,
     ) -> Result<serde_json::Value, String> {
         if kind != "status" {
             return Err(format!("unsupported workspace command `{kind}`"));
@@ -497,10 +514,14 @@ fn daemon_mints_sessions_and_handshake_proves_process_identity() {
         write_json_line(
             &mut stream,
             &Handshake {
-                protocol: WIRE_SCHEMA.to_string(),
+                protocol: WIRE_PROTOCOL.to_string(),
                 token: registry.token.clone(),
                 kind: "session".to_string(),
                 command: None,
+                client: Some(WorkspaceClientIdentity {
+                    connection_id: "test-connection".to_string(),
+                    host_id: "test-host".to_string(),
+                }),
                 workspace: workspace.clone(),
             },
         )
@@ -560,10 +581,14 @@ fn workspace_daemon_rejects_a_wrong_handshake_token() {
     write_json_line(
         &mut stream,
         &Handshake {
-            protocol: WIRE_SCHEMA.to_string(),
+            protocol: WIRE_PROTOCOL.to_string(),
             token: "wrong-token".to_string(),
             kind: "session".to_string(),
             command: None,
+            client: Some(WorkspaceClientIdentity {
+                connection_id: "test-connection".to_string(),
+                host_id: "test-host".to_string(),
+            }),
             workspace,
         },
     )

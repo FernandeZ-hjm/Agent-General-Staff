@@ -1,6 +1,6 @@
 use super::*;
 
-pub const RECEIPT_SCHEMA_VERSION: &str = "0.3.6-task-receipt";
+pub const RECEIPT_SCHEMA_VERSION: &str = "ags://schema/contract/v2/task-receipt";
 
 // ── Data model ──────────────────────────────────────────────────────────────
 
@@ -33,17 +33,17 @@ pub struct ReceiptSkillSelection {
 #[serde(deny_unknown_fields)]
 pub struct GovernanceEvidence {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub decision_id: Option<String>,
+    pub operation: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub lease_id: Option<String>,
+    pub action_ref_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub proposal_hash: Option<String>,
+    pub binding_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub solution_state: Option<ags_governance_decision::SolutionState>,
+    pub plan_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub scope_hash: Option<String>,
+    pub payload_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub snapshot_hash: Option<String>,
+    pub capability_snapshot_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub policy_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
-pub const RELEASE_PLAN_SCHEMA_VERSION: &str = "0.4.0-release-plan";
+pub const RELEASE_PLAN_SCHEMA_VERSION: &str = "ags://schema/contract/v2/release-plan";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RuntimeStageResult {
@@ -339,7 +339,7 @@ pub fn stage_release_runtime(
     }
 
     Ok(RuntimeStageResult {
-        schema_version: "0.4.0-runtime-stage",
+        schema_version: "ags://schema/contract/v2/runtime-stage",
         source_root: source.display().to_string(),
         target_root: target.display().to_string(),
         staged_files: runtime_assets,

@@ -14,18 +14,15 @@ export const RELEASE_REPOSITORY = "FernandeZ-hjm/Agent-General-Staff";
 export const MAX_DOWNLOAD_BYTES = 128 * 1024 * 1024;
 export const DOWNLOAD_TIMEOUT_MS = 30_000;
 export const UPDATE_CHECK_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
-export const UPDATE_CHECK_STATE_SCHEMA = "0.4.13-update-check-state";
+export const UPDATE_CHECK_STATE_SCHEMA = "ags://schema/contract/v2/update-check-state";
 export const UPDATE_STATE_FILE = "update-check.json";
 export const UPDATE_PLAN_SCHEMA = "1.1-launcher-update-plan";
 export const UPDATE_RECEIPT_SCHEMA = "1.1-launcher-update-receipt";
-export const VERIFIED_CATALOG_SCHEMA = "0.4.15-verified-catalog";
-export const MCP_ARGS = Object.freeze(["mcp", "serve", "--transport", "stdio"]);
+export const VERIFIED_CATALOG_SCHEMA = "ags://schema/contract/v2/verified-catalog";
+export const MCP_ARGS = Object.freeze([]);
 export function mcpRuntimeArgs(args) {
   if (args.length === 0) return [...MCP_ARGS];
-  if (args[0] === "setup") return [...args];
-  throw new Error(
-    "supported commands are `ags-mcp setup ...` and `ags-mcp update ...`; run without arguments to start the MCP server"
-  );
+  throw new Error("ags-mcp has no subcommands; run it without arguments");
 }
 export const RELEASE_SIGNING_PUBLIC_KEY_PEM = fs.readFileSync(
   new URL("../release-signing-public.pem", import.meta.url),
@@ -165,7 +162,15 @@ export async function launch(options = {}) {
     env.AGS_RUNTIME_HOME ||
     env.AGS_HOME ||
     path.join(paths.cacheRoot, "private-runtime");
-  const child = (options.spawnImpl || nodeSpawn)(artifact.binaryPath, [...args], {
+  const executableName = options.executableName || path.basename(artifact.binaryPath);
+  if (!["ags", "ags.exe", "ags-mcp", "ags-mcp.exe", "ags-host", "ags-host.exe"].includes(executableName)) {
+    throw new Error(`unsupported AGS executable: ${executableName}`);
+  }
+  const executablePath = path.join(path.dirname(artifact.binaryPath), executableName);
+  if (!isRegularFile(executablePath)) {
+    throw new Error(`verified release does not contain ${executableName}`);
+  }
+  const child = (options.spawnImpl || nodeSpawn)(executablePath, [...args], {
     stdio: options.stdio || "inherit",
     windowsHide: true,
     shell: false,
@@ -466,7 +471,7 @@ export function statusUpdate(planHash, options = {}) {
   }
   const receipt = readJsonIfPresent(receiptPath);
   return {
-    schema_version: "0.4.13-core-update-status",
+    schema_version: "ags://schema/contract/v2/core-update-status",
     plan,
     receipt,
     active: readJsonIfPresent(paths.currentPath)
@@ -504,7 +509,7 @@ export async function verifyUpdate(planHash, options = {}) {
   const runtimeHome = resolveRuntimeHome(paths, env, options);
   await verifyRuntimeSetup(active, runtimeHome, receipt.runtime_setup, options);
   return {
-    schema_version: "0.4.13-core-update-verification",
+    schema_version: "ags://schema/contract/v2/core-update-verification",
     status: "verified",
     plan_hash: planHash,
     active_version: active.version,
@@ -762,7 +767,10 @@ function archiveOutputOrThrow(destination, entryName, binaryName) {
   ) {
     throw new Error(`unsafe archive path: ${entryName}`);
   }
-  if (normalized === binaryName) return path.join(destination, binaryName);
+  const executableNames = binaryName.endsWith(".exe")
+    ? new Set(["ags.exe", "ags-mcp.exe", "ags-host.exe"])
+    : new Set(["ags", "ags-mcp", "ags-host"]);
+  if (executableNames.has(normalized)) return path.join(destination, normalized);
   if (normalized !== "runtime" && !normalized.startsWith("runtime/")) {
     throw new Error(`unsafe archive path: ${entryName}`);
   }
@@ -1177,6 +1185,7 @@ async function installOrReuse(metadata, paths, options) {
       assetName: metadata.assetName,
       assetSha256: expected,
       binarySha256: sha256File(extractedBinary),
+      executablesSha256: executableBundleSha256(stageRoot, paths.binaryName),
       runtimeSha256: sha256Directory(extractedRuntime),
       releaseIndexSha256,
       version: metadata.version,
@@ -1184,7 +1193,7 @@ async function installOrReuse(metadata, paths, options) {
     };
     fs.writeFileSync(
       path.join(stageRoot, ".verified-sha256"),
-      `${identity.assetName}\n${identity.assetSha256}\n${identity.binarySha256}\n${identity.runtimeSha256}\n${identity.releaseIndexSha256}\n`,
+      `${identity.assetName}\n${identity.assetSha256}\n${identity.binarySha256}\n${identity.executablesSha256}\n${identity.runtimeSha256}\n${identity.releaseIndexSha256}\n`,
       { mode: 0o600 }
     );
 
@@ -1290,14 +1299,20 @@ function inspectCache(versionDir, { binaryName, assetName, assetSha256, version,
     if (assetSha256 && marker.assetSha256 !== assetSha256) return null;
     assertReleasePayload(binaryPath, runtimeRoot);
     const binarySha256 = sha256File(binaryPath);
+    const executablesSha256 = executableBundleSha256(versionDir, binaryName);
     const runtimeSha256 = sha256Directory(runtimeRoot);
-    if (marker.binarySha256 !== binarySha256 || marker.runtimeSha256 !== runtimeSha256) {
+    if (
+      marker.binarySha256 !== binarySha256 ||
+      marker.executablesSha256 !== executablesSha256 ||
+      marker.runtimeSha256 !== runtimeSha256
+    ) {
       return null;
     }
     return {
       assetName: marker.assetName,
       assetSha256: marker.assetSha256,
       binarySha256,
+      executablesSha256,
       runtimeSha256,
       releaseIndexSha256: marker.releaseIndexSha256,
       version: version || null,
@@ -1314,16 +1329,33 @@ function inspectCache(versionDir, { binaryName, assetName, assetSha256, version,
 function parseMarker(text) {
   const lines = text.split(/\r?\n/u);
   if (lines.at(-1) === "") lines.pop();
-  if (lines.length !== 5 || !lines[0] || !lines.slice(1).every((line) => HASH_PATTERN.test(line))) {
+  if (lines.length !== 6 || !lines[0] || !lines.slice(1).every((line) => HASH_PATTERN.test(line))) {
     throw new Error("invalid launcher verification marker");
   }
   return {
     assetName: lines[0],
     assetSha256: lines[1],
     binarySha256: lines[2],
-    runtimeSha256: lines[3],
-    releaseIndexSha256: lines[4]
+    executablesSha256: lines[3],
+    runtimeSha256: lines[4],
+    releaseIndexSha256: lines[5]
   };
+}
+
+function executableBundleSha256(versionDir, binaryName) {
+  const names = binaryName.endsWith(".exe")
+    ? ["ags.exe", "ags-host.exe", "ags-mcp.exe"]
+    : ["ags", "ags-host", "ags-mcp"];
+  const hash = crypto.createHash("sha256");
+  let found = 0;
+  for (const name of names) {
+    const file = path.join(versionDir, name);
+    if (!isRegularFile(file)) continue;
+    found += 1;
+    hash.update(`${name}\0${sha256File(file)}\n`);
+  }
+  if (found === 0) throw new Error("release archive contains no AGS executable");
+  return hash.digest("hex");
 }
 
 function cacheIsVerified(binaryPath, runtimeRoot, markerPath, assetName) {
@@ -1926,10 +1958,13 @@ function timingSafeHexEqual(left, right) {
 }
 
 function writeArchiveFile(output, content, binaryName) {
+  const executableNames = binaryName.endsWith(".exe")
+    ? new Set(["ags.exe", "ags-mcp.exe", "ags-host.exe"])
+    : new Set(["ags", "ags-mcp", "ags-host"]);
   fs.mkdirSync(path.dirname(output), { recursive: true, mode: 0o700 });
   fs.writeFileSync(output, content, {
     flag: "wx",
-    mode: path.basename(output) === binaryName ? 0o700 : 0o600
+    mode: executableNames.has(path.basename(output)) ? 0o700 : 0o600
   });
 }
 

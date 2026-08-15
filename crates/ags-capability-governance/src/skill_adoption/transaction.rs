@@ -1,36 +1,18 @@
 use super::model::{
     AdoptionContext, BodyRevision, CatalogReviewStatus, InstalledSkillIndex, InstalledSkillRecord,
-    JournalFileState, JournalLinkState, PreparedSkillChange, ResolvedSource, RiskAcknowledgements,
-    RiskFinding, SkillMutationResult, SnapshotDiscovery, SourceSpec, TransactionJournal,
-    TransactionPhase, UpdatePolicy, TRANSACTION_JOURNAL_SCHEMA,
+    PreparedSkillChange, PreparedSkillChangeContract, ReadInputSeal, ResolvedSource,
+    RiskAcknowledgements, RiskFinding, SourceSpec, UpdatePolicy,
 };
 use super::projection::{host_index_path, host_index_paths, index_points_to};
 use super::remote::{acquire_remote_candidate_with_backend, GitBackend};
 use super::source::{audit_local_source, audit_local_source_with_boundary};
 use super::store::{
-    body_path, installed_skill_index_path, load_installed_skills, write_installed_skills,
+    body_path, installed_skill_index_path, observe_installed_skills, ObservedInstalledSkillIndex,
 };
-use crate::{
-    build_capability_snapshot_with_roots, build_capability_snapshots_with_live_roots,
-    hash_skill_source, publish_capability_snapshots, snapshot_path,
-};
+use crate::hash_skill_source;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::{Component, Path, PathBuf};
-
-type FileBackup = (PathBuf, Option<Vec<u8>>);
-
-pub fn transaction_lock_path(runtime_home: &Path) -> PathBuf {
-    ags_platform::RuntimeLayout::new(runtime_home).maintenance_lock()
-}
-
-pub fn transaction_journal_path(runtime_home: &Path) -> PathBuf {
-    runtime_home.join("transactions").join("pending.json")
-}
-
-fn acquire_transaction_lock(runtime_home: &Path) -> Result<ags_platform::MaintenanceLock, String> {
-    ags_platform::MaintenanceLock::acquire(runtime_home)
-}
+use std::path::{Path, PathBuf};
 
 fn record_hash(record: &InstalledSkillRecord) -> Result<String, String> {
     serde_json::to_vec(record)
@@ -61,11 +43,12 @@ fn body_identity(
     }
 }
 
-fn ensure_plan_cas(
+#[cfg_attr(not(unix), allow(dead_code))]
+pub(super) fn ensure_plan_cas_against(
     context: &AdoptionContext,
     plan: &PreparedSkillChange,
+    registry: InstalledSkillIndex,
 ) -> Result<InstalledSkillIndex, String> {
-    let registry = load_installed_skills(&context.runtime_home)?;
     if registry.revision != plan.registry_revision {
         return Err(format!(
             "stale_plan_registry_revision: expected {}, current {}",
@@ -100,254 +83,12 @@ fn ensure_plan_cas(
     Ok(registry)
 }
 
-/// Restore the exact pre-transaction registry, host links, snapshots, and
-/// immutable-body identity recorded in the machine-local journal. Recovery
-/// is explicit because a process destructor cannot observe SIGKILL or power
-/// loss; repeating this function after a successful recovery is a no-op.
-pub fn recover_pending_transactions(runtime_home: &Path, home: &Path) -> Result<(), String> {
-    let _lock = acquire_transaction_lock(runtime_home)?;
-    recover_pending_transactions_locked(runtime_home, home)
-}
-
-fn recover_pending_transactions_locked(runtime_home: &Path, home: &Path) -> Result<(), String> {
-    let journal_path = transaction_journal_path(runtime_home);
-    let bytes = match fs::read(&journal_path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => {
-            return Err(format!(
-                "cannot read transaction journal {}: {error}",
-                journal_path.display()
-            ))
-        }
-    };
-    let journal: TransactionJournal = serde_json::from_slice(&bytes)
-        .map_err(|error| format!("cannot parse transaction journal: {error}"))?;
-    if journal.schema_version != TRANSACTION_JOURNAL_SCHEMA {
-        return Err(format!(
-            "unsupported transaction journal schema: {}",
-            journal.schema_version
-        ));
-    }
-    if journal.phase == TransactionPhase::Committed {
-        fs::remove_file(&journal_path).map_err(|error| {
-            format!(
-                "cannot clear committed transaction journal {}: {error}",
-                journal_path.display()
-            )
-        })?;
-        return Ok(());
-    }
-    validate_journal_paths(runtime_home, home, &journal)?;
-    let mut errors = Vec::new();
-    if let Err(error) = restore_optional_file(
-        Path::new(&journal.registry.path),
-        journal.registry.bytes.as_deref(),
-    ) {
-        errors.push(error);
-    }
-    for link in &journal.links {
-        if let Err(error) = restore_journal_link(link) {
-            errors.push(error);
-        }
-    }
-    for snapshot in &journal.snapshots {
-        if let Err(error) =
-            restore_optional_file(Path::new(&snapshot.path), snapshot.bytes.as_deref())
-        {
-            errors.push(error);
-        }
-    }
-    if let Err(error) = restore_journal_body(&journal) {
-        errors.push(error);
-    }
-    if errors.is_empty() {
-        fs::remove_file(&journal_path).map_err(|error| {
-            format!(
-                "cannot clear recovered transaction journal {}: {error}",
-                journal_path.display()
-            )
-        })?;
-        Ok(())
-    } else {
-        Err(errors.join("; "))
-    }
-}
-
-fn validate_journal_paths(
-    runtime_home: &Path,
-    home: &Path,
-    journal: &TransactionJournal,
-) -> Result<(), String> {
-    let registry = Path::new(&journal.registry.path);
-    if registry != installed_skill_index_path(runtime_home)
-        || !safe_journal_path(registry, runtime_home)
-    {
-        return Err("transaction journal registry path drift".to_string());
-    }
-    let body = Path::new(&journal.body_path);
-    let bodies_root = super::store::bodies_root(runtime_home);
-    if !safe_journal_path(body, &bodies_root)
-        || body == bodies_root
-        || body.parent() == Some(bodies_root.as_path())
-    {
-        return Err("transaction journal body path escapes runtime home".to_string());
-    }
-    for link in &journal.links {
-        if !safe_journal_path(Path::new(&link.path), home) {
-            return Err("transaction journal link path escapes host home".to_string());
-        }
-    }
-    for snapshot in &journal.snapshots {
-        if !safe_journal_path(Path::new(&snapshot.path), runtime_home) {
-            return Err("transaction journal snapshot path escapes runtime home".to_string());
-        }
-    }
-    Ok(())
-}
-
-fn safe_journal_path(path: &Path, root: &Path) -> bool {
-    !path
-        .components()
-        .any(|component| component == Component::ParentDir)
-        && path.starts_with(root)
-}
-
-fn restore_journal_link(link: &JournalLinkState) -> Result<(), String> {
-    let path = Path::new(&link.path);
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
-            return Err(format!(
-                "cannot replace host directory during recovery: {}",
-                path.display()
-            ))
-        }
-        Ok(_) => fs::remove_file(path).map_err(|error| {
-            format!(
-                "cannot clear link {} during recovery: {error}",
-                path.display()
-            )
-        })?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(format!(
-                "cannot inspect link {} during recovery: {error}",
-                path.display()
-            ))
-        }
-    }
-    if let Some(target) = &link.previous_target {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                format!(
-                    "cannot create link parent {} during recovery: {error}",
-                    parent.display()
-                )
-            })?;
-        }
-        create_dir_symlink(Path::new(target), path)?;
-    }
-    Ok(())
-}
-
-fn restore_journal_body(journal: &TransactionJournal) -> Result<(), String> {
-    let body = Path::new(&journal.body_path);
-    let metadata = match fs::symlink_metadata(body) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => {
-            return Err(format!(
-                "cannot inspect body {} during recovery: {error}",
-                body.display()
-            ))
-        }
-    };
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err(format!(
-            "special_file_refused: transaction body {}",
-            body.display()
-        ));
-    }
-    let actual = hash_skill_source(body)?;
-    if journal.body_preexisting {
-        if journal.previous_body_hash.as_deref() != Some(actual.as_str()) {
-            return Err(format!(
-                "preexisting immutable body changed during recovery: {}",
-                body.display()
-            ));
-        }
-    } else {
-        if journal.expected_body_hash.as_deref() != Some(actual.as_str()) {
-            return Err(format!(
-                "new immutable body changed during recovery: {}",
-                body.display()
-            ));
-        }
-        fs::remove_dir_all(body)
-            .map_err(|error| format!("cannot remove new body {}: {error}", body.display()))?;
-    }
-    Ok(())
-}
-
-fn persist_journal(runtime_home: &Path, journal: &TransactionJournal) -> Result<(), String> {
-    let bytes = serde_json::to_vec_pretty(journal)
-        .map_err(|error| format!("cannot serialize transaction journal: {error}"))?;
-    ags_platform::atomic_write(
-        &transaction_journal_path(runtime_home),
-        &[bytes, b"\n".to_vec()].concat(),
-    )
-}
-
-fn advance_journal(
-    runtime_home: &Path,
-    journal: &mut TransactionJournal,
-    phase: TransactionPhase,
-) -> Result<(), String> {
-    journal.phase = phase;
-    persist_journal(runtime_home, journal)
-}
-
-struct JournalCapture {
-    body_hash: Option<String>,
-    previous_body_hash: Option<String>,
-    body_preexisting: bool,
-    registry: Option<Vec<u8>>,
-    links: Vec<JournalLinkState>,
-    snapshots: Vec<JournalFileState>,
-}
-
-fn new_transaction_journal(
-    context: &AdoptionContext,
-    plan: &PreparedSkillChange,
-    transaction_id: &str,
-    body: &Path,
-    capture: JournalCapture,
-) -> TransactionJournal {
-    TransactionJournal {
-        schema_version: TRANSACTION_JOURNAL_SCHEMA.to_string(),
-        transaction_id: transaction_id.to_string(),
-        operation: plan.operation.clone(),
-        phase: TransactionPhase::Prepared,
-        body_path: body.to_string_lossy().into_owned(),
-        expected_body_hash: capture.body_hash,
-        previous_body_hash: capture.previous_body_hash,
-        body_preexisting: capture.body_preexisting,
-        registry: JournalFileState {
-            path: installed_skill_index_path(&context.runtime_home)
-                .to_string_lossy()
-                .into_owned(),
-            bytes: capture.registry,
-        },
-        links: capture.links,
-        snapshots: capture.snapshots,
-    }
-}
-
 pub fn plan_removal(
     context: &AdoptionContext,
     skill_id: &str,
 ) -> Result<PreparedSkillChange, String> {
-    let registry = load_installed_skills(&context.runtime_home)?;
+    let observed_registry = observe_installed_skills(&context.runtime_home)?;
+    let registry = &observed_registry.value;
     let record = registry
         .skills
         .get(skill_id)
@@ -372,6 +113,7 @@ pub fn plan_removal(
         }
     }
     let plan = PreparedSkillChange {
+        contract_schema: PreparedSkillChangeContract::V2,
         operation: "remove".to_string(),
         skill_id: skill_id.to_string(),
         source: record.source.clone(),
@@ -411,25 +153,16 @@ pub fn plan_removal(
         previous_body_revision: Some(record.body_revision.clone()),
         rollback_revision: None,
         registry_revision: registry.revision,
+        registry_read_input: Some(observed_registry.seal.clone()),
+        registry_semantic_hash: observed_registry.semantic_hash.clone(),
         previous_record: Some(record.clone()),
         previous_record_hash: Some(record_hash(record)?),
         previous_body_hash: body_identity(&context.runtime_home, record)?,
+        target_record: None,
+        candidate_read_inputs: Vec::new(),
+        expected_link_targets: capture_expected_link_targets(&indexes)?,
     };
     Ok(plan)
-}
-
-pub fn apply_removal(
-    context: &AdoptionContext,
-    plan: &PreparedSkillChange,
-    transaction_id: &str,
-) -> Result<SkillMutationResult, String> {
-    if plan.operation != "remove" {
-        return Err(format!(
-            "prepared Skill change cannot remove: operation={} target={}",
-            plan.operation, plan.skill_id
-        ));
-    }
-    apply_removal_transaction(context, plan, transaction_id)
 }
 
 /// Plan an install from a typed source identity. Local and remote sources use
@@ -460,9 +193,10 @@ pub fn plan_install_with_backend(
     update_policy: UpdatePolicy,
     backend: &dyn GitBackend,
 ) -> Result<PreparedSkillChange, String> {
-    let mut target_hosts = normalize_hosts(requested_hosts)?;
-    let existing_registry = load_installed_skills(&context.runtime_home)?;
-    let (mut record, candidate_path, candidate_identity) = match source {
+    let mut target_hosts = normalize_hosts(context, requested_hosts)?;
+    let observed_registry = observe_installed_skills(&context.runtime_home)?;
+    let existing_registry = &observed_registry.value;
+    let (mut record, candidate_path, candidate_identity, candidate_read_inputs) = match source {
         SourceSpec::Local { path } => {
             let audited =
                 audit_local_source(Path::new(path), target_hosts.clone(), routing_metadata)?;
@@ -472,15 +206,31 @@ pub fn plan_install_with_backend(
             };
             record.risk_findings = audited.risk_findings;
             let candidate_path = record.source.clone();
-            (record, candidate_path, String::new())
+            (record, candidate_path, String::new(), audited.read_inputs)
         }
         SourceSpec::GitHub { .. } | SourceSpec::Git { .. } => {
             let candidate = acquire_remote_candidate_with_backend(context, source, backend)?;
             let candidate_identity = candidate.resolved_source.candidate_identity.clone();
+            let mut audited = audit_local_source_with_boundary(
+                &candidate.skill_dir,
+                target_hosts.clone(),
+                routing_metadata,
+                Some(&candidate.checkout_root),
+            )?;
+            for risk in candidate.record.risk_findings.iter().cloned() {
+                if !audited.record.risk_findings.contains(&risk) {
+                    audited.record.risk_findings.push(risk);
+                }
+            }
+            audited.risk_findings = audited.record.risk_findings.clone();
+            audited.record.source = candidate.record.source;
+            audited.record.source_spec = candidate.record.source_spec;
+            audited.record.resolved_source = Some(candidate.resolved_source.clone());
             (
-                candidate.record,
+                audited.record,
                 candidate.skill_dir.to_string_lossy().into_owned(),
                 candidate_identity,
+                audited.read_inputs,
             )
         }
     };
@@ -514,7 +264,9 @@ pub fn plan_install_with_backend(
             previous_body_revision: previous.as_ref().map(|record| record.body_revision.clone()),
             rollback_revision: None,
             allow_legacy_authority_indexes,
+            candidate_read_inputs: Some(candidate_read_inputs),
         },
+        &observed_registry,
     )?;
     Ok(plan)
 }
@@ -530,8 +282,9 @@ pub fn plan_legacy_catalog_migration(
     skill_id: &str,
     requested_hosts: &[String],
 ) -> Result<PreparedSkillChange, String> {
-    let target_hosts = normalize_hosts(requested_hosts)?;
-    let registry = load_installed_skills(&context.runtime_home)?;
+    let target_hosts = normalize_hosts(context, requested_hosts)?;
+    let observed_registry = observe_installed_skills(&context.runtime_home)?;
+    let registry = &observed_registry.value;
     let manifest = crate::third_party_manifest::read_third_party_manifest(&context.authority_root)?;
     let catalog = manifest
         .capabilities
@@ -616,7 +369,9 @@ pub fn plan_legacy_catalog_migration(
                     previous_body_revision: Some(existing.body_revision.clone()),
                     rollback_revision: None,
                     allow_legacy_authority_indexes: true,
+                    candidate_read_inputs: Some(audited.read_inputs),
                 },
+                &observed_registry,
             );
         }
     }
@@ -682,7 +437,9 @@ pub fn plan_legacy_catalog_migration(
             previous_body_revision: None,
             rollback_revision: None,
             allow_legacy_authority_indexes: true,
+            candidate_read_inputs: Some(audited.read_inputs),
         },
+        &observed_registry,
     )
 }
 
@@ -748,157 +505,6 @@ fn materialize_migration_candidate(
     result
 }
 
-pub fn apply_install(
-    context: &AdoptionContext,
-    plan: &PreparedSkillChange,
-    transaction_id: &str,
-    acknowledgements: &RiskAcknowledgements,
-) -> Result<SkillMutationResult, String> {
-    apply_prepared_install(context, plan, transaction_id, acknowledgements, false)
-}
-
-/// Apply within a composite maintenance transaction that already owns the
-/// process-wide MaintenanceLock. This is the sole non-locking entrypoint; it
-/// still runs WAL recovery and every CAS/hash/risk check.
-pub fn apply_install_in_maintenance_transaction(
-    context: &AdoptionContext,
-    plan: &PreparedSkillChange,
-    transaction_id: &str,
-    acknowledgements: &RiskAcknowledgements,
-) -> Result<SkillMutationResult, String> {
-    apply_prepared_install(context, plan, transaction_id, acknowledgements, true)
-}
-
-/// Repair Host activation for an already-installed record without replacing
-/// its immutable body or inventing upstream provenance. Composite setup owns
-/// the single snapshot refresh after all repairs complete.
-pub fn apply_reactivation_in_maintenance_transaction(
-    context: &AdoptionContext,
-    plan: &PreparedSkillChange,
-    transaction_id: &str,
-) -> Result<SkillMutationResult, String> {
-    if plan.operation != "reactivate" {
-        return Err(format!(
-            "plan operation cannot reactivate: {}",
-            plan.operation
-        ));
-    }
-    let current = load_installed_skills(&context.runtime_home)?
-        .skills
-        .get(&plan.skill_id)
-        .cloned()
-        .ok_or_else(|| format!("skill is not installed: {}", plan.skill_id))?;
-    let mut target = current.clone();
-    target.target_hosts = plan.target_hosts.clone();
-    let body = body_path(&context.runtime_home, &target);
-    if !body.is_dir() || hash_skill_source(&body)? != target.source_hash {
-        return Err("reactivation_body_hash_drift_after_plan".to_string());
-    }
-    apply_record_transaction_under_lock(context, plan, transaction_id, &target, &body, false, false)
-}
-
-pub fn apply_update(
-    context: &AdoptionContext,
-    plan: &PreparedSkillChange,
-    transaction_id: &str,
-    acknowledgements: &RiskAcknowledgements,
-) -> Result<SkillMutationResult, String> {
-    apply_prepared_install(context, plan, transaction_id, acknowledgements, false)
-}
-
-fn apply_prepared_install(
-    context: &AdoptionContext,
-    plan: &PreparedSkillChange,
-    transaction_id: &str,
-    acknowledgements: &RiskAcknowledgements,
-    maintenance_lock_held: bool,
-) -> Result<SkillMutationResult, String> {
-    if plan.operation != "install" && plan.operation != "update" {
-        return Err(format!(
-            "plan operation cannot install/update: {}",
-            plan.operation
-        ));
-    }
-    ensure_risks_acknowledged(plan, acknowledgements)?;
-    let candidate_path = plan
-        .candidate_path
-        .as_deref()
-        .ok_or_else(|| "install plan has no candidate path".to_string())?;
-    let candidate_path = Path::new(candidate_path);
-    if let Some(resolved) = &plan.resolved_source {
-        validate_candidate_path(context, candidate_path, &resolved.candidate_identity)?;
-    }
-    let repository_root = candidate_path
-        .ancestors()
-        .find(|path| path.file_name().and_then(|name| name.to_str()) == Some("checkout"));
-    let audited = audit_local_source_with_boundary(
-        candidate_path,
-        plan.target_hosts.clone(),
-        plan.routing_metadata_path.as_deref().map(Path::new),
-        repository_root,
-    )?;
-    if audited.record.source_hash != plan.source_hash
-        || audited.record.license_hash != plan.license_hash
-        || audited.record.routing_metadata_hash != plan.routing_metadata_hash
-        || audited.record.skill_id != plan.skill_id
-        || audited.record.source_hash != plan.body_hash
-    {
-        return Err("candidate_hash_or_source_drift_after_plan".to_string());
-    }
-    if let Some(resolved) = &plan.resolved_source {
-        if resolved.body_hash != audited.record.source_hash {
-            return Err("candidate_body_hash_drift_after_plan".to_string());
-        }
-    }
-    let mut candidate_risks = audited.risk_findings.clone();
-    if plan.catalog_review == CatalogReviewStatus::Unreviewed {
-        add_catalog_review_risk(&mut candidate_risks);
-    }
-    if normalize_risk_findings(candidate_risks)
-        != normalize_risk_findings(plan.risk_findings.clone())
-    {
-        return Err("candidate_risk_drift_after_plan".to_string());
-    }
-    let mut record = audited.record;
-    record.source = plan.source.clone();
-    record.source_spec = plan.source_spec.clone();
-    record.resolved_source = plan.resolved_source.clone();
-    record.update_policy = plan.update_policy;
-    // Risk acknowledgement is an apply-time fact.  It must not mutate the
-    // independent catalog-review truth carried by the plan.
-    record.catalog_review = plan.catalog_review;
-    record.risk_findings = plan.risk_findings.clone();
-    record.target_hosts = plan.target_hosts.clone();
-    record.body_revisions = merge_revision_history(
-        load_installed_skills(&context.runtime_home)?
-            .skills
-            .get(&record.skill_id)
-            .map(|existing| existing.body_revisions.clone())
-            .unwrap_or_default(),
-        &record,
-    );
-    if maintenance_lock_held {
-        apply_record_transaction_under_lock(
-            context,
-            plan,
-            transaction_id,
-            &record,
-            &audited.source_dir,
-            true,
-            false,
-        )
-    } else {
-        apply_record_transaction(
-            context,
-            plan,
-            transaction_id,
-            &record,
-            &audited.source_dir,
-            true,
-        )
-    }
-}
-
 pub fn plan_update(
     context: &AdoptionContext,
     skill_id: &str,
@@ -911,7 +517,8 @@ pub fn plan_update_with_backend(
     skill_id: &str,
     backend: &dyn GitBackend,
 ) -> Result<PreparedSkillChange, String> {
-    let registry = load_installed_skills(&context.runtime_home)?;
+    let observed_registry = observe_installed_skills(&context.runtime_home)?;
+    let registry = &observed_registry.value;
     let existing = registry
         .skills
         .get(skill_id)
@@ -934,7 +541,28 @@ pub fn plan_update_with_backend(
     {
         return Err("no_update_available".to_string());
     }
-    let mut record = candidate.record;
+    let mut audited = audit_local_source_with_boundary(
+        &candidate.skill_dir,
+        existing.target_hosts.clone(),
+        existing.routing_metadata_path.as_deref().map(Path::new),
+        Some(&candidate.checkout_root),
+    )?;
+    audited
+        .record
+        .risk_findings
+        .extend(candidate.record.risk_findings.iter().cloned());
+    let mut unique_risks = Vec::new();
+    for risk in audited.record.risk_findings.drain(..) {
+        if !unique_risks.contains(&risk) {
+            unique_risks.push(risk);
+        }
+    }
+    audited.record.risk_findings = unique_risks;
+    audited.risk_findings = audited.record.risk_findings.clone();
+    let mut record = audited.record;
+    record.source = candidate.record.source;
+    record.source_spec = candidate.record.source_spec;
+    record.resolved_source = Some(candidate.resolved_source.clone());
     record.target_hosts = existing.target_hosts.clone();
     record.update_policy = existing.update_policy;
     record.catalog_review = CatalogReviewStatus::Unreviewed;
@@ -942,8 +570,6 @@ pub fn plan_update_with_backend(
     if record.catalog_review == CatalogReviewStatus::Unreviewed {
         add_catalog_review_risk(&mut record.risk_findings);
     }
-    record.routing_metadata_path = existing.routing_metadata_path.clone();
-    record.routing_metadata_hash = existing.routing_metadata_hash.clone();
     record.body_revisions = existing.body_revisions.clone();
     let plan = build_plan(
         context,
@@ -956,7 +582,9 @@ pub fn plan_update_with_backend(
             previous_body_revision: Some(existing.body_revision),
             rollback_revision: None,
             allow_legacy_authority_indexes: false,
+            candidate_read_inputs: Some(audited.read_inputs),
         },
+        &observed_registry,
     )?;
     Ok(plan)
 }
@@ -966,7 +594,8 @@ pub fn plan_rollback(
     skill_id: &str,
     revision: &str,
 ) -> Result<PreparedSkillChange, String> {
-    let registry = load_installed_skills(&context.runtime_home)?;
+    let observed_registry = observe_installed_skills(&context.runtime_home)?;
+    let registry = &observed_registry.value;
     let existing = registry
         .skills
         .get(skill_id)
@@ -1003,402 +632,11 @@ pub fn plan_rollback(
             previous_body_revision: Some(existing.body_revision),
             rollback_revision: Some(revision.to_string()),
             allow_legacy_authority_indexes: false,
+            candidate_read_inputs: None,
         },
+        &observed_registry,
     )?;
     Ok(plan)
-}
-
-pub fn apply_rollback(
-    context: &AdoptionContext,
-    plan: &PreparedSkillChange,
-    transaction_id: &str,
-) -> Result<SkillMutationResult, String> {
-    if plan.operation != "rollback" {
-        return Err(format!(
-            "plan operation cannot rollback: {}",
-            plan.operation
-        ));
-    }
-    let revision = plan
-        .rollback_revision
-        .as_deref()
-        .ok_or_else(|| "rollback plan has no immutable target revision".to_string())?;
-    let registry = load_installed_skills(&context.runtime_home)?;
-    let current = registry
-        .skills
-        .get(&plan.skill_id)
-        .cloned()
-        .ok_or_else(|| format!("skill is not installed: {}", plan.skill_id))?;
-    if plan.previous_body_revision.as_deref() != Some(current.body_revision.as_str()) {
-        return Err("rollback_source_drift_after_plan".to_string());
-    }
-    let target_revision = current
-        .body_revisions
-        .iter()
-        .find(|candidate| candidate.revision == revision)
-        .ok_or_else(|| "rollback target revision is no longer retained".to_string())?;
-    let target = target_revision
-        .metadata
-        .restore_record(current.body_revisions.clone());
-    let body = body_path(&context.runtime_home, &target);
-    if body.to_string_lossy() != plan.body_path
-        || !body.is_dir()
-        || hash_skill_source(&body)? != target_revision.source_hash
-    {
-        return Err("rollback_target_hash_or_path_drift".to_string());
-    }
-    apply_record_transaction(context, plan, transaction_id, &target, &body, false)
-}
-
-/// Reverse one successfully applied persisted plan. Recovery is compare-and-
-/// swap bound to that plan's post-state, so it can never overwrite a later
-/// install, update, rollback or removal of the same Skill.
-pub fn recover_applied_change(
-    context: &AdoptionContext,
-    original: &PreparedSkillChange,
-    transaction_id: &str,
-) -> Result<SkillMutationResult, String> {
-    let _lock = acquire_transaction_lock(&context.runtime_home)?;
-    recover_applied_change_under_lock(context, original, transaction_id, true)
-}
-
-/// Recover one Skill change while a composite transaction retains the global
-/// maintenance lock. Identity/CAS checks are identical to standalone recover.
-pub fn recover_applied_change_in_maintenance_transaction(
-    context: &AdoptionContext,
-    original: &PreparedSkillChange,
-    transaction_id: &str,
-) -> Result<SkillMutationResult, String> {
-    recover_applied_change_under_lock(context, original, transaction_id, false)
-}
-
-fn recover_applied_change_under_lock(
-    context: &AdoptionContext,
-    original: &PreparedSkillChange,
-    transaction_id: &str,
-    refresh_snapshot_state: bool,
-) -> Result<SkillMutationResult, String> {
-    recover_pending_transactions_locked(&context.runtime_home, &context.host_home)?;
-    let registry = load_installed_skills(&context.runtime_home)?;
-    let current = registry.skills.get(&original.skill_id).cloned();
-
-    if original.operation == "remove" {
-        if current.is_some() {
-            return Err("recovery_refused: removal post-state is no longer current".to_string());
-        }
-    } else {
-        let current = current.as_ref().ok_or_else(|| {
-            "recovery_refused: applied Skill post-state is no longer installed".to_string()
-        })?;
-        if !record_matches_plan_target(current, original) {
-            return Err("recovery_refused: a later Skill state replaced this plan".to_string());
-        }
-    }
-
-    if let Some(mut previous) = original.previous_record.clone() {
-        if let Some(current) = current.as_ref() {
-            previous.body_revisions = current.body_revisions.clone();
-        }
-        let body = body_path(&context.runtime_home, &previous);
-        if !body.is_dir() || hash_skill_source(&body)? != previous.source_hash {
-            return Err("recovery_refused: previous immutable body is unavailable".to_string());
-        }
-        let recovery = build_plan(
-            context,
-            "recover",
-            &previous,
-            previous.target_hosts.clone(),
-            PlanBinding {
-                candidate_identity: previous
-                    .resolved_source
-                    .as_ref()
-                    .map(|source| source.candidate_identity.clone())
-                    .unwrap_or_default(),
-                candidate_path: Some(body.to_string_lossy().into_owned()),
-                previous_body_revision: current.as_ref().map(|record| record.body_revision.clone()),
-                rollback_revision: Some(previous.body_revision.clone()),
-                allow_legacy_authority_indexes: false,
-            },
-        )?;
-        apply_record_transaction_under_lock(
-            context,
-            &recovery,
-            transaction_id,
-            &previous,
-            &body,
-            false,
-            refresh_snapshot_state,
-        )
-    } else {
-        let current = current.ok_or_else(|| {
-            "recovery_refused: install plan has no current post-state".to_string()
-        })?;
-        let removal = plan_removal(context, &current.skill_id)?;
-        apply_removal_under_lock(context, &removal, transaction_id, refresh_snapshot_state)
-    }
-}
-
-fn record_matches_plan_target(record: &InstalledSkillRecord, plan: &PreparedSkillChange) -> bool {
-    record.skill_id == plan.skill_id
-        && record.source_hash == plan.source_hash
-        && record.license_hash == plan.license_hash
-        && record.routing_metadata_hash == plan.routing_metadata_hash
-        && record.target_hosts == plan.target_hosts
-        && record.source_spec == plan.source_spec
-        && record.resolved_source == plan.resolved_source
-        && record.update_policy == plan.update_policy
-        && record.catalog_review == plan.catalog_review
-        && normalize_risk_findings(record.risk_findings.clone())
-            == normalize_risk_findings(plan.risk_findings.clone())
-}
-
-fn apply_record_transaction(
-    context: &AdoptionContext,
-    plan: &PreparedSkillChange,
-    transaction_id: &str,
-    record: &InstalledSkillRecord,
-    source_dir: &Path,
-    install_body_content: bool,
-) -> Result<SkillMutationResult, String> {
-    let _lock = acquire_transaction_lock(&context.runtime_home)?;
-    apply_record_transaction_under_lock(
-        context,
-        plan,
-        transaction_id,
-        record,
-        source_dir,
-        install_body_content,
-        true,
-    )
-}
-
-fn apply_record_transaction_under_lock(
-    context: &AdoptionContext,
-    plan: &PreparedSkillChange,
-    transaction_id: &str,
-    record: &InstalledSkillRecord,
-    source_dir: &Path,
-    install_body_content: bool,
-    refresh_snapshot_state: bool,
-) -> Result<SkillMutationResult, String> {
-    recover_pending_transactions_locked(&context.runtime_home, &context.host_home)?;
-    let registry = ensure_plan_cas(context, plan)?;
-    apply_transaction_locked(
-        context,
-        plan,
-        transaction_id,
-        TransactionWrite {
-            registry,
-            record: Some(record),
-            source_dir: Some(source_dir),
-            install_body_content,
-            refresh_snapshot_state,
-        },
-    )
-}
-
-fn apply_removal_transaction(
-    context: &AdoptionContext,
-    plan: &PreparedSkillChange,
-    transaction_id: &str,
-) -> Result<SkillMutationResult, String> {
-    let _lock = acquire_transaction_lock(&context.runtime_home)?;
-    apply_removal_under_lock(context, plan, transaction_id, true)
-}
-
-fn apply_removal_under_lock(
-    context: &AdoptionContext,
-    plan: &PreparedSkillChange,
-    transaction_id: &str,
-    refresh_snapshot_state: bool,
-) -> Result<SkillMutationResult, String> {
-    recover_pending_transactions_locked(&context.runtime_home, &context.host_home)?;
-    let registry = ensure_plan_cas(context, plan)?;
-    apply_transaction_locked(
-        context,
-        plan,
-        transaction_id,
-        TransactionWrite {
-            registry,
-            record: None,
-            source_dir: None,
-            install_body_content: false,
-            refresh_snapshot_state,
-        },
-    )
-}
-
-struct TransactionWrite<'a> {
-    registry: InstalledSkillIndex,
-    record: Option<&'a InstalledSkillRecord>,
-    source_dir: Option<&'a Path>,
-    install_body_content: bool,
-    refresh_snapshot_state: bool,
-}
-
-fn apply_transaction_locked(
-    context: &AdoptionContext,
-    plan: &PreparedSkillChange,
-    transaction_id: &str,
-    write: TransactionWrite<'_>,
-) -> Result<SkillMutationResult, String> {
-    let TransactionWrite {
-        mut registry,
-        record,
-        source_dir,
-        install_body_content,
-        refresh_snapshot_state,
-    } = write;
-    let body = record
-        .map(|record| body_path(&context.runtime_home, record))
-        .unwrap_or_else(|| PathBuf::from(&plan.body_path));
-    if body.to_string_lossy() != plan.body_path {
-        return Err("plan_body_path_drift".to_string());
-    }
-    let registry_file = installed_skill_index_path(&context.runtime_home);
-    let registry_backup = read_optional(&registry_file)?;
-    let mut transaction_indexes = plan.host_indexes.clone();
-    transaction_indexes.extend(plan.retired_host_indexes.iter().cloned());
-    transaction_indexes.sort();
-    transaction_indexes.dedup();
-    let link_backups = capture_links(&transaction_indexes)?;
-    let snapshot_backups = if refresh_snapshot_state {
-        capture_snapshots(&context.runtime_home, &plan.target_hosts)?
-    } else {
-        Vec::new()
-    };
-    let body_preexisting = fs::symlink_metadata(&body).is_ok();
-    let previous_body_hash = if body_preexisting {
-        let metadata = fs::symlink_metadata(&body).map_err(|error| {
-            format!(
-                "cannot inspect transaction body {}: {error}",
-                body.display()
-            )
-        })?;
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            return Err(format!(
-                "special_file_refused: transaction body {}",
-                body.display()
-            ));
-        }
-        Some(hash_skill_source(&body)?)
-    } else {
-        None
-    };
-    let expected_body_hash = record.map(|record| record.source_hash.as_str());
-    let mut journal = new_transaction_journal(
-        context,
-        plan,
-        transaction_id,
-        &body,
-        JournalCapture {
-            body_hash: expected_body_hash.map(str::to_string),
-            previous_body_hash,
-            body_preexisting,
-            registry: registry_backup.clone(),
-            links: link_backups
-                .iter()
-                .map(|(path, target)| JournalLinkState {
-                    path: path.to_string_lossy().into_owned(),
-                    previous_target: target
-                        .as_ref()
-                        .map(|target| target.to_string_lossy().into_owned()),
-                })
-                .collect(),
-            snapshots: snapshot_backups
-                .iter()
-                .map(|(path, bytes)| JournalFileState {
-                    path: path.to_string_lossy().into_owned(),
-                    bytes: bytes.clone(),
-                })
-                .collect(),
-        },
-    );
-    persist_journal(&context.runtime_home, &journal)?;
-
-    let applied = (|| -> Result<BTreeMap<String, String>, String> {
-        if let Some(record) = record {
-            if install_body_content {
-                let source_dir =
-                    source_dir.ok_or_else(|| "install transaction has no source".to_string())?;
-                install_body(source_dir, &body, &record.source_hash)?;
-            } else if !body.is_dir() || hash_skill_source(&body)? != record.source_hash {
-                return Err("immutable rollback body is unavailable".to_string());
-            }
-            advance_journal(
-                &context.runtime_home,
-                &mut journal,
-                TransactionPhase::BodyInstalled,
-            )?;
-            for index in &plan.host_indexes {
-                replace_symlink(Path::new(index), &body)?;
-            }
-            for index in &plan.retired_host_indexes {
-                remove_host_index(Path::new(index))?;
-            }
-            registry
-                .skills
-                .insert(record.skill_id.clone(), record.clone());
-        } else {
-            for index in &plan.host_indexes {
-                remove_host_index(Path::new(index))?;
-            }
-            registry.skills.remove(&plan.skill_id);
-        }
-        advance_journal(
-            &context.runtime_home,
-            &mut journal,
-            TransactionPhase::LinksApplied,
-        )?;
-        registry.revision = registry.revision.saturating_add(1);
-        write_installed_skills(&context.runtime_home, &registry)?;
-        advance_journal(
-            &context.runtime_home,
-            &mut journal,
-            TransactionPhase::RegistryApplied,
-        )?;
-        let snapshots = if refresh_snapshot_state {
-            refresh_snapshots(context, &plan.target_hosts)?
-        } else {
-            BTreeMap::new()
-        };
-        advance_journal(
-            &context.runtime_home,
-            &mut journal,
-            TransactionPhase::SnapshotsApplied,
-        )?;
-        Ok(snapshots)
-    })();
-
-    match applied {
-        Ok(snapshots) => {
-            advance_journal(
-                &context.runtime_home,
-                &mut journal,
-                TransactionPhase::Committed,
-            )?;
-            fs::remove_file(transaction_journal_path(&context.runtime_home))
-                .map_err(|error| format!("cannot clear committed transaction journal: {error}"))?;
-            Ok(SkillMutationResult {
-                operation: plan.operation.clone(),
-                transaction_id: transaction_id.to_string(),
-                skill_id: plan.skill_id.clone(),
-                registry_revision: registry.revision,
-                body_path: body.to_string_lossy().into_owned(),
-                host_indexes: plan.host_indexes.clone(),
-                snapshot_hashes: snapshots,
-                requires_repreflight: true,
-            })
-        }
-        Err(error) => {
-            let recovery =
-                recover_pending_transactions_locked(&context.runtime_home, &context.host_home);
-            Err(match recovery {
-                Ok(()) => error,
-                Err(recovery_error) => format!("{error}; recovery failed: {recovery_error}"),
-            })
-        }
-    }
 }
 
 struct PlanBinding {
@@ -1407,18 +645,7 @@ struct PlanBinding {
     previous_body_revision: Option<String>,
     rollback_revision: Option<String>,
     allow_legacy_authority_indexes: bool,
-}
-
-fn index_points_to_legacy_authority(
-    context: &AdoptionContext,
-    record: &InstalledSkillRecord,
-    index: &Path,
-) -> bool {
-    let expected = context
-        .authority_root
-        .join("global-skills")
-        .join(&record.skill_id);
-    index_points_to(index, &expected)
+    candidate_read_inputs: Option<Vec<ReadInputSeal>>,
 }
 
 const LEGACY_SUPERPOWERS_ENTRYPOINTS: &[&str] = &[
@@ -1438,65 +665,47 @@ const LEGACY_SUPERPOWERS_ENTRYPOINTS: &[&str] = &[
     "writing-skills",
 ];
 
-fn index_points_to_legacy_parent_entrypoint(
-    context: &AdoptionContext,
-    record: &InstalledSkillRecord,
-    index: &Path,
-) -> bool {
-    record.skill_id == "superpowers"
-        && LEGACY_SUPERPOWERS_ENTRYPOINTS.iter().any(|entrypoint| {
-            index_points_to(
-                index,
-                &context
-                    .authority_root
-                    .join("global-skills/superpowers/playbooks")
-                    .join(entrypoint),
-            )
-        })
-}
-
 fn build_plan(
     context: &AdoptionContext,
     operation: &str,
     record: &InstalledSkillRecord,
     target_hosts: Vec<String>,
     binding: PlanBinding,
+    observed_registry: &ObservedInstalledSkillIndex,
 ) -> Result<PreparedSkillChange, String> {
+    let candidate_read_inputs = match binding.candidate_read_inputs {
+        Some(seals) => seals,
+        None => binding
+            .candidate_path
+            .as_deref()
+            .map(Path::new)
+            .filter(|path| path.is_dir())
+            .map(super::materialize::seal_candidate_tree)
+            .transpose()?
+            .unwrap_or_default(),
+    };
     let mut indexes = target_hosts
         .iter()
-        .map(|host| {
-            host_index_path(&context.host_home, host, &record.skill_id)
-                .ok_or_else(|| format!("unsupported skill host: {host}"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+        .filter_map(|host| host_index_path(&context.host_home, host, &record.skill_id))
+        .collect::<Vec<_>>();
     indexes.sort();
     indexes.dedup();
-    let registry = load_installed_skills(&context.runtime_home)?;
+    let registry = &observed_registry.value;
     let previous_record = registry.skills.get(&record.skill_id).cloned();
+    let mut target_record = record.clone();
+    // Preserve the canonical record emitted by the legacy apply-time audit.
+    // Planning timestamps are not part of the installed post-state today.
+    target_record.installed_at = 0;
+    target_record.body_revisions = merge_revision_history(
+        previous_record
+            .as_ref()
+            .map(|existing| existing.body_revisions.clone())
+            .unwrap_or_default(),
+        &target_record,
+    );
     let previous_body = previous_record
         .as_ref()
         .map(|record| body_path(&context.runtime_home, record));
-    for index in &indexes {
-        if let Ok(metadata) = fs::symlink_metadata(index) {
-            if !metadata.file_type().is_symlink() {
-                return Err(format!(
-                    "host index conflict is not a symlink and will not be replaced: {}",
-                    index.display()
-                ));
-            }
-            let previous_owned = previous_body
-                .as_deref()
-                .is_some_and(|body| index_points_to(index, body));
-            let legacy_owned = binding.allow_legacy_authority_indexes
-                && index_points_to_legacy_authority(context, record, index);
-            if !previous_owned && !legacy_owned {
-                return Err(format!(
-                    "host index conflict is not owned by this installed Skill: {}",
-                    index.display()
-                ));
-            }
-        }
-    }
     let canonical = indexes
         .iter()
         .cloned()
@@ -1517,27 +726,46 @@ fn build_plan(
     }
     retired_indexes.sort();
     retired_indexes.dedup();
-    for index in &retired_indexes {
-        let metadata = fs::symlink_metadata(index).map_err(|error| {
-            format!(
-                "cannot inspect legacy host index {}: {error}",
-                index.display()
-            )
-        })?;
+    let mut all_indexes = indexes.clone();
+    all_indexes.extend(retired_indexes.iter().cloned());
+    let expected_link_targets = capture_expected_link_targets(&all_indexes)?;
+    for index in &all_indexes {
+        let key = index.to_string_lossy();
+        let Some(target) = expected_link_targets
+            .get(key.as_ref())
+            .and_then(|target| target.as_deref())
+        else {
+            continue;
+        };
         let previous_owned = previous_body
             .as_deref()
-            .is_some_and(|body| index_points_to(index, body));
+            .is_some_and(|body| observed_link_points_to(index, target, body));
+        let legacy_root = context
+            .authority_root
+            .join("global-skills")
+            .join(&record.skill_id);
         let legacy_owned = binding.allow_legacy_authority_indexes
-            && (index_points_to_legacy_authority(context, record, index)
-                || index_points_to_legacy_parent_entrypoint(context, record, index));
-        if !metadata.file_type().is_symlink() || (!previous_owned && !legacy_owned) {
+            && (observed_link_points_to(index, target, &legacy_root)
+                || (record.skill_id == "superpowers"
+                    && LEGACY_SUPERPOWERS_ENTRYPOINTS.iter().any(|entrypoint| {
+                        observed_link_points_to(
+                            index,
+                            target,
+                            &context
+                                .authority_root
+                                .join("global-skills/superpowers/playbooks")
+                                .join(entrypoint),
+                        )
+                    })));
+        if !previous_owned && !legacy_owned {
             return Err(format!(
-                "duplicate host index is not owned by this installed Skill: {}",
+                "host index conflict is not owned by this installed Skill: {}",
                 index.display()
             ));
         }
     }
     let plan = PreparedSkillChange {
+        contract_schema: PreparedSkillChangeContract::V2,
         operation: operation.to_string(),
         skill_id: record.skill_id.clone(),
         source: record.source.clone(),
@@ -1590,24 +818,77 @@ fn build_plan(
         previous_body_revision: binding.previous_body_revision,
         rollback_revision: binding.rollback_revision,
         registry_revision: registry.revision,
+        registry_read_input: Some(observed_registry.seal.clone()),
+        registry_semantic_hash: observed_registry.semantic_hash.clone(),
         previous_record_hash: previous_record.as_ref().map(record_hash).transpose()?,
         previous_body_hash: previous_record
             .as_ref()
             .map(|existing| body_identity(&context.runtime_home, existing))
             .transpose()?
             .flatten(),
+        target_record: Some(target_record),
         previous_record,
+        candidate_read_inputs,
+        expected_link_targets,
     };
     Ok(plan)
 }
 
-fn validate_candidate_path(
+fn capture_expected_link_targets(
+    indexes: &[PathBuf],
+) -> Result<BTreeMap<String, Option<Vec<u8>>>, String> {
+    indexes
+        .iter()
+        .map(|path| {
+            let target = observe_link_target(path)?;
+            Ok((path.to_string_lossy().into_owned(), target))
+        })
+        .collect()
+}
+
+#[cfg(unix)]
+fn observed_link_points_to(index: &Path, target: &[u8], expected: &Path) -> bool {
+    use std::os::unix::ffi::OsStringExt;
+
+    let target = PathBuf::from(std::ffi::OsString::from_vec(target.to_vec()));
+    let target = if target.is_absolute() {
+        target
+    } else {
+        index
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(target)
+    };
+    match (target.canonicalize(), expected.canonicalize()) {
+        (Ok(actual), Ok(expected)) => actual == expected,
+        _ => false,
+    }
+}
+
+#[cfg(not(unix))]
+fn observed_link_points_to(_index: &Path, _target: &[u8], _expected: &Path) -> bool {
+    false
+}
+
+#[cfg(unix)]
+fn observe_link_target(path: &Path) -> Result<Option<Vec<u8>>, String> {
+    crate::shared_skill_source::observe_link_target(path)
+}
+
+#[cfg(not(unix))]
+fn observe_link_target(path: &Path) -> Result<Option<Vec<u8>>, String> {
+    let _ = path;
+    Err("descriptor_semantics_unavailable_for_skill_materialization".to_string())
+}
+
+#[cfg_attr(not(unix), allow(dead_code))]
+pub(super) fn validate_candidate_path(
     context: &AdoptionContext,
     candidate_path: &Path,
     candidate_identity: &str,
 ) -> Result<(), String> {
     let candidates_root = context
-        .runtime_home
+        .candidate_home
         .join("candidates")
         .canonicalize()
         .map_err(|error| {
@@ -1639,15 +920,17 @@ fn validate_candidate_path(
     Ok(())
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 fn candidates_root_display(context: &AdoptionContext) -> String {
     context
-        .runtime_home
+        .candidate_home
         .join("candidates")
         .display()
         .to_string()
 }
 
-fn ensure_risks_acknowledged(
+#[cfg_attr(not(unix), allow(dead_code))]
+pub(super) fn ensure_risks_acknowledged(
     plan: &PreparedSkillChange,
     acknowledgements: &RiskAcknowledgements,
 ) -> Result<(), String> {
@@ -1676,7 +959,7 @@ fn ensure_risks_acknowledged(
     Ok(())
 }
 
-fn add_catalog_review_risk(risk_findings: &mut Vec<RiskFinding>) {
+pub(super) fn add_catalog_review_risk(risk_findings: &mut Vec<RiskFinding>) {
     if risk_findings
         .iter()
         .any(|finding| finding.code == "catalog_unreviewed")
@@ -1794,14 +1077,7 @@ fn bind_catalog_integrity(
     Ok(())
 }
 
-fn normalize_risk_findings(mut risk_findings: Vec<RiskFinding>) -> Vec<RiskFinding> {
-    risk_findings
-        .sort_by(|left, right| left.code.cmp(&right.code).then(left.path.cmp(&right.path)));
-    risk_findings.dedup();
-    risk_findings
-}
-
-fn merge_revision_history(
+pub(super) fn merge_revision_history(
     mut history: Vec<BodyRevision>,
     record: &InstalledSkillRecord,
 ) -> Vec<BodyRevision> {
@@ -1828,7 +1104,7 @@ fn unix_time() -> u64 {
         .unwrap_or(0)
 }
 
-fn normalize_hosts(requested: &[String]) -> Result<Vec<String>, String> {
+fn normalize_hosts(context: &AdoptionContext, requested: &[String]) -> Result<Vec<String>, String> {
     let supported = ags_host_integration::supported_skill_hosts()
         .map(str::to_string)
         .collect::<BTreeSet<_>>();
@@ -1839,8 +1115,15 @@ fn normalize_hosts(requested: &[String]) -> Result<Vec<String>, String> {
     };
     hosts.sort();
     hosts.dedup();
-    if let Some(unsupported) = hosts.iter().find(|host| !supported.contains(*host)) {
-        return Err(format!("unsupported skill host: {unsupported}"));
+    for host in &hosts {
+        if supported.contains(host) {
+            continue;
+        }
+        let registration = crate::load_canonical_host_registration(&context.runtime_home, host)
+            .map_err(|_| format!("unsupported skill host: {host}"))?;
+        if registration.host_id.as_str() != host {
+            return Err(format!("unsupported skill host: {host}"));
+        }
     }
     Ok(hosts)
 }
@@ -1880,181 +1163,4 @@ fn reject_official_collision(
         ));
     }
     Ok(())
-}
-
-fn install_body(source: &Path, body: &Path, expected_hash: &str) -> Result<bool, String> {
-    if body.exists() {
-        let actual = hash_skill_source(body)?;
-        if actual == expected_hash {
-            return Ok(false);
-        }
-        return Err(format!(
-            "immutable body path contains different content: {}",
-            body.display()
-        ));
-    }
-    let parent = body
-        .parent()
-        .ok_or_else(|| "immutable body path has no parent".to_string())?;
-    fs::create_dir_all(parent)
-        .map_err(|error| format!("cannot create body parent {}: {error}", parent.display()))?;
-    let stage = parent.join(format!(
-        ".stage-{}-{}",
-        std::process::id(),
-        body.file_name().unwrap().to_string_lossy()
-    ));
-    if stage.exists() {
-        fs::remove_dir_all(&stage).map_err(|error| {
-            format!("cannot clear stale body stage {}: {error}", stage.display())
-        })?;
-    }
-    ags_platform::copy_regular_tree(source, &stage)?;
-    let staged_hash = hash_skill_source(&stage)?;
-    if staged_hash != expected_hash {
-        let _ = fs::remove_dir_all(&stage);
-        return Err("source_drift_during_copy".to_string());
-    }
-    fs::rename(&stage, body)
-        .map_err(|error| format!("cannot publish immutable body {}: {error}", body.display()))?;
-    Ok(true)
-}
-
-fn refresh_snapshots(
-    context: &AdoptionContext,
-    hosts: &[String],
-) -> Result<BTreeMap<String, String>, String> {
-    let snapshots = match context.snapshot_discovery {
-        SnapshotDiscovery::Live => build_capability_snapshots_with_live_roots(
-            &context.authority_root,
-            hosts,
-            &context.runtime_home,
-            &context.host_home,
-        ),
-        SnapshotDiscovery::Offline => hosts
-            .iter()
-            .map(|host| {
-                build_capability_snapshot_with_roots(
-                    &context.authority_root,
-                    host,
-                    &context.runtime_home,
-                    &context.host_home,
-                )
-                .map(|snapshot| (host.clone(), snapshot))
-            })
-            .collect(),
-    }
-    .map_err(|error| format!("capability snapshot build failed: {error:?}"))?;
-    publish_capability_snapshots(&context.runtime_home, snapshots)
-}
-
-fn capture_links(paths: &[String]) -> Result<Vec<(PathBuf, Option<PathBuf>)>, String> {
-    paths
-        .iter()
-        .map(|path| {
-            let path = PathBuf::from(path);
-            match fs::symlink_metadata(&path) {
-                Ok(metadata) if metadata.file_type().is_symlink() => fs::read_link(&path)
-                    .map(Some)
-                    .map(|target| (path.clone(), target))
-                    .map_err(|error| format!("cannot read link {}: {error}", path.display())),
-                Ok(_) => Err(format!(
-                    "host index conflict is not a symlink: {}",
-                    path.display()
-                )),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok((path, None)),
-                Err(error) => Err(format!(
-                    "cannot inspect host index {}: {error}",
-                    path.display()
-                )),
-            }
-        })
-        .collect()
-}
-
-fn capture_snapshots(runtime_home: &Path, hosts: &[String]) -> Result<Vec<FileBackup>, String> {
-    hosts
-        .iter()
-        .map(|host| {
-            let path = snapshot_path(runtime_home, host);
-            read_optional(&path).map(|bytes| (path, bytes))
-        })
-        .collect()
-}
-
-fn read_optional(path: &Path) -> Result<Option<Vec<u8>>, String> {
-    match fs::read(path) {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(format!("cannot read {}: {error}", path.display())),
-    }
-}
-
-fn replace_symlink(index: &Path, target: &Path) -> Result<(), String> {
-    let parent = index
-        .parent()
-        .ok_or_else(|| "host index has no parent".to_string())?;
-    fs::create_dir_all(parent).map_err(|error| {
-        format!(
-            "cannot create host skill root {}: {error}",
-            parent.display()
-        )
-    })?;
-    let stage = parent.join(format!(
-        ".ags-adopt-{}-{}.tmp",
-        std::process::id(),
-        index.file_name().unwrap().to_string_lossy()
-    ));
-    if fs::symlink_metadata(&stage).is_ok() {
-        fs::remove_file(&stage)
-            .map_err(|error| format!("cannot clear staged link {}: {error}", stage.display()))?;
-    }
-    create_dir_symlink(target, &stage)?;
-    if fs::symlink_metadata(index).is_ok() {
-        fs::remove_file(index)
-            .map_err(|error| format!("cannot replace host index {}: {error}", index.display()))?;
-    }
-    fs::rename(&stage, index)
-        .map_err(|error| format!("cannot publish host index {}: {error}", index.display()))
-}
-
-fn remove_host_index(index: &Path) -> Result<(), String> {
-    match fs::symlink_metadata(index) {
-        Ok(metadata) if metadata.file_type().is_symlink() || metadata.is_file() => {
-            fs::remove_file(index)
-                .map_err(|error| format!("cannot unlink {}: {error}", index.display()))
-        }
-        Ok(_) => Err(format!(
-            "host index conflict is not removable link: {}",
-            index.display()
-        )),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!(
-            "cannot inspect host index {}: {error}",
-            index.display()
-        )),
-    }
-}
-
-fn create_dir_symlink(target: &Path, link: &Path) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(target, link)
-            .map_err(|error| format!("cannot create link {}: {error}", link.display()))
-    }
-    #[cfg(windows)]
-    {
-        std::os::windows::fs::symlink_dir(target, link)
-            .map_err(|error| format!("cannot create link {}: {error}", link.display()))
-    }
-}
-
-fn restore_optional_file(path: &Path, bytes: Option<&[u8]>) -> Result<(), String> {
-    if let Some(bytes) = bytes {
-        ags_platform::atomic_write(path, bytes)
-    } else if path.exists() {
-        fs::remove_file(path)
-            .map_err(|error| format!("cannot remove {} during rollback: {error}", path.display()))
-    } else {
-        Ok(())
-    }
 }

@@ -2,7 +2,7 @@ use super::model::{ActivatedCapability, AdoptionRouteStatus, AdoptionStatus};
 use super::store::{body_path, installed_skill_index_hash, load_installed_skills};
 use crate::{
     hash_skill_source, load_static_snapshot, ActiveSkill, AuthState, AvailabilityState,
-    GovernanceState, SkillCard, SkillRoutingSurface, SkillSourceKind,
+    GovernanceState, SkillBodyRef, SkillCard, SkillRoutingSurface, SkillSourceKind,
 };
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
@@ -14,13 +14,16 @@ pub(crate) struct PrivateProjection {
     pub installed_skill_index_hash: String,
 }
 
-pub(crate) fn project_installed_skills(
+pub(crate) fn project_installed_skills_with_overlay(
     runtime_home: &Path,
     host_home: &Path,
     host: &str,
     official_ids: &HashSet<String>,
+    overlay: Option<&super::model::SkillPostStateOverlay>,
 ) -> Result<PrivateProjection, String> {
-    let registry = load_installed_skills(runtime_home)?;
+    let registry = overlay
+        .map(|overlay| Ok(overlay.installed_skills.clone()))
+        .unwrap_or_else(|| load_installed_skills(runtime_home))?;
     let mut cards = Vec::new();
     let mut active = Vec::new();
     for record in registry.skills.values() {
@@ -30,11 +33,22 @@ pub(crate) fn project_installed_skills(
             continue;
         }
         let body = body_path(runtime_home, record);
-        let body_present = body.join("SKILL.md").is_file();
-        let body_hash_matches = body_present
-            && hash_skill_source(&body).is_ok_and(|actual| actual == record.source_hash);
-        let visible = host_index_path(host_home, host, &record.skill_id)
-            .is_some_and(|index| index_points_to(&index, &body));
+        let target_overlay = overlay.filter(|overlay| overlay.target_skill_id == record.skill_id);
+        let body_present = target_overlay
+            .map(|overlay| overlay.target_body_hash_matches)
+            .unwrap_or_else(|| body.join("SKILL.md").is_file());
+        let body_hash_matches = target_overlay
+            .map(|overlay| overlay.target_body_hash_matches)
+            .unwrap_or_else(|| {
+                body_present
+                    && hash_skill_source(&body).is_ok_and(|actual| actual == record.source_hash)
+            });
+        let visible = target_overlay
+            .map(|overlay| overlay.target_visible_hosts.contains(host))
+            .unwrap_or_else(|| {
+                host_index_path(host_home, host, &record.skill_id)
+                    .is_some_and(|index| index_points_to(&index, &body))
+            });
         let mut reasons = Vec::new();
         if !body_present {
             reasons.push("canonical_missing".to_string());
@@ -84,6 +98,11 @@ pub(crate) fn project_installed_skills(
                 allowed_entrypoints: record.entrypoints.clone(),
                 intent_tags: record.intent_tags.clone(),
                 source_hash: record.source_hash.clone(),
+                body_ref: SkillBodyRef::new(
+                    &record.skill_id,
+                    record.body_revision.clone(),
+                    record.source_hash.clone(),
+                ),
             });
         }
         cards.push(card);
@@ -91,7 +110,14 @@ pub(crate) fn project_installed_skills(
     Ok(PrivateProjection {
         cards,
         active,
-        installed_skill_index_hash: installed_skill_index_hash(runtime_home)?,
+        installed_skill_index_hash: if overlay.is_some() {
+            ags_platform::sha256(
+                serde_json::to_vec(&registry)
+                    .map_err(|error| format!("cannot serialize installed Skill index: {error}"))?,
+            )
+        } else {
+            installed_skill_index_hash(runtime_home)?
+        },
     })
 }
 

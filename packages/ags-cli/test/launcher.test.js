@@ -48,7 +48,7 @@ test("publishes the ags bin and exact shared launcher dependency version", () =>
   const packageJson = JSON.parse(
     fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")
   );
-  assert.equal(packageJson.version, "0.4.16");
+  assert.equal(packageJson.version, "0.4.20");
   assert.equal(packageJson.bin.ags, "bin/ags.js");
   assert.equal(packageJson.dependencies["@agent-governance-suite/launcher"], packageJson.version);
   assert.match(
@@ -72,7 +72,7 @@ test("CLI forwards process arguments to the shared launcher core", async () => {
   assert.equal(exitCode, 7);
   assert.deepEqual(received.args, ["--version", "--json"]);
   assert.equal(received.label, "ags");
-  assert.deepEqual(cliArgs(["node", "ags", "mcp", "serve"]), ["mcp", "serve"]);
+  assert.deepEqual(cliArgs(["node", "ags", "test", "full"]), ["test", "full"]);
 });
 
 test("CLI update recover switches through the shared recovery core without launching Rust", async () => {
@@ -113,11 +113,11 @@ test("CLI core update plan and apply stay in the shared launcher transaction", a
       if (args[1] === "plan") {
         return {
           handled: true,
-          result: { plan_hash: "a".repeat(64), target_version: "0.4.16" }
+          result: { plan_hash: "a".repeat(64), target_version: "0.4.20" }
         };
       }
       appliedHash = args[args.indexOf("--plan-hash") + 1];
-      return { handled: true, result: { verified: true, active_version: "0.4.16" } };
+      return { handled: true, result: { verified: true, active_version: "0.4.20" } };
     },
     launch: async () => {
       launched = true;
@@ -136,7 +136,7 @@ test("CLI core update plan and apply stay in the shared launcher transaction", a
       coreModule
     });
     assert.equal(planExit, 0);
-    assert.equal(JSON.parse(output).target_version, "0.4.16");
+    assert.equal(JSON.parse(output).target_version, "0.4.20");
     output = "";
     const applyExit = await launch({
       argv: ["node", "ags", "update", "apply", "--plan-hash", "a".repeat(64)],

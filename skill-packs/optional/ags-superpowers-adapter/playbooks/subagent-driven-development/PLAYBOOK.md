@@ -11,6 +11,31 @@ Execute plan by dispatching a fresh implementer subagent per task, a task review
 
 **Core principle:** Fresh subagent per task + task review (spec + quality) + broad final review = high quality, fast iteration
 
+## Authority precedence
+
+This playbook is a method, not an authority source. Before setup or dispatch,
+resolve the execution contract in this order:
+
+1. A validated, confirmed task card's explicit `Execution mode`, `Execution
+   topology`, and `Delegation planning` tuple.
+2. Explicit task constraints, including `no-commit`, `no-push`, write ownership,
+   protected paths, review gates, and integration ownership.
+3. This playbook's defaults, only where the confirmed contract is silent.
+
+The playbook must never upgrade or downgrade the card. `plan-only` and
+`single-writer` forbid implementation subagent writers. `fanout-in-card`
+permits only writers named by the current card; `fanout-cross-card` is required
+for separately authoritative cards. `parallel` permits parallel lanes, while
+`worktree` permits isolated worktree lanes as well as parallel or single
+execution. `Delegation planning: no` forbids delegation; `yes` permits it only
+within the mode and topology ceiling.
+
+An explicit no-commit constraint binds every implementer, fixer, integrator,
+and reviewer. Commit-oriented steps below then use the no-commit diff path.
+Write the resolved tuple and constraints at the top of the progress ledger
+before dispatch. If they conflict, fail closed; never silently substitute this
+playbook's sequential or commit defaults.
+
 **Narration:** between tool calls, narrate at most one short line — the
 ledger and the tool results carry the record.
 
@@ -53,7 +78,7 @@ digraph process {
         "Dispatch implementer subagent (./implementer-prompt.md)" [shape=box];
         "Implementer asks questions?" [shape=diamond];
         "Answer questions, provide context" [shape=box];
-        "Implementer implements, tests, commits, self-reviews" [shape=box];
+        "Implementer implements, tests, records diff, self-reviews" [shape=box];
         "Generate review package, dispatch task reviewer (./task-reviewer-prompt.md)" [shape=box];
         "Spec ✅ and quality approved?" [shape=diamond];
         "Finding conflicts with plan text?" [shape=diamond];
@@ -69,19 +94,19 @@ digraph process {
         "Append completion to ledger, mark todo complete" [shape=box];
     }
 
-    "Setup: worktree, ledger check, read plan, pre-flight review" [shape=box];
+    "Setup: validate authority, worktree, ledger, plan, pre-flight review" [shape=box];
     "More tasks remain?" [shape=diamond];
     "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" [shape=box];
     "Final findings? ONE fix dispatch, one scoped re-review, adjudicate residuals" [shape=box];
-    "Final review clean: delete this plan's workspace" [shape=box];
+    "Final review clean: follow confirmed cleanup policy" [shape=box];
     "Use superpowers:finishing-a-development-branch" [shape=box style=filled fillcolor=lightgreen];
 
-    "Setup: worktree, ledger check, read plan, pre-flight review" -> "Dispatch implementer subagent (./implementer-prompt.md)";
+    "Setup: validate authority, worktree, ledger, plan, pre-flight review" -> "Dispatch implementer subagent (./implementer-prompt.md)";
     "Dispatch implementer subagent (./implementer-prompt.md)" -> "Implementer asks questions?";
     "Implementer asks questions?" -> "Answer questions, provide context" [label="yes"];
-    "Answer questions, provide context" -> "Implementer implements, tests, commits, self-reviews";
-    "Implementer asks questions?" -> "Implementer implements, tests, commits, self-reviews" [label="no"];
-    "Implementer implements, tests, commits, self-reviews" -> "Generate review package, dispatch task reviewer (./task-reviewer-prompt.md)";
+    "Answer questions, provide context" -> "Implementer implements, tests, records diff, self-reviews";
+    "Implementer asks questions?" -> "Implementer implements, tests, records diff, self-reviews" [label="no"];
+    "Implementer implements, tests, records diff, self-reviews" -> "Generate review package, dispatch task reviewer (./task-reviewer-prompt.md)";
     "Generate review package, dispatch task reviewer (./task-reviewer-prompt.md)" -> "Spec ✅ and quality approved?";
     "Spec ✅ and quality approved?" -> "Append completion to ledger, mark todo complete" [label="yes"];
     "Spec ✅ and quality approved?" -> "Finding conflicts with plan text?" [label="no"];
@@ -102,17 +127,18 @@ digraph process {
     "More tasks remain?" -> "Dispatch implementer subagent (./implementer-prompt.md)" [label="yes"];
     "More tasks remain?" -> "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" [label="no"];
     "Dispatch final code reviewer (../requesting-code-review/code-reviewer.md)" -> "Final findings? ONE fix dispatch, one scoped re-review, adjudicate residuals";
-    "Final findings? ONE fix dispatch, one scoped re-review, adjudicate residuals" -> "Final review clean: delete this plan's workspace";
-    "Final review clean: delete this plan's workspace" -> "Use superpowers:finishing-a-development-branch";
+    "Final findings? ONE fix dispatch, one scoped re-review, adjudicate residuals" -> "Final review clean: follow confirmed cleanup policy";
+    "Final review clean: follow confirmed cleanup policy" -> "Use superpowers:finishing-a-development-branch";
 }
 ```
 
 ## Setup
 
-Ensure the work happens in an isolated workspace: use
-superpowers:using-git-worktrees to create one or verify the existing one.
-Never start implementation on a main/master branch without your human
-partner's explicit consent.
+Apply the confirmed topology. For `worktree`, use
+superpowers:using-git-worktrees to create or verify the isolated worktrees
+named by the contract. For `parallel`, use isolated writers whose path
+ownership cannot overlap. Never start implementation on a main/master branch
+without explicit consent.
 
 Conversation memory does not survive compaction. In real sessions,
 controllers that lost their place have re-dispatched entire completed task
@@ -133,11 +159,15 @@ a ledger file, not only in todos.
   plan's progress: leave it in place and start your own, fresh.
 - Create the ledger with its identity as the first line:
   `# SDD ledger — plan: <plan file path>`.
-- The ledger is your recovery map: the commits it names exist in git even
-  when your context no longer remembers creating them. After compaction,
-  trust the ledger and `git log` over your own recollection.
-- `git clean -fdx` will destroy the workspace (it's git-ignored scratch); if
-  that happens, recover from `git log`.
+- Immediately record `Execution mode`, `Execution topology`, `Delegation
+  planning`, commit policy, and every lane's worktree and write ownership. This
+  authority block survives compaction and is checked before every re-dispatch.
+- The ledger is your recovery map. For commit-authorized work, trust its commit
+  identities and `git log`. Under no-commit, trust its package paths, hashes,
+  three-part inventories, and retained worktrees; no Git history exists for
+  those bytes.
+- Never run `git clean -fdx` as a recovery or cleanup step. It destroys ignored
+  scratch and, under no-commit, may destroy the only copy of reviewed bytes.
 
 Read the plan once, note its context and Global Constraints, and create a
 todo per task.
@@ -199,8 +229,8 @@ and is re-read on every later turn. Hand artifacts over as files.
 
 ### 1. Dispatch the implementer
 
-Record BASE (`git rev-parse HEAD`) before dispatching — the review package
-and fix-round diffs need it.
+Record BASE (`git rev-parse HEAD`) and the initial index/worktree status before
+dispatching. Commit-based and no-commit review packages both need this baseline.
 
 - **Task brief:** before dispatching an implementer, run this skill's
   `scripts/task-brief PLAN_FILE N` — it extracts the task's full text to a
@@ -217,7 +247,8 @@ and fix-round diffs need it.
 - **Report file:** name the implementer's report file after the brief
   (brief `…/task-N-brief.md` → report `…/task-N-report.md`) and put it in
   the dispatch prompt. The implementer writes the full report there and
-  returns only status, commits, a one-line test summary, and concerns.
+  returns only status, commits or `none (no-commit)`, a one-line test summary,
+  and concerns.
 - A dispatch prompt describes one task, not the session's history. Do not
   paste accumulated prior-task summaries ("state after Tasks 1-3") into
   later dispatches — a real session's dispatch hit 42k chars of which 99%
@@ -227,7 +258,46 @@ and fix-round diffs need it.
   a pointer to that ledger entry in the dispatch.
 - Record the implementer's agent identity from the dispatch result —
   fix-loop rounds 1-3 resume this agent.
-- Never dispatch multiple implementation subagents in parallel (conflicts).
+- Default to one implementation writer when the confirmed contract is silent.
+  Parallel implementation is allowed only when a validated card authorizes a
+  fanout execution mode plus `parallel` or `worktree` topology, and the ledger
+  gives every lane non-overlapping write ownership.
+
+### Parallel worktree lanes
+
+For authorized `fanout-in-card` plus `worktree` execution, dispatch independent
+lanes concurrently. Each dispatch carries the same card identity and authority
+tuple plus only that lane's brief, exact worktree, write ownership, report path,
+and commit policy. A lane stops before touching a shared manifest, central
+registry, another lane's files, or any unassigned path.
+
+Each lane records:
+
+- lane and agent identity, BASE, worktree, and owned paths;
+- status and test evidence;
+- commit SHA range, or `commits: none (no-commit)`;
+- tracked diff hash and exact untracked-file inventory;
+- integration state: pending, integrated, reviewed, or blocked.
+
+The main executor is the sole integrator. Fan in completed lanes one at a time,
+verify paths against ownership, preserve pre-existing changes, apply or copy
+the exact uncommitted diff into the integration worktree, then compare the
+integrated bytes and diff hash with the lane artifact. Never use reset,
+checkout, clean, or worktree deletion as integration. Run cross-lane tests only
+after all required lane diffs are present.
+
+Under no-commit, a review package contains all three byte inventories from the
+integration worktree:
+
+- tracked: complete `git diff --binary HEAD`, status/stat, and a package hash;
+- untracked: exact path inventory plus a content hash for every file;
+- explicitly owned ignored files: exact path inventory plus a content hash for
+  every ignored file named by the task card or lane brief's owned-path
+  allowlist. Never discover or package arbitrary ignored user files.
+
+Do not use `HEAD~1` or a commit-only range: it would omit the changes being
+reviewed. Task and final reviewers inspect this package and the ledger's
+lane-integration records.
 
 Template: [implementer-prompt.md](implementer-prompt.md)
 
@@ -235,7 +305,10 @@ Template: [implementer-prompt.md](implementer-prompt.md)
 
 Implementer subagents report one of four statuses. Handle each appropriately:
 
-**DONE:** Generate the review package (`scripts/review-package PLAN_FILE BASE HEAD`, from this skill's directory — it prints the unique file path it wrote; BASE is the commit you recorded before dispatching the implementer — never `HEAD~1`, which silently drops all but the last commit of a multi-commit task), then dispatch the task reviewer with the printed path.
+**DONE:** Generate the review package. When commits are authorized, use
+`scripts/review-package PLAN_FILE BASE HEAD` (never `HEAD~1`). Under no-commit,
+package the complete tracked diff plus untracked content/hash inventory as
+described above. Then dispatch the task reviewer with the artifact path.
 
 **DONE_WITH_CONCERNS:** The implementer completed the work but flagged doubts. Read the concerns before proceeding. If the concerns are about correctness or scope, address them before review. If they're observations (e.g., "this file is getting large"), note them and proceed to review.
 
@@ -261,7 +334,7 @@ report missing either verdict — spec compliance AND task quality are both
 required. Implementer self-review never replaces the task review; both are
 needed.
 
-- Hand the reviewer its diff as a file: run this skill's
+- Hand the reviewer its diff as a file. For commit-authorized work, run this skill's
   `scripts/review-package PLAN_FILE BASE HEAD` and pass the reviewer the file path
   it prints (or, without bash: `git log --oneline`, `git diff --stat`,
   and `git diff -U10` for the range, redirected to one uniquely named
@@ -269,7 +342,8 @@ needed.
   the commit list, stat summary, and full diff with context in one Read
   call. Use the BASE you recorded before dispatching the implementer —
   never `HEAD~1`, which silently truncates multi-commit tasks. Never
-  dispatch a task reviewer without a diff file.
+  dispatch a task reviewer without a diff file. For no-commit work, pass the
+  complete uncommitted package and lane-integration ledger described above.
 - **Reviewer inputs:** the task reviewer gets three paths — the same brief
   file, the report file, and the review package — plus the global
   constraints that bind the task.
@@ -340,17 +414,24 @@ output; dispatch the re-review once all three are present. Name the
 covering test files in the fix message — a one-line fix does not need the
 whole suite.
 
-**The re-review is scoped.** Run `scripts/review-package PLAN_FILE FIX_BASE HEAD`
-where FIX_BASE is the head the previous review saw, and dispatch
-[re-review-prompt.md](re-review-prompt.md) with the findings list, the
-brief, the report file, and the printed diff path. The re-reviewer verdicts
-each finding ADDRESSED or NOT ADDRESSED and flags new breakage in the fix
-diff only. New Critical/Important breakage in the fix diff joins the open
-findings list. Out-of-scope observations go to the ledger as deferred
-minors — they never extend the loop.
+**The re-review is scoped.** For commit-authorized work, run
+`scripts/review-package PLAN_FILE FIX_BASE HEAD`, where FIX_BASE is the head
+the previous review saw. For no-commit work, record the previous package path,
+package hash, and three-part byte inventory before the fix; then build a new
+package after the fix and pass both package paths, both hashes, and the exact
+changed-path inventory to the re-reviewer. A no-commit re-review never uses a
+commit range. Dispatch [re-review-prompt.md](re-review-prompt.md) with the
+findings list, brief, report file, and these scoped artifacts. The re-reviewer
+verdicts each finding ADDRESSED or NOT ADDRESSED and flags new breakage in the
+fix bytes only. New Critical/Important breakage joins the open findings list.
+Out-of-scope observations go to the ledger as deferred minors; they never
+extend the loop.
 
 **After each round,** append to the ledger:
 `Task <N>: fix round <R>/5 (<X> addressed, <Y> open — <finding one-liners>; commits <a7>..<b7>)`
+
+Under no-commit, replace the commit range with
+`diff <before-hash>..<after-hash>; commits none`.
 
 Never fix findings yourself in the controller session — your context stays
 clean for coordination, and controller fixes skip review.
@@ -358,6 +439,13 @@ clean for coordination, and controller fixes skip review.
 **The breaker.** When round 5's re-review still leaves findings open, stop
 dispatching. Adjudicate each open finding yourself — you hold the plan and
 the cross-task context the reviewer lacks:
+
+**A confirmed task-card blocking finding is never parkable.** A finding that
+shows the implementation violates a requirement, boundary, stop condition, or
+acceptance criterion in the validated confirmed task card must remain open.
+Stop, mark the task BLOCKED, and ask for a fix or a newly confirmed authority
+change. Never mark that task complete, even at the round cap. Task-card
+authority takes precedence over the general parking cases below.
 
 - **The reviewer is wrong, or the point is contestable:** park it —
   `Task <N>: parked — <finding> — ruling: <why the code stands>`. The final
@@ -376,13 +464,23 @@ a silent discard is forbidden.
 
 ### 5. Complete the task
 
-When the review comes back clean — or every open finding is parked with a
-ruling at the cap — append the completion line to the ledger in the same
+Before any completion entry, re-check open and parked findings against the
+validated confirmed task card. If any finding is blocking under that card,
+remove any parked/completed label, mark the task BLOCKED, and stop. A round cap
+does not weaken confirmed authority.
+
+When the review comes back clean — or every eligible non-card finding is
+parked with a ruling at the cap and no confirmed-card blocking finding remains
+— append the completion line to the ledger in the same
 message as your other bookkeeping:
 
 - `Task <N>: complete (commits <base7>..<head7>, review clean)`
 - `Task <N>: complete (commits <base7>..<head7>, <K> parked)` after a
   tripped breaker
+
+Under no-commit, record `Task <N>: complete (diff <hash>, commits none,
+review clean)` and keep the lane worktree until the main executor confirms
+byte-for-byte integration.
 
 Then mark the todo complete and move on. Never move to the next task while
 the review has open Critical/Important issues that are neither fixed nor
@@ -390,7 +488,7 @@ parked-with-ruling at the cap.
 
 ## Final Review
 
-The final whole-branch review gets a package too: run
+For commit-authorized work, the final whole-branch review gets a package too: run
 `scripts/review-package PLAN_FILE MERGE_BASE HEAD` (MERGE_BASE = the commit the
 branch started from, e.g. `git merge-base main HEAD`) and include the
 printed path in the final review dispatch, so the final reviewer reads
@@ -401,24 +499,36 @@ superpowers:requesting-code-review's
 the ledger's deferred-minor and parked lines so it can triage which must be
 fixed before merge.
 
+Under no-commit, instead generate the complete package from the integration
+worktree's tracked changes, untracked files, and explicitly owned ignored-file
+allowlist. Include content hashes for all three inventories plus every lane's
+diff hash and integration record. A clean commit range is not evidence that
+uncommitted lane work was integrated.
+
 If the final whole-branch review returns findings, dispatch ONE fix subagent
 with the complete findings list — not one fixer per finding.
 Per-finding fixers each rebuild context and re-run suites; a real
 session's final-review fix wave cost more than all its tasks combined.
-Then run exactly one scoped re-review of the fix wave
-(`scripts/review-package PLAN_FILE FIX_BASE HEAD` over the fix range,
-[re-review-prompt.md](re-review-prompt.md)).
-Adjudicate any residual findings as in the task loop's breaker: park with
-rulings, or stop on load-bearing ones. There is no second fix wave —
+Then run exactly one scoped re-review of the fix wave. Commit-authorized work
+uses `scripts/review-package PLAN_FILE FIX_BASE HEAD` over the fix range.
+No-commit work captures before/after package paths and hashes plus the exact
+tracked, untracked, and explicitly owned ignored-file inventory delta; it does
+not use a commit range. Dispatch
+[re-review-prompt.md](re-review-prompt.md) with the corresponding artifacts.
+Adjudicate any residual findings as in the task loop's breaker: confirmed-card
+blocking findings remain non-parkable and block completion; only eligible
+non-card findings may be parked with rulings. There is no second fix wave —
 residual load-bearing findings surface to your human partner when
 finishing-a-development-branch presents the options.
 
 ## Finish
 
-When the final whole-branch review is clean and its fixes are merged,
-delete this plan's workspace (`rm -rf <workspace>`) — the git history is
-the record now. Sibling directories belong to other plans; leave them
-alone.
+When the final whole-branch review is clean and fixes are integrated, follow
+the confirmed cleanup and commit policy. Commit-authorized work may delete this
+plan's scratch workspace after history is verified. Under no-commit, keep all
+lane worktrees and artifacts until the main executor confirms integration and
+explicitly authorizes cleanup; Git history is not the record in that mode.
+Sibling directories belong to other plans and are always left alone.
 
 Use superpowers:finishing-a-development-branch.
 
@@ -483,7 +593,8 @@ Task reviewer: Spec ❌:
 Implementer: Added progress reporting, extracted PROGRESS_INTERVAL constant.
   Re-ran test/recovery.test.js — 10/10 passing. Fix report appended.
 
-[Run review-package PLAN_FILE FIX_BASE HEAD; dispatch scoped re-review]
+[Commit-authorized example: run review-package PLAN_FILE FIX_BASE HEAD;
+ dispatch scoped re-review]
 Re-reviewer: Missing progress reporting — ADDRESSED (src/recovery.js:41).
   Magic number — ADDRESSED (src/recovery.js:7). New breakage: none.
   Verdict: all findings addressed.

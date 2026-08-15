@@ -28,7 +28,6 @@ pub(super) fn check_release_boundary(repo_root: &Path) -> Vec<CheckItem> {
     }
     items.push(check_release_version_surfaces(repo_root));
     items.push(check_first_party_language_boundary(repo_root));
-    items.push(check_validator_mutation_guards(repo_root));
 
     items
 }
@@ -187,21 +186,9 @@ fn rust_source_files(root: &Path) -> Vec<std::path::PathBuf> {
     files
 }
 
-fn check_validator_mutation_guards(repo_root: &Path) -> CheckItem {
-    match crate::mutation_guard::verify(repo_root) {
-        Ok(evidence) => CheckItem::pass("semantic-mutation-guards", "release", &evidence),
-        Err(error) => CheckItem::fail(
-            "semantic-mutation-guards",
-            "release",
-            &truncate(&error, 1200),
-            "Repair the Rust semantic contract test or the production invariant that survived mutation.",
-        )
-    }
-}
-
 #[cfg(test)]
 mod language_boundary_tests {
-    use super::directly_launches_python;
+    use super::{check_release_boundary, directly_launches_python};
 
     #[test]
     fn legacy_python_hook_text_is_not_a_process_launch() {
@@ -219,5 +206,17 @@ mod language_boundary_tests {
         ]
         .concat();
         assert!(directly_launches_python(&source));
+    }
+
+    #[test]
+    fn release_check_is_read_only_even_for_an_invalid_repository() {
+        let root = tempfile::tempdir().unwrap();
+        let before = std::fs::read_dir(root.path()).unwrap().count();
+
+        let _items = check_release_boundary(root.path());
+
+        let after = std::fs::read_dir(root.path()).unwrap().count();
+        assert_eq!(before, after);
+        assert!(!root.path().join("target").exists());
     }
 }

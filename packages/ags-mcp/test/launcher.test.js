@@ -19,10 +19,9 @@ test("publishes a canonical executable bin entry", () => {
   );
 });
 
-test("MCP package exposes setup without creating a second installer", () => {
-  assert.deepEqual(mcpRuntimeArgs([]), ["mcp", "serve", "--transport", "stdio"]);
-  assert.deepEqual(mcpRuntimeArgs(["setup", "--yes"]), ["setup", "--yes"]);
-  assert.throws(() => mcpRuntimeArgs(["skill", "status"]), /supported commands/u);
+test("MCP package launches only the standalone adapter executable", () => {
+  assert.deepEqual(mcpRuntimeArgs([]), []);
+  assert.throws(() => mcpRuntimeArgs(["setup"]), /no subcommands/u);
 });
 
 test("maps every supported release platform", () => {
@@ -37,6 +36,8 @@ test("maps every supported release platform", () => {
 test("extractor accepts only the binary and runtime subtree", () => {
   const root = path.resolve("/tmp/ags-launcher-test");
   assert.equal(safeArchiveOutput(root, "ags", "ags"), path.join(root, "ags"));
+  assert.equal(safeArchiveOutput(root, "ags-mcp", "ags"), path.join(root, "ags-mcp"));
+  assert.equal(safeArchiveOutput(root, "ags-host", "ags"), path.join(root, "ags-host"));
   assert.equal(
     safeArchiveOutput(root, "runtime/manifests/mcp-registry.yaml", "ags"),
     path.join(root, "runtime/manifests/mcp-registry.yaml")

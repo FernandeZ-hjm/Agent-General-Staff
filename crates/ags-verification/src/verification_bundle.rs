@@ -14,7 +14,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Schema version for serialized verification bundles.
-pub const VERIFICATION_BUNDLE_SCHEMA_VERSION: &str = "0.4.13-verification-bundle";
+pub const VERIFICATION_BUNDLE_SCHEMA_VERSION: &str = "ags://schema/contract/v2/verification-bundle";
 
 /// Version of the verification policy whose tests are represented by a
 /// bundle.  A policy change must invalidate old evidence even when the source

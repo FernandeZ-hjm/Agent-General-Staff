@@ -1,34 +1,40 @@
 // ── Check execution helpers ─────────────────────────────────────────────────
 
 use super::*;
+use std::collections::BTreeMap;
 use std::path::Path;
-use std::process::Command;
 
-/// Run a shell command and return (exit_code, stdout, stderr).
+/// Run one external ReadOnly command through the audited, shell-free child
+/// runner and return its bounded output prefixes.
 pub(crate) fn run_command(
     repo_root: &Path,
     program: &str,
     args: &[&str],
     env_vars: &[(&str, &str)],
 ) -> (i32, String, String) {
-    let mut cmd = Command::new(program);
-    cmd.args(args);
-    cmd.current_dir(repo_root);
-    for (key, value) in env_vars {
-        cmd.env(key, value);
-    }
-    // Suppress cargo's progress output for cleaner evidence
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
-
-    match cmd.output() {
-        Ok(output) => {
-            let code = output.status.code().unwrap_or(-1);
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            (code, stdout, stderr)
+    let spec = crate::test_execution::CommandSpec {
+        program: program.to_string(),
+        argv: args.iter().map(|arg| (*arg).to_string()).collect(),
+        cwd: ".".into(),
+        env: env_vars
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect::<BTreeMap<_, _>>(),
+        timeout_ms: 120_000,
+        allowed_write_paths: Vec::new(),
+    };
+    match crate::test_execution::run_read_only_command(repo_root, &spec) {
+        Ok(output) if output.receipt.zero_write_preserved => {
+            (output.receipt.exit_code, output.stdout, output.stderr)
         }
-        Err(e) => (-1, String::new(), format!("Failed to execute: {}", e)),
+        Ok(output) => {
+            let detail = format!(
+                "read_only_write_detected: {:?}",
+                output.receipt.observed_write_set
+            );
+            (-1, output.stdout, detail)
+        }
+        Err(error) => (-1, String::new(), format!("Failed to execute: {error}")),
     }
 }
 
@@ -98,7 +104,7 @@ pub(super) fn check_task_card_fixtures(repo_root: &Path) -> Vec<CheckItem> {
                     "Repair the CLI validator or its current-contract fixture.",
                 )
                 .with_command(&format!(
-                    "cargo run -q -p ags-cli -- task validate {relative}"
+                    "cargo run -q -p ags-cli -- govern task validate --task-card {relative}"
                 ))
                 .with_exit_code(if accepted { 0 } else { 1 })
             }
@@ -175,7 +181,7 @@ pub(super) fn check_session_preflight(repo_root: &Path) -> CheckItem {
         )
     } else {
         let remediation = format!(
-            "Run `ags session preflight --for claude-code --format json --target {}` to diagnose.",
+            "Run `ags doctor --workspace {} --format json` to diagnose.",
             repo_root.display()
         );
         CheckItem::fail(
@@ -189,7 +195,7 @@ pub(super) fn check_session_preflight(repo_root: &Path) -> CheckItem {
             &remediation,
         )
         .with_command(&format!(
-            "ags session preflight --for claude-code --format json --target {}",
+            "ags doctor --workspace {} --format json",
             repo_root.display()
         ))
         .with_exit_code(preflight.exit_code)
@@ -221,13 +227,92 @@ pub(super) fn check_project_session_preflight(repo_root: &Path) -> CheckItem {
             truncate(&preflight.failures.join("; "), 500)
         ),
         &format!(
-            "Run `ags session preflight --for claude-code --target {}` to diagnose.",
+            "Run `ags doctor --workspace {}` to diagnose.",
             repo_root.display()
         ),
     )
-    .with_command(&format!(
-        "ags session preflight --for claude-code --target {}",
-        repo_root.display()
-    ))
+    .with_command(&format!("ags doctor --workspace {}", repo_root.display()))
     .with_exit_code(preflight.exit_code)
+}
+
+pub(super) fn check_workspace_changes(repo_root: &Path) -> Vec<CheckItem> {
+    let (code, stdout, stderr) = run_command(
+        repo_root,
+        "git",
+        &["status", "--porcelain=v1", "--untracked-files=all"],
+        &[],
+    );
+    if code != 0 {
+        return vec![CheckItem::fail(
+            "changed-path-classification",
+            "changes",
+            &format!("cannot inspect Git changes: {}", truncate(&stderr, 600)),
+            "Restore a readable Git worktree and rerun `ags check changes`.",
+        )];
+    }
+    let changed = stdout
+        .lines()
+        .filter_map(|line| line.get(3..))
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .collect::<Vec<_>>();
+    let classification = crate::classify_lane(&changed);
+    vec![CheckItem::pass(
+        "changed-path-classification",
+        "changes",
+        &format!(
+            "{} changed path(s) require `{}` verification via `{}` lane",
+            classification.changed_files.len(),
+            classification.profile.as_str(),
+            classification.lane.as_str(),
+        ),
+    )]
+}
+
+pub(super) fn check_evidence_contracts(repo_root: &Path) -> Vec<CheckItem> {
+    let cases = [
+        ("receipt-valid.json", true, true),
+        ("receipt-invalid-hash.json", false, false),
+        ("receipt-non-compliant.json", true, false),
+    ];
+    cases
+        .into_iter()
+        .map(|(name, expected_valid, expected_compliant)| {
+            let relative = format!("tests/fixtures/{name}");
+            let result = std::fs::read(repo_root.join(&relative))
+                .map_err(|error| format!("cannot read {relative}: {error}"))
+                .and_then(|bytes| {
+                    serde_json::from_slice::<ags_evidence::Receipt>(&bytes)
+                        .map_err(|error| format!("cannot parse {relative}: {error}"))
+                });
+            let Ok(receipt) = result else {
+                return CheckItem::fail(
+                    &format!("evidence-{}", name.replace('.', "-")),
+                    "evidence",
+                    &result.unwrap_err(),
+                    "Restore the typed contract-v2 receipt fixture.",
+                );
+            };
+            let valid = ags_evidence::verify_receipt(&receipt).valid;
+            let compliant = ags_evidence::check_compliance(&receipt).compliant;
+            if valid == expected_valid && compliant == expected_compliant {
+                CheckItem::pass(
+                    &format!("evidence-{}", name.replace('.', "-")),
+                    "evidence",
+                    &format!(
+                        "{relative} produced valid={valid}, compliant={compliant} as declared"
+                    ),
+                )
+            } else {
+                CheckItem::fail(
+                    &format!("evidence-{}", name.replace('.', "-")),
+                    "evidence",
+                    &format!(
+                        "{relative} produced valid={valid}, compliant={compliant}; expected valid={expected_valid}, compliant={expected_compliant}"
+                    ),
+                    "Repair receipt validation or the contract-v2 fixture.",
+                )
+            }
+        })
+        .collect()
 }

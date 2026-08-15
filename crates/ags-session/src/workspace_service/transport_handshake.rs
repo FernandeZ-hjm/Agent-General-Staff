@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -15,11 +14,12 @@ use super::upgrade_recycle::{
     connect_existing_read_only_at, connect_or_start, reclaim_registry_after_failed_handshake,
 };
 use super::{
-    WorkspaceCommand, WorkspaceServiceInspection, WorkspaceSessionHandler,
-    WORKSPACE_DAEMON_STATUS_SCHEMA_VERSION,
+    WorkspaceClientIdentity, WorkspaceCommand, WorkspaceControlClient, WorkspaceServiceInspection,
+    WorkspaceSessionContext, WorkspaceSessionHandler, WORKSPACE_DAEMON_STATUS_SCHEMA_VERSION,
 };
 
-pub(super) const WIRE_SCHEMA: &str = "ags-workspace-service/2";
+pub(super) const WIRE_PROTOCOL: &str = "ags-workspace-service/2";
+pub const MAX_WORKSPACE_WIRE_FRAME_BYTES: usize = 1024 * 1024;
 const PEER_CLOSED_BEFORE_HANDSHAKE: &str = "workspace daemon closed during handshake";
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -30,6 +30,8 @@ pub(super) struct Handshake {
     pub(super) kind: String,
     #[serde(default)]
     pub(super) command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) client: Option<WorkspaceClientIdentity>,
     pub(super) workspace: PathBuf,
 }
 
@@ -43,6 +45,24 @@ pub(super) struct HandshakeResult {
     pub(super) process_start_identity: String,
     #[serde(default)]
     pub(super) daemon_nonce: String,
+    #[serde(default)]
+    pub(super) authenticated_session: String,
+    #[serde(default)]
+    pub(super) project_facts_hash: String,
+    #[serde(default)]
+    pub(super) registry_key: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(
+    tag = "status",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+enum WorkspaceCommandReply {
+    Ok(serde_json::Value),
+    Error(String),
 }
 
 pub(super) struct SessionActivity {
@@ -65,75 +85,6 @@ impl Drop for SessionActivity {
     fn drop(&mut self) {
         self.active_sessions.fetch_sub(1, Ordering::AcqRel);
         self.last_activity.store(now_millis(), Ordering::Release);
-    }
-}
-
-pub(super) fn run_stdio_adapter_impl() -> Result<(), String> {
-    let cwd = std::env::current_dir().map_err(|error| format!("current_dir failed: {error}"))?;
-    let workspace = canonical_workspace_root(&cwd)?;
-    let service_paths = ServicePaths::new(&ags_platform::runtime_home(), &workspace);
-    let mut first_error = None;
-    let (mut stream, mut daemon_reader) = loop {
-        match connect_workspace_session(&workspace) {
-            Ok(session) => break session,
-            Err(error) if first_error.is_none() => {
-                first_error = Some(error);
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Err(error) => {
-                return Err(format!(
-                    "workspace daemon session handshake failed after retry: {}; first attempt: {}",
-                    error,
-                    first_error.unwrap_or_else(|| "unknown".to_string())
-                ));
-            }
-        }
-    };
-
-    let _request_thread = std::thread::spawn(move || {
-        let stdin = std::io::stdin();
-        for line in BufReader::new(stdin.lock()).lines() {
-            let Ok(line) = line else {
-                break;
-            };
-            if stream
-                .write_all(line.as_bytes())
-                .and_then(|_| stream.write_all(b"\n"))
-                .and_then(|_| stream.flush())
-                .is_err()
-            {
-                break;
-            }
-        }
-        let _ = stream.shutdown(std::net::Shutdown::Write);
-    });
-
-    let stdout = std::io::stdout();
-    let mut output = stdout.lock();
-    let mut line = String::new();
-    loop {
-        line.clear();
-        let read = daemon_reader
-            .read_line(&mut line)
-            .map_err(|error| format!("daemon read failed: {error}"))?;
-        if read == 0 {
-            let diagnostic = fs::read_to_string(&service_paths.diagnostics).unwrap_or_default();
-            if !diagnostic.contains("stdin read error:")
-                && !diagnostic.contains("panicked at")
-                && !diagnostic.contains("workspace daemon connection failed:")
-            {
-                return Ok(());
-            }
-            return Err(format!(
-                "workspace daemon closed the session; diagnostic log {}:\n{}",
-                service_paths.diagnostics.display(),
-                diagnostic.trim()
-            ));
-        }
-        output
-            .write_all(line.as_bytes())
-            .and_then(|_| output.flush())
-            .map_err(|error| format!("stdout proxy failed: {error}"))?;
     }
 }
 
@@ -197,25 +148,32 @@ fn dispatch_workspace_command_on(
         payload,
     };
     let handshake = Handshake {
-        protocol: WIRE_SCHEMA.to_string(),
+        protocol: WIRE_PROTOCOL.to_string(),
         token: registry.token,
         kind: "workspace-command".to_string(),
         command: Some(
             serde_json::to_string(&command)
                 .map_err(|error| format!("workspace command encode failed: {error}"))?,
         ),
+        client: None,
         workspace,
     };
     write_json_line(&mut stream, &handshake)?;
-    read_json_line(&mut BufReader::new(stream))
+    match read_json_line(&mut BufReader::new(stream))? {
+        WorkspaceCommandReply::Ok(value) => Ok(value),
+        WorkspaceCommandReply::Error(detail) => Err(detail),
+    }
 }
 
-fn connect_workspace_session(
+pub(super) fn connect_workspace_control_client_impl(
     workspace: &Path,
-) -> Result<(TcpStream, BufReader<TcpStream>), String> {
-    let (stream, registry) = connect_or_start(workspace)?;
-    let paths = ServicePaths::new(&ags_platform::runtime_home(), workspace);
-    finish_workspace_session(stream, &registry, workspace, &paths)
+    client: WorkspaceClientIdentity,
+) -> Result<WorkspaceControlClient, String> {
+    validate_client_identity(&client)?;
+    let workspace = canonical_workspace_root(workspace)?;
+    let (stream, registry) = connect_or_start(&workspace)?;
+    let paths = ServicePaths::new(&ags_platform::runtime_home(), &workspace);
+    finish_workspace_session(stream, &registry, &workspace, &paths, client)
 }
 
 pub(super) fn finish_workspace_session(
@@ -223,12 +181,14 @@ pub(super) fn finish_workspace_session(
     registry: &WorkspaceRegistry,
     workspace: &Path,
     paths: &ServicePaths,
-) -> Result<(TcpStream, BufReader<TcpStream>), String> {
+    client: WorkspaceClientIdentity,
+) -> Result<WorkspaceControlClient, String> {
     let handshake = Handshake {
-        protocol: WIRE_SCHEMA.to_string(),
+        protocol: WIRE_PROTOCOL.to_string(),
         token: registry.token.clone(),
         kind: "session".to_string(),
         command: None,
+        client: Some(client.clone()),
         workspace: workspace.to_path_buf(),
     };
     let result = (|| {
@@ -246,15 +206,50 @@ pub(super) fn finish_workspace_session(
             || (!registry.process_start_identity.is_empty()
                 && ready.process_start_identity != registry.process_start_identity)
             || (!registry.daemon_nonce.is_empty() && ready.daemon_nonce != registry.daemon_nonce)
+            || ready.authenticated_session.trim().is_empty()
+            || !ags_platform::is_sha256(&ready.project_facts_hash)
+            || ready.registry_key != registry.instance_key
         {
             return Err("workspace daemon handshake mismatch".to_string());
         }
-        Ok((stream, daemon_reader))
+        Ok(WorkspaceControlClient {
+            writer: stream,
+            reader: daemon_reader,
+            context: WorkspaceSessionContext {
+                canonical_workspace: workspace.to_path_buf(),
+                workspace_service_identity: ready.daemon_nonce,
+                workspace_identity: ready.instance_key,
+                project_facts_hash: ready.project_facts_hash,
+                registry_key: ready.registry_key,
+                authenticated_session: ready.authenticated_session,
+                connection_id: client.connection_id,
+                host_id: client.host_id,
+            },
+        })
     })();
     if result.is_err() {
         reclaim_registry_after_failed_handshake(paths, registry);
     }
     result
+}
+
+fn validate_client_identity(client: &WorkspaceClientIdentity) -> Result<(), String> {
+    let connection = client.connection_id.trim();
+    let host = client.host_id.trim();
+    if connection.is_empty()
+        || host.is_empty()
+        || connection.len() > 128
+        || host.len() > 64
+        || !connection
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+        || !host.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+        })
+    {
+        return Err("workspace client identity invalid".to_string());
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -306,7 +301,7 @@ pub(super) fn handle_connection(
             .map_err(|error| format!("stream clone failed: {error}"))?,
     );
     let handshake: Handshake = read_json_line(&mut reader)?;
-    if handshake.protocol != WIRE_SCHEMA
+    if handshake.protocol != WIRE_PROTOCOL
         || handshake.token != registry.token
         || canonical_workspace_root(&handshake.workspace)? != registry.workspace
     {
@@ -319,10 +314,13 @@ pub(super) fn handle_connection(
             &HandshakeResult {
                 status: "stopping".to_string(),
                 workspace: registry.workspace,
-                instance_key: registry.instance_key,
+                instance_key: registry.instance_key.clone(),
                 executable_hash: registry.executable_hash,
                 process_start_identity: registry.process_start_identity,
                 daemon_nonce: registry.daemon_nonce,
+                authenticated_session: String::new(),
+                project_facts_hash: state.project_facts_hash(),
+                registry_key: registry.instance_key.clone(),
             },
         )?;
         shutdown.store(true, Ordering::Release);
@@ -334,27 +332,60 @@ pub(super) fn handle_connection(
             .ok_or_else(|| "workspace command handshake has no payload".to_string())?;
         let command: WorkspaceCommand = serde_json::from_str(&encoded)
             .map_err(|error| format!("workspace command payload invalid: {error}"))?;
-        let result = handler.run_workspace_command(&command.kind, command.payload, state)?;
-        write_json_line(&mut writer, &result)?;
+        let context = super::WorkspaceCommandContext {
+            canonical_workspace: registry.workspace.clone(),
+            workspace_service_identity: registry.daemon_nonce.clone(),
+            authenticated_session: fresh_id("workspace-command-session", &registry.workspace),
+        };
+        let reply =
+            match handler.run_workspace_command(&command.kind, command.payload, state, context) {
+                Ok(value) => WorkspaceCommandReply::Ok(value),
+                Err(detail) => WorkspaceCommandReply::Error(detail),
+            };
+        write_json_line(&mut writer, &reply)?;
         return Ok(());
     }
     if handshake.kind != "session" {
         return Err("unsupported workspace daemon handshake".to_string());
     }
+    let client = handshake
+        .client
+        .ok_or_else(|| "workspace session client identity required".to_string())?;
+    validate_client_identity(&client)?;
     let session_id = fresh_id("daemon-session", &registry.workspace);
     let startup_executable_hash = registry.executable_hash.clone();
+    let project_facts_hash = state.project_facts_hash();
     write_json_line(
         &mut writer,
         &HandshakeResult {
             status: "ready".to_string(),
-            workspace: registry.workspace,
-            instance_key: registry.instance_key,
+            workspace: registry.workspace.clone(),
+            instance_key: registry.instance_key.clone(),
             executable_hash: registry.executable_hash,
             process_start_identity: registry.process_start_identity,
-            daemon_nonce: registry.daemon_nonce,
+            daemon_nonce: registry.daemon_nonce.clone(),
+            authenticated_session: session_id.clone(),
+            project_facts_hash: project_facts_hash.clone(),
+            registry_key: registry.instance_key.clone(),
         },
     )?;
-    handler.run(reader, writer, state, session_id, startup_executable_hash);
+    let registry_key = state.instance_key().to_string();
+    handler.run(
+        reader,
+        writer,
+        state,
+        WorkspaceSessionContext {
+            canonical_workspace: registry.workspace,
+            workspace_service_identity: registry.daemon_nonce,
+            workspace_identity: registry.instance_key,
+            project_facts_hash,
+            registry_key,
+            authenticated_session: session_id,
+            connection_id: client.connection_id,
+            host_id: client.host_id,
+        },
+        startup_executable_hash,
+    );
     Ok(())
 }
 
@@ -373,12 +404,49 @@ pub(super) fn write_json_line<T: Serialize>(
 pub(super) fn read_json_line<T: for<'de> Deserialize<'de>>(
     reader: &mut impl BufRead,
 ) -> Result<T, String> {
-    let mut line = String::new();
-    let read = reader
-        .read_line(&mut line)
-        .map_err(|error| format!("workspace wire read failed: {error}"))?;
-    if read == 0 {
-        return Err(PEER_CLOSED_BEFORE_HANDSHAKE.to_string());
-    }
+    let mut buffer = Vec::with_capacity(8 * 1024);
+    let line = read_workspace_wire_frame(reader, &mut buffer)?
+        .ok_or_else(|| PEER_CLOSED_BEFORE_HANDSHAKE.to_string())?;
     serde_json::from_str(&line).map_err(|error| format!("workspace wire invalid: {error}"))
+}
+
+pub fn read_workspace_wire_frame<R: BufRead>(
+    reader: &mut R,
+    buffer: &mut Vec<u8>,
+) -> Result<Option<String>, String> {
+    buffer.clear();
+    let mut saw_input = false;
+    loop {
+        let available = reader
+            .fill_buf()
+            .map_err(|error| format!("workspace wire read failed: {error}"))?;
+        if available.is_empty() {
+            if !saw_input {
+                return Ok(None);
+            }
+            break;
+        }
+        saw_input = true;
+        let newline = available.iter().position(|byte| *byte == b'\n');
+        let consumed = newline.map_or(available.len(), |index| index + 1);
+        let content = newline.map_or(available, |index| &available[..index]);
+        if buffer.len().saturating_add(content.len()) > MAX_WORKSPACE_WIRE_FRAME_BYTES {
+            buffer.clear();
+            reader.consume(consumed);
+            return Err(
+                "workspace_wire_frame_too_large: workspace wire frame exceeds 1 MiB".to_string(),
+            );
+        }
+        buffer.extend_from_slice(content);
+        reader.consume(consumed);
+        if newline.is_some() {
+            break;
+        }
+    }
+    if buffer.last() == Some(&b'\r') {
+        buffer.pop();
+    }
+    String::from_utf8(std::mem::take(buffer))
+        .map(Some)
+        .map_err(|_| "workspace_wire_frame_invalid_utf8: workspace wire frame is not UTF-8".into())
 }

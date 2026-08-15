@@ -1,5 +1,5 @@
 schema_version: "1.2"
-# Frozen for the reviewed v0.4.16 public candidate. Refresh only when every
+# Frozen for the reviewed v0.4.20 public candidate. Refresh only when every
 # changed B overlay/rewrite byte has been reviewed and pinned here.
 projection_state: "frozen"
 
@@ -123,11 +123,11 @@ generated_files:
   - manifests/mcp-registry.yaml
   - manifests/skills-registry.yaml
   - manifests/suite.yaml
-  - templates/command-skills/ags-agents/SKILL.md
+  - templates/command-skills/ags-agent/SKILL.md
   - templates/command-skills/ags-doctor/SKILL.md
   - templates/command-skills/ags-init/SKILL.md
   - templates/command-skills/ags-setup/SKILL.md
-  - templates/command-skills/ags-skill/SKILL.md
+  - templates/command-skills/ags-govern/SKILL.md
 
 # B-owned files are not copied from A, but A still pins their exact reviewed
 # bytes. Promotion and release self-verification both reject overlay drift.
@@ -143,11 +143,11 @@ public_overlay_files:
   - path: .github/PULL_REQUEST_TEMPLATE.md
     target_sha256: "sha256:e2955b5d15b08657cab32477bba15b69a9657548d0617a7d34446156da035418"
   - path: .github/workflows/ci.yml
-    target_sha256: "sha256:65cd1ebeacc9652b6f9d3d3615d3c87d8fb8c45f7237f74f8adcd5e57c7606ae"
+    target_sha256: "sha256:cbc4a74a8c49852e8ad2c9c717c8b26ec4447319d1161f7f57e2aa2509bba4db"
   - path: .github/workflows/npm-publish.yml
     target_sha256: "sha256:41243f14cd44d73ed9f3284afa58e71e27e0b02da1d7c350a54e479f96366c13"
   - path: .github/workflows/release.yml
-    target_sha256: "sha256:3f57dffd3566ac3412e419bdb4328ceb962565f477d00170d576b84468fae518"
+    target_sha256: "sha256:11e2c24b99d51d50ffcad983db5bdd04488881ae2446dffa69bc0851e301a698"
   - path: COMMERCIAL.md
     target_sha256: "sha256:8035a28d9d06bc354f72a19b563dc26b8863b72d811577d862715e394f8c5ef0"
   - path: CONTRIBUTING.md
@@ -216,7 +216,7 @@ crate_trees:
   - root: crates/ags-session
   - root: crates/ags-evidence
   - root: crates/ags-verification
-  - root: crates/ags-lifecycle
+  - root: crates/ags-control-plane
   - root: crates/ags-cli
   - root: crates/ags-mcp
     exclude:
@@ -230,18 +230,18 @@ public_rewrites:
   - path: AGENTS.md
     target_sha256: "sha256:d33013f339a1042f50dd3a55aa77332129522ccdef327c86cce3251b15346c97"
   - path: AGENT_SUITE_PROTOCOL.md
-    target_sha256: "sha256:3fd6450a3c987e75cd60e39ac141cb08f7d1cf533465103296bd82c609089f88"
+    target_sha256: "sha256:a142afb5c7cdaa29b911c169f062c2fba2faee388e6998d2f688485e5a1e03c3"
   - path: CLAUDE.md
     target_sha256: "sha256:54248f658ee1668312762488429b4c3e07acfee8d0b6011fb9ea5cd2252623bd"
   - path: README.md
-    target_sha256: "sha256:0e9ec9223e9b527ab691495c2ab713e115f57e2be84ae63d2edef90bdaabaed7"
+    target_sha256: "sha256:5cfed46b3a5636c5a9136a58e639e164f4d3bb68f95acfb0fce4ebfc0d8eec8e"
   - path: README_EN.md
-    target_sha256: "sha256:a29c9ab8644612f2ca0dd205b1be726b8d321e76c108ccfa8a15e9de07ef9edb"
+    target_sha256: "sha256:c954d063887a24c15b71d4ef18f0ecdf225a8090196261740ed6dfd5783774cf"
   - path: WORKSPACE.md
-    target_sha256: "sha256:a46421b2d31b27d69a777769e0d3a65a2c55c3a2d968725236386c24208648d1"
+    target_sha256: "sha256:5f2118bdb5933927d60edfd4d332e42ccdb3def91d05f6cd2a7e87b8d813d678"
 
-# Binary release assets contain only this runtime support subset. The workflow
-# obtains this list from `ags release package`; it must not repeat the paths.
+# Binary release assets contain only this runtime support subset. The release
+# workflow consumes this authority directly; it must not repeat the paths.
 runtime_asset_files:
   - manifests/suite.yaml
   - manifests/skills-registry.yaml
@@ -292,11 +292,11 @@ runtime_asset_files:
   - skill-packs/optional/ags-superpowers-adapter/playbooks/writing-skills/testing-skills-with-subagents.md
   - skill-packs/optional/ags-superpowers-adapter/PROVENANCE.yaml
   - skill-packs/optional/ags-superpowers-adapter/SKILL.md
-  - templates/command-skills/ags-agents/SKILL.md
+  - templates/command-skills/ags-agent/SKILL.md
   - templates/command-skills/ags-doctor/SKILL.md
   - templates/command-skills/ags-init/SKILL.md
   - templates/command-skills/ags-setup/SKILL.md
-  - templates/command-skills/ags-skill/SKILL.md
+  - templates/command-skills/ags-govern/SKILL.md
   - protocol/agent-task-protocol.md
   - protocol/task-card-template.md
   - protocol/runtime-adapters.md

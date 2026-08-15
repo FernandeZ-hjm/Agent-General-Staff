@@ -27,21 +27,39 @@ If you find a security vulnerability in AGS, please report it privately:
 | Version | Supported |
 |---|---|
 | 0.4.x | Yes |
-| 0.3.x | Yes |
-| < 0.3 | No |
+| Earlier contracts | No |
 
 ## Runtime Executable Trust Boundary
 
-AGS v0.3.6 hashes the complete running MCP executable before every governed
-request and compares it with the startup identity. It deliberately does not use
-inode, size, mtime, or ctime as a shortcut because those signals are not
-reliable on every supported filesystem. A mismatch closes the gate and requires
-the host to reconnect after `ags mcp restart`.
+AGS v0.4.20 authenticates each per-workspace daemon handshake and binds every
+sealed action reference to the adapter connection, normalized host, canonical
+workspace, authenticated workspace session, policy, plan, and payload hashes.
+Cross-binding use, replay, restart, or tampering fails closed.
 
-Versions v0.3.4 and v0.3.5 did not provide request-time executable
-self-integrity verification. The earlier metadata-based check was removed
-because it could miss equal-length replacement on filesystems with coarse or
-non-standard timestamp behavior. v0.3.6 restores the control using full-content
-hashing rather than filesystem metadata.
+The standalone `ags-mcp` adapter resolves a workspace per request. It never uses
+the daemon process cwd, HOME, a recent project, or fuzzy managed-project lookup
+as governance identity. `ags apply` and the MCP `ags_apply` tool accept only the
+sealed action reference plus a controlled host outcome when the operation kind
+requires one; callers cannot resubmit write plans or binding facts.
 
-历史 `2.x` tag 不属于当前受支持产品线。
+Runtime executable identity uses complete-content hashing rather than inode,
+size, or timestamps. LocalExecution runs only through the bounded execution
+policy and must fail closed when write containment cannot be established.
+
+## Local Projection Filesystem Trust Boundary
+
+Projection apply treats a public pathname as a lookup name, never as object
+identity. Unknown inodes are not unlinked or removed. If a created directory or
+rollback target cannot be proved by a retained descriptor plus device/inode and
+expected content where applicable, AGS preserves the residue and returns
+`risk-escalated` with `created_directory_residue` when relevant.
+
+Deletion quarantine lives under a retained AGS state-directory descriptor on
+the same filesystem. The state directory must be owned by the effective user
+and mode `0700`; these checks prevent access by other credentials, but they do
+not isolate AGS from another process running with the same credentials. Such
+same-credential local processes are inside the host trust boundary. Platforms
+provide no portable atomic mkdir-plus-fd or remove-if-expected-inode primitive,
+so protection against an indefinitely racing same-credential process is not a
+supported security claim. Cross-filesystem or unsupported atomic moves fail
+closed before the public source object is moved.

@@ -1,3 +1,5 @@
+// Thin host adapter for the "omp" "host". Transport-only "lifecycle" bridge;
+// all governance logic lives in the Rust ags-host executable.
 import { spawnSync } from "node:child_process";
 
 let startupContext;
@@ -10,15 +12,14 @@ function lifecycle(event, ctx, payload = {}) {
     session_id: contextSessionId || payload.session_id || "",
   };
   const result = spawnSync(
-    "ags",
+    "ags-host",
     [
-      "host",
       "lifecycle",
       "--event",
       event,
       "--host",
       "omp",
-      "--target",
+      "--workspace",
       canonicalWorkspace,
     ],
     {

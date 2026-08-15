@@ -12,15 +12,11 @@ suite_interfaces:
   package:
     manager: cargo
     name: ags-mcp
-    version: 0.4.16
+    version: 0.4.20
     repository: this-repository
     license: GPL-3.0-only
   install:
     transport: stdio
-    command: ags
-    args:
-    - mcp
-    - serve
-    - --transport
-    - stdio
+    command: ags-mcp
+    args: []
 mcps: []

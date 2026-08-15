@@ -62,7 +62,7 @@ const PRODUCT_PACKAGES: &[&str] = &[
     "ags-session",
     "ags-evidence",
     "ags-verification",
-    "ags-lifecycle",
+    "ags-control-plane",
     "ags-cli",
     "ags-mcp",
 ];
@@ -236,6 +236,47 @@ fn check_typed_product_metadata(
     }
 }
 
+pub(super) fn check_npm_product_metadata(
+    repo_root: &Path,
+    version: &str,
+    license: &str,
+) -> Vec<String> {
+    #[derive(serde::Deserialize)]
+    struct NpmProductMetadata {
+        version: String,
+        license: String,
+    }
+
+    let mut errors = Vec::new();
+    for relative in [
+        "packages/ags-cli/package.json",
+        "packages/ags-launcher/package.json",
+        "packages/ags-mcp/package.json",
+    ] {
+        match std::fs::read_to_string(repo_root.join(relative))
+            .ok()
+            .and_then(|content| serde_json::from_str::<NpmProductMetadata>(&content).ok())
+        {
+            Some(package) => {
+                require_exact_field(
+                    &mut errors,
+                    &format!("{relative} version"),
+                    Some(&package.version),
+                    version,
+                );
+                require_exact_field(
+                    &mut errors,
+                    &format!("{relative} license"),
+                    Some(&package.license),
+                    license,
+                );
+            }
+            None => errors.push(format!("{relative} is missing or invalid typed metadata")),
+        }
+    }
+    errors
+}
+
 fn require_inherited_product_field(
     errors: &mut Vec<String>,
     surface: &str,
@@ -261,18 +302,18 @@ pub(super) fn check_public_ci_release_invocation(repo_root: &Path) -> Vec<String
         return Vec::new();
     }
 
-    let stale_binary = "./target/release/ags verify --scope release";
+    let stale_binary = "./target/release/ags check release";
     match std::fs::read_to_string(&path) {
         Ok(content) => {
             let mut errors = Vec::new();
             let compact = content.split_whitespace().collect::<Vec<_>>().join(" ");
             for required in [
-                "cargo run -q --locked -p ags-cli -- verify",
-                "--scope release",
+                "cargo run -q --locked -p ags-cli -- check release",
+                "--workspace .",
                 "--format json",
-                "verify bundle create",
-                "verify bundle validate",
-                "--source-scope public-full",
+                "check bundle create",
+                "check bundle validate",
+                "--source public-full",
             ] {
                 if !compact.contains(required) {
                     errors.push(format!(
@@ -297,39 +338,15 @@ pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
     const LICENSE: &str = "GPL-3.0-only";
 
     let mut errors = Vec::new();
-    let package_path = repo_root.join("packages/ags-mcp/package.json");
-    match std::fs::read_to_string(&package_path)
-        .ok()
-        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
-    {
-        Some(package) => {
-            if package.get("version").and_then(|value| value.as_str()) != Some(VERSION) {
-                errors.push(format!(
-                    "packages/ags-mcp/package.json version must be {VERSION}"
-                ));
-            }
-            if package.get("license").and_then(|value| value.as_str()) != Some(LICENSE) {
-                errors.push(format!(
-                    "packages/ags-mcp/package.json license must be {LICENSE}"
-                ));
-            }
-        }
-        None => errors.push("packages/ags-mcp/package.json is missing or invalid JSON".to_string()),
-    }
+    errors.extend(check_npm_product_metadata(repo_root, VERSION, LICENSE));
 
     check_typed_product_metadata(repo_root, VERSION, LICENSE, &mut errors);
     errors.extend(check_public_ci_release_invocation(repo_root));
 
-    for (relative, marker) in [
-        (
-            "crates/ags-mcp/src/protocol.rs",
-            "pub const SERVER_VERSION: &str = env!(\"CARGO_PKG_VERSION\");",
-        ),
-        (
-            "crates/ags-mcp/src/server.rs",
-            "version: SERVER_VERSION.to_string()",
-        ),
-    ] {
+    for (relative, marker) in [(
+        "crates/ags-mcp/src/contract_v2.rs",
+        "\"version\": env!(\"CARGO_PKG_VERSION\")",
+    )] {
         match std::fs::read_to_string(repo_root.join(relative)) {
             Ok(content) if content.contains(marker) => {}
             Ok(_) => errors.push(format!(
@@ -363,10 +380,6 @@ pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
             format!("# AGS v{VERSION} Architecture"),
         ),
         ("SECURITY.md", supported_series),
-        (
-            "SECURITY.md",
-            "AGS v0.3.6 hashes the complete running MCP executable".to_string(),
-        ),
     ];
     for (relative, marker) in required_text {
         match std::fs::read_to_string(repo_root.join(relative)) {
@@ -382,11 +395,11 @@ pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
     // directory exists, however, every AGS-owned command skill must stay aligned.
     if repo_root.join("global-skills").is_dir() {
         for relative in [
-            "global-skills/ags-agents/SKILL.md",
+            "global-skills/ags-agent/SKILL.md",
             "global-skills/ags-doctor/SKILL.md",
             "global-skills/ags-init/SKILL.md",
             "global-skills/ags-setup/SKILL.md",
-            "global-skills/ags-skill/SKILL.md",
+            "global-skills/ags-govern/SKILL.md",
         ] {
             let marker = format!("AGS 产品版本：{VERSION}");
             match std::fs::read_to_string(repo_root.join(relative)) {
@@ -403,9 +416,9 @@ pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
                     "{setup_skill} still references retired flag --with-evomap"
                 ));
             }
-            if !content.contains("ags setup --yes --force") {
+            if !content.lines().any(|line| line.trim() == "ags setup") {
                 errors.push(format!(
-                    "{setup_skill} is missing current command: ags setup --yes --force"
+                    "{setup_skill} is missing the contract v2 `ags setup` command"
                 ));
             }
         }
@@ -418,99 +431,30 @@ pub(super) fn check_release_version_surfaces(repo_root: &Path) -> CheckItem {
         errors.push("npm launcher GPL LICENSE is missing".to_string());
     }
 
-    // The current release owns one current schema set. Removed compatibility
-    // protocols are not retained as hidden interfaces.
+    // Contract v2 surfaces are release-gated together. Legacy contracts are a
+    // hard cut and are checked separately by the source-absence gate.
     for (relative, marker) in [
+        ("protocol/mcp-server.md", "# AGS MCP contract v2"),
         (
-            "crates/ags-governance-decision/src/lib.rs",
-            "0.3.6-host-route-proposal",
+            "protocol/task-routing.md",
+            "# AGS contract v2 Operation routing",
         ),
         (
-            "crates/ags-governance-decision/src/lib.rs",
-            "0.3.6-route-resolution",
+            "protocol/runtime-adapters.md",
+            "# Runtime adapters — contract v2",
         ),
         (
-            "crates/ags-task-contract/src/intent.rs",
-            "0.3.6-handoff-contract",
-        ),
-        (
-            "crates/ags-task-contract/src/intent.rs",
-            "0.3.6-task-contract",
-        ),
-        (
-            "crates/ags-task-contract/src/runner.rs",
-            "0.3.6-launch-plan",
-        ),
-        (
-            "crates/ags-lifecycle/src/onboarding/mod.rs",
-            "0.3.6-onboarding-plan",
-        ),
-        (
-            "crates/ags-lifecycle/src/init/model.rs",
-            "0.4.1-project-init",
-        ),
-        (
-            "crates/ags-lifecycle/src/setup/mod.rs",
-            "0.4.13-runtime-install",
-        ),
-        (
-            "crates/ags-lifecycle/src/workspace_lifecycle.rs",
-            "0.4.0-workspace-lifecycle",
-        ),
-        (
-            "crates/ags-lifecycle/src/workspace_lifecycle.rs",
-            "0.4.0-closure-pointer",
-        ),
-        (
-            "crates/ags-lifecycle/src/lifecycle_projection.rs",
-            "0.4.0-workspace-lifecycle-manifest",
-        ),
-        (
-            "crates/ags-capability-governance/src/authority.rs",
-            "0.3.6-host-capability-snapshot",
-        ),
-        (
-            "crates/ags-capability-governance/src/skill_body/console/model.rs",
-            "0.3.6-skill-console",
-        ),
-        (
-            "crates/ags-capability-governance/src/skill_body/model.rs",
-            "0.3.6-skill-inventory",
-        ),
-        (
-            "crates/ags-governance-decision/src/policy/model.rs",
-            "0.3.6-execution-policy",
+            "protocol/agent-task-protocol.md",
+            "# Agent task protocol — contract v2",
         ),
         (
             "crates/ags-verification/src/orchestrator.rs",
-            "0.3.6-verification-report",
+            "ags://schema/contract/v2/check-report",
         ),
         (
-            "crates/ags-verification/src/release_package.rs",
-            "0.4.0-release-plan",
+            "crates/ags-verification/src/test_execution.rs",
+            "ags://schema/contract/v2/test-receipt",
         ),
-        (
-            "crates/ags-verification/src/release_package.rs",
-            "0.4.0-runtime-stage",
-        ),
-        (
-            "crates/ags-session/src/workspace_service.rs",
-            "0.4.0-workspace-daemon-status",
-        ),
-        (
-            "crates/ags-session/src/workspace_service/upgrade_recycle.rs",
-            "0.4.0-workspace-service-status",
-        ),
-        ("crates/ags-mcp/src/protocol.rs", "2024-11-05"),
-        (
-            "crates/ags-evidence/src/receipt_model.rs",
-            "0.3.6-task-receipt",
-        ),
-        (
-            "crates/ags-evidence/src/delivery_report.rs",
-            "0.3.6-delivery-closure",
-        ),
-        ("crates/ags-evidence/src/action.rs", "0.3.6-action-receipt"),
     ] {
         match std::fs::read_to_string(repo_root.join(relative)) {
             Ok(content) if content.contains(marker) => {}

@@ -5,18 +5,25 @@ edition.workspace = true
 license.workspace = true
 description = "AGS MCP Server — governance kernel exposed as MCP tools/resources/prompts over stdio"
 
+[[bin]]
+name = "ags-mcp"
+path = "src/main.rs"
+
+[[bin]]
+name = "ags-host"
+path = "src/bin/ags-host.rs"
+
 [dependencies]
-ags-task-contract = { path = "../ags-task-contract" }
-ags-governance-decision = { path = "../ags-governance-decision" }
 ags-host-integration = { path = "../ags-host-integration" }
-ags-capability-governance = { path = "../ags-capability-governance" }
-ags-workspace-facts = { path = "../ags-workspace-facts" }
-ags-verification = { path = "../ags-verification" }
-ags-lifecycle = { path = "../ags-lifecycle" }
-ags-evidence = { path = "../ags-evidence" }
+ags-control-plane = { path = "../ags-control-plane" }
 ags-session = { path = "../ags-session" }
 ags-platform = { path = "../ags-platform" }
+ags-verification = { path = "../ags-verification" }
+libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+[dev-dependencies]
+ags-cli = { path = "../ags-cli" }
+clap = { version = "4", features = ["derive"] }
 tempfile = "3"
-getrandom = "0.4.2"

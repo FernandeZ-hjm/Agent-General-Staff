@@ -1,159 +1,97 @@
-# AGS v0.4.16 Architecture
+# AGS v0.4.20 Architecture
 
-AGS is a multi-Agent development governance control plane. It admits typed
-requests, binds authority and policy, validates evidence, and preserves
-capability/session state. It is not a task queue, Agent scheduler, parallel
-executor, or multi-Agent negotiation runtime.
+AGS is a typed governance control plane. The host interprets natural language;
+AGS accepts an `OperationRequest`, returns a decision or sealed plan, and
+consumes the plan through one explicit apply boundary. AGS is not an Agent
+scheduler, task queue, third-party MCP broker, or natural-language router.
 
-## Authority flow
-
-```text
-human request
-  -> host semantic interpretation
-  -> typed HostRouteProposal
-  -> governance decision
-  -> host-native action or one-shot server-held action
-  -> verified evidence / delivery closure
-```
-
-Natural language remains in the host. AGS accepts closed typed fields and never
-reconstructs user intent from keywords.
-
-## Twelve authoritative modules
-
-| Module | Owns | Must not own |
-|---|---|---|
-| `ags-platform` | paths, filesystem, process lookup, hashes, atomic writes | governance policy |
-| `ags-workspace-facts` | canonical workspace identity, discovery, protocol audit, preflight facts | host mutation |
-| `ags-host-integration` | host identity and native integration facts | workspace instance identity |
-| `ags-capability-governance` | catalog, skill-body governance, exact resolution, static snapshots | session leases |
-| `ags-task-contract` | task-card compile/validate, handoff contract, non-executing preparation | Agent execution |
-| `ags-governance-decision` | typed proposals, policy resolution, route and decision contracts | I/O effects |
-| `ags-session` | workspace daemon, client sessions, preflight bindings, one-shot action store | MCP JSON-RPC |
-| `ags-evidence` | receipts, delivery closure, evidence integrity | decision authority |
-| `ags-verification` | doctor, typed public projection, local/promotion/release gates and verification bundles | lifecycle writes |
-| `ags-lifecycle` | setup, init, onboarding, update | CLI parsing |
-| `ags-cli` | current human/Machine CLI and application dispatch | duplicated domain rules |
-| `ags-mcp` | JSON-RPC conversion, session connection, error mapping | workspace-global state |
-
-`cargo metadata` must expose exactly these packages. The former
-The former `bootstrap-dry-run`, `capability-registry`, `delivery-report-validator`,
-`execution-policy`, `runner`, `skill-governance`, `suite-doctor`,
-`task-card-validator`, and `workflow-sync-check` package manifests are absent.
-Their implementations live under the owning modules:
+## One operation authority
 
 ```text
-ags-capability-governance/skill_body
-ags-evidence/delivery_report
-ags-governance-decision/policy
-ags-task-contract/runner
-ags-task-contract/validator
-ags-verification/doctor
-ags-verification/release_manifest
+human CLI / machine JSON / MCP
+              |
+              v
+       Operation registry
+              |
+              v
+     open -> decide -> apply
+              |
+              v
+     verify -> receipt/recover
 ```
 
-Only current commands, wire/schema identifiers, and necessary Rust re-exports
-remain. Legacy aliases and packages are not compatibility mechanisms because
-they preserve dead behavior or a second authority.
+Each public operation has one typed request declared by the registry. The same
+declaration supplies adapter routing, schema, help metadata, operation kind, and
+handler selection. Adapters do not compose domain argv or run `ags` recursively.
 
-## Dependency direction
+Operation kinds are `ReadOnly`, `Transaction`, `LocalExecution`, and
+`HostDelegated`. ReadOnly performs no write. Effectful operations first return a
+sealed plan; `ags apply` and MCP `ags_apply` are the only product apply surfaces.
+Transactions verify and either receipt or recover. LocalExecution preserves
+source changes on test failure and escalates an unexpected write set; a host
+without provable descendant containment is blocked before spawn. HostDelegated
+work may close only after a content-addressed, binding-scoped outcome receipt is
+verified. The current A-workspace candidate keeps production HostDelegated
+apply blocked until that artifact verifier is implemented.
+
+## Authoritative modules
+
+| Module | Owns |
+|---|---|
+| `ags-platform` | paths, hashes, atomic filesystem/process primitives |
+| `ags-workspace-facts` | canonical project facts and protocol audit |
+| `ags-host-integration` | normalized Generic Agent identity and optional host probes |
+| `ags-capability-governance` | capability inventory, exact Skill resolution and snapshots |
+| `ags-task-contract` | typed task-card validation and launch contract |
+| `ags-governance-decision` | execution policy vocabulary |
+| `ags-session` | workspace resolver/router, authenticated daemon sessions |
+| `ags-evidence` | receipts and closure evidence integrity |
+| `ags-verification` | governance check and structured project-test execution |
+| `ags-control-plane` | registry, sealed plans, state machine, domain handlers |
+| `ags-cli` | ten-command human and machine adapter |
+| `ags-mcp` | standalone stdio adapter and private daemon child mode |
+
+Dependencies point inward. `ags-cli` and `ags-mcp` translate Interface values;
+they do not own policy or lifecycle orchestration. `ags-host` is the separate
+host lifecycle callback executable.
+
+## Target-routed workspace service
+
+One global stdio transport may serve many per-workspace daemons:
 
 ```text
-human CLI / MCP wire
-       |
-       v
-ags-cli / ags-mcp                 adapters
-       |
-       v
-lifecycle / verification          orchestration
-       |
-       v
-capability / task / decision /
-session / evidence / workspace    domain modules
-       |
-       v
-platform / host integration       machine facts
+Generic Agent connection
+  -> request context (explicit workspace | unique MCP root | adapter cwd)
+  -> canonical workspace + project facts
+  -> authenticated workspace-service handshake
+  -> immutable WorkspaceBinding
+  -> per-workspace open/decide/apply
 ```
 
-Dependencies point inward. Adapters do not own governance state, and machine
-fact modules do not import product adapters.
+Resolution order is fixed. HOME, daemon cwd, recent-project state, fuzzy path
+matching, and managed-project guesses are not fallbacks. Managed-project data
+may assist discovery but is not identity authority. The router keeps isolated
+authenticated sessions per canonical workspace and has no mutable global
+current binding, so A -> B -> A traffic can reuse both sessions safely.
 
-Host facts are table-driven in `ags-host-integration`: native and shared skill
-roots, Codex plugin visibility, MCP probe format/source, live-runtime evidence,
-official registrar, and native memory-adapter identity are declared once.
-Consumers may add domain behavior, but may not rebuild host lists with string
-matches. In particular, OMP's inherited Codex registration source is not live
-OMP runtime evidence.
+An action reference binds connection, normalized host, canonical workspace,
+authenticated session, policy, plan, and payload. It cannot be replayed or used
+across a connection, host, workspace, daemon restart, or plan mutation.
 
-The CLI has one outer output seam for the closed `text | json` choice and JSON
-serialization failures. Domain modules still own their human-readable
-renderers; the adapter no longer reimplements format selection per command.
+## Public Interface
 
-## Workspace service
+The CLI exposes only `setup`, `init`, `agent`, `govern`, `update`, `doctor`,
+`check`, `test`, `apply`, and `schema`. MCP exposes only `ags_decide` and
+`ags_apply`. Contract v2 is a hard cut: older commands, aliases, tools, wires,
+schema identifiers, and compatibility handlers are absent.
 
-```text
-canonical workspace path
-  -> one workspace daemon
-       -> Codex client session
-       -> Claude Code client session
-       -> Cursor client session
-       -> CodeBuddy client session
-       -> OMP client session
-```
+Default successful human output is at most five lines. Default JSON is at most
+16 KiB and MCP tool schema is at most 8 KiB; larger evidence is returned through
+a `details_uri`.
 
-- The instance key is derived from the canonical workspace path only.
-- Host identity is a client attribute and never participates in the key.
-- Each host has one persisted static capability snapshot. The daemon loads and
-  validates it once for its lifetime. Explicit snapshot refresh followed by a
-  daemon restart publishes changed canonical sources; request-time scanning or
-  automatic cache invalidation is deliberately absent.
-- Lifecycle and reusable preflight state are keyed by workspace, host, and host
-  session. DecisionLease state remains connection-bound and is never reused.
-- Workspace-owned host adapters translate SessionStart, per-turn Stop Guard,
-  and true SessionEnd into one daemon lifecycle envelope.
-- A new preflight or route invalidates earlier actions in that session.
-- Shape-invalid apply input is rejected before consumption. Failure after the
-  effect boundary still consumes the lease.
-- Disconnect does not stop the daemon. An empty daemon exits after its idle TTL.
-- Executable mismatch triggers authenticated stop-before-restart.
-- Hosts keep using `ags mcp serve --transport stdio`; no daemon command is added
-  to the public command surface.
+## Workspace boundaries
 
-## Evidence
-
-The host MCP E2E suite launches real `ags` adapter and daemon processes. It
-tests same-workspace sharing, cross-project separation, reconnects, foreign
-lease rejection, snapshot rebind, idle recycle, and executable replacement for
-Codex, Claude Code, Cursor, CodeBuddy, and OMP identities. It does not automate
-host GUIs.
-
-The release comparison runs the current private build against the installed
-stable build with fixed samples for startup, preflight, and E2E behavior. It
-reports median and p95; the stable checkout remains read-only.
-
-## Versions
-
-The supported CLI and MCP contracts are the current release surfaces. Historical
-hidden commands, loose compiler inputs, and captured executable snapshots are
-not compatibility authorities.
-
-Version classes remain separate:
-
-- current source candidate: `0.4.16`; latest published release: `0.4.15`;
-- existing governance wire schemas remain on the 0.3.6 contract;
-- maintenance, runtime install/migration, suite activation and update notice
-  schemas introduced or changed in this release use 0.4.13 identifiers;
-- unchanged runtime-stage and release-plan structures retain their 0.4.0 identifiers;
-- MCP `protocolVersion` remains `2024-11-05`;
-- historical releases remain only in release notes, not runtime fixtures.
-
-## Public completion
-
-Public completion requires more than an exact release-manifest comparison. The guard
-also proves:
-
-- the exact twelve-package module set and source topology;
-- bilingual current documentation and GPL-3.0-only/latest wording;
-- real workspace-service E2E and performance-contract evidence;
-- absence of every retired package and authority marker;
-- public-safe runtime exclusions and exact-version release surfaces.
+Workspace A is the private development authority. Stable, public, remotes,
+installed runtimes, tags, packages, and releases change only through separately
+authorized promotion or release work. A local verification pass never implies
+promotion or release completion.

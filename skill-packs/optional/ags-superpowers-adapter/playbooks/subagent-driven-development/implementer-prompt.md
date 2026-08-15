@@ -19,6 +19,21 @@ Subagent (general-purpose):
 
     [Scene-setting: where this fits, dependencies, architectural context]
 
+    ## Binding Authority
+
+    - Confirmed task card: [TASK_CARD]
+    - Execution mode: [MODE]
+    - Execution topology: [TOPOLOGY]
+    - Delegation planning: [DELEGATION]
+    - Worktree: [WORKTREE]
+    - Write ownership: [OWNED_PATHS]
+    - Explicitly owned ignored-file allowlist: [OWNED_IGNORED_PATHS | NONE]
+    - Commit policy: [COMMIT_ALLOWED | NO_COMMIT]
+
+    These values override this template's defaults. Stop before touching an
+    unowned path. If commit policy is NO_COMMIT, do not commit, stage, push,
+    reset, clean, delete the worktree, or move the diff out of the working tree.
+
     ## Before You Begin
 
     If you have questions about:
@@ -35,7 +50,8 @@ Subagent (general-purpose):
     1. Implement exactly what the task specifies
     2. Write tests (following TDD if task says to)
     3. Verify implementation works
-    4. Commit your work
+    4. Commit only when Binding Authority says COMMIT_ALLOWED; otherwise leave
+       the complete diff uncommitted for the main executor
     5. Self-review (see below)
     6. Report back
 
@@ -45,7 +61,8 @@ Subagent (general-purpose):
     It's always OK to pause and clarify. Don't guess or make assumptions.
 
     While iterating, run the focused test for what you're changing; run the
-    full suite once before committing, not after every edit.
+    full suite once before committing or reporting a no-commit diff, not after
+    every edit.
 
     ## Code Organization
 
@@ -122,13 +139,17 @@ Subagent (general-purpose):
       - RED: command run, relevant failing output before implementation, and why the failure was expected
       - GREEN: command run and relevant passing output after implementation
     - Files changed
+    - Review-package hash, tracked diff hash, and exact untracked-file
+      content/hash inventory
+    - Exact content/hash inventory for ignored files explicitly named by the
+      Binding Authority allowlist; never enumerate arbitrary ignored user files
     - Self-review findings (if any)
     - Any issues or concerns
 
     Then report back with ONLY (under 15 lines — the detail lives in the
     report file):
     - **Status:** DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT
-    - Commits created (short SHA + subject)
+    - Commits created (short SHA + subject), or `none (no-commit)`
     - One-line test summary (e.g. "14/14 passing, output pristine")
     - Your concerns, if any
     - The report file path

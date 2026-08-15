@@ -20,20 +20,16 @@
 - `<runtime_home>/stable-capabilities/snapshots/<host>.json`: one sealed active
   snapshot per Host.
 
-The legacy `skill-registry/private-skills.json`, `skill-bodies/` and
-`capability-snapshot/` paths are migration inputs only. Normal readers reject
-their schema; setup performs a rollback-safe one-way migration and archives
-them before the current-schema maintenance transaction begins.
-
-Pre-0.5 suite-to-Host symlinks are also migration inputs, even when the old
-runtime never wrote a projection state file. Setup recognizes one only when a
-typed catalog id points exactly into the selected suite authority. It seals
-the source identity, content hash, target Hosts and rollback facts in the same
-runtime MaintenancePlan, removes the obsolete suite ownership, writes or
-repairs the InstalledSkillRecord, then builds all Host snapshots once. An
-existing catalog-matching body is rebound to its reviewed upstream; a diverged
-body is preserved and remains `rebind-required`. Unowned Host entries are
-ignored, never removed.
+The legacy `skill-registry/private-skills.json`, `skill-bodies/`,
+`capability-snapshot/`, and pre-contract-v2 suite-to-Host symlinks are not input
+to the contract-v2 runtime. Normal readers and setup neither read nor migrate
+them, and their presence never creates an installed or active Skill fact. Setup
+refuses an enclosing non-contract-v2 runtime manifest with the structured
+`setup_legacy_install_requires_migration` result; otherwise those legacy files
+remain inert and untouched. Re-admission is explicit: the operator selects a
+source and target Host through `ags govern skill install`, reviews the sealed
+plan, and consumes it with `ags apply`. There is no compatibility migration or
+implicit catalog rebind.
 
 ## Source and policy
 
@@ -48,17 +44,18 @@ target Hosts and one update policy:
 - `manual`: check only when requested.
 - `pinned`: do not track upstream.
 
-Legacy local-only records remain usable but project `rebind-required`; the user
-must explicitly reinstall from an upstream identity. There is no alias or old
-JSON compatibility layer.
+Legacy local-only records are inert and never project a route or compatibility
+status. The user must explicitly install the selected source and target Host
+through the contract-v2 Operation. There is no alias, old JSON reader, or
+implicit adoption path.
 
 ## One maintenance transaction
 
 ```text
 source/ref resolve -> immutable candidate -> bounded audit -> semantic/file diff
 -> MaintenancePlan + plan_hash -> explicit risk acknowledgement -> apply
--> immutable body + InstalledSkillRecord -> five-Host snapshot build
--> exact RouteResolution + preflight -> MaintenanceReceipt
+-> immutable body + InstalledSkillRecord -> selected-Host snapshot build
+-> exact RouteResolution in a new authenticated session -> MaintenanceReceipt
 ```
 
 Apply uses a cross-process runtime lock, CAS-checks the registry/body identity,
@@ -90,28 +87,26 @@ user has acknowledged the sealed risk plan.
 ## Routing
 
 Installation and activation are independent. A `SkillTarget` resolves only
-when its exact id exists in the preflight-bound active table, the immutable body
+when its exact id exists in the authenticated host session's active table, the immutable body
 hash matches, the Host thin index points to that body, and the sealed snapshot
 returns an exact `RouteResolution`. There is no fuzzy or fallback route.
 
-Codex, Claude Code, Cursor, OMP and CodeBuddy-Code use distinct snapshots. Any
-snapshot replacement invalidates old bindings; callers must reconnect or run
-preflight again.
+Every normalized Generic Agent HostId has a distinct snapshot. An official
+adapter adds probe metadata only. Snapshot replacement is atomic and new
+sessions observe the new hash; existing sessions remain bound to their loaded
+snapshot until reconnect.
 
 ## Public commands
 
 ```bash
-ags skill recommend
-ags skill inspect <catalog-id|github-url|local-path>
-ags skill install <catalog-id|github-url>
-ags skill adopt <local-path>
-ags skill check [skill-id]
-ags skill update <skill-id>
-ags skill rollback <skill-id>
-ags skill status [skill-id]
-ags skill verify <skill-id>
+ags govern capability inventory [--host <id>] --workspace . --format json
+ags govern skill install <skill-id> <source-uri> --source-kind local|github|git --target-host <host-id> [--target-host <host-id>...] --workspace . --format json
+ags govern skill remove <skill-id> --workspace . --format json
+ags govern capability snapshot --host <id> [--replace-all] --workspace . --format json
 ```
 
-`status` returns the layered catalog/installation/activation/update projection.
-All mutating commands are plan-first and require the exact current plan hash;
-third-party Skill updates are never silently applied.
+Inventory is read-only. Every mutation returns a sealed `action_ref` and is
+performed only by `ags apply` in the same authenticated binding. Third-party
+Skill changes are never downloaded or silently applied during unrelated work.
+The resolver binds remote sources to an immutable commit and content hash during
+planning.

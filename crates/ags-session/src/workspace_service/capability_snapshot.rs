@@ -1,12 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
-use crate::{
-    classify_snapshot_load_error, unavailable, CapabilityBinding, CapabilityCatalogSource,
-    CapabilityDiagnosticCode, CapabilityLoadFailure, CapabilityReference, PreflightBinding,
-    ValidatedCapabilityCatalog,
-};
 use ags_platform::canonical_workspace_root;
 
 use super::registry_ownership::workspace_key;
@@ -17,7 +13,7 @@ pub struct WorkspaceState {
     root: PathBuf,
     instance_key: String,
     runtime_home: PathBuf,
-    catalogs: RwLock<HashMap<String, ValidatedCapabilityCatalog>>,
+    catalogs: RwLock<HashMap<String, ags_capability_governance::HostCapabilitySnapshot>>,
 }
 
 impl WorkspaceState {
@@ -39,6 +35,13 @@ impl WorkspaceState {
         &self.instance_key
     }
 
+    /// Stable request-binding facts derived from the canonical workspace and
+    /// the small set of governance identity files. Daemon cwd and managed
+    /// project discovery never participate.
+    pub fn project_facts_hash(&self) -> String {
+        project_facts_hash_at(&self.root)
+    }
+
     pub fn target_matches(&self, target: &Path) -> bool {
         canonical_workspace_root(target).is_ok_and(|target| target == self.root)
     }
@@ -51,10 +54,101 @@ impl WorkspaceState {
             .read()
             .map_err(|_| "workspace catalog lock poisoned".to_string())?
             .iter()
-            .map(|(host, catalog)| (host.clone(), catalog.snapshot.snapshot_hash.clone()))
+            .map(|(host, snapshot)| (host.clone(), snapshot.snapshot_hash.clone()))
             .collect())
     }
+}
 
+/// Request-binding facts that change when governance entrypoints or the
+/// checked-out commit change. This function is independent of daemon cwd.
+pub fn project_facts_hash_at(root: &Path) -> String {
+    let mut facts = root.to_string_lossy().as_bytes().to_vec();
+    for relative in ["AGENTS.md", "config/agent-project-profile.yaml"] {
+        append_bounded_fact(&mut facts, relative, &root.join(relative), 1024 * 1024);
+    }
+    if let Some(git_dir) = git_directory(root) {
+        if let Some(head) = read_bounded_file(&git_dir.join("HEAD"), 4096) {
+            append_fact_bytes(&mut facts, "git/HEAD", &head);
+            if let Some(reference) = std::str::from_utf8(&head)
+                .ok()
+                .and_then(|head| head.trim().strip_prefix("ref: "))
+            {
+                let direct_ref = git_dir.join(reference);
+                if read_bounded_file(&direct_ref, 4096).is_some() {
+                    append_bounded_fact(&mut facts, "git/ref", &direct_ref, 4096);
+                } else if let Some(common_dir) = git_common_directory(&git_dir) {
+                    append_bounded_fact(
+                        &mut facts,
+                        "git/common-ref",
+                        &common_dir.join(reference),
+                        4096,
+                    );
+                    append_bounded_fact(
+                        &mut facts,
+                        "git/packed-refs",
+                        &common_dir.join("packed-refs"),
+                        1024 * 1024,
+                    );
+                }
+            }
+        }
+    }
+    ags_platform::sha256(facts)
+}
+
+fn git_directory(root: &Path) -> Option<PathBuf> {
+    let marker = root.join(".git");
+    if marker.is_dir() {
+        return Some(marker);
+    }
+    let bytes = read_bounded_file(&marker, 4096)?;
+    let value = std::str::from_utf8(&bytes).ok()?.trim();
+    let path = PathBuf::from(value.strip_prefix("gitdir: ")?);
+    Some(if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    })
+}
+
+fn git_common_directory(git_dir: &Path) -> Option<PathBuf> {
+    let bytes = read_bounded_file(&git_dir.join("commondir"), 4096)?;
+    let path = PathBuf::from(std::str::from_utf8(&bytes).ok()?.trim());
+    Some(if path.is_absolute() {
+        path
+    } else {
+        git_dir.join(path)
+    })
+}
+
+fn append_bounded_fact(facts: &mut Vec<u8>, label: &str, path: &Path, limit: u64) {
+    if let Some(bytes) = read_bounded_file(path, limit) {
+        append_fact_bytes(facts, label, &bytes);
+    }
+}
+
+fn append_fact_bytes(facts: &mut Vec<u8>, label: &str, bytes: &[u8]) {
+    facts.extend_from_slice(b"\0");
+    facts.extend_from_slice(label.as_bytes());
+    facts.extend_from_slice(b"\0");
+    facts.extend_from_slice(bytes);
+}
+
+fn read_bounded_file(path: &Path, limit: u64) -> Option<Vec<u8>> {
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    if !metadata.file_type().is_file() || metadata.len() > limit {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    std::fs::File::open(path)
+        .ok()?
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .ok()?;
+    (bytes.len() as u64 <= limit).then_some(bytes)
+}
+
+impl WorkspaceState {
     /// Validate every candidate before atomically publishing a complete or
     /// partial Host catalog change. Maintenance activation uses this typed seam
     /// so CLI and MCP updates never need recursive subprocesses or self-restarts.
@@ -70,11 +164,16 @@ impl WorkspaceState {
             if prepared.contains_key(host) {
                 return Err(format!("duplicate Host in capability activation: `{host}`"));
             }
-            let catalog = self
-                .load_fresh_host_catalog(host)
-                .map_err(CapabilityLoadFailure::into_error_message)?;
-            hashes.insert(host.clone(), catalog.snapshot.snapshot_hash.clone());
-            prepared.insert(host.clone(), catalog);
+            let (snapshot, _tables) =
+                ags_capability_governance::load_static_snapshot(&self.runtime_home, host)
+                    .map_err(|error| format!("capability_snapshot_invalid: {error:?}"))?;
+            ags_capability_governance::validate_snapshot_authorities(
+                &self.runtime_home,
+                host,
+                &snapshot,
+            )?;
+            hashes.insert(host.clone(), snapshot.snapshot_hash.clone());
+            prepared.insert(host.clone(), snapshot);
         }
         let retired = retired_hosts
             .iter()
@@ -98,122 +197,5 @@ impl WorkspaceState {
             catalogs.extend(prepared);
         }
         Ok(hashes)
-    }
-
-    pub fn read_catalog(
-        &self,
-        binding: &PreflightBinding,
-    ) -> Result<ags_capability_governance::HostCapabilitySnapshot, String> {
-        let Some(reference) = binding.capability.as_ref() else {
-            return Err(CapabilityLoadFailure::SnapshotStale.into_error_message());
-        };
-        if let Some(failure) = reference.as_failure() {
-            return Err(failure.into_error_message());
-        }
-        let accepted = reference
-            .ready_binding()
-            .expect("ready capability reference has a binding");
-        self.load_validated_catalog(binding)
-            .and_then(|catalog| {
-                if accepted == &catalog.binding {
-                    Ok(catalog.snapshot)
-                } else {
-                    Err(CapabilityLoadFailure::SnapshotStale)
-                }
-            })
-            .map_err(CapabilityLoadFailure::into_error_message)
-    }
-
-    fn load_validated_catalog(
-        &self,
-        binding: &PreflightBinding,
-    ) -> Result<ValidatedCapabilityCatalog, CapabilityLoadFailure> {
-        let target = canonical_workspace_root(&binding.target).map_err(|error| {
-            unavailable(
-                CapabilityDiagnosticCode::WorkspaceTargetInvalid,
-                error.to_string(),
-            )
-        })?;
-        if target != self.root {
-            return Err(unavailable(
-                CapabilityDiagnosticCode::WorkspaceTargetInvalid,
-                format!(
-                    "workspace_target_mismatch: service={} requested={}",
-                    self.root.display(),
-                    target.display()
-                ),
-            ));
-        }
-        if let Some(catalog) = self
-            .catalogs
-            .read()
-            .map_err(|_| {
-                unavailable(
-                    CapabilityDiagnosticCode::StateLockUnavailable,
-                    "workspace catalog lock poisoned",
-                )
-            })?
-            .get(&binding.host)
-        {
-            return Ok(catalog.clone());
-        }
-
-        let catalog = self.load_fresh_host_catalog(&binding.host)?;
-        let mut catalogs = self.catalogs.write().map_err(|_| {
-            unavailable(
-                CapabilityDiagnosticCode::StateLockUnavailable,
-                "workspace catalog lock poisoned",
-            )
-        })?;
-        Ok(catalogs
-            .entry(binding.host.clone())
-            .or_insert(catalog)
-            .clone())
-    }
-
-    fn load_fresh_host_catalog(
-        &self,
-        host: &str,
-    ) -> Result<ValidatedCapabilityCatalog, CapabilityLoadFailure> {
-        let (snapshot, _) =
-            ags_capability_governance::load_static_snapshot(&self.runtime_home, host)
-                .map_err(|error| classify_snapshot_load_error(error, &self.runtime_home, host))?;
-        let tables = snapshot.validate_integrity(host).map_err(|error| {
-            unavailable(
-                CapabilityDiagnosticCode::SnapshotInvalid,
-                format!("active capability table is invalid: {error:?}"),
-            )
-        })?;
-        let catalog = ValidatedCapabilityCatalog {
-            binding: self.capability_binding(&snapshot.snapshot_hash),
-            snapshot,
-            tables,
-        };
-        Ok(catalog)
-    }
-
-    fn capability_binding(&self, snapshot_hash: &str) -> CapabilityBinding {
-        CapabilityBinding {
-            workspace_identity: self.instance_key.clone(),
-            snapshot_hash: snapshot_hash.to_string(),
-        }
-    }
-}
-
-impl CapabilityCatalogSource for WorkspaceState {
-    fn capability_reference(&self, binding: &PreflightBinding) -> CapabilityReference {
-        match self.load_validated_catalog(binding) {
-            Ok(catalog) => CapabilityReference::Ready {
-                binding: catalog.binding,
-            },
-            Err(error) => error.into_reference(),
-        }
-    }
-
-    fn load_validated_snapshot(
-        &self,
-        binding: &PreflightBinding,
-    ) -> Result<ValidatedCapabilityCatalog, CapabilityLoadFailure> {
-        self.load_validated_catalog(binding)
     }
 }

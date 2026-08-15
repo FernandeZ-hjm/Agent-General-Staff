@@ -6,7 +6,7 @@ use super::*;
 // event, ARCHIVE into task-archive, and invoke the Rust lifecycle kernel.
 // The host is part of this interface: one host's evidence must never satisfy
 // Codex, Claude Code, Cursor, or OMP. `ags init` owns the project store;
-// `ags agents govern --apply` owns
+// `ags govern host-projection` plans
 // native host adapters; doctor and preflight consume this same computation.
 
 /// Read / write / archive / verify closure state for a project's memory store.
@@ -39,7 +39,7 @@ pub struct MemoryLifecycle {
     pub write_wired: bool,
     /// Native stop/settled event invokes the Rust raw-tool-call guard.
     pub stop_guard_wired: bool,
-    /// Every configured hook/extension delegates to the `ags host lifecycle` Rust kernel.
+    /// Every configured hook/extension delegates to the `ags-host lifecycle` executable.
     pub kernel_backed: bool,
     /// Human one-line summary of the closure state.
     pub summary: String,
@@ -78,53 +78,41 @@ pub(super) fn derive_memory_status(
     }
 }
 
-/// Resolve a project's memory slug from its profile, falling back to the
-/// directory name (mirrors `detect_project`'s slug resolution, standalone so the
-/// lifecycle computation does not require a full project detection pass).
-pub fn resolve_project_slug(target: &Path) -> String {
-    if let Some(slug) = extract_profile_slug(target) {
-        return slug;
-    }
-    slug_from_path(target)
-}
-
-pub fn project_memory_dir_at(target: &Path, home: &Path) -> PathBuf {
-    home.join(".agents/memory/projects")
-        .join(resolve_project_slug(target))
-}
-
-/// Extract `project.slug` from `config/agent-project-profile.yaml`.
-/// Only matches an indented `slug:` line (under the `project:` section) and
-/// strips YAML inline comments (`# …`). Returns `None` on missing/empty.
-#[doc(hidden)]
-pub fn extract_profile_slug(target: &Path) -> Option<String> {
-    let profile = target.join("config/agent-project-profile.yaml");
-    let content = std::fs::read_to_string(&profile).ok()?;
-    let mut in_project = false;
-    for line in content.lines() {
-        if !line.starts_with(' ') && !line.starts_with('\t') {
-            in_project = line.trim().starts_with("project:");
-            continue;
-        }
-        if !in_project {
-            continue;
-        }
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("slug:") {
-            let value = rest.split('#').next().unwrap_or("");
-            let slug = value.trim().trim_matches('"').trim_matches('\'').trim();
-            if !slug.is_empty() {
-                return Some(slug.to_string());
+/// Derive the single-component memory identity from the canonical workspace.
+/// Profile metadata is intentionally not an authority input.
+pub fn project_memory_key(target: &Path) -> Result<String, String> {
+    let canonical = target
+        .canonicalize()
+        .map_err(|error| format!("cannot canonicalize memory workspace: {error}"))?;
+    let basename = canonical
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_else(|| "workspace".into());
+    let mut sanitized = basename
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character.to_ascii_lowercase()
+            } else {
+                '-'
             }
-        }
-    }
-    None
+        })
+        .collect::<String>();
+    sanitized.truncate(48);
+    let sanitized = sanitized.trim_matches('-');
+    let sanitized = if sanitized.is_empty() {
+        "workspace"
+    } else {
+        sanitized
+    };
+    let digest = ags_platform::sha256_hex(canonical.to_string_lossy().as_bytes());
+    Ok(format!("{sanitized}-{}", &digest[..24]))
 }
 
-fn slug_from_path(path: &Path) -> String {
-    path.file_name()
-        .map(|name| name.to_string_lossy().to_string())
-        .unwrap_or_else(|| "unknown".to_string())
+pub fn project_memory_dir_at(target: &Path, home: &Path) -> Result<PathBuf, String> {
+    Ok(home
+        .join(".agents/memory/projects")
+        .join(project_memory_key(target)?))
 }
 
 /// Compute the closure for the exact host requested by preflight.
@@ -140,7 +128,21 @@ pub fn compute_memory_lifecycle_at_for_host(
     home: &Path,
     agent_type: &AgentType,
 ) -> MemoryLifecycle {
-    let mem_dir = project_memory_dir_at(target, home);
+    let Ok(mem_dir) = project_memory_dir_at(target, home) else {
+        return MemoryLifecycle {
+            host: agent_type.as_str().to_string(),
+            adapter: "unsupported".to_string(),
+            adapter_supported: false,
+            status: "absent".to_string(),
+            files_present: false,
+            archive_ready: false,
+            read_wired: false,
+            write_wired: false,
+            stop_guard_wired: false,
+            kernel_backed: false,
+            summary: "memory workspace identity is invalid".to_string(),
+        };
+    };
     let files_present =
         mem_dir.join("context-capsule.md").is_file() && mem_dir.join("task-memory.md").is_file();
     let archive_ready = mem_dir.join("task-archive").is_dir();
@@ -186,11 +188,21 @@ pub fn compute_memory_lifecycle_at_for_host(
         kernel_backed,
     );
     let summary = match status {
-        "full" => format!("{normalized_host} memory closure complete: native start + close lifecycle wired and backed; files + archive present"),
-        "read-only" => format!("{normalized_host} can read project memory on start, but its native close capture is not wired"),
-        "write-only" => format!("{normalized_host} closes/captures memory, but its native start injection is not wired"),
-        "files-only" => format!("project memory files exist, but {normalized_host} native read/write hooks are not wired — run `ags agents govern --agent {normalized_host} --apply`"),
-        "unsupported" => format!("AGS has no native memory lifecycle adapter for host `{normalized_host}`; closure cannot be claimed"),
+        "full" => format!(
+            "{normalized_host} memory closure complete: native start + close lifecycle wired and backed; files + archive present"
+        ),
+        "read-only" => format!(
+            "{normalized_host} can read project memory on start, but its native close capture is not wired"
+        ),
+        "write-only" => format!(
+            "{normalized_host} closes/captures memory, but its native start injection is not wired"
+        ),
+        "files-only" => format!(
+            "project memory files exist, but {normalized_host} native read/write hooks are not wired — run `ags govern host-projection --host {normalized_host} --surface hybrid`, then apply its action_ref"
+        ),
+        "unsupported" => format!(
+            "AGS has no native memory lifecycle adapter for host `{normalized_host}`; closure cannot be claimed"
+        ),
         _ => format!("no project memory store or {normalized_host} native lifecycle wiring"),
     };
 
@@ -221,7 +233,7 @@ mod tests {
         let target = root.join("project");
         std::fs::create_dir_all(&home).unwrap();
         std::fs::create_dir_all(&target).unwrap();
-        let memory = project_memory_dir_at(&target, &home);
+        let memory = project_memory_dir_at(&target, &home).unwrap();
         std::fs::create_dir_all(memory.join("task-archive")).unwrap();
         std::fs::write(memory.join("context-capsule.md"), "capsule").unwrap();
         std::fs::write(memory.join("task-memory.md"), "memory").unwrap();
@@ -250,5 +262,40 @@ mod tests {
             assert_eq!(lifecycle.status, "full", "{}", lifecycle.host);
             assert!(lifecycle.kernel_backed);
         }
+    }
+
+    #[test]
+    fn memory_identity_is_canonical_workspace_bound_and_ignores_profile_slug() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let first = root.path().join("one/shared-name");
+        let second = root.path().join("two/shared-name");
+        std::fs::create_dir_all(first.join("config")).unwrap();
+        std::fs::create_dir_all(second.join("config")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(
+            first.join("config/agent-project-profile.yaml"),
+            "project:\n  slug: /tmp/cross-workspace\n",
+        )
+        .unwrap();
+        std::fs::write(
+            second.join("config/agent-project-profile.yaml"),
+            "project:\n  slug: ../../cross-workspace\n",
+        )
+        .unwrap();
+        let first = first.canonicalize().unwrap();
+        let second = second.canonicalize().unwrap();
+        let first_memory = project_memory_dir_at(&first, &home).unwrap();
+        let second_memory = project_memory_dir_at(&second, &home).unwrap();
+        let trusted_root = home.join(".agents/memory/projects");
+        assert!(first_memory.starts_with(&trusted_root));
+        assert!(second_memory.starts_with(&trusted_root));
+        assert_ne!(first_memory, second_memory);
+        assert_eq!(first_memory.parent(), Some(trusted_root.as_path()));
+        assert_eq!(second_memory.parent(), Some(trusted_root.as_path()));
+        assert_ne!(
+            first_memory.file_name().unwrap().to_string_lossy(),
+            "cross-workspace"
+        );
     }
 }

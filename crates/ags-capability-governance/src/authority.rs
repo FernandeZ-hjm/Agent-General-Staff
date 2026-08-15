@@ -1,6 +1,7 @@
 use super::*;
 
-pub const HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION: &str = "0.3.6-host-capability-snapshot";
+pub const HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION: &str =
+    "ags://schema/contract/v2/host-capability-snapshot";
 pub const CAPABILITY_SNAPSHOT_SCHEMA_VERSION: &str = HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION;
 pub const SKILL_REASON_CODES: &[&str] = &[
     "registry_not_routable",

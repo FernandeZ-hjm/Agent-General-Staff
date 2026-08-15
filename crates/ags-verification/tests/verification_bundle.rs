@@ -8,9 +8,10 @@ use std::process::Command;
 
 fn passing_report() -> VerificationReport {
     VerificationReport {
-        schema_version: "0.3.6-verification-report".to_string(),
-        scope: Scope::Local,
+        schema_version: "ags://schema/contract/v2/check-report".to_string(),
+        scope: Scope::Governance,
         repo_root: "/fixture".to_string(),
+        project_tests_run: false,
         items: Vec::new(),
         summary: VerificationSummary {
             total: 0,

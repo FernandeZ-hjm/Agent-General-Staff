@@ -1,29 +1,29 @@
 schema_version: 2.0-skill
 suite:
   name: agent-general-staff
-  version: 0.4.16
+  version: 0.4.20
   description: Public AGS governance control plane. Bundled command Skills are shipped with the release; reviewed third-party entries are discovery metadata only.
   required:
-  - name: ags-agents
-    version: 0.4.16
-    source: templates/command-skills/ags-agents
-    hash: aa5109528dcbcdfb580fcd33610ceb093c6643d846c39e22b2f1e8571be6c946
+  - name: ags-agent
+    version: 0.4.20
+    source: templates/command-skills/ags-agent
+    hash: 00ea83effe3d45130d405ffff0ce48aca95a7df5120e22ea716ac67ff2e3e028
   - name: ags-doctor
-    version: 0.4.16
+    version: 0.4.20
     source: templates/command-skills/ags-doctor
-    hash: cbe47721eb604d729de97c84e9f15e9edef05f7a88d30af4c283ba9a0806aed2
+    hash: a6a766c30ab0246f9e3a2d89155c28254462373bcae82ee8057aec49be510e0e
   - name: ags-init
-    version: 0.4.16
+    version: 0.4.20
     source: templates/command-skills/ags-init
-    hash: bfe09a19231d07185f66299116c9edaada69d5f40e821c777b22e2b857b42d17
+    hash: 50ce8385d4458513fe1f533ceba7750e70192a4ade0027a41f22197c290387ca
   - name: ags-setup
-    version: 0.4.16
+    version: 0.4.20
     source: templates/command-skills/ags-setup
-    hash: 1663e12837dbd70358a070b165778ac5190ef7fea7c9195b4b59a8d40bbbadc0
-  - name: ags-skill
-    version: 0.4.16
-    source: templates/command-skills/ags-skill
-    hash: a1670b5d53fbe83a3a1d08071d5df27914a0ff0fce7f10ecc422e86c51bd77b3
+    hash: 42a92438209a9375184c2fb685728eb463db0d9365599bd8098a65b1431df62a
+  - name: ags-govern
+    version: 0.4.20
+    source: templates/command-skills/ags-govern
+    hash: 31b214b6167b8d04068ef70a021de2ba518e527f32e371c79c04127b621cffea
   optional:
   - name: ags-superpowers-adapter
     version: 44c9b2d6e889982ac18c27d05a19fefe335194e1
@@ -32,7 +32,7 @@ suite:
     repository: https://github.com/obra/superpowers
     subdirectory: skill-packs/optional/ags-superpowers-adapter
     resolved_commit: 44c9b2d6e889982ac18c27d05a19fefe335194e1
-    body_hash: sha256:cf95cd5c3e8ba8798480ddca0c81c283a5f2d6fa2ade4d2d26aa5b995ac11abf
+    body_hash: sha256:2d3fe21c3e051885b740e17c271b514dc271e697beb403772ea9994571fc7989
     license: MIT
     catalog_review_status: reviewed
     install_state: not-installed

@@ -1,32 +1,27 @@
 # AGENTS.md
 
-Keep project-specific agent instructions outside the AGS managed block. Run
-`ags project integrate --dry-run` to preview the block and
-`ags project integrate --confirm` to merge or update it.
+Keep project-specific instructions outside the AGS managed block. `ags init
+--workspace .` plans this projection; `ags apply <action-ref> --workspace .`
+is its only mutation path.
 
-<!-- AGS:BEGIN managed-entry v2 -->
-## Agent General Staff
+<!-- AGS:BEGIN managed-entry contract-v2 -->
+## Agent Governance Suite
 
-This project is governed by AGS. Preserve project-specific instructions above
-and below this managed block; only AGS should update the block itself.
+This project uses AGS contract v2. Preserve user-owned instructions outside
+this block; only an integrity-verified AGS init migration may replace it.
 
-Before development, debugging, review, commit, or task-card generation:
-- Run or equivalently complete `ags session preflight --for <codex|claude-code|cursor>`.
-- Read `CLAUDE.md` and the canonical protocol files under `protocol/`.
-- Treat AGS as a standing engineering hub, not a CLI toolbox the user must invoke manually.
-- For raw requests, complete ambient preflight and solution formation before any Light / Medium / Heavy routing.
-- Do not treat raw user requests as executable task cards.
-- If the first non-empty line is `## 任务卡`, treat the input as an existing task card and validate it before raw-request classification.
-- A valid existing card goes directly to policy resolution and runner consumption; invalid card-shaped input fails closed and never falls through to task-card generation.
-- Task-card authority is the explicit `Execution mode`, `Execution topology`,
-  and `Delegation planning` tuple. Task level changes review depth, not authority.
-- `方案 OK` only ends the solution phase; wait for an explicit task-card instruction before routing or calling `ags task compile --task-card-requested`.
-- Preserve user-owned entry-file rules; if they conflict with this block, stop and report the conflict.
+- The host interprets natural language and submits one typed Operation through
+  the CLI or `ags_decide`.
+- Effectful Operations return a sealed `action_ref`; consume it only through
+  `ags apply` or `ags_apply` in the same workspace/host/session binding.
+- Existing `## 任务卡` input is validated before classification. Task-card
+  execution authority comes from its mode/topology/delegation tuple.
+- A task card overrides workflow-playbook defaults. In particular, authorized
+  parallel worktrees and a no-commit rule must not be silently changed to a
+  serial, commit-based workflow.
+- Third-party MCP registration is advice-only. AGS does not proxy it.
 
-Canonical references:
-- `AGENT_SUITE_PROTOCOL.md`
-- `protocol/agent-task-protocol.md`
-- `protocol/task-routing.md`
-- `protocol/runtime-adapters.md`
-- `protocol/task-card-template.md`
-<!-- AGS:END managed-entry v2 -->
+Canonical references: `AGENT_SUITE_PROTOCOL.md`,
+`protocol/agent-task-protocol.md`, `protocol/task-routing.md`,
+`protocol/runtime-adapters.md`, and `protocol/mcp-server.md`.
+<!-- AGS:END managed-entry contract-v2 -->

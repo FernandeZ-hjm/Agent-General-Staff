@@ -39,8 +39,12 @@ pub(super) fn snapshot_integrity_hash(snapshot: &HostCapabilitySnapshot) -> Stri
         serde_json::to_vec(&(
             &snapshot.schema_version,
             &snapshot.host,
+            &snapshot.surface,
+            &snapshot.host_registration_hash,
             &snapshot.registry_hash,
-            &snapshot.runtime_hash,
+            &snapshot.runtime_observation_hash,
+            &snapshot.installed_skill_index_hash,
+            &snapshot.input_set_hash,
             &snapshot.third_party_registry_url,
             &snapshot.third_party_manifest_hash,
             catalog,
@@ -51,4 +55,21 @@ pub(super) fn snapshot_integrity_hash(snapshot: &HostCapabilitySnapshot) -> Stri
         ))
         .unwrap_or_default(),
     )
+}
+
+pub fn snapshot_input_set_hash(snapshot: &HostCapabilitySnapshot) -> String {
+    let mut canonical = b"ags-capability-input-set-v2\n".to_vec();
+    canonical.extend(
+        serde_json::to_vec(&(
+            &snapshot.host,
+            &snapshot.surface,
+            &snapshot.host_registration_hash,
+            &snapshot.registry_hash,
+            &snapshot.runtime_observation_hash,
+            &snapshot.installed_skill_index_hash,
+            &snapshot.third_party_manifest_hash,
+        ))
+        .unwrap_or_default(),
+    );
+    ags_platform::sha256(canonical)
 }

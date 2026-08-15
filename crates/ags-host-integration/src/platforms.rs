@@ -172,7 +172,7 @@ pub const AGENT_PLATFORM_SPECS: &[AgentPlatformSpec] = &[
         cli_names: &["claude"],
         config_subdirs: &[".claude"],
         app_bundles: &[],
-        mcp_host_command: "claude mcp add ags -- ags mcp serve --transport stdio",
+        mcp_host_command: "claude mcp add ags -- ags-mcp",
         native_skill_subdir: Some(".claude/skills"),
         loads_shared_agent_skills: false,
         loads_codex_plugin_skills: false,
@@ -195,7 +195,7 @@ pub const AGENT_PLATFORM_SPECS: &[AgentPlatformSpec] = &[
         cli_names: &["codex"],
         config_subdirs: &[".codex"],
         app_bundles: &[],
-        mcp_host_command: "codex mcp add ags -- ags mcp serve --transport stdio",
+        mcp_host_command: "codex mcp add ags -- ags-mcp",
         native_skill_subdir: Some(".codex/skills"),
         loads_shared_agent_skills: true,
         loads_codex_plugin_skills: true,
@@ -266,7 +266,7 @@ pub const AGENT_PLATFORM_SPECS: &[AgentPlatformSpec] = &[
         cli_names: &["workbuddy", "workbuddy-ide"],
         config_subdirs: &[".workbuddy"],
         app_bundles: &["WorkBuddy.app", "WorkBuddy IDE.app"],
-        mcp_host_command: "register AGS MCP in WorkBuddy host config (exposes ags_preflight / ags_agent_instructions / ags_task_validate / ags_policy_resolve); AGS never runs the registrar",
+        mcp_host_command: "register `ags-mcp` in WorkBuddy host config (exposes ags_decide / ags_apply); AGS never runs the registrar",
         native_skill_subdir: None,
         loads_shared_agent_skills: false,
         loads_codex_plugin_skills: false,
@@ -388,9 +388,12 @@ pub fn cross_platform_init_plan_with_detectors(
                 .any(|directory| home.join(directory).is_dir());
             let app_present = spec.app_bundles.iter().any(|bundle| app_present(bundle));
             let drift_check = if spec.verify_supported {
-                format!("ags capability verify --host {}", spec.id)
+                format!("ags govern capability inventory --host {}", spec.id)
             } else {
-                format!("ags capability verify --host {} (reserved)", spec.id)
+                format!(
+                    "ags govern capability inventory --host {} (reserved)",
+                    spec.id
+                )
             };
             AgentPlatformStatus {
                 id: spec.id.to_string(),

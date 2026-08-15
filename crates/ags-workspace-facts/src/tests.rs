@@ -27,8 +27,10 @@ fn write_profile(project: &Path, slug: &str) {
     .unwrap();
 }
 
-fn write_memory(home: &Path, slug: &str, archive: bool) {
-    let dir = home.join(".agents/memory/projects").join(slug);
+fn write_memory(home: &Path, project: &Path, archive: bool) {
+    let dir = home
+        .join(".agents/memory/projects")
+        .join(project_memory_key(project).unwrap());
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("context-capsule.md"), "# Context\n").unwrap();
     std::fs::write(dir.join("task-memory.md"), "# Tasks\n").unwrap();
@@ -71,7 +73,7 @@ fn memory_lifecycle_state_matrix() {
         std::fs::create_dir_all(&project).unwrap();
         write_profile(&project, tag);
         if memory {
-            write_memory(&home, tag, archive);
+            write_memory(&home, &project, archive);
         }
         if start || stop {
             write_command_hooks(&project, "claude-code", start, stop);
@@ -92,7 +94,7 @@ fn memory_lifecycle_is_host_specific_and_supports_codex_and_omp() {
     let project = root.join("project");
     std::fs::create_dir_all(&project).unwrap();
     write_profile(&project, "hosts");
-    write_memory(&home, "hosts", true);
+    write_memory(&home, &project, true);
     write_command_hooks(&project, "claude-code", true, true);
 
     assert_eq!(
@@ -221,17 +223,17 @@ fn public_suite_identity_does_not_depend_on_machine_path_rows() {
 #[test]
 fn instruction_projection_preserves_each_host_contract() {
     for (agent, canonical, marker) in [
-        (AgentType::Codex, "codex", "ags_route_request"),
+        (AgentType::Codex, "codex", "ags_decide"),
         (
             AgentType::ClaudeCode,
             "claude-code",
             "bounded handoff task cards",
         ),
-        (AgentType::Cursor, "cursor", "HostRouteProposal"),
+        (AgentType::Cursor, "cursor", "OperationRequest"),
         (
             AgentType::from_str("workbuddy").unwrap(),
             "workbuddy",
-            "AGS-compatible governed host",
+            "contract-v2 CLI/MCP surfaces",
         ),
     ] {
         let instructions = generate_agent_instructions(&repo_root(), &agent);
@@ -251,10 +253,15 @@ fn verification_command_detection_is_target_aware() {
     let root = temp("verify");
     assert!(detect_verification_commands(&root)
         .iter()
-        .any(|command| command.contains("ags verify")));
+        .any(|command| command.contains("ags check governance")));
     std::fs::write(root.join("Cargo.toml"), "[package]\nname='demo'\n").unwrap();
     let commands = detect_verification_commands(&root);
-    for expected in ["cargo fmt", "cargo test", "cargo build", "ags verify"] {
+    for expected in [
+        "cargo fmt",
+        "cargo test",
+        "cargo build",
+        "ags check governance",
+    ] {
         assert!(
             commands.iter().any(|command| command.contains(expected)),
             "{expected}"

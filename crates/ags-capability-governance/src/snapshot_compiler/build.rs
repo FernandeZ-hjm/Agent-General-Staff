@@ -194,7 +194,7 @@ pub fn build_capability_snapshots_with_live_roots(
 /// Multi-Host counterpart of
 /// [`build_capability_snapshot_with_live_roots_at`]. Setup/update uses this
 /// entrypoint so Host-native discovery is evaluated from the same workspace as
-/// an explicit `ags capability snapshot --target ...` refresh.
+/// an explicit contract-v2 capability snapshot Operation.
 pub fn build_capability_snapshots_with_live_roots_at(
     manifest_root: &Path,
     active_hosts: &[String],
@@ -265,6 +265,7 @@ pub fn publish_capability_snapshots(
             snapshot
                 .validate_integrity(&host)
                 .map_err(|error| format!("invalid `{host}` candidate snapshot: {error:?}"))?;
+            crate::validate_snapshot_authorities(runtime_home, &host, &snapshot)?;
             let hash = snapshot.snapshot_hash.clone();
             let mut bytes = serde_json::to_vec_pretty(&snapshot)
                 .map_err(|error| format!("cannot serialize `{host}` snapshot: {error}"))?;
@@ -496,16 +497,22 @@ fn compile_snapshot_from_inventory(
                 allowed_entrypoints,
                 intent_tags: card.intent_tags.clone(),
                 source_hash: card.source_hash.clone(),
+                body_ref: SkillBodyRef::new(
+                    &card.skill_id,
+                    card.source_hash.trim_start_matches("sha256:"),
+                    card.source_hash.clone(),
+                ),
             });
         }
         catalog.push(card);
     }
 
-    let mut installed_projection = crate::skill_adoption::project_installed_skills(
+    let mut installed_projection = crate::skill_adoption::project_installed_skills_with_overlay(
         runtime_home,
         &context.home,
         active_host,
         &official_ids,
+        None,
     )
     .map_err(SnapshotBuildError::Manifest)?;
     // Installed third-party parents are authoritative for activation, while
@@ -659,7 +666,7 @@ fn compile_snapshot_from_inventory(
         mcp_catalog.push(card);
     }
 
-    let runtime_hash = ags_platform::sha256(
+    let runtime_observation_hash = ags_platform::sha256(
         format!(
             "{}\n{auth_hash}\n{}",
             inventory_snapshot_hash(inventory),
@@ -737,10 +744,31 @@ fn compile_snapshot_from_inventory(
             }
         })
         .collect();
+    let registration =
+        crate::load_canonical_host_registration(runtime_home, active_host).map_err(|error| {
+            SnapshotBuildError::Manifest(match error {
+                crate::CanonicalArtifactReadError::Unavailable(detail) => {
+                    format!("snapshot_required: canonical host registration unavailable: {detail}")
+                }
+                crate::CanonicalArtifactReadError::Refused(detail) => {
+                    format!("skill_snapshot_refused: canonical host registration: {detail}")
+                }
+                crate::CanonicalArtifactReadError::Stale(detail) => {
+                    format!("skill_snapshot_stale: canonical host registration: {detail}")
+                }
+            })
+        })?;
+    if registration.host_id.as_str() != active_host {
+        return Err(SnapshotBuildError::Manifest(format!(
+            "skill_snapshot_stale: registration subject {} does not match requested host {active_host}",
+            registration.host_id
+        )));
+    }
     HostCapabilitySnapshot::new(
-        active_host,
+        &registration,
         ags_platform::sha256(registry_bytes),
-        runtime_hash,
+        runtime_observation_hash,
+        installed_projection.installed_skill_index_hash,
         catalog,
         mcp_catalog,
         third_party.source.clone(),
@@ -778,6 +806,20 @@ mod tests {
         .unwrap();
     }
 
+    fn write_test_registration(runtime_home: &Path, host: &str) {
+        let registration = ags_host_integration::HostRegistration::new(
+            ags_host_integration::HostId::new(host).unwrap(),
+            ags_host_integration::AgentSurface::Hybrid,
+            ags_host_integration::platform_spec(host).map(|spec| spec.id.to_string()),
+        );
+        let path = runtime_home
+            .join("hosts")
+            .join(host)
+            .join("registration.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, serde_json::to_vec_pretty(&registration).unwrap()).unwrap();
+    }
+
     #[test]
     fn multi_host_refresh_matches_canonical_single_host_snapshots() {
         let manifest_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -789,6 +831,8 @@ mod tests {
         let host_home = base.join("home");
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&runtime_home).unwrap();
+        write_test_registration(&runtime_home, "codex");
+        write_test_registration(&runtime_home, "claude-code");
         write_test_skill(
             &host_home.join(".codex/skills/test-codex-only"),
             "test-codex-only",
@@ -857,6 +901,7 @@ mod tests {
         let host_home = base.join("home");
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&runtime_home).unwrap();
+        write_test_registration(&runtime_home, "codex");
         std::fs::create_dir_all(&host_home).unwrap();
         let third_party =
             crate::third_party_manifest::resolve_third_party_manifest(&manifest_root).unwrap();

@@ -1,5 +1,4 @@
 use super::*;
-use ags_host_integration::extract_profile_slug;
 // ── Shared / common types ──────────────────────────────────────────────────
 
 /// Known AGS protocol files under `protocol/`.
@@ -227,7 +226,7 @@ pub fn detect_project(target: &Path) -> ProjectIdentity {
     let profile_path = canonical.join("config").join("agent-project-profile.yaml");
     if profile_path.exists() {
         identity.project_profile_path = Some(profile_path.clone());
-        identity.project_slug = extract_profile_slug(&canonical);
+        identity.project_slug = read_project_profile_slug(&profile_path);
     }
 
     // Check for memory capsule
@@ -351,6 +350,32 @@ pub fn detect_project(target: &Path) -> ProjectIdentity {
     }
 
     identity
+}
+
+/// Read the single typed profile fact owned by workspace-facts. This parser is
+/// intentionally private: host integration must not become a parallel project
+/// identity authority.
+fn read_project_profile_slug(profile: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(profile).ok()?;
+    let mut in_project = false;
+    for line in content.lines() {
+        if !line.starts_with(' ') && !line.starts_with('\t') {
+            in_project = line.trim().starts_with("project:");
+            continue;
+        }
+        if !in_project {
+            continue;
+        }
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("slug:") {
+            let value = rest.split('#').next().unwrap_or("");
+            let slug = value.trim().trim_matches('"').trim_matches('\'').trim();
+            if !slug.is_empty() {
+                return Some(slug.to_string());
+            }
+        }
+    }
+    None
 }
 
 /// Derive a project slug from a path (fallback when no profile exists).

@@ -5,11 +5,11 @@
 //! (the canonical runtime root's `managed-projects.yaml`, honoring
 //! `$AGS_RUNTIME_HOME` / `$AGS_HOME`).
 //!
-//! - **Write side**: `ags init` upserts (append + dedupe on canonical path) the
-//!   project after a successful onboard. Re-running `ags init` refreshes the
+//! - **Write side**: the sealed `init` Operation upserts (append + dedupe on
+//!   canonical path) after a successful apply. Re-running it refreshes the
 //!   entry without losing the first-registration time.
-//! - **Query side** (read-only): consumed by `ags update` (sync plan),
-//!   `ags doctor` (global scan), and `ags agents verify` (sampled preflight).
+//! - **Query side** (read-only): consumed by `update`, `doctor`, and `check`
+//!   Operations as discovery evidence, never as workspace identity authority.
 //!
 //! This is an inventory, NOT a sync ledger. A GitHub/remote-backed project
 //! (one with an `origin`) is marked accordingly so downstream `ags update` keeps
@@ -23,7 +23,7 @@
 use std::path::{Path, PathBuf};
 
 /// Registry schema version (the registry file format, not the suite version).
-pub const MANAGED_PROJECTS_SCHEMA: &str = "1";
+pub const MANAGED_PROJECTS_SCHEMA: &str = "ags://schema/contract/v2/managed-projects";
 
 /// Version-control status of a managed project.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,7 +149,7 @@ pub fn render_yaml(reg: &ManagedProjectsRegistry) -> String {
     projects.sort_by(|a, b| a.path.cmp(&b.path));
     let mut out = String::new();
     out.push_str("# AGS managed-projects registry — maintained by `ags init`.\n");
-    out.push_str("# Read-only query side: ags update / ags doctor / ags agents verify.\n");
+    out.push_str("# Read-only query side: ags doctor / ags check / ags agent probe.\n");
     out.push_str(&format!("schema_version: \"{}\"\n", reg.schema_version));
     if projects.is_empty() {
         out.push_str("projects: []\n");

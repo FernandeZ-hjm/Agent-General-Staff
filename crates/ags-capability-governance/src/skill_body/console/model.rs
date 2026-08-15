@@ -1,5 +1,5 @@
 use super::*;
-pub const CONSOLE_SCHEMA_VERSION: &str = "0.3.6-skill-console";
+pub const CONSOLE_SCHEMA_VERSION: &str = "ags://schema/contract/v2/skill-console";
 
 // ── Host-adapter runner seam ────────────────────────────────────────────────
 

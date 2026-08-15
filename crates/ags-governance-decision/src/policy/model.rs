@@ -433,7 +433,10 @@ pub struct ResolvedExecutionPolicy {
 impl Serialize for ResolvedExecutionPolicy {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut map = serializer.serialize_map(None)?;
-        map.serialize_entry("schema_version", "0.3.6-execution-policy")?;
+        map.serialize_entry(
+            "schema_version",
+            "ags://schema/contract/v2/execution-policy",
+        )?;
         map.serialize_entry("executor", &self.executor)?;
         map.serialize_entry("runtime_adapter", &self.runtime_adapter)?;
         map.serialize_entry("effective_execution_mode", &self.effective_execution_mode)?;
@@ -522,7 +525,7 @@ pub struct PolicyExplanation {
 
 // ── Policy explain output ─────────────────────────────────────────────────
 
-/// Complete output for `ags policy explain`.
+/// Complete output for `ags govern policy`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct PolicyExplainOutput {
     pub schema_version: String,
@@ -534,7 +537,7 @@ pub struct PolicyExplainOutput {
 
 // ── Gate check output ─────────────────────────────────────────────────────
 
-/// Output for `ags gate check` on a valid task card.
+/// Output for `ags govern gate` on a valid task card.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct GateCheckOutput {
     pub schema_version: String,
@@ -544,7 +547,7 @@ pub struct GateCheckOutput {
 
 // ── Gate error output (validation/protected-path failure) ─────────────────
 
-/// Structured error output for `ags gate check` when validation or
+/// Structured error output for `ags govern gate` when validation or
 /// protected-path checks fail.  Always carries `decision: stop`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct GateErrorOutput {

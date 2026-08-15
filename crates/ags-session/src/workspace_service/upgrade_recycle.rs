@@ -17,12 +17,12 @@ use super::capability_snapshot::WorkspaceState;
 use super::registry_ownership::{
     acquire_workspace_owner, current_executable_hash, ensure_private_dir, fresh_id, now_millis,
     publish_registry, read_registry, reclaim_stale_lock, registry_matches_process,
-    remove_registry_if_owned, set_private_file, workspace_key, ServicePaths, StartLock,
-    WorkspaceRegistry, REGISTRY_SCHEMA, START_TIMEOUT,
+    remove_registry_if_owned, set_private_file, workspace_daemon_executable, workspace_key,
+    ServicePaths, StartLock, WorkspaceRegistry, REGISTRY_SCHEMA, START_TIMEOUT,
 };
 use super::transport_handshake::{
     inspect_existing_workspace_service_at, read_json_line, spawn_workspace_connection,
-    write_json_line, Handshake, HandshakeResult, WIRE_SCHEMA,
+    write_json_line, Handshake, HandshakeResult, WIRE_PROTOCOL,
 };
 use super::WorkspaceServiceStatus;
 use super::WorkspaceSessionHandler;
@@ -45,7 +45,7 @@ pub(super) fn workspace_service_status_at(
     let current_hash = current_executable_hash()?;
     let Some(registry) = read_registry(&paths.registry)? else {
         return Ok(WorkspaceServiceStatus {
-            schema_version: "0.4.0-workspace-service-status".to_string(),
+            schema_version: super::WORKSPACE_DAEMON_STATUS_SCHEMA_VERSION.to_string(),
             workspace: workspace.display().to_string(),
             state: "stopped".to_string(),
             pid: None,
@@ -60,7 +60,7 @@ pub(super) fn workspace_service_status_at(
         && inspect_existing_workspace_service_at(runtime_home, &workspace)
             .is_ok_and(|inspection| inspection.is_some());
     Ok(WorkspaceServiceStatus {
-        schema_version: "0.4.0-workspace-service-status".to_string(),
+        schema_version: super::WORKSPACE_DAEMON_STATUS_SCHEMA_VERSION.to_string(),
         workspace: workspace.display().to_string(),
         state: if authenticated { "running" } else { "stale" }.to_string(),
         pid: Some(registry.pid),
@@ -236,12 +236,9 @@ pub(super) fn connect_or_start(workspace: &Path) -> Result<(TcpStream, Workspace
         .open(&paths.diagnostics)
         .map_err(|error| format!("workspace daemon log open failed: {error}"))?;
     set_private_file(&paths.diagnostics);
-    let mut daemon_command = Command::new(
-        std::env::current_exe()
-            .map_err(|error| format!("cannot resolve current executable: {error}"))?,
-    );
+    let mut daemon_command = Command::new(workspace_daemon_executable()?);
     daemon_command
-        .args(["mcp", "workspace-daemon", "--workspace"])
+        .args(["daemon", "--workspace"])
         .arg(workspace)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -471,10 +468,11 @@ fn request_shutdown(registry: &WorkspaceRegistry) -> Result<bool, String> {
     write_json_line(
         &mut stream,
         &Handshake {
-            protocol: WIRE_SCHEMA.to_string(),
+            protocol: WIRE_PROTOCOL.to_string(),
             token: registry.token.clone(),
             kind: "control".to_string(),
             command: Some("shutdown".to_string()),
+            client: None,
             workspace: registry.workspace.clone(),
         },
     )?;

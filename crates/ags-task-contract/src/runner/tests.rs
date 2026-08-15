@@ -50,7 +50,7 @@ fn unavailable_runtime_skill_tag_blocks_launch() {
     let card = dir.join("card.md");
     // Use a canonical bundled route so the card passes the two static gates;
     // the isolated runtime home must then fail at the live availability gate.
-    std::fs::write(&card, format!("{VALID_CARD}\n[skill: ags-skill]\n")).unwrap();
+    std::fs::write(&card, format!("{VALID_CARD}\n[skill: codebase-design]\n")).unwrap();
 
     let plan = run_task_card_inner(
         &card.to_string_lossy(),
@@ -89,7 +89,7 @@ fn card_without_skill_tags_prepares_host_execution() {
         GovernanceStatus::HostExecutionRequired
     );
     assert!(plan.host_execution_required);
-    assert_eq!(plan.schema_version, "0.3.6-launch-plan");
+    assert_eq!(plan.schema_version, "ags://schema/contract/v2/launch-plan");
     assert!(!plan.task_card_hash.is_empty());
     assert!(!plan.launch_plan_hash.is_empty());
     let value = serde_json::to_value(&plan).unwrap();
@@ -105,7 +105,7 @@ fn check_only_skips_runtime_skill_gate() {
     let dir = unique_tmp("check-only");
     std::fs::create_dir_all(&dir).unwrap();
     let card = dir.join("card.md");
-    std::fs::write(&card, format!("{VALID_CARD}\n[skill: ags-skill]\n")).unwrap();
+    std::fs::write(&card, format!("{VALID_CARD}\n[skill: codebase-design]\n")).unwrap();
 
     let plan = run_task_card_inner(
         &card.to_string_lossy(),

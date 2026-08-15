@@ -1,9 +1,12 @@
 {
-  "schema_version": "0.3.6-task-receipt",
-  "receipt_id": "receipt-noncompliant",
+  "schema_version": "ags://schema/contract/v2/task-receipt",
+  "receipt_id": "receipt-e851f36c99d4",
   "timestamp": "unix-0",
   "task_card_hash": "d568542eeaba086b8a48101374828e6c05fa1399a097ab67c63d9f301be96a02",
+  "launch_plan_hash": "1111111111111111111111111111111111111111111111111111111111111111",
   "task_card_path": "tests/fixtures/valid-full.md",
+  "launch_plan_path": "tests/fixtures/launch-plan-non-compliant.json",
+  "delivery_report_path": "tests/fixtures/delivery-report-non-compliant.md",
   "gate_result": {
     "decision": "stop",
     "reason": "writable-execution_topology-blocked-by-permission"
@@ -24,5 +27,12 @@
       "exit_code": 0,
       "output_hash": ""
     }
-  ]
+  ],
+  "delivery_report_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+  "execution_footprint": {
+    "execution_mode_used": "fanout-in-card",
+    "execution_topology_used": "worktree",
+    "delegation_used": "yes"
+  },
+  "closure_status": "failed"
 }

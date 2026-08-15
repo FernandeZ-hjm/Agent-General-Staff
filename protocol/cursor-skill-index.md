@@ -92,7 +92,7 @@ Use this when Cursor needs to hand work to Claude Code CLI, another agent, or a 
   显式可写 execution mode 直接执行并验证；Heavy 不另行强制计划
 - 完成后运行相关验证
 - 接续后由宿主用完整上下文与 current-host catalog 生成 typed proposal，再调用只读
-  `ags_route_request`；验证是协议 gate，仅当 Skill Resolver / 原任务卡精确选择 `superpowers` 时才读取其
+  `ags_decide`；验证是协议 gate，仅当 Skill Resolver / 原任务卡精确选择 `superpowers` 时才读取其
   `verification-before-completion` playbook。Continuation 自由文本不得携带
   `[skill: ...]` 元数据。
 ```

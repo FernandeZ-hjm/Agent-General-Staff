@@ -1,192 +1,112 @@
-# AGS MCP: Host Initialization Adapter
+# AGS MCP contract v2
 
-> AGS MCP 是宿主初始化、只读治理解析、workspace lifecycle 和显式 maintenance/apply 的连接适配器，不是自然语言 Agent。
+AGS v0.4.20 exposes exactly two MCP tools:
 
-## Architecture
+| Tool | Meaning |
+|---|---|
+| `ags_decide` | Validate one typed Operation, run a read-only Operation immediately, or return a sealed plan and single-use `action_ref`. |
+| `ags_apply` | Consume an `action_ref` in the exact authenticated binding that created it. |
+
+There is no preflight tool, route tool, maintenance tool, resource-as-control
+path, or compatibility translation. Natural language stays in the host. Both
+tools accept only contract-v2 typed input with unknown fields denied.
+
+## Process model
+
+`ags-mcp stdio` is a lightweight transport and `ags-mcp daemon --workspace
+<path>` is the private per-workspace service child. The stdio process does not
+own policy state and does not have a mutable current workspace.
 
 ```text
-Human request
-  → Host keeps full conversation context
-  → MCP stdio adapter
-  → connect-or-start unique workspace AGS daemon
-  → per-client session + shared workspace capability state
-  → read ags://capabilities/current-host
-  → HostRouteProposal
-  → ags_route_request (read-only resolve)
-  → DirectResponse | exact Skill | host-native edit | server-held action
-  → ags_apply_action(lease_id, action_id) only for a held action
+one stdio connection
+  -> request-scoped WorkspaceResolver
+  -> canonical workspace A -> authenticated session A -> control plane A
+  -> canonical workspace B -> authenticated session B -> control plane B
 ```
 
-自然语言语义选择只在宿主发生。Compiler、Policy、Gate、Runner、Capability Resolver 和 MCP server 都不重新解释原始文本。
+After the first authenticated handshake, the connection reuses the independent
+session for that canonical workspace. A→B→A therefore reuses A without moving
+or invalidating B. Daemon process cwd is never a governance identity input.
 
-daemon 的唯一实例键只包含工作区 canonical path，不包含 host。Codex、Claude Code、
-Cursor、CodeBuddy-Code、OMP 等宿主只是同一工作区服务的客户端；每个客户端连接仍拥有独立
-`session_id`、preflight binding、route generation 与 DecisionLease。stdio 进程仅转发
-JSON-RPC，不保存治理状态。客户端断开不会终止 daemon；无活动会话超过 idle window
-后才回收。新 adapter 发现 executable hash 变化时，必须先停止旧 daemon，再启动新
-版本，禁止同一工作区的新旧 daemon 并存。daemon 只监听 loopback ephemeral
-endpoint；registry/token 与静态 host capability snapshot 位于用户私有 runtime 目录，使用私有
-权限、token handshake、非符号链接目录和原子替换。
+The private authenticated TCP transport is a bounded message channel. Every
+handshake, reply and persistent control frame is limited to 1 MiB. Crossing the
+limit terminates that private connection immediately without waiting for a
+newline, EOF or drain; an authenticated server emits one structured terminal
+error when possible. This is separate from public stdio JSON-RPC framing, which
+may drain and resynchronize after rejecting an oversized line.
 
-静态 snapshot 的 Skill catalog 同时声明 `routing_surface`。只有 `skill_target` 条目
-可以进入 typed proposal；`host_command` 条目（例如 `ags-setup`）由宿主按
-`routing_hint` 直接调用 CLI，不经 MCP 二次路由。若误交为 `SkillTarget`，
-route 返回 `skill_target_kind_mismatch`，而不是暗示安装或快照需要刷新。
-同一 snapshot 还包含 `mcp_catalog` 与 `active_mcps`：只有显式刷新时被宿主
-只读探针确认为 registered + active、且 registry 标记 routable 的 MCP 才可进入
-`McpTarget`。AGS 只校验 server/tool 标识并返回 host-native dispatch，不代理
-第三方 MCP。
+## Workspace resolution
 
-route 与 apply 只消费 daemon 已加载 snapshot 内封存的 registry/snapshot hash，
-不得重新读取现场 registry、overlay、PATH 或宿主技能目录。
+For `ags_decide`, resolution order is fixed:
 
-## Initialization Gate
+1. `operation.request.context.workspace`;
+2. one unique declared MCP root;
+3. adapter cwd when it is inside exactly one AGS workspace;
+4. otherwise `workspace_required` or `workspace_ambiguous`.
 
-任何 AGS 场景的第一调用必须是 `ags_preflight(agent, target?)`；MCP 不可用时才使用 `ags session preflight --for <agent> --target <path>`。preflight 绑定当前 daemon client session 的 host/target，并返回 current-host resource URI、`snapshot_hash` 与 `workspace_service` 身份。preflight target 必须属于 daemon 的 canonical workspace；跨工作区 target fail closed。新 preflight 会清空该 session 的所有 held actions。preflight 只读取 daemon 启动后首次加载的静态 host snapshot，不扫描或比较动态目录，也不自动写快照。快照缺失、损坏或内部 hash 不一致时返回结构化 warning 与显式刷新 argv，并对 `SkillTarget` / `McpTarget` / `MachineCliTarget` fail closed；`DirectResponse` 仍可用。
+MCP roots are discovery hints, never an authorization boundary. A client declares
+root support only through `initialize.params.capabilities.roots`. After returning
+the initialize response, the server waits for `notifications/initialized`, sends
+one correlated `roots/list` request, and accepts only unique canonical `file://`
+roots. A negotiated `notifications/roots/list_changed` refresh is coalesced while
+one request is pending. A selected root only supplies a candidate path to the
+resolver; canonical project facts, registry identity, and the authenticated
+daemon handshake must still mint the `WorkspaceBinding`. Private
+`initialize.params.roots` input is ignored.
 
-尚未初始化的项目不会进入普通治理态，而会建立受限
-`bootstrap_required` 绑定。该绑定只允许 `ags_onboarding_plan` 与
-`ags_apply_action`；route、task、policy、verify 和 phase prompts 继续 fail closed。
-任一 onboarding apply 后旧绑定和全部 lease 失效，宿主必须重新 preflight。
+An explicit workspace is resolved independently of declared roots and remains
+usable in every discovery state. While a negotiated `roots/list` is pending,
+only an explicit workspace is accepted; an omitted workspace returns the
+structured pending error and does not fall back to adapter cwd. Once discovery
+is unsupported, unavailable, or available with no valid roots, an omitted
+workspace may use the allowed adapter-cwd fallback. One valid root wins before
+cwd; multiple valid roots are ambiguous and do not fall back. If neither a root
+nor cwd resolves, the server returns the structured unavailable or required
+error instead of guessing. Client errors, invalid root results, unknown response
+IDs, and out-of-order root notifications do not terminate stdio. There is no
+HOME, recent-project, fuzzy-path, or managed-projects fallback.
 
-## MCP Capabilities
+A matching roots response must contain exactly one of a typed `result` or typed
+JSON-RPC `error`. Only an explicit matching error transitions discovery to
+unavailable. Unknown or mismatched IDs and malformed matching responses do not
+mutate discovery state; invalid roots remain untrusted and the request stays
+pending rather than becoming available.
 
-### Tools (14)
+`ags_apply` accepts the sealed `action_ref` and optional typed host outcome; it
+does not accept a workspace. The stored action route remains sealed to
+connection, normalized HostId, canonical workspace, project-facts hash, registry
+key, authenticated session, policy, payload, and plan. Wrong workspace, host,
+connection, session, replay, or tampering fails closed. Transport and daemon
+errors, plus an `awaiting-outcome` / `host_outcome_required` response, retain the
+route. A terminal route is deleted only after its bounded response is delivered
+successfully, so a post-effect output-budget failure cannot lose the receipt.
 
-| Tool | 副作用 | 作用 |
-|---|---|---|
-| `ags_preflight` | 只读 | 建立连接的宿主/项目绑定 |
-| `ags_protocol_status` | 只读 | 读取协议状态 |
-| `ags_agent_instructions` | 只读 | 读取宿主指令 |
-| `ags_onboarding_plan` | 严格只读 | 评估 public profile，并为可逐项确认的动作建立 session 内引用 |
-| `ags_task_validate` | 只读 | 验证现有任务卡 |
-| `ags_policy_resolve` | 只读 | 解析已验证任务卡策略 |
-| `ags_route_request` | 严格只读 | 校验 typed proposal，解析精确 Skill/MCP 并按需持有动作引用 |
-| `ags_apply_action` | effectful | 一次性消费当前 daemon client session 内的固定动作 |
-| `ags_maintenance_status` | 只读 | 读取精确 Plan 与回执状态 |
-| `ags_maintenance_plan` | 只读/候选获取 | 生成绑定当前连接和不可变来源的 Plan；不激活 |
-| `ags_maintenance_apply` | effectful | 仅应用精确 plan hash 和已确认风险 |
-| `ags_maintenance_verify` | 只读 | 验证当前 body、快照、preflight 与精确路由 |
-| `ags_maintenance_recover` | effectful | 恢复该 Plan 的旧 body、索引、快照和指针 |
+## Workspace authority
 
-`ags_apply_action` 是治理路由内唯一 effectful 工具；maintenance apply/recover
-是独立的 typed 维护事务入口，不能执行 Host 自由文本或任意命令。所有资源均只读。
-真正的 local verification 必须作为 `MachineCliTarget(ProjectVerify)` 经
-`ags_route_request → DecisionLease → ags_apply_action` 执行。
+Canonical path, governed project facts, registry ownership, daemon process
+identity, token-authenticated handshake, and the minted session together form a
+`WorkspaceBinding`. `managed-projects` may help a human discover projects but
+is not identity authority.
 
-### `ags_onboarding_plan`
+Private `initialize.params.roots` input is ignored. Standard MCP roots are
+obtained only through the negotiated `roots/list` capability and remain
+discovery hints, never workspace authorization.
 
-该工具只消费 preflight 绑定，不接受路径、命令或 profile 重传。它固定读取
-public onboarding profile，显式排除 EvoMap、GEP、private runtime 和 personal
-skill packs，返回 `absent`、`installed-not-visible`、`visible-not-ready`、
-`active-ready`、`blocked-untrusted-source`、`blocked-missing-integrity` 或
-`unsupported-host`。
+The external control-plane Interface is `open`, `decide`, and `apply`.
+Transport adapters do not assemble commands, invoke nested `ags`, or orchestrate
+domain modules. Read-only Operations prove protected state unchanged. Effectful
+Operations produce a sealed plan first; only `ags_apply` begins effects.
 
-可执行项目只返回 `item_id + action_id`，不返回可篡改 argv。用户选择一个项目后，
-`ags_apply_action(lease_id, action_id)` 才运行既定的项目 init、官方宿主 registrar、
-固定 npm MCP 注册或明确的 CLI 安装。第三方 Skill 只展示静态建议，不进入 apply。
-一次 lease 只能选择一个项目。
+## Tool and output budgets
 
-### `ags_route_request`
+- `tools/list` is exactly the two tools above.
+- Combined tool input schemas are at most 8 KiB.
+- Default JSON responses are at most 16 KiB.
+- Large evidence is stored as an integrity-bound artifact and returned through
+  a verified `details_uri`; a URI is never emitted without a readable artifact.
+  The same authenticated connection reads that URI with standard MCP
+  `resources/read`. The internal `details.read` Operation is not accepted by
+  `ags_decide` and is never part of the public tool union.
 
-输入只有 typed proposal：
-
-```json
-{
-  "proposal": {
-    "schema_version": "0.3.6-host-route-proposal",
-    "request_fingerprint": "sha256:...",
-    "phase": "execution",
-    "solution_state": "confirmed",
-    "execution_authority": "task_card_handoff",
-    "scope_hash": "sha256:...",
-    "targets": [
-      {
-        "kind": "machine_cli",
-        "capability": "task_prepare_execution",
-        "input": {"kind": "task_card", "content": "## 任务卡\n..."}
-      }
-    ]
-  }
-}
-```
-
-旧 `{ "request": "..." }` 稳定返回 `raw_request_unsupported`。字段缺失返回结构化错误；绝不回退关键词分类。调用前后文件树与进程计数必须不变。
-
-输出 `RouteResolution`，包含 `governance_status`、`proposal_hash`、preflight host/target、精确 Skill/MCP selection 或阻断理由，以及可选 `DecisionLease` 证据。`McpTarget` 返回 `HOST_EXECUTION_REQUIRED` 与 host-native server/tool 元数据，不生成 lease；direct-edit 只返回 host-native action；AGS MCP 不代理第三方 MCP，也不代写项目。
-
-### `ags_apply_action`
-
-```json
-{
-  "lease_id": "lease-...",
-  "action_id": "action-...",
-  "outcome": {"status": "succeeded", "quality": 90}
-}
-```
-
-调用方不得重传 capability、input、argv 或 action payload。服务器只执行 route 时已固定的动作。成功或失败尝试均消费租约；重放、跨连接、hash 漂移、host/target 冲突或篡改都拒绝。
-
-SkillTarget 在不与 MachineCli 共存时返回受控 outcome action。`outcome=abandoned`
-加相同 `request_fingerprint` 的后续 decision 构成 route-correction evidence；
-它只供离线评估，不修改静态 catalog 或生产路由。
-
-### Fixed Machine CLI mappings
-
-| Capability | 固定入口 |
-|---|---|
-| `TaskCompile` | `confirmed_handoff_contract.handoff_source=explicit_handoff` → `ags task compile - --format json --output report --task-card-requested --confirmed-handoff-contract`; `host_plan_mode` → 同一固定入口改用 `--host-plan-mode-final` |
-| `TaskPrepareExecution` | `ags run - --format json` |
-| `TaskValidate` | `ags task validate -` |
-| `PolicyResolve` | `ags policy resolve - --format json` |
-| `ProjectVerify` | `ags verify --scope local --format json --target <preflight-target>` |
-| `SkillTagsVerify` | `ags gate skill-tags - --target <preflight-target> --for <preflight-host> --format json` |
-| `ReceiptVerify` | `ags receipt verify - --format json` |
-
-Machine CLI 子进程的 cwd 固定为 preflight-bound target，因此相对本地 Skill
-路径不能按 MCP server 自身启动目录重新解释。
-每个 capability 只接受与其匹配的 `TypedCliInput`；route 在持有动作前校验，
-apply 在生成 argv 前再次校验。实现使用固定 argv 与 stdin，禁止 shell 和任意
-命令字符串。
-
-### Resources (8)
-
-新增 `ags://capabilities/current-host`：preflight-bound、只读的 `HostCapabilitySnapshot`。经显式 setup/update 或 `ags capability snapshot --write` 原子写出的静态 snapshot，由工作区 daemon 每宿主只读取和校验一次；不存在 workspace capability bundle、bundle epoch 或请求期重新扫描。resource read、route 和 apply 复用同一内存对象与 `snapshot_hash`。宿主提交精确 `skill_id` / `entrypoint` / `snapshot_hash`。第三方能力是否 routable/ready、认证、health 与宿主可见性均是刷新时冻结的事实；实际调用失败作为普通执行失败记录，不会隐式重建快照。磁盘快照刷新后须重启 daemon/重新连接再 preflight，旧 session 与 lease 随服务重启失效。快照缺失或内部校验失败时，preflight 的 `capability_catalog.refresh.argv` 给出显式机器本地刷新参数。其他资源为全局内核、任务协议、路由、模板、runtime adapter 与 Evolver 边界文档。
-
-## DecisionLease
-
-Lease 只存在于当前 daemon client session，绑定 `session_id`、preflight host/target、proposal/scope/registry/snapshot/policy hash。它不能跨 Codex/OMP/Claude Code/Cursor session 使用。没有任意 TTL；生命周期由 session 与事实绑定决定。新 route、新 preflight、连接重置、绑定变化或消费都会使旧 lease 失效。
-
-Onboarding lease 绑定 public profile 的完整 `plan_hash`、item、host 与 target；
-不借用尚未存在的 capability snapshot。apply 后强制重新 preflight。
-
-## Runner Boundary
-
-`TaskPrepareExecution` 只返回 LaunchPlan。Runner 不启动宿主、不验证任务执行结果、不写最终 receipt，也不声称任务完成；允许状态必须是 `HOST_EXECUTION_REQUIRED`。
-
-## EvoMap Boundary
-
-AGS MCP 与 EvoMap MCP 是平行 peers。EvoMap 只在方案形成时提供 advisory recall，不影响 route admission、task level、permission、review、verification 或 release gate。
-
-## Server Info
-
-```json
-{"name":"ags-mcp","version":"0.4.0"}
-```
-
-## Verification
-
-```bash
-cargo test -p ags-governance-decision
-cargo test -p ags-capability-governance
-cargo test -p ags-mcp
-cargo test --workspace
-ags verify --scope promotion --public-root <public-worktree> --format json
-```
-
-## Version History
-
-| Version | Date | Change |
-|---|---|---|
-| 0.3.0 | 2026-07-19 | 宿主语义 typed proposal、只读 route、连接内 DecisionLease、显式 apply、current-host 技能目录。 |
-| 0.2.8 | 2026-07-16 | 关键词 Request Router、闭集 SkillDemand、固定 argv MachineCli。 |
+Server information reports product version `0.4.20` and contract v2. Older MCP
+tool names, schema IDs, wire envelopes, actions, and leases are invalid input.

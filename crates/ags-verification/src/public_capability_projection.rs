@@ -18,11 +18,11 @@ pub const PUBLIC_CAPABILITY_GENERATED_FILES: &[&str] = &[
     "manifests/mcp-registry.yaml",
     "manifests/skills-registry.yaml",
     "manifests/suite.yaml",
-    "templates/command-skills/ags-agents/SKILL.md",
+    "templates/command-skills/ags-agent/SKILL.md",
     "templates/command-skills/ags-doctor/SKILL.md",
     "templates/command-skills/ags-init/SKILL.md",
     "templates/command-skills/ags-setup/SKILL.md",
-    "templates/command-skills/ags-skill/SKILL.md",
+    "templates/command-skills/ags-govern/SKILL.md",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -169,7 +169,7 @@ struct PublicSuitePackage {
 struct PublicSuiteInstall {
     transport: &'static str,
     command: &'static str,
-    args: [&'static str; 4],
+    args: Vec<&'static str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -367,8 +367,8 @@ fn render_projection(source_root: &Path, target_root: &Path) -> RenderedProjecti
                 },
                 install: PublicSuiteInstall {
                     transport: "stdio",
-                    command: "ags",
-                    args: ["mcp", "serve", "--transport", "stdio"],
+                    command: "ags-mcp",
+                    args: vec![],
                 },
             }],
             mcps: Vec::new(),
@@ -588,7 +588,7 @@ fn render_bundled_registry(
                 bundled.id, contract.name, contract.profile, contract.local_path
             ));
         }
-        let expected_routing = if bundled.id == "ags-skill" {
+        let expected_routing = if bundled.id == "ags-govern" {
             ("routable", "skill_target")
         } else {
             ("not-routable", "host_command")
@@ -974,14 +974,14 @@ mod tests {
         let target = TempDir::new().unwrap();
         write(
             &source.path().join("Cargo.toml"),
-            "[workspace]\n[workspace.package]\nversion = \"0.4.13\"\nlicense = \"GPL-3.0-only\"\n",
+            "[workspace]\n[workspace.package]\nversion = \"0.4.20\"\nlicense = \"GPL-3.0-only\"\n",
         );
         let ids = [
-            "ags-agents",
+            "ags-agent",
             "ags-doctor",
             "ags-init",
             "ags-setup",
-            "ags-skill",
+            "ags-govern",
         ];
         for id in ids {
             write(
@@ -1007,7 +1007,7 @@ mod tests {
                 "registry:\n  schema_version: test\nskills:\n{}",
                 ids.iter()
                     .map(|id| {
-                        let (state, surface) = if *id == "ags-skill" {
+                        let (state, surface) = if *id == "ags-govern" {
                             ("routable", "skill_target")
                         } else {
                             ("not-routable", "host_command")
@@ -1066,7 +1066,7 @@ mod tests {
         assert!(suite.contains("install_state: not-installed"));
         assert!(registry.contains("name: ags-setup"));
         assert!(registry.contains("routing_surface: host_command"));
-        assert!(registry.contains("name: ags-skill"));
+        assert!(registry.contains("name: ags-govern"));
         assert!(registry.contains("routing_surface: skill_target"));
         assert!(!registry.contains("name: diagnosing-bugs"));
         let mcp_registry =

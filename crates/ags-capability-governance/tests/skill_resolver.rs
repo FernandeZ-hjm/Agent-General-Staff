@@ -2,12 +2,26 @@ use ags_capability_governance::{
     build_capability_snapshot_with_runtime_home, load_static_snapshot,
     resolve_capability_authority_root, resolve_mcp, resolve_skill, snapshot_path, ActiveMcp,
     ActiveMcpTable, ActiveSkill, ActiveSkillTable, AuthState, AvailabilityState,
-    CapabilitySnapshot, GovernanceState, ResolveError, SkillCard, SkillSourceKind, SnapshotError,
-    HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION,
+    CapabilitySnapshot, GovernanceState, ResolveError, SkillBodyRef, SkillCard, SkillSourceKind,
+    SnapshotError, HOST_CAPABILITY_SNAPSHOT_SCHEMA_VERSION,
 };
 
 fn temp_path(name: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("ags-skill-resolver-{name}-{}", std::process::id()))
+    std::env::temp_dir().join(format!("ags-govern-resolver-{name}-{}", std::process::id()))
+}
+
+fn seed_host_registration(runtime_home: &std::path::Path, host: &str) {
+    let registration = ags_host_integration::HostRegistration::new(
+        ags_host_integration::HostId::new(host).unwrap(),
+        ags_host_integration::AgentSurface::Hybrid,
+        Some(host.to_string()),
+    );
+    let path = runtime_home
+        .join("hosts")
+        .join(host)
+        .join("registration.json");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, serde_json::to_vec_pretty(&registration).unwrap()).unwrap();
 }
 
 #[test]
@@ -67,6 +81,7 @@ fn architecture_skill() -> ActiveSkill {
         allowed_entrypoints: vec!["brainstorming".to_string()],
         intent_tags: vec!["system-architecture".to_string()],
         source_hash: "sha256:source".to_string(),
+        body_ref: SkillBodyRef::new("superpowers", "source", "sha256:source"),
     }
 }
 
@@ -206,6 +221,7 @@ fn snapshot_registers_optional_parent_entrypoints_without_activating_an_uninstal
         std::fs::remove_dir(&visible_parent).unwrap();
         std::os::unix::fs::symlink(&canonical_parent, &visible_parent).unwrap();
     }
+    seed_host_registration(&runtime, "codex");
 
     let snapshot = ags_capability_governance::build_capability_snapshot_with_roots(
         &root, "codex", &runtime, &home,
@@ -308,10 +324,16 @@ fn duplicate_skill_identifier_is_rejected() {
 }
 
 fn snapshot() -> CapabilitySnapshot {
+    let registration = ags_host_integration::HostRegistration::new(
+        ags_host_integration::HostId::new("codex").unwrap(),
+        ags_host_integration::AgentSurface::Hybrid,
+        Some("codex".to_string()),
+    );
     CapabilitySnapshot::new(
-        "codex",
+        &registration,
         "sha256:registry-a",
-        "sha256:runtime-a",
+        "sha256:runtime-observation-a",
+        "sha256:installed-index-a",
         vec![architecture_card()],
         Vec::new(),
         "https://example.com/third-party-capabilities.yaml",
@@ -363,6 +385,7 @@ fn host_scoped_snapshots_coexist_and_validate_independently() {
     let _ = std::fs::remove_dir_all(&runtime);
 
     for host in ["codex", "claude-code"] {
+        seed_host_registration(&runtime, host);
         let snapshot = build_capability_snapshot_with_runtime_home(&root, host, &runtime).unwrap();
         let path = snapshot_path(&runtime, host);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -397,6 +420,7 @@ fn current_skill_body_change_waits_for_explicit_snapshot_refresh() {
     .unwrap();
     std::fs::create_dir_all(body.join("scripts")).unwrap();
     std::fs::write(body.join("scripts/run.sh"), "printf first\n").unwrap();
+    seed_host_registration(&runtime, "codex");
 
     let snapshot = ags_capability_governance::build_capability_snapshot_with_roots(
         &root, "codex", &runtime, &home,
@@ -438,6 +462,7 @@ fn cursor_catalog_discovers_shared_user_skills() {
         "---\nname: cursor-shared-demo\ndescription: shared cursor skill\nintent_tags: [cursor]\n---\n",
     )
     .unwrap();
+    seed_host_registration(&runtime, "cursor");
 
     let snapshot = ags_capability_governance::build_capability_snapshot_with_roots(
         &root, "cursor", &runtime, &home,
@@ -506,6 +531,7 @@ fn catalog_unifies_all_enabled_sources_and_excludes_disabled_plugin_cache() {
         &home.join(".codex/plugins/cache/market/disabled-demo/1.0/skills/catalog-plugin-disabled"),
         "catalog-plugin-disabled",
     );
+    seed_host_registration(&runtime, "codex");
 
     let snapshot = ags_capability_governance::build_capability_snapshot_with_roots(
         &root, "codex", &runtime, &home,

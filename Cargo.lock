@@ -4,11 +4,12 @@ version = 4
 
 [[package]]
 name = "ags-capability-governance"
-version = "0.4.16"
+version = "0.4.20"
 dependencies = [
  "ags-governance-decision",
  "ags-host-integration",
  "ags-platform",
+ "rustix",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -17,21 +18,35 @@ dependencies = [
 
 [[package]]
 name = "ags-cli"
-version = "0.4.16"
+version = "0.4.20"
+dependencies = [
+ "ags-control-plane",
+ "ags-host-integration",
+ "ags-session",
+ "ags-verification",
+ "clap",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "ags-control-plane"
+version = "0.4.20"
 dependencies = [
  "ags-capability-governance",
  "ags-evidence",
  "ags-governance-decision",
  "ags-host-integration",
- "ags-lifecycle",
- "ags-mcp",
  "ags-platform",
- "ags-session",
  "ags-task-contract",
  "ags-verification",
  "ags-workspace-facts",
- "clap",
- "libc",
+ "blake3",
+ "getrandom",
+ "rustix",
+ "schemars",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -40,7 +55,7 @@ dependencies = [
 
 [[package]]
 name = "ags-evidence"
-version = "0.4.16"
+version = "0.4.20"
 dependencies = [
  "ags-governance-decision",
  "ags-platform",
@@ -52,7 +67,7 @@ dependencies = [
 
 [[package]]
 name = "ags-governance-decision"
-version = "0.4.16"
+version = "0.4.20"
 dependencies = [
  "ags-platform",
  "serde",
@@ -61,44 +76,26 @@ dependencies = [
 
 [[package]]
 name = "ags-host-integration"
-version = "0.4.16"
+version = "0.4.20"
 dependencies = [
  "ags-platform",
  "serde",
  "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "ags-lifecycle"
-version = "0.4.16"
-dependencies = [
- "ags-capability-governance",
- "ags-evidence",
- "ags-host-integration",
- "ags-platform",
- "ags-workspace-facts",
- "serde",
- "serde_json",
- "serde_yaml",
  "tempfile",
 ]
 
 [[package]]
 name = "ags-mcp"
-version = "0.4.16"
+version = "0.4.20"
 dependencies = [
- "ags-capability-governance",
- "ags-evidence",
- "ags-governance-decision",
+ "ags-cli",
+ "ags-control-plane",
  "ags-host-integration",
- "ags-lifecycle",
  "ags-platform",
  "ags-session",
- "ags-task-contract",
  "ags-verification",
- "ags-workspace-facts",
- "getrandom",
+ "clap",
+ "libc",
  "serde",
  "serde_json",
  "tempfile",
@@ -106,7 +103,7 @@ dependencies = [
 
 [[package]]
 name = "ags-platform"
-version = "0.4.16"
+version = "0.4.20"
 dependencies = [
  "blake3",
  "sha2",
@@ -115,9 +112,10 @@ dependencies = [
 
 [[package]]
 name = "ags-session"
-version = "0.4.16"
+version = "0.4.20"
 dependencies = [
  "ags-capability-governance",
+ "ags-host-integration",
  "ags-platform",
  "getrandom",
  "libc",
@@ -129,7 +127,7 @@ dependencies = [
 
 [[package]]
 name = "ags-task-contract"
-version = "0.4.16"
+version = "0.4.20"
 dependencies = [
  "ags-capability-governance",
  "ags-governance-decision",
@@ -140,26 +138,30 @@ dependencies = [
 
 [[package]]
 name = "ags-verification"
-version = "0.4.16"
+version = "0.4.20"
 dependencies = [
  "ags-capability-governance",
+ "ags-evidence",
  "ags-governance-decision",
  "ags-host-integration",
- "ags-lifecycle",
  "ags-platform",
  "ags-session",
  "ags-task-contract",
  "ags-workspace-facts",
+ "libc",
+ "rustix",
+ "schemars",
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "tempfile",
  "toml",
 ]
 
 [[package]]
 name = "ags-workspace-facts"
-version = "0.4.16"
+version = "0.4.20"
 dependencies = [
  "ags-governance-decision",
  "ags-host-integration",
@@ -312,7 +314,7 @@ dependencies = [
  "heck",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -370,6 +372,12 @@ dependencies = [
  "block-buffer",
  "crypto-common",
 ]
+
+[[package]]
+name = "dyn-clone"
+version = "1.0.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "equivalent"
@@ -528,7 +536,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
  "proc-macro2",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -556,6 +564,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
+name = "ref-cast"
+version = "1.0.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "216e8f773d7923bcba9ceb86a86c93cabb3903a11872fc3f138c49630e50b96d"
+dependencies = [
+ "ref-cast-impl",
+]
+
+[[package]]
+name = "ref-cast-impl"
+version = "1.0.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c9283685feec7d69af75fb0e858d5e7378f33fe4fc699383b2916ab9273e03c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
+]
+
+[[package]]
 name = "rustix"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -573,6 +601,31 @@ name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
+
+[[package]]
+name = "schemars"
+version = "1.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "687274d293b6cdc6e73e0fee520bf2049650090d7164f87672d212a3c530cf4a"
+dependencies = [
+ "dyn-clone",
+ "ref-cast",
+ "schemars_derive",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "schemars_derive"
+version = "1.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d98c67716b46af2f0b8cf752abc930f6f9aecfbf671ecfb531db8a31dbe4e2ba"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde_derive_internals",
+ "syn 3.0.3",
+]
 
 [[package]]
 name = "semver"
@@ -607,7 +660,18 @@ checksum = "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "serde_derive_internals"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f852137cce035d6a4df67ccce505ff6b3e9fd3a10e3e52b24dc71e650bb1a9bd"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -673,6 +737,17 @@ name = "syn"
 version = "2.0.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e665b8803e7b1d2a727f4023456bbbbe74da67099c585258af0ad9c5013b9b99"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
+name = "syn"
+version = "3.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53e9bae58849f64dfa4f5d5ae372c8341f7305f82a3868709269343628b659a3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -881,7 +956,7 @@ dependencies = [
  "heck",
  "indexmap",
  "prettyplease",
- "syn",
+ "syn 2.0.117",
  "wasm-metadata",
  "wit-bindgen-core",
  "wit-component",
@@ -897,7 +972,7 @@ dependencies = [
  "prettyplease",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
  "wit-bindgen-core",
  "wit-bindgen-rust",
 ]

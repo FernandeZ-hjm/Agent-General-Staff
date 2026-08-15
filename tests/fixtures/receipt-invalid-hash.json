@@ -1,9 +1,12 @@
 {
-  "schema_version": "0.3.6-task-receipt",
+  "schema_version": "ags://schema/contract/v2/task-receipt",
   "receipt_id": "receipt-00deadbeef00",
   "timestamp": "unix-0",
   "task_card_hash": "00deadbeef000000000000000000000000000000000000000000000000000000",
+  "launch_plan_hash": "1111111111111111111111111111111111111111111111111111111111111111",
   "task_card_path": "tests/fixtures/valid-full.md",
+  "launch_plan_path": "tests/fixtures/launch-plan-invalid.json",
+  "delivery_report_path": "tests/fixtures/delivery-report-invalid.md",
   "gate_result": {
     "decision": "allow"
   },
@@ -23,5 +26,12 @@
       "exit_code": 0,
       "output_hash": ""
     }
-  ]
+  ],
+  "delivery_report_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+  "execution_footprint": {
+    "execution_mode_used": "fanout-in-card",
+    "execution_topology_used": "worktree",
+    "delegation_used": "yes"
+  },
+  "closure_status": "completed"
 }

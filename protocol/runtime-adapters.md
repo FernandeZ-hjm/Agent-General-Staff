@@ -1,236 +1,101 @@
-# Runtime Adapters
+# Runtime adapters — contract v2
 
-AGS has one Rust Host Adapter and a table of host protocol descriptions. Codex,
-Claude Code, Cursor, and OMP are not separate policy implementations.
-
-```text
-host-native event or MCP probe
-        │
-        ▼
-AgentPlatformSpec (data)
-        │
-        ▼
-HostAdapter (one Rust implementation)
-        │
-        ├─ MCP status/probe normalization
-        ├─ lifecycle event normalization
-        └─ LaunchPlan handoff
-```
-
-Host-specific code may translate transport envelopes. It must not parse task
-cards, calculate authority, compare artifact hashes, generate receipts, or
-implement closure policy.
-
-## Canonical Task Authority
-
-Every task card declares three independent fields:
+AGS v0.4.20 admits any normalized Generic Agent. Official integrations are
+optional protocol probes and lifecycle codecs, not an allowlist.
 
 ```text
-Execution mode: plan-only | single-writer | fanout-in-card | fanout-cross-card
-Execution topology: single | parallel | worktree
-Delegation planning: no | yes
+Generic Agent (any normalized HostId)
+  + surface: cli | mcp | hybrid
+  -> CLI adapter (`ags`) and/or MCP adapter (`ags-mcp`)
+  -> authenticated workspace control plane
 ```
 
-`Execution mode` is the writer-authority lattice:
+The host keeps conversation context and performs all natural-language
+interpretation. AGS accepts one typed Operation. A host adapter may translate a
+native envelope, but it must not implement policy, workspace identity, plan
+sealing, verification, recovery, or receipts.
 
-```text
-plan-only < single-writer < fanout-in-card < fanout-cross-card
-```
+## Executables
 
-- `plan-only`: no filesystem or external mutation.
-- `single-writer`: one writer owns all mutation.
-- `fanout-in-card`: multiple writers are allowed only within the current card.
-- `fanout-cross-card`: the current card may coordinate separately closed cards.
+- `ags`: the human and Machine CLI. `--format json` changes presentation only;
+  it does not select another implementation.
+- `ags-mcp stdio`: global or project-scoped MCP transport.
+- `ags-mcp daemon --workspace <path>`: private per-workspace child mode.
+- `ags-host lifecycle ...`: native lifecycle callback adapter.
 
-`Execution topology` is the maximum execution shape:
+Transport and lifecycle are not product subcommands. There is no `ags mcp` or
+`ags host` command tree.
 
-- `single` permits only single.
-- `parallel` permits single or parallel.
-- `worktree` permits single, parallel, or worktree.
+## Generic Agent admission
 
-`Delegation planning: yes` permits designing a delegation plan. It does not
-create writers and does not upgrade `Execution mode`.
+`ags agent register --host <id> --surface cli|mcp|hybrid` accepts any HostId
+that normalizes to the canonical lowercase dash form. Registration is an
+AGS-owned Transaction: decide seals the exact metadata write set, and apply
+performs verification, receipt, and recover/risk handling in the authenticated
+workspace binding. It does not require a host outcome. `ags agent probe` is
+read-only.
 
-The following combinations fail closed:
+Codex, Claude Code, Cursor, OMP, and CodeBuddy may have incremental probe or
+lifecycle metadata. Hermes and unfamiliar agents use the same Generic Agent
+contract; they are not downgraded to an unofficial security model.
 
-- `plan-only` with topology other than `single`.
-- `plan-only` or `single-writer` with actual delegation.
-- fanout requested by task text without a `fanout-*` execution mode.
-- subtask orchestration without `parallel` or `worktree`.
+Capability snapshot absence or staleness blocks only exact Skill/MCP selection.
+It does not block setup, init, doctor, check, test, schema, or Generic Agent
+admission.
 
-`Execution effort` remains a reasoning-intensity field:
+## External ReadOnly execution
 
-```text
-low | normal | high | exhaustive
-```
+An external ReadOnly child uses the same fail-closed runner as LocalExecution
+but receives zero declared workspace or host-state writable roots. `zero-write`
+means no mutation of the canonical workspace, Git state, AGS state, project
+configuration, host configuration, credentials, registry, cache, or any other
+pre-existing filesystem object. The runner may provide one fresh isolated
+scratch directory for process-internal temporary files; it is not an authorized
+workspace/host root, is never projected into a result, and is destroyed before
+closure. Complete before/after snapshots are audit evidence only and never the
+enforcement mechanism.
 
-It never changes authority, topology, delegation, review, or launch arguments.
-Task level (`Light`, `Medium`, `Heavy`) is a risk and review tier only.
+If the platform cannot enforce filesystem containment and non-evadable process
+membership, the adapter returns structured `sandbox_unavailable` and directs
+the caller to a policy-approved HostDelegated outcome. It never runs the child
+unsandboxed and never converts a selected-path digest comparison into authority.
+On macOS, ReadOnly remains single-process: the Seatbelt profile permits the
+direct exec but denies `process-fork`, closing the double-fork escape. A
+ReadOnly command that requires child processes must use a policy-approved
+HostDelegated outcome instead.
 
-## LaunchPlan
+## Task-card authority and playbooks
 
-`ags run` validates the card and resolves policy, then emits a
-`0.3.6-launch-plan`. It prepares execution but does not start a host.
+The validated task card is the execution authority. Its `Execution mode`,
+`Execution topology`, `Delegation planning`, mutation boundary, and explicit
+commit prohibition override playbook workflow defaults. A playbook may narrow
+authority but cannot serialize an authorized parallel topology, require lane
+commits, or add external writes.
 
-Required binding fields:
+For `fanout-in-card` plus `worktree`, independent lanes may run concurrently in
+separate worktrees and return uncommitted diffs and evidence to the main
+executor. Only the main executor integrates. A task-card no-commit rule means
+no lane commit, integration commit, or temporary commit. Heavy work still
+requires an independent reviewer who did not implement the reviewed diff.
 
-- `task_card_hash`
-- `launch_plan_hash`
-- `effective_execution_mode`
-- `effective_execution_topology`
-- `delegation_planning`
-- resolved launch arguments
-- downgrade reasons
+## Lifecycle adapter
 
-`launch_plan_hash` is SHA-256 over deterministic LaunchPlan body JSON excluding
-the hash itself and any timestamp or random value. The same validated input and
-policy produce the same plan and hash.
-
-Launch arguments come only from the resolved policy. A non-writing mode must
-not emit `--parallel`, `--worktree`, `--headless`, or another write-capable
-flag.
-
-## Downscope at Closure
-
-The delivery report declares actual use:
-
-```text
-Closure schema: 1.1
-task-card-hash:
-launch-plan-hash:
-execution-mode-used:
-execution-topology-used:
-delegation-used: none | in-card | cross-card
-```
-
-Actual authority may only shrink:
-
-- execution mode used must be no greater than the effective mode;
-- topology used must be no greater than the effective topology;
-- `plan-only` and `single-writer` require `delegation-used: none`;
-- `fanout-in-card` permits `none` or `in-card`;
-- `fanout-cross-card` permits `none`, `in-card`, or `cross-card`.
-
-Closure is performed only through:
+Official host lifecycle codecs call the standalone executable:
 
 ```bash
-ags task close <task-card> <launch-plan> <delivery-report> \
-  --receipt-out <receipt.json> \
-  --format text|json
+ags-host lifecycle \
+  --event session-start|session-end|stop-guard \
+  --host <normalized-host-id> \
+  --workspace <canonical-path> \
+  --input <json-path|->
 ```
 
-This single Rust operation verifies all hashes and authority, generates the
-`0.3.6-task-receipt`, and writes the session closure pointer.
+Generic hosts receive the canonical response. Known host codecs may translate
+only response shape. Lifecycle state remains workspace-scoped and does not
+create a second governance kernel.
 
-## Host Protocol Table
+## Conformance
 
-The Rust `AgentPlatformSpec` table describes:
-
-- canonical host ID and display name;
-- CLI names and config locations;
-- MCP probe command and output format;
-- native skill roots;
-- memory/lifecycle protocol;
-- supported verification and registration operations.
-
-The table currently includes:
-
-| Host | Host ID | Runtime adapter | Lifecycle bridge |
-|---|---|---|---|
-| Codex | `codex` | `codex-local` | native hooks call Rust |
-| Claude Code | `claude-code` | `claude-code` | native hooks call Rust |
-| Cursor | `cursor` | `cursor` | native lowercase hooks call Rust |
-| OMP | `omp` | `omp` | thin JS extension calls Rust |
-| CodeBuddy-Code | `codebuddy-code` | `codebuddy-code` | native workspace hooks call Rust |
-
-Adding a host means adding a protocol description and contract tests. It does
-not mean copying policy or lifecycle implementations.
-
-## Lifecycle Contract
-
-All five hosts call:
-
-```bash
-ags host lifecycle --event session-start|session-end|stop-guard \
-  --host codex|claude-code|cursor|codebuddy-code|omp \
-  --target <repo>
-```
-
-The v0.4.1 generator writes only workspace-owned adapters and replaces
-`<repo>` with the canonical absolute workspace path. Claude Code uses
-`.claude/settings.local.json`, CodeBuddy-Code uses
-`.codebuddy/settings.local.json`, Codex and Cursor use their project hook
-files, and OMP uses `.omp/extensions/ags-lifecycle.js`.
-
-Setup records the explicitly approved lifecycle hosts in the existing install
-manifest. Init consumes that set through `LifecycleProjection`; host detection,
-approval, and observed workspace state remain separate facts.
-
-`ags host lifecycle` is a compatibility-preserving CLI facade. It sends a
-`0.4.0-workspace-lifecycle` envelope to the canonical workspace daemon; it no
-longer owns memory reads, archive writes, or host-session state.
-
-- `session-start` returns bounded, read-only memory context.
-- `session-end` archives only a verified closure pointer.
-- `stop-guard` checks raw tool-call markup leakage.
-
-Claude Code consumes `hookSpecificOutput.additionalContext`; its clear Stop
-response omits an empty optional `hookSpecificOutput`. CodeBuddy-Code uses the
-same SessionStart context shape but maps a blocked Stop to its native
-`continue: false` plus `reason` response. Cursor consumes `additional_context`
-on `sessionStart` and `followup_message` on `stop`. These response-envelope
-differences are declared in `AgentPlatformSpec`, not implemented as additional
-lifecycle kernels. Cursor registration evidence is read through
-`cursor-agent mcp list` with its file credential-store mode so the probe does
-not depend on the macOS login keychain.
-
-OMP's JavaScript extension is intentionally thin: register events, pass JSON to
-the command, map the result. OMP itself is not patched.
-
-## MCP Process Ownership
-
-The MCP server never restarts itself. Process management belongs at the
-CLI/lifecycle seam:
-
-```bash
-ags mcp status
-ags mcp restart
-```
-
-Restart stops the workspace service and lets the host reconnect to the current
-binary. All old connection-bound preflight bindings, actions, and leases become
-invalid.
-
-## MCP Self-Integrity
-
-Before serving a governed request, MCP hashes the complete current executable
-content and compares it with the startup identity. It deliberately has no
-inode/mtime/ctime shortcut because those metadata are not reliable change
-signals on every filesystem.
-
-## Review and Resume
-
-Review gates are independent from execution authority:
-
-- Light: focused self-review.
-- Medium: integration and boundary review.
-- Heavy: independent review.
-
-On resume, reread the exact task card and LaunchPlan, inspect current workspace
-state, and continue only within the sealed authority. Conversation text,
-memory, task level, skill selection, and host product name cannot upgrade it.
-
-## Adapter Conformance
-
-Every supported host runs the same contract suite:
-
-- task-card and policy input mapping;
-- lifecycle start/end/stop behavior;
-- no transcript inference;
-- idempotent repeated SessionEnd;
-- no closure pointer means safe skip;
-- MCP probe result normalization;
-- plan-only launch-argument gate.
-
-Host-native integration tests may add transport checks, but they cannot weaken
-the shared Rust semantics.
+Every adapter is tested for normalized HostId, workspace resolution, daemon
+authentication, A→B→A session isolation, cross-binding action rejection,
+task-card authority precedence, no-commit delegation, and bounded output.

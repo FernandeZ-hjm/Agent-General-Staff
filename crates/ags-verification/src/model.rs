@@ -7,8 +7,12 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Scope {
-    /// Source-semantic checks for the target workspace.
-    Local,
+    /// AGS governance contract and workspace integration checks.
+    Governance,
+    /// Changed-path classification and verification-profile binding.
+    Changes,
+    /// Typed evidence fixture and receipt integrity checks.
+    Evidence,
     /// Release-payload, version, and public-safety checks only.
     Release,
     /// Private-to-public projection checks only.
@@ -19,11 +23,13 @@ impl Scope {
     #[allow(clippy::should_implement_trait)] // inherent parser with domain String error; intentionally not std::str::FromStr
     pub fn from_str(s: &str) -> Result<Self, String> {
         match s {
-            "local" => Ok(Scope::Local),
+            "governance" => Ok(Scope::Governance),
+            "changes" => Ok(Scope::Changes),
+            "evidence" => Ok(Scope::Evidence),
             "release" => Ok(Scope::Release),
             "promotion" => Ok(Scope::Promotion),
             other => Err(format!(
-                "invalid scope: '{}'. Expected one of: local, release, promotion",
+                "invalid scope: '{}'. Expected one of: governance, changes, evidence, release, promotion",
                 other
             )),
         }
@@ -33,7 +39,9 @@ impl Scope {
 impl std::fmt::Display for Scope {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Scope::Local => write!(f, "local"),
+            Scope::Governance => write!(f, "governance"),
+            Scope::Changes => write!(f, "changes"),
+            Scope::Evidence => write!(f, "evidence"),
             Scope::Release => write!(f, "release"),
             Scope::Promotion => write!(f, "promotion"),
         }
@@ -180,6 +188,10 @@ pub struct VerificationReport {
     pub schema_version: String,
     pub scope: Scope,
     pub repo_root: String,
+    /// Governance checks never execute project test commands. This explicit
+    /// field prevents a successful check receipt from being mistaken for test
+    /// evidence.
+    pub project_tests_run: bool,
     pub items: Vec<CheckItem>,
     pub summary: VerificationSummary,
 }

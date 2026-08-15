@@ -12,19 +12,7 @@ const LEGACY_MARKERS: &[&str] = &[
     "stop-archive-hook.sh",
     ".hookSpecificOutput == null then del(.hookSpecificOutput)",
 ];
-const DRIFT_MARKERS: &[&str] = &["--target .", "ctx.cwd"];
-const RETIRED_CLAUDE_STOP_ADAPTER_PREFIX: &str =
-    "set -o pipefail; ags host lifecycle --event stop-guard --host claude-code --target ";
-const RETIRED_CLAUDE_STOP_ADAPTER_SUFFIX: &str =
-    " | jq -c 'if .hookSpecificOutput == null then del(.hookSpecificOutput) else . end'";
-const LEGACY_COMMANDS: &[&str] = &[
-    r#"python3 "$HOME/.agents/scripts/context-memory-start.py""#,
-    r#"python3 "$HOME/.agents/scripts/claude-stop-memory-capture.py""#,
-    r#"node "$HOME/.agents/scripts/raw-tool-call-stop-guard.js""#,
-    r#"bash "$HOME/.agents/scripts/memory-start-context.sh""#,
-    r#"bash "$HOME/.agents/scripts/context-memory.sh""#,
-    r#"bash "$HOME/.agents/scripts/stop-archive-hook.sh""#,
-];
+const DRIFT_MARKERS: &[&str] = &["--workspace .", "ctx.cwd"];
 
 pub type OwnedLifecycleProjection = BTreeMap<String, Vec<serde_json::Value>>;
 
@@ -235,23 +223,11 @@ pub fn lifecycle_body_contains_owned(spec: HostLifecycleSpec, body: &str) -> boo
             && body.contains("lifecycle")
             && body.contains("session-start");
     }
-    body.contains("ags host lifecycle") && body.contains(&format!("--host {}", spec.host_id))
-        || spec.host_id == "claude-code"
-            && LEGACY_MARKERS.iter().any(|marker| body.contains(marker))
+    body.contains("ags-host lifecycle") && body.contains(&format!("--host {}", spec.host_id))
 }
 
 pub fn lifecycle_command_is_owned(host: &str, command: &str) -> bool {
     current_owned_command(command, host)
-        || host == "claude-code"
-            && (LEGACY_COMMANDS.contains(&command.trim()) || retired_claude_stop_adapter(command))
-}
-
-fn retired_claude_stop_adapter(command: &str) -> bool {
-    command
-        .trim()
-        .strip_prefix(RETIRED_CLAUDE_STOP_ADAPTER_PREFIX)
-        .and_then(|rest| rest.strip_suffix(RETIRED_CLAUDE_STOP_ADAPTER_SUFFIX))
-        .is_some_and(valid_single_shell_word)
 }
 
 pub fn remove_owned_lifecycle_entries(value: &mut serde_json::Value, host: &str) -> bool {
@@ -306,7 +282,7 @@ fn lifecycle_events(spec: HostLifecycleSpec) -> [(&'static str, &'static str, u6
 
 fn lifecycle_command(event: &str, host: &str, workspace: &Path) -> String {
     format!(
-        "ags host lifecycle --event {event} --host {host} --target {}",
+        "ags-host lifecycle --event {event} --host {host} --workspace {}",
         shell_quote(&workspace.to_string_lossy())
     )
 }
@@ -341,7 +317,7 @@ fn event_matches(
 }
 
 fn current_owned_command(command: &str, host: &str) -> bool {
-    let Some(rest) = command.trim().strip_prefix("ags host lifecycle --event ") else {
+    let Some(rest) = command.trim().strip_prefix("ags-host lifecycle --event ") else {
         return false;
     };
     let Some((event, rest)) = rest.split_once(" --host ") else {
@@ -350,7 +326,7 @@ fn current_owned_command(command: &str, host: &str) -> bool {
     if !matches!(event, "session-start" | "stop-guard" | "session-end") {
         return false;
     }
-    let Some((observed_host, target)) = rest.split_once(" --target ") else {
+    let Some((observed_host, target)) = rest.split_once(" --workspace ") else {
         return false;
     };
     observed_host == host && valid_single_shell_word(target)
@@ -524,10 +500,13 @@ mod tests {
             (
                 "target",
                 body.replace(
-                    serde_json::to_string(&format!("--target '{}'", codec.workspace().display()))
-                        .unwrap()
-                        .trim_matches('"'),
-                    "--target .",
+                    serde_json::to_string(&format!(
+                        "--workspace '{}'",
+                        codec.workspace().display()
+                    ))
+                    .unwrap()
+                    .trim_matches('"'),
+                    "--workspace .",
                 ),
             ),
         ] {
@@ -552,57 +531,10 @@ mod tests {
             "claude-code",
             &format!("echo before; {command}")
         ));
-        assert!(lifecycle_command_is_owned(
-            "claude-code",
-            r#"python3 "$HOME/.agents/scripts/context-memory-start.py""#
-        ));
         assert!(!lifecycle_command_is_owned(
             "claude-code",
             r#"python3 "$HOME/.agents/scripts/context-memory-start.py" && ./notify.sh"#
         ));
-    }
-
-    #[test]
-    fn exact_retired_macbook_jq_adapter_is_removed_without_claiming_user_pipelines() {
-        let retired = concat!(
-            "set -o pipefail; ags host lifecycle --event stop-guard ",
-            "--host claude-code --target . | jq -c 'if .hookSpecificOutput == null ",
-            "then del(.hookSpecificOutput) else . end'"
-        );
-        assert!(lifecycle_command_is_owned("claude-code", retired));
-        assert!(!lifecycle_command_is_owned(
-            "claude-code",
-            &format!("{retired} && ./notify.sh")
-        ));
-        assert!(!lifecycle_command_is_owned(
-            "claude-code",
-            &retired.replace("del(.hookSpecificOutput)", "del(.reason)")
-        ));
-
-        let mut config = serde_json::json!({
-            "hooks": {
-                "Stop": [{
-                    "hooks": [
-                        {"type": "command", "command": retired},
-                        {"type": "command", "command": "./notify.sh"}
-                    ]
-                }]
-            },
-            "mcpServers": {"user-owned": {"command": "user-mcp"}}
-        });
-        assert!(remove_owned_lifecycle_entries(&mut config, "claude-code"));
-        assert_eq!(
-            config["hooks"]["Stop"][0]["hooks"]
-                .as_array()
-                .unwrap()
-                .len(),
-            1
-        );
-        assert_eq!(
-            config["hooks"]["Stop"][0]["hooks"][0]["command"],
-            "./notify.sh"
-        );
-        assert_eq!(config["mcpServers"]["user-owned"]["command"], "user-mcp");
     }
 
     #[test]
@@ -629,7 +561,7 @@ mod tests {
             .lifecycle
             .unwrap();
         let user_only = serde_json::json!({
-            "hooks": {"Stop": [{"command": "echo --target ."}]}
+            "hooks": {"Stop": [{"command": "echo --workspace ."}]}
         })
         .to_string();
         assert!(lifecycle_config_drift_markers(spec, &user_only).is_empty());
@@ -638,7 +570,7 @@ mod tests {
             "hooks": {"Stop": [{
                 "hooks": [{
                     "type": "command",
-                    "command": "ags host lifecycle --event stop-guard --host claude-code --target .",
+                    "command": "ags-host lifecycle --event stop-guard --host claude-code --workspace .",
                     "timeout": 2
                 }]
             }]}
@@ -646,7 +578,7 @@ mod tests {
         .to_string();
         assert_eq!(
             lifecycle_config_drift_markers(spec, &relative_ags),
-            ["--target ."]
+            ["--workspace ."]
         );
     }
 }

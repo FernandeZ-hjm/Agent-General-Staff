@@ -52,10 +52,15 @@ When generating a task card:
    evidence, use current evidence and mention the conflict in `背景` or
    `实施要求`.
 
-## Minimal Schema
+## Contract v2 schema
+
+The v2 profile stores test commands only as structured `CommandSpec` values.
+Free-form strings and the former `default_commands`, `smoke_commands`, and
+`expensive_commands` keys are invalid. AGS passes `program` and `argv` directly
+to the process API; it never invokes a shell or interpolates a command string.
 
 ```yaml
-schema_version: 1
+schema_version: ags://schema/contract/v2/project-profile
 project:
   name: ""
   slug: ""
@@ -72,9 +77,28 @@ defaults:
   delegation_planning: no
 
 verification:
-  default_commands: []
-  smoke_commands: []
-  expensive_commands: []
+  project_tests:
+    smoke:
+      program: cargo
+      argv: [test, -p, example, --lib]
+      cwd: .
+      env: {}
+      timeout_ms: 120000
+      allowed_write_paths: [target]
+    standard:
+      program: cargo
+      argv: [test, --workspace]
+      cwd: .
+      env: {}
+      timeout_ms: 600000
+      allowed_write_paths: [target]
+    full:
+      program: cargo
+      argv: [test, --workspace, --all-features]
+      cwd: .
+      env: {}
+      timeout_ms: 1200000
+      allowed_write_paths: [target]
   evidence_required: []
 
 risk:
@@ -86,9 +110,7 @@ risk:
 
 workflow:
   governance_docs: []
-  context_memory_capsule: "$HOME/.agents/memory/projects/<project-slug>/context-capsule.md"
-  task_memory: "$HOME/.agents/memory/projects/<project-slug>/task-memory.md"
-  task_archive: "$HOME/.agents/memory/projects/<project-slug>/task-archive/"
+  memory_uri: "ags-memory://projects/<project-slug>"
   default_review_policy: ""
   delivery_report: protocol/agent-task-protocol.md
 
@@ -98,6 +120,33 @@ user_preferences:
   do_not_do: []
 ```
 
+## LocalExecution platform containment
+
+LocalExecution is available only when `local_execution_platform_support()`
+reports an audited containment backend. v0.4.20 enables two fail-closed paths:
+
+- Linux `linux-bubblewrap`, when a runtime containment probe succeeds: a
+  read-only root, explicit writable binds for existing declared write roots,
+  isolated namespaces including a PID namespace with a reaping PID 1, direct
+  argv, bounded output, and recursive descendant-tree termination. If
+  bubblewrap, its namespace permissions, or
+  the process-table probe is unavailable, LocalExecution returns structured
+  `sandbox_unavailable` instead of executing without containment.
+
+- macOS `macos-seatbelt`, when the fixed `/usr/bin/sandbox-exec` probe succeeds:
+  direct argv, isolated scratch, declared-write allow, protected and
+  undeclared-write deny rules, direct `exec`, and `process-fork` denial. The
+  dedicated process group therefore contains exactly one killable process;
+  multi-process project tools use the separately authorized HostDelegated
+  path. A missing or failed Seatbelt probe returns structured
+  `sandbox_unavailable` without execution.
+
+Windows LocalExecution is blocked with `sandbox_unavailable` because `std::process`
+cannot atomically assign a suspended child to a Job Object before the first
+instruction and this release has no audited AppContainer or filesystem-filter
+write-containment backend. Policy-approved `HostDelegated` execution is the
+safe alternative. AGS never falls back to an unsandboxed local process.
+
 ## Governance
 
 - The profile is project-owned, not suite-owned.
@@ -106,5 +155,10 @@ user_preferences:
   them. A later change in authority requires a new task card and LaunchPlan.
 - Suite bootstrap installs only a template; it must not overwrite a project's
   real profile.
+- Every `cwd` and `allowed_write_paths` entry resolves within the canonical
+  workspace. Absolute escapes, `..`, and symlink escapes fail closed.
+- `ags check` does not consume `project_tests` and always reports
+  `project_tests_run=false`. Only `ags test smoke|standard|full` may execute a
+  profile command and produce a `TestReceipt`.
 - Profile changes are normal project changes and should be reviewed with the
   same risk level as other workflow changes.

@@ -30,7 +30,7 @@ pub fn gate_check(input: &TaskPolicyInput) -> GateCheckOutput {
     let resolved = resolve_policy(input.clone());
     let decision = derive_decision(&resolved);
     GateCheckOutput {
-        schema_version: "0.3.6-execution-policy".to_string(),
+        schema_version: "ags://schema/contract/v2/execution-policy".to_string(),
         decision,
         resolved_policy: resolved,
     }
@@ -39,12 +39,12 @@ pub fn gate_check(input: &TaskPolicyInput) -> GateCheckOutput {
 /// Produce a structured `decision=stop` error output for validation or
 /// protected-path failures.
 ///
-/// This ensures that `ags gate check` always outputs structured JSON even
+/// This ensures that `ags govern gate` always outputs structured JSON even
 /// when the task card fails validation — runners receive a machine-readable
 /// `decision=stop` with error details, not just a raw exit code.
 pub fn gate_check_failed(error_kind: &str, errors: Vec<String>) -> GateErrorOutput {
     GateErrorOutput {
-        schema_version: "0.3.6-execution-policy".to_string(),
+        schema_version: "ags://schema/contract/v2/execution-policy".to_string(),
         decision: GateDecision::Stop,
         error_kind: error_kind.to_string(),
         errors,
@@ -327,7 +327,7 @@ pub fn explain_policy(input: &TaskPolicyInput) -> PolicyExplainOutput {
     }
 
     PolicyExplainOutput {
-        schema_version: "0.3.6-execution-policy".to_string(),
+        schema_version: "ags://schema/contract/v2/execution-policy".to_string(),
         task_summary: summary,
         explanations,
         safety_assertions: assertions,

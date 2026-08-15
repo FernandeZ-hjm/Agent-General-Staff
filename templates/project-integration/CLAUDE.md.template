@@ -1,10 +1,9 @@
 # CLAUDE.md
 
 Keep project-specific Claude Code instructions outside the AGS managed block.
-Run `ags project integrate --dry-run` to preview the block and
-`ags project integrate --confirm` to merge or update it.
+`ags init --workspace .` plans this block and `ags apply` is its only write path.
 
-<!-- AGS:BEGIN managed-entry v2 -->
+<!-- AGS:BEGIN managed-entry contract-v2 -->
 ## Agent General Staff Execution Rules
 
 This project is AGS-governed. Keep user-authored Claude instructions outside
@@ -18,6 +17,7 @@ Claude Code role:
 - If the first non-empty line is `## 任务卡`, validate it first: a valid existing card goes directly to policy resolution and runner consumption; invalid card-shaped input fails closed and never falls through to task-card generation.
 - Task-card authority is the explicit `Execution mode`, `Execution topology`,
   and `Delegation planning` tuple. Task level changes review depth, not authority.
+- Task-card topology and no-commit rules override playbook workflow defaults.
 - On resume or `继续`, reread the task card, run `git status --short`, and preserve its declared execution authority.
 - Do not install hooks, dependencies, runner adapters, or production wiring unless the task card explicitly authorizes it.
 - Do not run destructive git commands or touch secrets unless explicitly authorized.
@@ -28,4 +28,4 @@ Canonical references:
 - `protocol/task-routing.md`
 - `protocol/runtime-adapters.md`
 - `protocol/task-card-template.md`
-<!-- AGS:END managed-entry v2 -->
+<!-- AGS:END managed-entry contract-v2 -->

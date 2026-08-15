@@ -1,11 +1,15 @@
+#![cfg_attr(not(unix), allow(dead_code))]
+
 use super::model::{
-    AdoptionRoutingMetadata, BodyRevision, CatalogReviewStatus, InstalledSkillRecord, RiskFinding,
-    SourceSpec, UpdatePolicy,
+    AdoptionRoutingMetadata, BodyRevision, CatalogReviewStatus, InstalledSkillRecord,
+    MaterializedBodyNode, ReadInputIdentity, ReadInputKind, ReadInputSeal, RiskFinding, SourceSpec,
+    UpdatePolicy,
 };
-use crate::hash_skill_source;
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+const MAX_SIDE_INPUT_BYTES: u64 = 64 * 1024;
 
 pub(super) const MAX_FILES: usize = 512;
 pub(super) const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
@@ -34,10 +38,32 @@ struct SkillFrontmatter {
     version: String,
 }
 
+#[derive(Debug)]
 pub(super) struct AuditedSource {
     pub source_dir: PathBuf,
     pub record: InstalledSkillRecord,
     pub risk_findings: Vec<RiskFinding>,
+    pub read_inputs: Vec<ReadInputSeal>,
+}
+
+struct RoutingMetadataObservation {
+    path: Option<String>,
+    hash: Option<String>,
+    seal: Option<ReadInputSeal>,
+}
+
+enum RoutingMetadataLocation {
+    SourceRelative {
+        relative_path: String,
+        display: String,
+    },
+    External(PathBuf),
+}
+
+#[cfg(all(test, unix))]
+thread_local! {
+    static SIDE_INPUT_OBSERVER_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static ROUTING_SIDE_OBSERVER_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Parse a GitHub repository/tree/blob URL into a canonical source identity.
@@ -235,6 +261,7 @@ pub(super) fn audit_local_source_with_boundary(
         }
         source.to_path_buf()
     };
+    let lexical_source_dir = source_dir.clone();
     let source_dir = fs::canonicalize(&source_dir).map_err(|error| {
         format!(
             "cannot resolve local skill source {}: {error}",
@@ -247,12 +274,20 @@ pub(super) fn audit_local_source_with_boundary(
             source_dir.display()
         ));
     }
+    let snapshot = super::materialize::snapshot_skill_source(&source_dir)?;
     let skill_md = source_dir.join("SKILL.md");
-    let content = fs::read_to_string(&skill_md)
-        .map_err(|error| format!("cannot read {}: {error}", skill_md.display()))?;
-    let mut frontmatter = parse_frontmatter(&content)?;
-    let (routing_metadata_path, routing_metadata_hash) =
-        load_routing_metadata(routing_metadata, &mut frontmatter)?;
+    let skill_md_bytes = snapshot_file_bytes(&snapshot, "SKILL.md")
+        .ok_or_else(|| format!("cannot read {}: missing regular file", skill_md.display()))?;
+    let content = std::str::from_utf8(skill_md_bytes)
+        .map_err(|error| format!("cannot read {} as UTF-8: {error}", skill_md.display()))?;
+    let mut frontmatter = parse_frontmatter(content)?;
+    let routing_metadata = load_routing_metadata(
+        routing_metadata,
+        &source_dir,
+        &lexical_source_dir,
+        &snapshot,
+        &mut frontmatter,
+    )?;
     if !stable_skill_id(&frontmatter.name) {
         return Err("skill frontmatter name is not a stable identifier".to_string());
     }
@@ -265,21 +300,32 @@ pub(super) fn audit_local_source_with_boundary(
         return Err("skill frontmatter requires description or summary".to_string());
     }
 
-    let mut risk_findings = Vec::new();
-    let mut files = 0usize;
-    let mut total = 0u64;
-    audit_tree(
-        &source_dir,
-        &source_dir,
-        &mut files,
-        &mut total,
-        &mut risk_findings,
-    )?;
-    let source_hash = hash_skill_source(&source_dir)?;
+    let mut risk_findings = risks_from_snapshot(&snapshot);
+    let source_hash = snapshot.source_hash.clone();
     let license = find_license(&source_dir, repository_root);
+    let mut side_input_seals = Vec::new();
     let (license_path, license_hash) = if let Some(license) = license {
-        let license_bytes = fs::read(&license)
-            .map_err(|error| format!("cannot read license {}: {error}", license.display()))?;
+        let relative = license
+            .strip_prefix(&source_dir)
+            .ok()
+            .and_then(|path| path.to_str())
+            .map(|path| path.replace('\\', "/"));
+        let (license_bytes, license_seal) = if let Some(relative) = relative.as_deref() {
+            match (
+                snapshot_file_bytes(&snapshot, relative),
+                snapshot_file_seal(&snapshot, relative),
+            ) {
+                (Some(bytes), Some(seal)) => (bytes.to_vec(), Some(seal.clone())),
+                _ => observe_side_input(&license, "license")?,
+            }
+        } else {
+            observe_side_input(&license, "license")?
+        };
+        if let Some(seal) = license_seal {
+            if !snapshot.seals.contains(&seal) {
+                side_input_seals.push(seal);
+            }
+        }
         if !known_license(&license_bytes) {
             risk_findings.push(RiskFinding::acknowledgement(
                 "unknown_license",
@@ -321,8 +367,8 @@ pub(super) fn audit_local_source_with_boundary(
         source_hash: source_hash.clone(),
         license_path,
         license_hash,
-        routing_metadata_path,
-        routing_metadata_hash,
+        routing_metadata_path: routing_metadata.path,
+        routing_metadata_hash: routing_metadata.hash,
         body_revision: body_revision.clone(),
         summary: summary.to_string(),
         intent_tags,
@@ -344,69 +390,351 @@ pub(super) fn audit_local_source_with_boundary(
         installed_at: 0,
     };
     record.body_revisions = vec![BodyRevision::from_record(&record)];
+    if let Some(seal) = routing_metadata.seal {
+        if !snapshot.seals.contains(&seal) {
+            side_input_seals.push(seal);
+        }
+    }
+    let mut read_inputs = snapshot.seals.clone();
+    read_inputs.extend(side_input_seals);
+    read_inputs.sort_by(|left, right| {
+        left.root
+            .cmp(&right.root)
+            .then(left.relative_path.cmp(&right.relative_path))
+    });
+    read_inputs.dedup();
     Ok(AuditedSource {
         source_dir: source_dir.clone(),
         record,
         risk_findings,
+        read_inputs,
     })
+}
+
+#[cfg(unix)]
+pub(super) fn audit_remote_source_snapshots(
+    source_dir: PathBuf,
+    checkout_root: &Path,
+    subdir: &str,
+    target_hosts: Vec<String>,
+    snapshot: super::materialize::SkillSourceSnapshot,
+    checkout_snapshot: &super::materialize::SkillSourceSnapshot,
+) -> Result<AuditedSource, String> {
+    let skill_md = source_dir.join("SKILL.md");
+    let skill_md_bytes = snapshot_file_bytes(&snapshot, "SKILL.md")
+        .ok_or_else(|| format!("cannot read {}: missing regular file", skill_md.display()))?;
+    let content = std::str::from_utf8(skill_md_bytes)
+        .map_err(|error| format!("cannot read {} as UTF-8: {error}", skill_md.display()))?;
+    let frontmatter = parse_frontmatter(content)?;
+    if !stable_skill_id(&frontmatter.name) {
+        return Err("skill frontmatter name is not a stable identifier".to_string());
+    }
+    let summary = if frontmatter.summary.trim().is_empty() {
+        frontmatter.description.trim()
+    } else {
+        frontmatter.summary.trim()
+    };
+    if summary.is_empty() {
+        return Err("skill frontmatter requires description or summary".to_string());
+    }
+    let mut risk_findings = risks_from_snapshot(&snapshot);
+    let mut license = None;
+    let mut directories = vec![subdir.trim_matches('/').to_string()];
+    while let Some(last) = directories.last().cloned() {
+        if last.is_empty() {
+            break;
+        }
+        directories.push(
+            Path::new(&last)
+                .parent()
+                .unwrap_or_else(|| Path::new(""))
+                .to_string_lossy()
+                .into_owned(),
+        );
+    }
+    if directories.last().is_none_or(|last| !last.is_empty()) {
+        directories.push(String::new());
+    }
+    'search: for directory in directories {
+        for name in ["LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING"] {
+            let relative = if directory.is_empty() {
+                name.to_string()
+            } else {
+                format!("{directory}/{name}")
+            };
+            if let Some(bytes) = snapshot_file_bytes(checkout_snapshot, &relative) {
+                license = Some((relative, bytes));
+                break 'search;
+            }
+        }
+    }
+    let (license_path, license_hash) = if let Some((relative, bytes)) = license {
+        if !known_license(bytes) {
+            risk_findings.push(RiskFinding::acknowledgement(
+                "unknown_license",
+                Some(relative.clone()),
+                "license file is present but its identifier was not recognized",
+            ));
+        }
+        (
+            checkout_root.join(relative).to_string_lossy().into_owned(),
+            ags_platform::sha256(bytes),
+        )
+    } else {
+        risk_findings.push(RiskFinding::acknowledgement(
+            "missing_license",
+            None,
+            "no supported LICENSE or COPYING file was found",
+        ));
+        (String::new(), String::new())
+    };
+    let source_hash = snapshot.source_hash.clone();
+    let mut intent_tags = frontmatter.intent_tags;
+    if intent_tags.is_empty() {
+        intent_tags.push(frontmatter.name.clone());
+    }
+    intent_tags.sort();
+    intent_tags.dedup();
+    let mut entrypoints = frontmatter.entrypoints;
+    entrypoints.sort();
+    entrypoints.dedup();
+    let invoke_hint = if frontmatter.invoke_hint.trim().is_empty() {
+        format!("[skill: {}]", frontmatter.name)
+    } else {
+        frontmatter.invoke_hint
+    };
+    let source_string = source_dir.to_string_lossy().into_owned();
+    let mut record = InstalledSkillRecord {
+        skill_id: frontmatter.name,
+        source: source_string.clone(),
+        source_hash: source_hash.clone(),
+        license_path,
+        license_hash,
+        routing_metadata_path: None,
+        routing_metadata_hash: None,
+        body_revision: source_hash.trim_start_matches("sha256:").to_string(),
+        summary: summary.to_string(),
+        intent_tags,
+        positive_examples: frontmatter.positive_examples,
+        negative_examples: frontmatter.negative_examples,
+        entrypoints,
+        invoke_hint,
+        requires_auth: frontmatter.requires_auth,
+        version: frontmatter.version,
+        target_hosts,
+        source_spec: SourceSpec::Local {
+            path: source_string,
+        },
+        resolved_source: None,
+        update_policy: UpdatePolicy::Notify,
+        catalog_review: CatalogReviewStatus::Unreviewed,
+        risk_findings: risk_findings.clone(),
+        body_revisions: Vec::new(),
+        installed_at: 0,
+    };
+    record.body_revisions = vec![BodyRevision::from_record(&record)];
+    let mut read_inputs = snapshot.seals.clone();
+    read_inputs.extend(checkout_snapshot.seals.clone());
+    Ok(AuditedSource {
+        source_dir,
+        record,
+        risk_findings,
+        read_inputs,
+    })
+}
+
+fn snapshot_file_bytes<'a>(
+    snapshot: &'a super::materialize::SkillSourceSnapshot,
+    relative_path: &str,
+) -> Option<&'a [u8]> {
+    snapshot.nodes.iter().find_map(|node| match node {
+        MaterializedBodyNode::RegularFile {
+            relative_path: candidate,
+            bytes,
+            ..
+        } if candidate == relative_path => Some(bytes.as_slice()),
+        _ => None,
+    })
+}
+
+fn snapshot_file_seal<'a>(
+    snapshot: &'a super::materialize::SkillSourceSnapshot,
+    relative_path: &str,
+) -> Option<&'a ReadInputSeal> {
+    snapshot
+        .seals
+        .iter()
+        .find(|seal| seal.relative_path == relative_path && seal.kind == ReadInputKind::RegularFile)
+}
+
+fn observe_side_input(
+    path: &Path,
+    label: &str,
+) -> Result<(Vec<u8>, Option<ReadInputSeal>), String> {
+    #[cfg(all(test, unix))]
+    SIDE_INPUT_OBSERVER_CALLS.with(|calls| calls.set(calls.get() + 1));
+    let observed = crate::shared_skill_source::observe_bounded_regular_file(
+        path,
+        MAX_SIDE_INPUT_BYTES,
+        label,
+    )?;
+    let seal = ReadInputSeal {
+        root: observed.parent.to_string_lossy().into_owned(),
+        relative_path: observed.relative_path,
+        kind: ReadInputKind::RegularFile,
+        mode: observed.mode,
+        identity: Some(ReadInputIdentity {
+            device: observed.device,
+            inode: observed.inode,
+        }),
+        digest: ags_platform::sha256(&observed.bytes),
+    };
+    Ok((observed.bytes, Some(seal)))
+}
+
+fn risks_from_snapshot(snapshot: &super::materialize::SkillSourceSnapshot) -> Vec<RiskFinding> {
+    let mut risks = Vec::new();
+    for node in &snapshot.nodes {
+        let MaterializedBodyNode::RegularFile {
+            relative_path,
+            bytes,
+            mode,
+        } = node
+        else {
+            continue;
+        };
+        if is_scriptish_snapshot(relative_path, *mode) {
+            risks.push(RiskFinding::acknowledgement(
+                "script_or_executable_content",
+                Some(relative_path.clone()),
+                "script or executable content is retained but never executed by adoption",
+            ));
+        }
+        if bytes_contain_suspected_secret(bytes) {
+            risks.push(RiskFinding::acknowledgement(
+                "suspected_sensitive_content",
+                Some(relative_path.clone()),
+                "content matches a sensitive-material heuristic; body bytes are withheld",
+            ));
+        }
+    }
+    risks
+}
+
+fn is_scriptish_snapshot(path: &str, mode: u32) -> bool {
+    if mode & 0o111 != 0 {
+        return true;
+    }
+    let name = Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    name == "install.sh"
+        || name == "setup.sh"
+        || name == "uninstall.sh"
+        || name == "run.sh"
+        || name.ends_with(".sh")
+        || name.ends_with(".bash")
+        || name.ends_with(".py")
+        || name.ends_with(".js")
+        || name.ends_with(".mjs")
+        || name.ends_with(".command")
+        || name.ends_with(".bat")
+        || name.ends_with(".cmd")
+        || name.ends_with(".ps1")
+}
+
+fn bytes_contain_suspected_secret(bytes: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(bytes);
+    let lower = text.to_ascii_lowercase();
+    text.contains("-----BEGIN ")
+        || text.contains("ghp_")
+        || text.contains("github_pat_")
+        || text.contains("AKIA")
+        || lower.contains("private_key")
+        || lower.contains("client_secret")
+        || lower.contains("access_token")
 }
 
 fn load_routing_metadata(
     path: Option<&Path>,
+    source_root: &Path,
+    lexical_source_root: &Path,
+    snapshot: &super::materialize::SkillSourceSnapshot,
     frontmatter: &mut SkillFrontmatter,
-) -> Result<(Option<String>, Option<String>), String> {
+) -> Result<RoutingMetadataObservation, String> {
     let Some(path) = path else {
-        return Ok((None, None));
+        return Ok(RoutingMetadataObservation {
+            path: None,
+            hash: None,
+            seal: None,
+        });
     };
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let value = path.to_string_lossy();
-            if value.contains('\n')
-                || value.trim_start().starts_with("---")
-                || value.contains(": ")
-                || value.trim_end().ends_with(':')
-            {
-                return Err(
+    let location = classify_routing_metadata(path, source_root, lexical_source_root)?;
+    let (bytes, observed_path, seal) = match location {
+        RoutingMetadataLocation::SourceRelative {
+            relative_path,
+            display,
+        } => {
+            let bytes = snapshot_file_bytes(snapshot, &relative_path).ok_or_else(|| {
+                format!("metadata_file_not_found: --metadata file does not exist: {display}")
+            })?;
+            let seal = snapshot_file_seal(snapshot, &relative_path)
+                .cloned()
+                .ok_or_else(|| format!("routing metadata is not a regular file: {display}"))?;
+            (bytes.to_vec(), display, seal)
+        }
+        RoutingMetadataLocation::External(path) => {
+            #[cfg(all(test, unix))]
+            ROUTING_SIDE_OBSERVER_CALLS.with(|calls| calls.set(calls.get() + 1));
+            let observed = match crate::shared_skill_source::observe_bounded_regular_file(
+                &path,
+                MAX_SIDE_INPUT_BYTES,
+                "routing metadata",
+            ) {
+                Ok(observed) => observed,
+                Err(error) if error == "routing metadata_not_found" => {
+                    let value = path.to_string_lossy();
+                    if value.contains('\n')
+                        || value.trim_start().starts_with("---")
+                        || value.contains(": ")
+                        || value.trim_end().ends_with(':')
+                    {
+                        return Err(
                     "metadata_argument_requires_file: --metadata accepts an existing YAML file path (<FILE>), not inline YAML"
                         .to_string(),
                 );
-            }
-            return Err(format!(
-                "metadata_file_not_found: --metadata file does not exist: {}",
-                path.display()
-            ));
-        }
-        Err(error) => {
-            return Err(format!(
-                "cannot inspect routing metadata {}: {error}",
-                path.display()
-            ))
+                    }
+                    return Err(format!(
+                        "metadata_file_not_found: --metadata file does not exist: {}",
+                        path.display()
+                    ));
+                }
+                Err(error) => {
+                    return Err(error);
+                }
+            };
+            let seal = ReadInputSeal {
+                root: observed.parent.to_string_lossy().into_owned(),
+                relative_path: observed.relative_path,
+                kind: ReadInputKind::RegularFile,
+                mode: observed.mode,
+                identity: Some(ReadInputIdentity {
+                    device: observed.device,
+                    inode: observed.inode,
+                }),
+                digest: ags_platform::sha256(&observed.bytes),
+            };
+            (
+                observed.bytes,
+                observed.path.to_string_lossy().into_owned(),
+                seal,
+            )
         }
     };
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err(format!(
-            "routing metadata must be a regular file: {}",
-            path.display()
-        ));
-    }
-    if metadata.len() > 64 * 1024 {
-        return Err("routing metadata exceeds 65536 bytes".to_string());
-    }
-    let canonical = fs::canonicalize(path).map_err(|error| {
-        format!(
-            "cannot resolve routing metadata {}: {error}",
-            path.display()
-        )
-    })?;
-    let bytes = fs::read(&canonical).map_err(|error| {
-        format!(
-            "cannot read routing metadata {}: {error}",
-            canonical.display()
-        )
-    })?;
     let overlay: AdoptionRoutingMetadata = serde_yaml::from_slice(&bytes)
-        .map_err(|error| format!("invalid routing metadata {}: {error}", canonical.display()))?;
+        .map_err(|error| format!("invalid routing metadata {observed_path}: {error}"))?;
     if let Some(summary) = overlay.summary {
         frontmatter.summary = summary;
     }
@@ -431,10 +759,47 @@ fn load_routing_metadata(
     if let Some(version) = overlay.version {
         frontmatter.version = version;
     }
-    Ok((
-        Some(canonical.to_string_lossy().into_owned()),
-        Some(ags_platform::sha256(&bytes)),
-    ))
+    Ok(RoutingMetadataObservation {
+        path: Some(observed_path),
+        hash: Some(ags_platform::sha256(&bytes)),
+        seal: Some(seal),
+    })
+}
+
+fn classify_routing_metadata(
+    path: &Path,
+    source_root: &Path,
+    lexical_source_root: &Path,
+) -> Result<RoutingMetadataLocation, String> {
+    use std::path::Component;
+
+    let (candidate, display) = if path.is_absolute() {
+        match path
+            .strip_prefix(lexical_source_root)
+            .or_else(|_| path.strip_prefix(source_root))
+        {
+            Ok(relative) => (relative, path.to_string_lossy().into_owned()),
+            Err(_) => return Ok(RoutingMetadataLocation::External(path.to_path_buf())),
+        }
+    } else {
+        (path, path.to_string_lossy().into_owned())
+    };
+    let mut normalized = PathBuf::new();
+    for component in candidate.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(name) => normalized.push(name),
+            _ => return Err("routing_metadata_traversal_refused".to_string()),
+        }
+    }
+    if normalized.as_os_str().is_empty() {
+        return Err("routing_metadata_path_has_no_file".to_string());
+    }
+    let relative_path = normalized.to_string_lossy().replace('\\', "/");
+    Ok(RoutingMetadataLocation::SourceRelative {
+        relative_path,
+        display,
+    })
 }
 
 fn parse_frontmatter(content: &str) -> Result<SkillFrontmatter, String> {
@@ -454,125 +819,6 @@ fn stable_skill_id(value: &str) -> bool {
         && value.chars().all(|character| {
             character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
         })
-}
-
-pub(super) fn validate_materialized_tree(root: &Path) -> Result<(), String> {
-    audit_materialized_tree_with_risks(root).map(|_| ())
-}
-
-pub(super) fn audit_materialized_tree_with_risks(root: &Path) -> Result<Vec<RiskFinding>, String> {
-    let mut files = 0usize;
-    let mut total = 0u64;
-    let mut risks = Vec::new();
-    audit_tree(root, root, &mut files, &mut total, &mut risks)?;
-    Ok(risks)
-}
-
-fn audit_tree(
-    root: &Path,
-    directory: &Path,
-    files: &mut usize,
-    total: &mut u64,
-    risk_findings: &mut Vec<RiskFinding>,
-) -> Result<(), String> {
-    let mut entries = fs::read_dir(directory)
-        .map_err(|error| format!("cannot read {}: {error}", directory.display()))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("cannot enumerate {}: {error}", directory.display()))?;
-    entries.sort_by_key(|entry| entry.path());
-    for entry in entries {
-        let path = entry.path();
-        let metadata = fs::symlink_metadata(&path)
-            .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
-        let relative = path
-            .strip_prefix(root)
-            .unwrap_or(&path)
-            .display()
-            .to_string();
-        if metadata.file_type().is_symlink() {
-            return Err(format!("symlink_refused: {relative}"));
-        }
-        if metadata.is_dir() {
-            audit_tree(root, &path, files, total, risk_findings)?;
-        } else if metadata.is_file() {
-            *files += 1;
-            *total = total.saturating_add(metadata.len());
-            if *files > MAX_FILES {
-                return Err(format!("skill source exceeds {MAX_FILES} files"));
-            }
-            if metadata.len() > MAX_FILE_BYTES {
-                return Err(format!(
-                    "skill source file exceeds {MAX_FILE_BYTES} bytes: {relative}"
-                ));
-            }
-            if *total > MAX_TOTAL_BYTES {
-                return Err(format!(
-                    "skill source exceeds {MAX_TOTAL_BYTES} total bytes"
-                ));
-            }
-            let scriptish = is_scriptish(&path, &metadata);
-            if scriptish {
-                let finding = RiskFinding::acknowledgement(
-                    "script_or_executable_content",
-                    Some(relative.clone()),
-                    "script or executable content is retained but never executed by adoption",
-                );
-                risk_findings.push(finding);
-            }
-            if contains_suspected_secret(&path)? {
-                risk_findings.push(RiskFinding::acknowledgement(
-                    "suspected_sensitive_content",
-                    Some(relative),
-                    "content matches a sensitive-material heuristic; body bytes are withheld",
-                ));
-            }
-        } else {
-            return Err(format!("special_file_refused: {relative}"));
-        }
-    }
-    Ok(())
-}
-
-fn is_scriptish(path: &Path, _metadata: &fs::Metadata) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if _metadata.permissions().mode() & 0o111 != 0 {
-            return true;
-        }
-    }
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    name == "install.sh"
-        || name == "setup.sh"
-        || name == "uninstall.sh"
-        || name == "run.sh"
-        || name.ends_with(".sh")
-        || name.ends_with(".bash")
-        || name.ends_with(".py")
-        || name.ends_with(".js")
-        || name.ends_with(".mjs")
-        || name.ends_with(".command")
-        || name.ends_with(".bat")
-        || name.ends_with(".cmd")
-        || name.ends_with(".ps1")
-}
-
-fn contains_suspected_secret(path: &Path) -> Result<bool, String> {
-    let bytes = fs::read(path)
-        .map_err(|error| format!("cannot inspect content {}: {error}", path.display()))?;
-    let text = String::from_utf8_lossy(&bytes);
-    let lower = text.to_ascii_lowercase();
-    Ok(text.contains("-----BEGIN ")
-        || text.contains("ghp_")
-        || text.contains("github_pat_")
-        || text.contains("AKIA")
-        || lower.contains("private_key")
-        || lower.contains("client_secret")
-        || lower.contains("access_token"))
 }
 
 fn known_license(bytes: &[u8]) -> bool {
@@ -618,4 +864,253 @@ fn find_license(source: &Path, repository_root: Option<&Path>) -> Option<PathBuf
         current = directory.parent();
     }
     None
+}
+
+#[cfg(all(test, unix))]
+mod bounded_audit_tests {
+    use super::*;
+
+    #[test]
+    fn audit_never_reads_bytes_beyond_scanner_budget_after_stat_window() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let source = temp.path().join("skill");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("SKILL.md"),
+            b"---\nname: bounded-audit-team\ndescription: Fixture.\n---\n",
+        )
+        .unwrap();
+        let growing = source.join("A.txt");
+        fs::write(&growing, b"small").unwrap();
+        crate::shared_skill_source::set_after_named_stat_hook(Box::new(move || {
+            fs::write(growing, vec![0_u8; MAX_FILE_BYTES as usize + 1]).unwrap();
+        }));
+
+        let error = match audit_local_source(&source, vec!["codex".to_string()], None) {
+            Ok(_) => panic!("production Skill walker did not observe the growth hook"),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains(&MAX_FILE_BYTES.to_string())
+                || error.contains("candidate_read_input_drift"),
+            "unexpected bounded production-walker error: {error}"
+        );
+    }
+
+    fn fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let temp = tempfile::TempDir::new().unwrap();
+        let source = temp.path().join("skill");
+        fs::create_dir(&source).unwrap();
+        fs::write(
+            source.join("SKILL.md"),
+            b"---\nname: side-input-team\ndescription: Fixture.\n---\n",
+        )
+        .unwrap();
+        let license = temp.path().join("LICENSE");
+        fs::write(&license, b"MIT License\n").unwrap();
+        (temp, source, license)
+    }
+
+    #[test]
+    fn license_rejects_named_file_replaced_by_outside_symlink() {
+        let (temp, source, license) = fixture();
+        let outside = temp.path().join("outside-license");
+        fs::write(&outside, b"MIT License outside sentinel\n").unwrap();
+        let license_for_hook = license.clone();
+        let outside_for_hook = outside.clone();
+        crate::shared_skill_source::set_after_bounded_file_named_stat_hook(Box::new(move || {
+            fs::remove_file(&license_for_hook).unwrap();
+            std::os::unix::fs::symlink(&outside_for_hook, &license_for_hook).unwrap();
+        }));
+
+        assert!(
+            audit_local_source(&source, vec![], None).is_err(),
+            "license reader followed a symlink installed after discovery"
+        );
+        assert_eq!(
+            fs::read(&outside).unwrap(),
+            b"MIT License outside sentinel\n"
+        );
+    }
+
+    #[test]
+    fn license_rejects_oversized_file() {
+        let (_temp, source, license) = fixture();
+        fs::write(&license, vec![b' '; MAX_SIDE_INPUT_BYTES as usize + 1]).unwrap();
+
+        let error = match audit_local_source(&source, vec![], None) {
+            Ok(_) => panic!("oversized license was accepted"),
+            Err(error) => error,
+        };
+        assert!(error.contains("license exceeds 65536 bytes"), "{error}");
+    }
+
+    #[test]
+    fn license_rejects_growth_after_opened_stat() {
+        let (_temp, source, license) = fixture();
+        crate::shared_skill_source::set_after_bounded_file_opened_stat_hook(Box::new(move || {
+            let mut bytes = b"MIT License\n".to_vec();
+            bytes.resize(MAX_SIDE_INPUT_BYTES as usize + 1, b' ');
+            fs::write(license, bytes).unwrap();
+        }));
+
+        let error = match audit_local_source(&source, vec![], None) {
+            Ok(_) => panic!("license growth was accepted"),
+            Err(error) => error,
+        };
+        assert!(error.contains("license exceeds 65536 bytes"), "{error}");
+    }
+
+    #[test]
+    fn routing_rejects_named_file_replaced_by_outside_symlink() {
+        let (temp, source, _license) = fixture();
+        let routing = temp.path().join("routing.yaml");
+        let outside = temp.path().join("outside-routing.yaml");
+        fs::write(&routing, b"summary: inside\n").unwrap();
+        fs::write(&outside, b"summary: outside sentinel\n").unwrap();
+        let routing_for_hook = routing.clone();
+        let outside_for_hook = outside.clone();
+        crate::shared_skill_source::set_after_bounded_file_named_stat_hook(Box::new(move || {
+            fs::remove_file(&routing_for_hook).unwrap();
+            std::os::unix::fs::symlink(&outside_for_hook, &routing_for_hook).unwrap();
+        }));
+
+        assert!(
+            audit_local_source(&source, vec![], Some(&routing)).is_err(),
+            "routing reader followed a symlink installed after the named stat"
+        );
+        assert_eq!(fs::read(&outside).unwrap(), b"summary: outside sentinel\n");
+    }
+
+    #[test]
+    fn relative_routing_path_is_bound_to_the_snapshotted_source_root() {
+        let (_temp, source, _license) = fixture();
+        fs::write(source.join("routing.yaml"), b"summary: source relative\n").unwrap();
+
+        ROUTING_SIDE_OBSERVER_CALLS.with(|calls| calls.set(0));
+        let audited = audit_local_source(&source, vec![], Some(Path::new("routing.yaml")))
+            .expect("source-relative routing metadata should be resolved from the held source");
+
+        assert_eq!(audited.record.summary, "source relative");
+        assert_eq!(
+            audited.record.routing_metadata_path.as_deref(),
+            Some("routing.yaml")
+        );
+        assert!(audited
+            .read_inputs
+            .iter()
+            .any(|seal| seal.relative_path == "routing.yaml"));
+        ROUTING_SIDE_OBSERVER_CALLS.with(|calls| assert_eq!(calls.get(), 0));
+    }
+
+    #[test]
+    fn absolute_in_tree_routing_reuses_the_source_snapshot() {
+        let (_temp, source, _license) = fixture();
+        let routing = source.join("routing.yaml");
+        fs::write(&routing, b"summary: absolute in tree\n").unwrap();
+        ROUTING_SIDE_OBSERVER_CALLS.with(|calls| calls.set(0));
+
+        let audited = audit_local_source(&source, vec![], Some(&routing)).unwrap();
+
+        assert_eq!(audited.record.summary, "absolute in tree");
+        ROUTING_SIDE_OBSERVER_CALLS.with(|calls| assert_eq!(calls.get(), 0));
+    }
+
+    #[test]
+    fn routing_traversal_is_rejected_lexically() {
+        let (_temp, source, _license) = fixture();
+        let error =
+            audit_local_source(&source, vec![], Some(Path::new("../routing.yaml"))).unwrap_err();
+        assert_eq!(error, "routing_metadata_traversal_refused");
+    }
+
+    #[test]
+    fn missing_in_tree_routing_is_rejected_from_the_snapshot() {
+        let (_temp, source, _license) = fixture();
+        let error =
+            audit_local_source(&source, vec![], Some(Path::new("missing.yaml"))).unwrap_err();
+        assert!(error.contains("metadata_file_not_found"), "{error}");
+    }
+
+    #[test]
+    fn in_tree_routing_symlink_is_rejected_by_the_source_snapshot() {
+        let (temp, source, _license) = fixture();
+        let outside = temp.path().join("outside.yaml");
+        fs::write(&outside, b"summary: outside\n").unwrap();
+        std::os::unix::fs::symlink(&outside, source.join("routing.yaml")).unwrap();
+
+        let error =
+            audit_local_source(&source, vec![], Some(Path::new("routing.yaml"))).unwrap_err();
+        assert!(error.contains("symlink_refused"), "{error}");
+        assert_eq!(fs::read(outside).unwrap(), b"summary: outside\n");
+    }
+
+    #[test]
+    fn external_routing_parent_swap_is_rejected() {
+        let (temp, source, _license) = fixture();
+        let temp_root = temp.path().to_path_buf();
+        let parent = temp_root.join("external");
+        fs::create_dir(&parent).unwrap();
+        let routing = parent.join("routing.yaml");
+        fs::write(&routing, b"summary: held\n").unwrap();
+        let moved = temp_root.join("external-held");
+        let outside = temp_root.join("outside-external");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("routing.yaml"), b"summary: outside sentinel\n").unwrap();
+        crate::shared_skill_source::set_after_bounded_file_opened_stat_hook(Box::new(move || {
+            fs::rename(&parent, &moved).unwrap();
+            std::os::unix::fs::symlink(&outside, &parent).unwrap();
+        }));
+
+        let error = audit_local_source(&source, vec![], Some(&routing)).unwrap_err();
+        assert!(
+            error.contains("read_input_drift") || error.contains("root_identity_drift"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn routing_rejects_oversized_file() {
+        let (temp, source, _license) = fixture();
+        let routing = temp.path().join("routing.yaml");
+        fs::write(&routing, vec![b' '; MAX_SIDE_INPUT_BYTES as usize + 1]).unwrap();
+
+        let error = match audit_local_source(&source, vec![], Some(&routing)) {
+            Ok(_) => panic!("oversized routing metadata was accepted"),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("routing metadata exceeds 65536 bytes"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn routing_rejects_growth_after_opened_stat() {
+        let (temp, source, _license) = fixture();
+        let routing = temp.path().join("routing.yaml");
+        fs::write(&routing, b"summary: inside\n").unwrap();
+        let routing_for_hook = routing.clone();
+        crate::shared_skill_source::set_after_bounded_file_opened_stat_hook(Box::new(move || {
+            let mut bytes = b"summary: grown\n#".to_vec();
+            bytes.resize(MAX_SIDE_INPUT_BYTES as usize + 1, b' ');
+            fs::write(routing_for_hook, bytes).unwrap();
+        }));
+
+        let error = match audit_local_source(&source, vec![], Some(&routing)) {
+            Ok(_) => panic!("routing metadata growth was accepted"),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("routing metadata exceeds 65536 bytes"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn side_input_io_has_no_pathname_read_fallback() {
+        let source = include_str!("source.rs");
+        assert!(!source.contains(concat!("fs::", "read(&license)")));
+        assert!(!source.contains(concat!("fs::", "read(&canonical)")));
+    }
 }

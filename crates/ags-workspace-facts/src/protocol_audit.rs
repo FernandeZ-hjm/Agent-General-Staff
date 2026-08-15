@@ -81,7 +81,7 @@ pub(super) fn detect_verification_commands(target: &Path) -> Vec<String> {
         commands.push("cargo build --release".to_string());
     }
 
-    commands.push("ags verify --scope local".to_string());
+    commands.push("ags check governance --workspace .".to_string());
 
     // If no project tooling found, give guidance
     if commands.is_empty() {
@@ -145,12 +145,12 @@ pub fn check_protocol_status(target: &Path) -> ProtocolStatus {
 
     let (validator_entry, alternate_entry) = if has_rust_validator {
         (
-            "ags task validate <task-card>".to_string(),
-            "cargo run -p ags-cli -- task validate <task-card>".to_string(),
+            "ags govern task validate --task-card <task-card> --workspace .".to_string(),
+            "cargo run -p ags-cli -- govern task validate --task-card <task-card>".to_string(),
         )
     } else {
         (
-            "ags task validate <task-card>".to_string(),
+            "ags govern task validate --task-card <task-card> --workspace .".to_string(),
             "N/A (use the installed AGS Rust kernel)".to_string(),
         )
     };

@@ -1,22 +1,56 @@
+#![cfg_attr(not(unix), allow(dead_code))]
+
 use super::model::{
-    AdoptionContext, BodyRevision, InstalledSkillRecord, ResolvedSource, RiskFinding, SourceSpec,
+    AdoptionContext, InstalledSkillRecord, MaterializedBodyNode, ResolvedSource, SourceSpec,
 };
-use super::source::{
-    audit_local_source_with_boundary, parse_github_url, validate_materialized_tree,
-    validate_source_subdir,
-};
-use crate::hash_skill_source;
+#[cfg(unix)]
+use super::model::{BodyRevision, RiskFinding};
+#[cfg(unix)]
+use super::source::audit_remote_source_snapshots;
+use super::source::{parse_github_url, validate_source_subdir};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Read;
+#[cfg(unix)]
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const CANDIDATE_MANIFEST_SCHEMA: &str = "0.4.15-remote-candidate";
+#[cfg(unix)]
+use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, Stat};
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
+
+const CANDIDATE_MANIFEST_SCHEMA: &str = "ags://schema/contract/v2/remote-candidate";
+#[cfg_attr(not(unix), allow(dead_code))]
 const CANDIDATE_MANIFEST_FILE: &str = "candidate-manifest.json";
+#[cfg_attr(not(unix), allow(dead_code))]
 const MAX_CANDIDATE_MANIFEST_BYTES: u64 = 64 * 1024;
+#[cfg(unix)]
+const MAX_GIT_SCAN_DIRECTORIES: usize = 512;
+#[cfg(unix)]
+const MAX_GIT_SCAN_ENTRIES: usize = 1024;
+#[cfg(unix)]
+const MAX_GIT_METADATA_RESULTS: usize = 64;
+#[cfg(unix)]
+const MAX_GIT_SCAN_NAME_BYTES: usize = 255;
+#[cfg(unix)]
+const MAX_GIT_CLEANUP_ENTRIES: usize = 16 * 1024;
+const MAX_GIT_PROCESS_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
+const GIT_PROCESS_TIMEOUT: Duration = Duration::from_secs(60);
 static CANDIDATE_STAGE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(all(test, unix))]
+thread_local! {
+    static AFTER_GIT_METADATA_NAMED_STAT_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+    static AFTER_CANDIDATE_ROOT_PATH_CHECK_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+    static AFTER_FRESH_STAGE_CREATE_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+    static AFTER_CACHED_MANIFEST_READ_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+    static AFTER_HELD_STAGE_REVALIDATE_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+    static AFTER_CANDIDATE_MANIFEST_WRITE_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
 
 /// The only process seam used by remote Skill acquisition.  Implementations
 /// receive discrete values; no shell command string is ever accepted.
@@ -33,7 +67,7 @@ pub trait GitBackend {
         &self,
         repository_url: &str,
         resolved_commit: &str,
-        destination: &Path,
+        destination: &HeldCheckout,
     ) -> Result<Option<Vec<RemoteTreeEntry>>, String> {
         let _ = (repository_url, resolved_commit, destination);
         Ok(None)
@@ -45,7 +79,7 @@ pub trait GitBackend {
         &self,
         _repository_url: &str,
         resolved_commit: &str,
-        destination: &Path,
+        destination: &HeldCheckout,
         _subdir: &str,
         _license_paths: &[String],
     ) -> Result<(), String>;
@@ -53,9 +87,103 @@ pub trait GitBackend {
     /// A backend may inspect its checkout's Git tree for gitlinks and unsafe
     /// paths.  The materialized-tree audit below remains mandatory for every
     /// backend.
-    fn validate_checkout(&self, _destination: &Path) -> Result<(), String> {
+    fn validate_checkout(&self, _destination: &HeldCheckout) -> Result<(), String> {
         Ok(())
     }
+}
+
+#[cfg(unix)]
+pub struct HeldCheckout {
+    root: crate::shared_skill_source::DescriptorRoot,
+}
+
+#[cfg(unix)]
+impl HeldCheckout {
+    pub fn create_dir_all(&self, relative: &Path) -> Result<(), String> {
+        if relative.as_os_str().is_empty() {
+            return Ok(());
+        }
+        self.root.create_relative_directory(
+            relative,
+            Mode::from_raw_mode(0o700),
+            "backend checkout",
+        )?;
+        Ok(())
+    }
+
+    pub fn write(&self, relative: &Path, bytes: &[u8]) -> Result<(), String> {
+        self.root.write_relative_file(
+            relative,
+            bytes,
+            Mode::from_raw_mode(0o600),
+            "backend checkout",
+        )
+    }
+
+    pub fn copy_from(&self, source: &Path) -> Result<(), String> {
+        copy_into_held_checkout(source, self, Path::new(""))
+    }
+
+    pub fn symlink(&self, relative: &Path, target: &Path) -> Result<(), String> {
+        self.root
+            .create_relative_symlink(relative, target, "backend checkout")
+    }
+}
+
+#[cfg(not(unix))]
+pub struct HeldCheckout;
+
+#[cfg(not(unix))]
+impl HeldCheckout {
+    pub fn create_dir_all(&self, _relative: &Path) -> Result<(), String> {
+        Err("descriptor_semantics_unavailable_for_held_checkout".to_string())
+    }
+
+    pub fn write(&self, _relative: &Path, _bytes: &[u8]) -> Result<(), String> {
+        Err("descriptor_semantics_unavailable_for_held_checkout".to_string())
+    }
+
+    pub fn copy_from(&self, _source: &Path) -> Result<(), String> {
+        Err("descriptor_semantics_unavailable_for_held_checkout".to_string())
+    }
+
+    pub fn symlink(&self, _relative: &Path, _target: &Path) -> Result<(), String> {
+        Err("descriptor_semantics_unavailable_for_held_checkout".to_string())
+    }
+}
+
+#[cfg(unix)]
+fn copy_into_held_checkout(
+    source: &Path,
+    destination: &HeldCheckout,
+    relative: &Path,
+) -> Result<(), String> {
+    let mut entries = fs::read_dir(source)
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let child_relative = relative.join(entry.file_name());
+        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+        if file_type.is_dir() {
+            destination.create_dir_all(&child_relative)?;
+            copy_into_held_checkout(&entry.path(), destination, &child_relative)?;
+        } else if file_type.is_file() {
+            destination.write(
+                &child_relative,
+                &fs::read(entry.path()).map_err(|error| error.to_string())?,
+            )?;
+        } else if file_type.is_symlink() {
+            destination.symlink(
+                &child_relative,
+                &fs::read_link(entry.path()).map_err(|error| error.to_string())?,
+            )?;
+        } else {
+            return Err("fixture source contains a special file".to_string());
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,94 +250,145 @@ pub fn acquire_remote_candidate_with_backend(
         .map_err(|error| format!("cannot serialize candidate identity: {error}"))?,
     );
     let candidate_name = candidate_identity.trim_start_matches("sha256:");
-    let candidates_root = context.runtime_home.join("candidates");
+    let candidates_root = context.candidate_home.join("candidates");
     let candidate_root = candidates_root.join(candidate_name);
     let checkout_root = candidate_root.join("checkout");
-    ensure_directory_not_symlink(&candidates_root, "candidate store")?;
-    let expected_manifest = CandidateManifest {
-        schema_version: CANDIDATE_MANIFEST_SCHEMA.to_string(),
-        candidate_identity: candidate_identity.clone(),
-        repository_url: repository_url.to_string(),
-        resolved_commit: resolved_commit.clone(),
-        subdir: subdir.clone(),
-        body_hash: String::new(),
-    };
-    if fs::symlink_metadata(&candidate_root).is_ok() {
-        ensure_directory_not_symlink(&candidate_root, "candidate")?;
-        if validate_cached_candidate(&candidate_root, &expected_manifest).is_err() {
-            quarantine_candidate(&candidates_root, &candidate_root, candidate_name)?;
-        }
-    }
-    if fs::symlink_metadata(&candidate_root).is_err() {
-        materialize_candidate(
-            &candidates_root,
-            &candidate_root,
-            candidate_name,
-            repository_url,
-            &resolved_commit,
-            &subdir,
-            &expected_manifest,
-            backend,
-        )?;
-    }
-    ensure_directory_not_symlink(&checkout_root, "candidate checkout")?;
-    validate_cached_candidate(&candidate_root, &expected_manifest)?;
-    let skill_dir = checkout_root.join(&subdir);
-    ensure_contained_directory(&checkout_root, &skill_dir)?;
-    validate_materialized_tree(&skill_dir)?;
-    // Fresh candidates already validated the exact tree-derived license set;
-    // cached candidates are rechecked against the supported root names.
-    validate_materialized_license_files(&checkout_root, &[])?;
-    if !skill_dir.join("SKILL.md").is_file() {
-        return Err(format!(
-            "remote candidate does not contain SKILL.md under {}",
-            subdir.if_empty("repository root")
-        ));
-    }
-    let audited =
-        audit_local_source_with_boundary(&skill_dir, Vec::new(), None, Some(&checkout_root))?;
-    let mut repository_risks = audited.risk_findings.clone();
-    repository_risks
-        .sort_by(|left, right| left.code.cmp(&right.code).then(left.path.cmp(&right.path)));
-    repository_risks.dedup();
-    if !repository_risks
-        .iter()
-        .any(|finding| finding.code == "catalog_unreviewed")
+    #[cfg(unix)]
     {
-        repository_risks.push(RiskFinding::acknowledgement(
-            "catalog_unreviewed",
-            None,
-            "third-party source has not completed catalog review",
-        ));
+        let held_candidates = open_candidate_store(&context.candidate_home)?;
+        let expected_manifest = CandidateManifest {
+            schema_version: CANDIDATE_MANIFEST_SCHEMA.to_string(),
+            candidate_identity: candidate_identity.clone(),
+            repository_url: repository_url.to_string(),
+            resolved_commit: resolved_commit.clone(),
+            subdir: subdir.clone(),
+            body_hash: String::new(),
+        };
+        if let Ok(held_candidate) =
+            held_candidates.open_relative_directory(Path::new(candidate_name), "candidate root")
+        {
+            if validate_cached_candidate_at(&held_candidate, &expected_manifest).is_err() {
+                quarantine_candidate(&candidates_root, &candidate_root, candidate_name)?;
+            }
+        }
+        if held_candidates
+            .open_relative_directory(Path::new(candidate_name), "candidate root")
+            .is_err()
+        {
+            materialize_candidate(
+                &held_candidates,
+                candidate_name,
+                repository_url,
+                &resolved_commit,
+                &subdir,
+                &expected_manifest,
+                backend,
+            )?;
+        }
+        let held_candidate =
+            held_candidates.open_relative_directory(Path::new(candidate_name), "candidate root")?;
+        validate_cached_candidate_at(&held_candidate, &expected_manifest)?;
+        let skill_dir = checkout_root.join(&subdir);
+        let checkout_snapshot =
+            super::materialize::snapshot_skill_source_at(&held_candidate, Path::new("checkout"))?;
+        let skill_snapshot = super::materialize::snapshot_skill_source_at(
+            &held_candidate,
+            &Path::new("checkout").join(&subdir),
+        )?;
+        let audited = audit_remote_source_snapshots(
+            skill_dir.clone(),
+            &checkout_root,
+            &subdir,
+            Vec::new(),
+            skill_snapshot,
+            &checkout_snapshot,
+        )?;
+        held_candidate
+            .revalidate("candidate root")
+            .map_err(|_| "candidate_root_identity_drift".to_string())?;
+        let mut repository_risks = audited.risk_findings.clone();
         repository_risks
             .sort_by(|left, right| left.code.cmp(&right.code).then(left.path.cmp(&right.path)));
+        repository_risks.dedup();
+        if !repository_risks
+            .iter()
+            .any(|finding| finding.code == "catalog_unreviewed")
+        {
+            repository_risks.push(RiskFinding::acknowledgement(
+                "catalog_unreviewed",
+                None,
+                "third-party source has not completed catalog review",
+            ));
+            repository_risks
+                .sort_by(|left, right| left.code.cmp(&right.code).then(left.path.cmp(&right.path)));
+        }
+        let source_label = source_label(source, &subdir);
+        let resolved_source = ResolvedSource {
+            source_spec: source.clone(),
+            resolved_commit,
+            body_hash: audited.record.source_hash.clone(),
+            candidate_identity,
+            subdir,
+        };
+        let mut record = audited.record;
+        record.source = source_label;
+        record.source_spec = source.clone();
+        record.resolved_source = Some(resolved_source.clone());
+        record.risk_findings = repository_risks;
+        record.body_revisions = vec![BodyRevision::from_record(&record)];
+        Ok(RemoteCandidate {
+            checkout_root,
+            skill_dir,
+            record,
+            resolved_source,
+        })
     }
-    let source_label = source_label(source, &subdir);
-    let resolved_source = ResolvedSource {
-        source_spec: source.clone(),
-        resolved_commit,
-        body_hash: audited.record.source_hash.clone(),
-        candidate_identity,
-        subdir,
-    };
-    let mut record = audited.record;
-    record.source = source_label;
-    record.source_spec = source.clone();
-    record.resolved_source = Some(resolved_source.clone());
-    record.risk_findings = repository_risks;
-    record.body_revisions = vec![BodyRevision::from_record(&record)];
-    Ok(RemoteCandidate {
-        checkout_root,
-        skill_dir,
-        record,
-        resolved_source,
-    })
+    #[cfg(not(unix))]
+    {
+        let _ = (
+            context,
+            source,
+            backend,
+            repository_url,
+            requested_ref,
+            subdir,
+            &resolved_commit,
+            &candidate_identity,
+            candidate_name,
+            candidates_root,
+            candidate_root,
+            checkout_root,
+        );
+        Err("descriptor_semantics_unavailable_for_candidate_store".to_string())
+    }
+}
+
+#[cfg(unix)]
+fn open_candidate_store(
+    runtime_home: &Path,
+) -> Result<crate::shared_skill_source::DescriptorRoot, String> {
+    let runtime_parent = runtime_home
+        .parent()
+        .ok_or_else(|| "runtime home has no authorized parent".to_string())?;
+    let runtime_name = runtime_home
+        .file_name()
+        .ok_or_else(|| "runtime home has no directory name".to_string())?;
+    let held_parent = crate::shared_skill_source::DescriptorRoot::open_absolute(
+        runtime_parent,
+        "candidate store authority",
+    )?;
+    held_parent.create_relative_directory(
+        &PathBuf::from(runtime_name).join("candidates"),
+        Mode::from_raw_mode(0o700),
+        "candidate store",
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(unreachable_code)]
+#[cfg(unix)]
 fn materialize_candidate(
-    candidates_root: &Path,
-    candidate_root: &Path,
+    candidates_root: &crate::shared_skill_source::DescriptorRoot,
     candidate_name: &str,
     repository_url: &str,
     resolved_commit: &str,
@@ -217,27 +396,43 @@ fn materialize_candidate(
     expected_manifest: &CandidateManifest,
     backend: &dyn GitBackend,
 ) -> Result<(), String> {
-    fs::create_dir_all(candidates_root).map_err(|error| {
-        format!(
-            "cannot create candidate root {}: {error}",
-            candidates_root.display()
-        )
-    })?;
-    let stage_root = candidates_root.join(format!(
+    let stage_name = format!(
         ".stage-{}-{}-{candidate_name}",
         std::process::id(),
         unique_candidate_suffix()
-    ));
-    fs::create_dir(&stage_root).map_err(|error| {
-        format!(
-            "cannot create unique candidate stage {}: {error}",
-            stage_root.display()
-        )
-    })?;
-    let stage_checkout = stage_root.join("checkout");
+    );
+    let held_stage = candidates_root.create_relative_directory(
+        Path::new(&stage_name),
+        Mode::from_raw_mode(0o700),
+        "candidate stage root",
+    )?;
+    let stage_root = held_stage.path().to_path_buf();
+    let candidate_root = candidates_root.path().join(candidate_name);
+    #[cfg(test)]
+    AFTER_FRESH_STAGE_CREATE_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+    held_stage
+        .revalidate("candidate stage root")
+        .map_err(|_| "candidate_stage_root_identity_drift".to_string())?;
+    #[cfg(test)]
+    AFTER_HELD_STAGE_REVALIDATE_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+    let held_checkout = HeldCheckout {
+        root: held_stage.create_relative_directory(
+            Path::new("checkout"),
+            Mode::from_raw_mode(0o700),
+            "candidate checkout",
+        )?,
+    };
     let result = (|| -> Result<(), String> {
         let tree_metadata =
-            backend.prepare_checkout(repository_url, resolved_commit, &stage_checkout)?;
+            backend.prepare_checkout(repository_url, resolved_commit, &held_checkout)?;
         let license_paths = tree_metadata
             .as_deref()
             .map(|entries| preflight_selected_tree(entries, subdir))
@@ -246,24 +441,51 @@ fn materialize_candidate(
         backend.materialize_selected(
             repository_url,
             resolved_commit,
-            &stage_checkout,
+            &held_checkout,
             subdir,
             &license_paths,
         )?;
-        ensure_directory_not_symlink(&stage_checkout, "candidate checkout")?;
-        backend.validate_checkout(&stage_checkout)?;
-        remove_git_metadata(&stage_checkout)?;
-        ensure_no_git_metadata(&stage_checkout)?;
-        if let Some(entries) = tree_metadata.as_deref() {
-            validate_materialized_tree_metadata(&stage_checkout, entries, subdir)?;
+        backend.validate_checkout(&held_checkout)?;
+        for path in find_git_metadata_held(&held_checkout.root)? {
+            held_checkout
+                .root
+                .remove_relative_tree(&path, "Git metadata")?;
         }
-        let selected_stage = stage_checkout.join(subdir);
-        validate_materialized_tree(&selected_stage)?;
-        validate_materialized_license_files(&stage_checkout, &license_paths)?;
+        let checkout_snapshot =
+            super::materialize::snapshot_skill_source_at(&held_checkout.root, Path::new(""))?;
+        if let Some(entries) = tree_metadata.as_deref() {
+            validate_snapshot_tree_metadata(&checkout_snapshot, entries, subdir)?;
+        }
+        validate_snapshot_license_files(&checkout_snapshot, &license_paths)?;
+        let selected_snapshot =
+            super::materialize::snapshot_skill_source_at(&held_checkout.root, Path::new(subdir))?;
         let mut manifest = expected_manifest.clone();
-        manifest.body_hash = hash_skill_source(&selected_stage)?;
-        write_candidate_manifest(&stage_root, &manifest)?;
-        fs::rename(&stage_root, candidate_root).map_err(|error| {
+        manifest.body_hash = selected_snapshot.source_hash;
+        #[cfg(unix)]
+        {
+            write_candidate_manifest_at(&held_stage, &manifest)?;
+            #[cfg(test)]
+            AFTER_CANDIDATE_MANIFEST_WRITE_HOOK.with(|slot| {
+                if let Some(hook) = slot.borrow_mut().take() {
+                    hook();
+                }
+            });
+        }
+        #[cfg(not(unix))]
+        return Err("descriptor_semantics_unavailable_for_candidate_manifest_write".to_string());
+        held_stage
+            .revalidate("candidate stage root")
+            .map_err(|_| "candidate_stage_root_identity_drift".to_string())?;
+        candidates_root
+            .revalidate("candidate store")
+            .map_err(|_| "candidate_store_identity_drift".to_string())?;
+        rustix::fs::renameat(
+            candidates_root.descriptor(),
+            Path::new(&stage_name),
+            candidates_root.descriptor(),
+            Path::new(candidate_name),
+        )
+        .map_err(|error| {
             format!(
                 "cannot publish sealed candidate {}: {error}",
                 candidate_root.display()
@@ -273,22 +495,60 @@ fn materialize_candidate(
     })();
     if result.is_err() {
         let _ = fs::remove_dir_all(&stage_root);
-        // Preserve the pre-0.4.15 fail-closed contract: an acquisition that
+        // Preserve the fail-closed contract: an acquisition that
         // never publishes or quarantines a candidate must not leave an empty
         // cache directory behind.
-        let _ = fs::remove_dir(candidates_root);
+        let _ = fs::remove_dir(candidates_root.path());
     }
     result
 }
 
+#[allow(unreachable_code)]
+#[cfg(all(test, unix))]
 fn validate_cached_candidate(
     candidate_root: &Path,
     expected: &CandidateManifest,
 ) -> Result<(), String> {
-    ensure_directory_not_symlink(candidate_root, "candidate")?;
-    let checkout_root = candidate_root.join("checkout");
-    ensure_directory_not_symlink(&checkout_root, "candidate checkout")?;
-    let manifest = read_candidate_manifest(candidate_root)?;
+    let parent = candidate_root
+        .parent()
+        .ok_or_else(|| "candidate root has no parent".to_string())?;
+    let name = candidate_root
+        .file_name()
+        .ok_or_else(|| "candidate root has no name".to_string())?;
+    let held_parent =
+        crate::shared_skill_source::DescriptorRoot::open_absolute(parent, "candidate store")?;
+    let held_candidate =
+        held_parent.open_relative_directory(Path::new(name), "candidate root named check")?;
+    #[cfg(test)]
+    AFTER_CANDIDATE_ROOT_PATH_CHECK_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+    held_candidate
+        .revalidate("candidate root")
+        .map_err(|_| "candidate_root_identity_drift".to_string())?;
+    validate_cached_candidate_at(&held_candidate, expected)
+}
+
+#[allow(unreachable_code)]
+#[cfg(unix)]
+fn validate_cached_candidate_at(
+    held_candidate: &crate::shared_skill_source::DescriptorRoot,
+    expected: &CandidateManifest,
+) -> Result<(), String> {
+    #[cfg(unix)]
+    let manifest = read_candidate_manifest_at(held_candidate)?;
+    #[cfg(test)]
+    AFTER_CACHED_MANIFEST_READ_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+    #[cfg(not(unix))]
+    return Err("descriptor_semantics_unavailable_for_candidate_manifest_read".to_string());
+    #[cfg(not(unix))]
+    let manifest = expected.clone();
     if manifest.schema_version != expected.schema_version
         || manifest.candidate_identity != expected.candidate_identity
         || manifest.repository_url != expected.repository_url
@@ -298,34 +558,58 @@ fn validate_cached_candidate(
     {
         return Err("candidate_manifest_identity_mismatch".to_string());
     }
-    ensure_no_git_metadata(&checkout_root)?;
-    let skill_dir = checkout_root.join(&manifest.subdir);
-    ensure_contained_directory(&checkout_root, &skill_dir)?;
-    validate_materialized_tree(&skill_dir)?;
-    let observed_hash = hash_skill_source(&skill_dir)?;
-    if observed_hash != manifest.body_hash {
+    let checkout_snapshot =
+        super::materialize::snapshot_skill_source_at(held_candidate, Path::new("checkout"))?;
+    if checkout_snapshot
+        .nodes
+        .iter()
+        .map(materialized_node_path)
+        .any(|path| path.split('/').any(|component| component == ".git"))
+    {
+        return Err("isolated Git metadata remains after cleanup".to_string());
+    }
+    let skill_relative = Path::new("checkout").join(&manifest.subdir);
+    let skill_snapshot =
+        super::materialize::snapshot_skill_source_at(held_candidate, &skill_relative)?;
+    if skill_snapshot.source_hash != manifest.body_hash {
         return Err("candidate_manifest_body_hash_mismatch".to_string());
     }
+    held_candidate
+        .revalidate("candidate root")
+        .map_err(|_| "candidate_root_identity_drift".to_string())?;
     Ok(())
 }
 
+#[cfg(all(test, unix))]
 fn read_candidate_manifest(candidate_root: &Path) -> Result<CandidateManifest, String> {
-    let path = candidate_root.join(CANDIDATE_MANIFEST_FILE);
-    let metadata = fs::symlink_metadata(&path).map_err(|error| {
-        format!(
-            "cannot inspect candidate manifest {}: {error}",
-            path.display()
-        )
+    let held_candidate = crate::shared_skill_source::DescriptorRoot::open_absolute(
+        candidate_root,
+        "candidate root",
+    )?;
+    read_candidate_manifest_at(&held_candidate)
+}
+
+#[cfg(unix)]
+fn read_candidate_manifest_at(
+    candidate_root: &crate::shared_skill_source::DescriptorRoot,
+) -> Result<CandidateManifest, String> {
+    let path = candidate_root.path().join(CANDIDATE_MANIFEST_FILE);
+    let observed = crate::shared_skill_source::observe_bounded_regular_file_at(
+        candidate_root,
+        Path::new(CANDIDATE_MANIFEST_FILE),
+        MAX_CANDIDATE_MANIFEST_BYTES,
+        "candidate manifest",
+    )
+    .map_err(|error| {
+        if error.contains("exceeds 65536 bytes") {
+            "candidate_manifest_too_large".to_string()
+        } else if error.contains("must be a regular file") {
+            "candidate_manifest_not_regular_file".to_string()
+        } else {
+            error
+        }
     })?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err("candidate_manifest_not_regular_file".to_string());
-    }
-    if metadata.len() > MAX_CANDIDATE_MANIFEST_BYTES {
-        return Err("candidate_manifest_too_large".to_string());
-    }
-    let bytes = fs::read(&path)
-        .map_err(|error| format!("cannot read candidate manifest {}: {error}", path.display()))?;
-    serde_json::from_slice(&bytes).map_err(|error| {
+    serde_json::from_slice(&observed.bytes).map_err(|error| {
         format!(
             "cannot parse candidate manifest {}: {error}",
             path.display()
@@ -333,19 +617,90 @@ fn read_candidate_manifest(candidate_root: &Path) -> Result<CandidateManifest, S
     })
 }
 
+#[cfg(all(test, unix))]
 fn write_candidate_manifest(
     candidate_root: &Path,
     manifest: &CandidateManifest,
 ) -> Result<(), String> {
-    let path = candidate_root.join(CANDIDATE_MANIFEST_FILE);
+    #[cfg(not(unix))]
+    {
+        let _ = (candidate_root, manifest);
+        return Err("descriptor_semantics_unavailable_for_candidate_manifest_write".to_string());
+    }
+
+    #[cfg(unix)]
+    {
+        let held_candidate = crate::shared_skill_source::DescriptorRoot::open_absolute(
+            candidate_root,
+            "candidate stage root",
+        )?;
+        write_candidate_manifest_at(&held_candidate, manifest)
+    }
+}
+
+#[cfg(all(test, unix))]
+thread_local! {
+    static AFTER_CANDIDATE_MANIFEST_ROOT_OPEN_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(unix)]
+fn write_candidate_manifest_at(
+    candidate_root: &crate::shared_skill_source::DescriptorRoot,
+    manifest: &CandidateManifest,
+) -> Result<(), String> {
+    let path = candidate_root.path().join(CANDIDATE_MANIFEST_FILE);
     let bytes = serde_json::to_vec_pretty(manifest)
         .map_err(|error| format!("cannot serialize candidate manifest: {error}"))?;
-    fs::write(&path, bytes).map_err(|error| {
+    if bytes.len() as u64 > MAX_CANDIDATE_MANIFEST_BYTES {
+        return Err("candidate_manifest_too_large".to_string());
+    }
+    let root_fd = candidate_root.descriptor();
+    let root_opened_before = rustix::fs::fstat(root_fd)
+        .map_err(|error| format!("cannot stat held candidate stage root: {error}"))?;
+    #[cfg(test)]
+    AFTER_CANDIDATE_MANIFEST_ROOT_OPEN_HOOK.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+    let file_fd = rustix::fs::openat(
+        root_fd,
+        CANDIDATE_MANIFEST_FILE,
+        OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::from_bits_truncate(0o600),
+    )
+    .map_err(|error| {
+        format!(
+            "cannot create candidate manifest {}: {error}",
+            path.display()
+        )
+    })?;
+    let mut file = fs::File::from(file_fd);
+    file.write_all(&bytes).map_err(|error| {
         format!(
             "cannot write candidate manifest {}: {error}",
             path.display()
         )
-    })
+    })?;
+    file.sync_all()
+        .map_err(|error| format!("cannot sync candidate manifest {}: {error}", path.display()))?;
+    let opened_after = rustix::fs::fstat(&file)
+        .map_err(|error| format!("cannot stat written candidate manifest: {error}"))?;
+    let named_after =
+        rustix::fs::statat(root_fd, CANDIDATE_MANIFEST_FILE, AtFlags::SYMLINK_NOFOLLOW)
+            .map_err(|error| format!("cannot revalidate candidate manifest path: {error}"))?;
+    let root_opened_after = rustix::fs::fstat(root_fd)
+        .map_err(|error| format!("cannot revalidate held candidate stage root: {error}"))?;
+    if FileType::from_raw_mode(opened_after.st_mode) != FileType::RegularFile
+        || git_stat_binding(&opened_after) != git_stat_binding(&named_after)
+        || u64::try_from(opened_after.st_size).ok() != Some(bytes.len() as u64)
+        || (u32::from(opened_after.st_mode) & 0o7777) != 0o600
+        || git_stat_identity(&root_opened_before) != git_stat_identity(&root_opened_after)
+    {
+        return Err("candidate_manifest_write_identity_drift".to_string());
+    }
+    candidate_root.revalidate("candidate stage root")?;
+    Ok(())
 }
 
 fn quarantine_candidate(
@@ -579,130 +934,64 @@ fn source_label(source: &SourceSpec, subdir: &str) -> String {
     }
 }
 
-fn ensure_contained_directory(root: &Path, child: &Path) -> Result<(), String> {
-    let metadata = fs::symlink_metadata(child).map_err(|error| {
-        format!(
-            "cannot inspect remote candidate path {}: {error}",
-            child.display()
-        )
-    })?;
-    if metadata.file_type().is_symlink() {
-        return Err(format!("symlink_refused: {}", child.display()));
+fn materialized_node_path(node: &MaterializedBodyNode) -> &str {
+    match node {
+        MaterializedBodyNode::Directory { relative_path, .. }
+        | MaterializedBodyNode::RegularFile { relative_path, .. } => relative_path,
     }
-    if !metadata.is_dir() {
-        return Err(format!(
-            "remote candidate path is not a directory: {}",
-            child.display()
-        ));
-    }
-    let root = root.canonicalize().map_err(|error| {
-        format!(
-            "cannot canonicalize candidate root {}: {error}",
-            root.display()
-        )
-    })?;
-    let child = child.canonicalize().map_err(|error| {
-        format!(
-            "cannot canonicalize candidate path {}: {error}",
-            child.display()
-        )
-    })?;
-    if !child.starts_with(&root) {
-        return Err(format!(
-            "remote candidate path escapes checkout root: {}",
-            child.display()
-        ));
-    }
-    Ok(())
 }
 
-fn validate_materialized_license_files(
-    checkout_root: &Path,
-    license_paths: &[String],
-) -> Result<(), String> {
-    let required = !license_paths.is_empty();
-    let paths = if license_paths.is_empty() {
-        ["LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING"]
-            .iter()
-            .map(|name| (*name).to_string())
-            .collect::<Vec<_>>()
-    } else {
-        license_paths.to_vec()
-    };
-    for relative in paths {
-        let path = checkout_root.join(&relative);
-        let Ok(metadata) = fs::symlink_metadata(&path) else {
-            if required {
-                return Err(format!("remote selected license is missing: {relative}"));
-            }
-            continue;
-        };
-        if metadata.file_type().is_symlink() {
-            return Err(format!("symlink_refused: {relative}"));
-        }
-        if !metadata.is_file() {
-            return Err(format!("special_file_refused: {relative}"));
-        }
-        if metadata.len() > super::source::MAX_FILE_BYTES {
-            return Err(format!(
-                "skill source file exceeds {} bytes: {relative}",
-                super::source::MAX_FILE_BYTES
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn validate_materialized_tree_metadata(
-    checkout_root: &Path,
+fn validate_snapshot_tree_metadata(
+    snapshot: &super::materialize::SkillSourceSnapshot,
     entries: &[RemoteTreeEntry],
     subdir: &str,
 ) -> Result<(), String> {
-    let selected_prefix = if subdir.is_empty() {
-        String::new()
-    } else {
-        format!("{subdir}/")
-    };
+    let selected_prefix = (!subdir.is_empty()).then(|| format!("{subdir}/"));
     for entry in entries {
-        let selected =
-            subdir.is_empty() || entry.path == subdir || entry.path.starts_with(&selected_prefix);
-        if !selected && !is_root_license_path(&entry.path) {
+        if !(subdir.is_empty()
+            || entry.path == subdir
+            || selected_prefix
+                .as_deref()
+                .is_some_and(|prefix| entry.path.starts_with(prefix))
+            || is_root_license_path(&entry.path))
+        {
             continue;
         }
-        let path = checkout_root.join(&entry.path);
-        let metadata = fs::symlink_metadata(&path).map_err(|error| {
-            format!(
-                "selected remote tree entry is missing {}: {error}",
-                entry.path
-            )
-        })?;
-        match entry.kind {
-            RemoteTreeEntryKind::Directory => {
-                if !metadata.is_dir() || metadata.file_type().is_symlink() {
-                    return Err(format!("symlink_refused: {}", entry.path));
-                }
+        let node = snapshot
+            .nodes
+            .iter()
+            .find(|node| materialized_node_path(node) == entry.path)
+            .ok_or_else(|| format!("selected remote tree entry is missing {}", entry.path))?;
+        match (entry.kind, node) {
+            (RemoteTreeEntryKind::Directory, MaterializedBodyNode::Directory { .. }) => {}
+            (RemoteTreeEntryKind::Regular, MaterializedBodyNode::RegularFile { bytes, .. })
+                if bytes.len() as u64 <= super::source::MAX_FILE_BYTES => {}
+            (RemoteTreeEntryKind::Symlink, _) => {
+                return Err(format!("symlink_refused: {}", entry.path))
             }
-            RemoteTreeEntryKind::Regular => {
-                if !metadata.is_file() || metadata.file_type().is_symlink() {
-                    return Err(format!("special_file_refused: {}", entry.path));
-                }
-                if metadata.len() > super::source::MAX_FILE_BYTES {
-                    return Err(format!(
-                        "skill source file exceeds {} bytes: {}",
-                        super::source::MAX_FILE_BYTES,
-                        entry.path
-                    ));
-                }
+            (RemoteTreeEntryKind::Gitlink, _) => {
+                return Err(format!("submodule_refused: {}", entry.path))
             }
-            RemoteTreeEntryKind::Symlink => {
-                return Err(format!("symlink_refused: {}", entry.path));
-            }
-            RemoteTreeEntryKind::Gitlink => {
-                return Err(format!("submodule_refused: {}", entry.path));
-            }
-            RemoteTreeEntryKind::Special => {
-                return Err(format!("special_file_refused: {}", entry.path));
-            }
+            _ => return Err(format!("special_file_refused: {}", entry.path)),
+        }
+    }
+    Ok(())
+}
+
+fn validate_snapshot_license_files(
+    snapshot: &super::materialize::SkillSourceSnapshot,
+    license_paths: &[String],
+) -> Result<(), String> {
+    for path in license_paths {
+        let Some(MaterializedBodyNode::RegularFile { bytes, .. }) = snapshot
+            .nodes
+            .iter()
+            .find(|node| materialized_node_path(node) == path)
+        else {
+            return Err(format!("remote selected license is missing: {path}"));
+        };
+        if bytes.len() as u64 > super::source::MAX_FILE_BYTES {
+            return Err(format!("skill source file exceeds byte budget: {path}"));
         }
     }
     Ok(())
@@ -721,6 +1010,7 @@ fn ensure_directory_not_symlink(path: &Path, label: &str) -> Result<(), String> 
     Ok(())
 }
 
+#[cfg(unix)]
 fn remove_git_metadata(root: &Path) -> Result<(), String> {
     const MAX_PASSES: usize = 4;
     for _ in 0..MAX_PASSES {
@@ -729,13 +1019,19 @@ fn remove_git_metadata(root: &Path) -> Result<(), String> {
             return Ok(());
         }
         for git_path in git_paths {
-            remove_git_metadata_path(&git_path)?;
+            remove_git_metadata_path(root, &git_path)?;
         }
         std::thread::yield_now();
     }
     ensure_no_git_metadata(root)
 }
 
+#[cfg(not(unix))]
+fn remove_git_metadata(_root: &Path) -> Result<(), String> {
+    Err("descriptor_semantics_unavailable_for_git_metadata_cleanup".to_string())
+}
+
+#[cfg(unix)]
 fn ensure_no_git_metadata(root: &Path) -> Result<(), String> {
     let remaining = find_git_metadata(root)?;
     if remaining.is_empty() {
@@ -751,88 +1047,860 @@ fn ensure_no_git_metadata(root: &Path) -> Result<(), String> {
     ))
 }
 
+#[cfg(not(unix))]
+fn ensure_no_git_metadata(_root: &Path) -> Result<(), String> {
+    Err("descriptor_semantics_unavailable_for_git_metadata_cleanup".to_string())
+}
+
+#[cfg(unix)]
 fn find_git_metadata(root: &Path) -> Result<Vec<PathBuf>, String> {
-    ensure_directory_not_symlink(root, "candidate checkout")?;
-    let mut pending = vec![root.to_path_buf()];
+    let held = open_git_scan_root(root)?;
+    let mut budget = GitScanBudget::default();
     let mut found = Vec::new();
-    while let Some(directory) = pending.pop() {
-        let entries = fs::read_dir(&directory).map_err(|error| {
-            format!(
-                "cannot inspect isolated checkout {}: {error}",
-                directory.display()
-            )
-        })?;
-        for entry in entries {
-            let entry = entry.map_err(|error| {
-                format!(
-                    "cannot inspect isolated checkout entry under {}: {error}",
-                    directory.display()
-                )
-            })?;
-            let path = entry.path();
-            let file_type = entry.file_type().map_err(|error| {
-                format!(
-                    "cannot inspect isolated checkout entry {}: {error}",
-                    path.display()
-                )
-            })?;
-            if entry.file_name() == ".git" {
-                if !file_type.is_symlink() && !file_type.is_dir() && !file_type.is_file() {
-                    return Err(format!("special_file_refused: {}", path.display()));
-                }
-                found.push(path);
-            } else if file_type.is_dir() {
-                pending.push(path);
-            }
-        }
-    }
+    scan_git_directory(root, &held.root_fd, Path::new(""), &mut budget, &mut found)?;
+    revalidate_git_scan_root(&held)?;
     found.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
     Ok(found)
 }
 
-fn remove_git_metadata_path(path: &Path) -> Result<(), String> {
-    const MAX_ATTEMPTS: usize = 4;
-    for attempt in 0..MAX_ATTEMPTS {
-        let metadata = match fs::symlink_metadata(path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => {
-                return Err(format!(
-                    "cannot inspect isolated Git metadata {}: {error}",
-                    path.display()
-                ))
+#[cfg(unix)]
+fn find_git_metadata_held(
+    root: &crate::shared_skill_source::DescriptorRoot,
+) -> Result<Vec<PathBuf>, String> {
+    let mut budget = GitScanBudget::default();
+    let mut found = Vec::new();
+    scan_git_directory(
+        root.path(),
+        root.descriptor(),
+        Path::new(""),
+        &mut budget,
+        &mut found,
+    )?;
+    root.revalidate("candidate checkout")?;
+    let mut relative = found
+        .into_iter()
+        .map(|path| {
+            path.strip_prefix(root.path())
+                .map(Path::to_path_buf)
+                .map_err(|_| "git metadata path escaped held checkout".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    relative.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    Ok(relative)
+}
+
+#[cfg(unix)]
+struct HeldGitScanRoot {
+    parent_fd: std::os::fd::OwnedFd,
+    root_fd: std::os::fd::OwnedFd,
+    name: std::ffi::OsString,
+    binding: GitStatBinding,
+}
+
+#[cfg(unix)]
+#[derive(Default)]
+struct GitScanBudget {
+    directories: usize,
+    entries: usize,
+}
+
+#[cfg(unix)]
+#[derive(Default)]
+struct GitCleanupBudget {
+    entries: usize,
+}
+
+#[cfg(unix)]
+type GitStatBinding = (u64, u64, u32, i128, i128, i128, i128, i128);
+
+#[cfg(unix)]
+fn git_stat_binding(stat: &Stat) -> GitStatBinding {
+    (
+        stat.st_dev as u64,
+        stat.st_ino,
+        stat.st_mode as u32,
+        stat.st_size as i128,
+        stat.st_mtime as i128,
+        stat.st_mtime_nsec as i128,
+        stat.st_ctime as i128,
+        stat.st_ctime_nsec as i128,
+    )
+}
+
+#[cfg(unix)]
+fn git_stat_identity(stat: &Stat) -> (u64, u64, u32) {
+    (stat.st_dev as u64, stat.st_ino, stat.st_mode as u32)
+}
+
+#[cfg(unix)]
+fn open_git_scan_root(root: &Path) -> Result<HeldGitScanRoot, String> {
+    let parent = root
+        .parent()
+        .ok_or_else(|| format!("candidate checkout has no parent: {}", root.display()))?;
+    let name = root
+        .file_name()
+        .ok_or_else(|| format!("candidate checkout has no name: {}", root.display()))?
+        .to_os_string();
+    let parent_fd = rustix::fs::open(
+        parent,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|error| format!("cannot open candidate checkout parent: {error}"))?;
+    let named =
+        rustix::fs::statat(&parent_fd, &name, AtFlags::SYMLINK_NOFOLLOW).map_err(|error| {
+            format!(
+                "cannot inspect candidate checkout {}: {error}",
+                root.display()
+            )
+        })?;
+    if FileType::from_raw_mode(named.st_mode) != FileType::Directory {
+        return Err(format!(
+            "symlink_refused: candidate checkout {}",
+            root.display()
+        ));
+    }
+    let root_fd = rustix::fs::openat(
+        &parent_fd,
+        &name,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|error| format!("cannot open candidate checkout {}: {error}", root.display()))?;
+    let opened = rustix::fs::fstat(&root_fd)
+        .map_err(|error| format!("cannot stat candidate checkout fd: {error}"))?;
+    if git_stat_binding(&named) != git_stat_binding(&opened) {
+        return Err("git_metadata_root_identity_drift".to_string());
+    }
+    Ok(HeldGitScanRoot {
+        parent_fd,
+        root_fd,
+        name,
+        binding: git_stat_binding(&opened),
+    })
+}
+
+#[cfg(unix)]
+fn revalidate_git_scan_root(root: &HeldGitScanRoot) -> Result<(), String> {
+    let opened = rustix::fs::fstat(&root.root_fd)
+        .map_err(|error| format!("cannot revalidate candidate checkout fd: {error}"))?;
+    let named = rustix::fs::statat(&root.parent_fd, &root.name, AtFlags::SYMLINK_NOFOLLOW)
+        .map_err(|error| format!("cannot revalidate candidate checkout path: {error}"))?;
+    if root.binding != git_stat_binding(&opened) || root.binding != git_stat_binding(&named) {
+        return Err("git_metadata_root_identity_drift".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn revalidate_git_scan_root_identity(root: &HeldGitScanRoot) -> Result<(), String> {
+    let opened = rustix::fs::fstat(&root.root_fd)
+        .map_err(|error| format!("cannot revalidate candidate checkout fd: {error}"))?;
+    let named = rustix::fs::statat(&root.parent_fd, &root.name, AtFlags::SYMLINK_NOFOLLOW)
+        .map_err(|error| format!("cannot revalidate candidate checkout path: {error}"))?;
+    let expected = (root.binding.0, root.binding.1, root.binding.2);
+    if expected != git_stat_identity(&opened) || expected != git_stat_identity(&named) {
+        return Err("git_metadata_root_identity_drift".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn scan_git_directory(
+    root: &Path,
+    directory_fd: &impl std::os::fd::AsFd,
+    relative: &Path,
+    budget: &mut GitScanBudget,
+    found: &mut Vec<PathBuf>,
+) -> Result<(), String> {
+    let directory_before = rustix::fs::fstat(directory_fd)
+        .map_err(|error| format!("cannot stat isolated checkout directory: {error}"))?;
+    for entry in Dir::read_from(directory_fd)
+        .map_err(|error| format!("cannot duplicate isolated checkout directory fd: {error}"))?
+    {
+        let entry =
+            entry.map_err(|error| format!("cannot enumerate isolated checkout: {error}"))?;
+        let name_bytes = entry.file_name().to_bytes();
+        if matches!(name_bytes, b"." | b"..") {
+            continue;
+        }
+        if budget.entries >= MAX_GIT_SCAN_ENTRIES {
+            return Err("git_metadata_entry_budget_exceeded".to_string());
+        }
+        budget.entries += 1;
+        if name_bytes.len() > MAX_GIT_SCAN_NAME_BYTES {
+            return Err("git_metadata_name_budget_exceeded".to_string());
+        }
+        let name = std::ffi::OsStr::from_bytes(name_bytes);
+        let child_relative = relative.join(name);
+        let child_path = root.join(&child_relative);
+        let named_before = rustix::fs::statat(directory_fd, name, AtFlags::SYMLINK_NOFOLLOW)
+            .map_err(|error| {
+                format!(
+                    "cannot inspect isolated checkout {}: {error}",
+                    child_path.display()
+                )
+            })?;
+        #[cfg(test)]
+        AFTER_GIT_METADATA_NAMED_STAT_HOOK.with(|hook| {
+            if let Some(hook) = hook.borrow_mut().take() {
+                hook();
             }
-        };
-        let result = if metadata.file_type().is_symlink() || metadata.is_file() {
-            fs::remove_file(path)
-        } else if metadata.is_dir() {
-            fs::remove_dir_all(path)
-        } else {
-            return Err(format!("special_file_refused: {}", path.display()));
-        };
-        match result {
-            Ok(()) => return Ok(()),
-            Err(error)
-                if attempt + 1 < MAX_ATTEMPTS
-                    && matches!(
-                        error.kind(),
-                        std::io::ErrorKind::DirectoryNotEmpty | std::io::ErrorKind::Interrupted
-                    ) =>
+        });
+        let kind = FileType::from_raw_mode(named_before.st_mode);
+        if name_bytes == b".git" {
+            if !matches!(
+                kind,
+                FileType::Directory | FileType::RegularFile | FileType::Symlink
+            ) {
+                return Err(format!("special_file_refused: {}", child_path.display()));
+            }
+            if found.len() >= MAX_GIT_METADATA_RESULTS {
+                return Err("git_metadata_result_budget_exceeded".to_string());
+            }
+            found.push(child_path);
+        } else if kind == FileType::Directory {
+            if budget.directories >= MAX_GIT_SCAN_DIRECTORIES {
+                return Err("git_metadata_directory_budget_exceeded".to_string());
+            }
+            budget.directories += 1;
+            let child_fd = rustix::fs::openat(
+                directory_fd,
+                name,
+                OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
+            .map_err(|error| {
+                format!(
+                    "cannot open isolated checkout {}: {error}",
+                    child_path.display()
+                )
+            })?;
+            let opened = rustix::fs::fstat(&child_fd)
+                .map_err(|error| format!("cannot stat isolated checkout fd: {error}"))?;
+            if git_stat_binding(&named_before) != git_stat_binding(&opened) {
+                return Err("git_metadata_directory_identity_drift".to_string());
+            }
+            scan_git_directory(root, &child_fd, &child_relative, budget, found)?;
+            let opened_after = rustix::fs::fstat(&child_fd)
+                .map_err(|error| format!("cannot revalidate isolated checkout fd: {error}"))?;
+            let named_after = rustix::fs::statat(directory_fd, name, AtFlags::SYMLINK_NOFOLLOW)
+                .map_err(|error| format!("cannot revalidate isolated checkout path: {error}"))?;
+            if git_stat_binding(&opened) != git_stat_binding(&opened_after)
+                || git_stat_binding(&opened) != git_stat_binding(&named_after)
             {
-                std::thread::yield_now();
-            }
-            Err(error) => {
-                return Err(format!(
-                    "cannot remove isolated Git metadata {}: {error}",
-                    path.display()
-                ))
+                return Err("git_metadata_directory_identity_drift".to_string());
             }
         }
     }
-    Err(format!(
-        "cannot remove isolated Git metadata {} after retries",
-        path.display()
-    ))
+    let directory_after = rustix::fs::fstat(directory_fd)
+        .map_err(|error| format!("cannot revalidate isolated checkout directory: {error}"))?;
+    if git_stat_binding(&directory_before) != git_stat_binding(&directory_after) {
+        return Err("git_metadata_directory_identity_drift".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn remove_git_metadata_path(root: &Path, path: &Path) -> Result<(), String> {
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| "git_metadata_path_escapes_checkout".to_string())?;
+    let name = relative
+        .file_name()
+        .ok_or_else(|| "git metadata target has no name".to_string())?;
+    let parent_relative = relative.parent().unwrap_or_else(|| Path::new(""));
+    let held = open_git_scan_root(root)?;
+    let parent_fd = open_git_relative_directory(&held.root_fd, parent_relative)?;
+    let stat = match rustix::fs::statat(&parent_fd, name, AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(stat) => stat,
+        Err(rustix::io::Errno::NOENT) => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "cannot inspect Git metadata {}: {error}",
+                path.display()
+            ))
+        }
+    };
+    match FileType::from_raw_mode(stat.st_mode) {
+        FileType::Directory => {
+            let mut budget = GitCleanupBudget::default();
+            remove_git_directory_at(&parent_fd, name, path, &mut budget)?;
+        }
+        FileType::RegularFile | FileType::Symlink => {
+            rustix::fs::unlinkat(&parent_fd, name, AtFlags::empty()).map_err(|error| {
+                format!("cannot remove Git metadata {}: {error}", path.display())
+            })?;
+        }
+        _ => return Err(format!("special_file_refused: {}", path.display())),
+    }
+    revalidate_git_scan_root_identity(&held)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn open_git_relative_directory(
+    root_fd: &impl std::os::fd::AsFd,
+    relative: &Path,
+) -> Result<std::os::fd::OwnedFd, String> {
+    let mut current = rustix::io::dup(root_fd)
+        .map_err(|error| format!("cannot duplicate checkout root fd: {error}"))?;
+    for component in relative.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err("git_metadata_relative_path_invalid".to_string());
+        };
+        let named = rustix::fs::statat(&current, name, AtFlags::SYMLINK_NOFOLLOW)
+            .map_err(|error| format!("cannot inspect Git metadata parent: {error}"))?;
+        if FileType::from_raw_mode(named.st_mode) != FileType::Directory {
+            return Err("git_metadata_parent_not_directory".to_string());
+        }
+        let child = rustix::fs::openat(
+            &current,
+            name,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|error| format!("cannot open Git metadata parent: {error}"))?;
+        let opened = rustix::fs::fstat(&child)
+            .map_err(|error| format!("cannot stat Git metadata parent: {error}"))?;
+        if git_stat_binding(&named) != git_stat_binding(&opened) {
+            return Err("git_metadata_parent_identity_drift".to_string());
+        }
+        current = child;
+    }
+    Ok(current)
+}
+
+#[cfg(unix)]
+fn remove_git_directory_at(
+    parent_fd: &impl std::os::fd::AsFd,
+    name: &std::ffi::OsStr,
+    display: &Path,
+    budget: &mut GitCleanupBudget,
+) -> Result<(), String> {
+    let named =
+        rustix::fs::statat(parent_fd, name, AtFlags::SYMLINK_NOFOLLOW).map_err(|error| {
+            format!(
+                "cannot inspect Git directory {}: {error}",
+                display.display()
+            )
+        })?;
+    let directory = rustix::fs::openat(
+        parent_fd,
+        name,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|error| format!("cannot open Git directory {}: {error}", display.display()))?;
+    let opened = rustix::fs::fstat(&directory)
+        .map_err(|error| format!("cannot stat Git directory {}: {error}", display.display()))?;
+    if git_stat_binding(&named) != git_stat_binding(&opened) {
+        return Err("git_metadata_cleanup_identity_drift".to_string());
+    }
+    for entry in Dir::read_from(&directory).map_err(|error| {
+        format!(
+            "cannot enumerate Git directory {}: {error}",
+            display.display()
+        )
+    })? {
+        let entry = entry.map_err(|error| format!("cannot enumerate Git metadata: {error}"))?;
+        let name_bytes = entry.file_name().to_bytes();
+        if matches!(name_bytes, b"." | b"..") {
+            continue;
+        }
+        if budget.entries >= MAX_GIT_CLEANUP_ENTRIES {
+            return Err("git_metadata_cleanup_entry_budget_exceeded".to_string());
+        }
+        budget.entries += 1;
+        if name_bytes.len() > MAX_GIT_SCAN_NAME_BYTES {
+            return Err("git_metadata_name_budget_exceeded".to_string());
+        }
+        let child_name = std::ffi::OsStr::from_bytes(name_bytes);
+        let child_display = display.join(child_name);
+        let child = rustix::fs::statat(&directory, child_name, AtFlags::SYMLINK_NOFOLLOW).map_err(
+            |error| {
+                format!(
+                    "cannot inspect Git metadata {}: {error}",
+                    child_display.display()
+                )
+            },
+        )?;
+        match FileType::from_raw_mode(child.st_mode) {
+            FileType::Directory => {
+                remove_git_directory_at(&directory, child_name, &child_display, budget)?;
+            }
+            FileType::RegularFile | FileType::Symlink => {
+                rustix::fs::unlinkat(&directory, child_name, AtFlags::empty()).map_err(
+                    |error| {
+                        format!(
+                            "cannot remove Git metadata {}: {error}",
+                            child_display.display()
+                        )
+                    },
+                )?;
+            }
+            _ => return Err(format!("special_file_refused: {}", child_display.display())),
+        }
+    }
+    let opened_after = rustix::fs::fstat(&directory)
+        .map_err(|error| format!("cannot revalidate Git directory: {error}"))?;
+    let named_after = rustix::fs::statat(parent_fd, name, AtFlags::SYMLINK_NOFOLLOW)
+        .map_err(|error| format!("cannot revalidate Git directory path: {error}"))?;
+    if git_stat_identity(&opened) != git_stat_identity(&opened_after)
+        || git_stat_identity(&opened) != git_stat_identity(&named_after)
+    {
+        return Err("git_metadata_cleanup_identity_drift".to_string());
+    }
+    rustix::fs::unlinkat(parent_fd, name, AtFlags::REMOVEDIR)
+        .map_err(|error| format!("cannot remove Git directory {}: {error}", display.display()))?;
+    Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod descriptor_git_metadata_tests {
+    use super::*;
+
+    #[test]
+    fn queued_child_replacement_with_symlink_fails_without_visiting_outside() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path().join("checkout");
+        let child = root.join("queued-child");
+        let moved = root.join("queued-child-old");
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(&child).unwrap();
+        fs::create_dir_all(outside.join(".git")).unwrap();
+        let child_for_hook = child.clone();
+        let outside_for_hook = outside.clone();
+        AFTER_GIT_METADATA_NAMED_STAT_HOOK.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&child_for_hook, &moved).unwrap();
+                std::os::unix::fs::symlink(&outside_for_hook, &child_for_hook).unwrap();
+            }));
+        });
+
+        assert!(
+            find_git_metadata(&root).is_err(),
+            "queued pathname traversal accepted a child replaced by an outside symlink"
+        );
+        assert!(
+            outside.join(".git").is_dir(),
+            "metadata cleanup reached outside the held checkout root"
+        );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod descriptor_candidate_manifest_tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    fn manifest(identity: &str) -> CandidateManifest {
+        CandidateManifest {
+            schema_version: CANDIDATE_MANIFEST_SCHEMA.to_string(),
+            candidate_identity: identity.to_string(),
+            repository_url: "https://github.com/example/repository".to_string(),
+            resolved_commit: "0123456789abcdef0123456789abcdef01234567".to_string(),
+            subdir: "skill".to_string(),
+            body_hash: "sha256:body".to_string(),
+        }
+    }
+
+    #[test]
+    fn manifest_read_rejects_named_file_replaced_by_outside_symlink() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let temp_root = temp.path().to_path_buf();
+        let candidate = temp_root.join("candidate");
+        fs::create_dir(&candidate).unwrap();
+        let path = candidate.join(CANDIDATE_MANIFEST_FILE);
+        fs::write(&path, serde_json::to_vec(&manifest("inside")).unwrap()).unwrap();
+        let outside = temp_root.join("outside.json");
+        fs::write(&outside, serde_json::to_vec(&manifest("outside")).unwrap()).unwrap();
+        let path_for_hook = path.clone();
+        let outside_for_hook = outside.clone();
+        crate::shared_skill_source::set_after_bounded_file_named_stat_hook(Box::new(move || {
+            fs::remove_file(&path_for_hook).unwrap();
+            symlink(&outside_for_hook, &path_for_hook).unwrap();
+        }));
+
+        assert!(
+            read_candidate_manifest(&candidate).is_err(),
+            "manifest reader followed a symlink installed after the named stat"
+        );
+        assert_eq!(
+            fs::read(&outside).unwrap(),
+            serde_json::to_vec(&manifest("outside")).unwrap()
+        );
+    }
+
+    #[test]
+    fn manifest_read_rejects_oversized_file() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let candidate = temp.path().join("candidate");
+        fs::create_dir(&candidate).unwrap();
+        fs::write(
+            candidate.join(CANDIDATE_MANIFEST_FILE),
+            vec![b' '; MAX_CANDIDATE_MANIFEST_BYTES as usize + 1],
+        )
+        .unwrap();
+
+        assert_eq!(
+            read_candidate_manifest(&candidate).unwrap_err(),
+            "candidate_manifest_too_large"
+        );
+    }
+
+    #[test]
+    fn manifest_read_rejects_growth_after_opened_stat() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let candidate = temp.path().join("candidate");
+        fs::create_dir(&candidate).unwrap();
+        let path = candidate.join(CANDIDATE_MANIFEST_FILE);
+        fs::write(&path, serde_json::to_vec(&manifest("inside")).unwrap()).unwrap();
+        crate::shared_skill_source::set_after_bounded_file_opened_stat_hook(Box::new(move || {
+            fs::write(path, vec![b' '; MAX_CANDIDATE_MANIFEST_BYTES as usize + 1]).unwrap();
+        }));
+
+        assert_eq!(
+            read_candidate_manifest(&candidate).unwrap_err(),
+            "candidate_manifest_too_large"
+        );
+    }
+
+    #[test]
+    fn manifest_write_refuses_preexisting_symlink_without_touching_outside() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let temp_root = temp.path().to_path_buf();
+        let candidate = temp_root.join("candidate");
+        fs::create_dir(&candidate).unwrap();
+        let outside = temp_root.join("outside.json");
+        fs::write(&outside, b"outside-sentinel").unwrap();
+        symlink(&outside, candidate.join(CANDIDATE_MANIFEST_FILE)).unwrap();
+
+        assert!(
+            write_candidate_manifest(&candidate, &manifest("inside")).is_err(),
+            "manifest writer followed a preexisting symlink"
+        );
+        assert_eq!(fs::read(&outside).unwrap(), b"outside-sentinel");
+    }
+
+    #[test]
+    fn manifest_write_rejects_candidate_root_swap_without_touching_outside() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let temp_root = temp.path().to_path_buf();
+        let candidate = temp_root.join("candidate");
+        fs::create_dir(&candidate).unwrap();
+        let moved = temp_root.join("candidate-held");
+        let outside = temp_root.join("outside-candidate");
+        fs::create_dir(&outside).unwrap();
+        let candidate_for_hook = candidate.clone();
+        let outside_for_hook = outside.clone();
+        AFTER_CANDIDATE_MANIFEST_ROOT_OPEN_HOOK.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::rename(&candidate_for_hook, &moved).unwrap();
+                symlink(&outside_for_hook, &candidate_for_hook).unwrap();
+            }));
+        });
+
+        let error = write_candidate_manifest(&candidate, &manifest("inside")).unwrap_err();
+        assert!(error.contains("root_identity_drift"), "{error}");
+        assert!(!outside.join(CANDIDATE_MANIFEST_FILE).exists());
+    }
+
+    #[test]
+    fn manifest_io_has_no_pathname_read_or_write_fallback() {
+        let source = include_str!("remote.rs");
+        let manifest_io = source
+            .split_once("fn read_candidate_manifest")
+            .unwrap()
+            .1
+            .split_once("fn quarantine_candidate")
+            .unwrap()
+            .0;
+        assert!(!manifest_io.contains(concat!("fs::", "read(")));
+        assert!(!manifest_io.contains(concat!("fs::", "write(")));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod descriptor_candidate_root_tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    struct FixtureBackend;
+
+    impl GitBackend for FixtureBackend {
+        fn resolve_commit(
+            &self,
+            _repository_url: &str,
+            _requested_ref: Option<&str>,
+        ) -> Result<String, String> {
+            Ok("a".repeat(40))
+        }
+
+        fn materialize_selected(
+            &self,
+            _repository_url: &str,
+            _resolved_commit: &str,
+            destination: &HeldCheckout,
+            _subdir: &str,
+            _license_paths: &[String],
+        ) -> Result<(), String> {
+            destination.create_dir_all(Path::new("skill"))?;
+            destination.write(Path::new("LICENSE"), b"MIT License\n")?;
+            destination.write(
+                Path::new("skill/SKILL.md"),
+                b"---\nname: candidate-root-team\ndescription: Fixture.\n---\n",
+            )
+        }
+    }
+
+    fn context(temp: &tempfile::TempDir) -> AdoptionContext {
+        AdoptionContext {
+            authority_root: Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .and_then(Path::parent)
+                .unwrap()
+                .to_path_buf(),
+            runtime_home: temp.path().join("runtime"),
+            candidate_home: temp.path().join("runtime"),
+            host_home: temp.path().join("home"),
+            snapshot_discovery: super::super::model::SnapshotDiscovery::Offline,
+        }
+    }
+
+    fn source() -> SourceSpec {
+        SourceSpec::Git {
+            url: "file:///fixture/candidate-root".to_string(),
+            requested_ref: None,
+            tracking_ref: None,
+            subdir: Some("skill".to_string()),
+        }
+    }
+
+    fn copy_tree(source: &Path, destination: &Path) {
+        fs::create_dir_all(destination).unwrap();
+        for entry in fs::read_dir(source).unwrap() {
+            let entry = entry.unwrap();
+            let target = destination.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy_tree(&entry.path(), &target);
+            } else {
+                fs::copy(entry.path(), target).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn remote_candidate_uses_disposable_authority_not_installed_runtime() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let mut context = context(&temp);
+        context.candidate_home = temp.path().join("plan-scratch");
+        fs::create_dir_all(&context.runtime_home).unwrap();
+        fs::write(context.runtime_home.join("sentinel"), b"installed-runtime").unwrap();
+
+        let candidate =
+            acquire_remote_candidate_with_backend(&context, &source(), &FixtureBackend).unwrap();
+
+        assert!(candidate
+            .checkout_root
+            .starts_with(context.candidate_home.join("candidates")));
+        assert!(!context.runtime_home.join("candidates").exists());
+        assert_eq!(
+            fs::read(context.runtime_home.join("sentinel")).unwrap(),
+            b"installed-runtime"
+        );
+    }
+
+    #[test]
+    fn cached_candidate_replacement_after_path_check_is_rejected() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let context = context(&temp);
+        let first =
+            acquire_remote_candidate_with_backend(&context, &source(), &FixtureBackend).unwrap();
+        let candidate = first.checkout_root.parent().unwrap().to_path_buf();
+        let outside = temp.path().join("outside-candidate");
+        fs::rename(&candidate, &outside).unwrap();
+        fs::create_dir(&candidate).unwrap();
+        let expected = read_candidate_manifest(&outside).unwrap();
+        let candidate_for_hook = candidate.clone();
+        let outside_for_hook = outside.clone();
+        AFTER_CANDIDATE_ROOT_PATH_CHECK_HOOK.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::rename(
+                    &candidate_for_hook,
+                    candidate_for_hook.with_file_name("checked-candidate"),
+                )
+                .unwrap();
+                symlink(&outside_for_hook, &candidate_for_hook).unwrap();
+            }));
+        });
+
+        let error = validate_cached_candidate(&candidate, &expected)
+            .expect_err("candidate root replacement must fail closed");
+        assert!(error.contains("identity_drift"), "{error}");
+        assert!(outside.join("checkout/skill/SKILL.md").is_file());
+    }
+
+    #[test]
+    fn fresh_stage_replacement_never_materializes_into_outside() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let context = context(&temp);
+        let candidates_root = context.runtime_home.join("candidates");
+        let outside = temp.path().join("outside-stage");
+        fs::create_dir(&outside).unwrap();
+        let candidates_for_hook = candidates_root.clone();
+        let outside_for_hook = outside.clone();
+        AFTER_FRESH_STAGE_CREATE_HOOK.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                let stage = fs::read_dir(&candidates_for_hook)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path())
+                    .find(|path| {
+                        path.file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| name.starts_with(".stage-"))
+                    })
+                    .unwrap();
+                let held = candidates_for_hook.join("held-stage");
+                fs::rename(&stage, &held).unwrap();
+                symlink(&outside_for_hook, &stage).unwrap();
+            }));
+        });
+
+        let error = acquire_remote_candidate_with_backend(&context, &source(), &FixtureBackend)
+            .expect_err("fresh stage replacement must fail closed");
+        assert!(!outside.join("checkout/skill/SKILL.md").exists());
+        assert!(!error.is_empty());
+    }
+
+    #[test]
+    fn cached_root_replacement_after_manifest_read_never_scans_outside() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let context = context(&temp);
+        let first =
+            acquire_remote_candidate_with_backend(&context, &source(), &FixtureBackend).unwrap();
+        let candidate = first.checkout_root.parent().unwrap().to_path_buf();
+        let outside = temp.path().join("outside-matching-candidate");
+        copy_tree(&candidate, &outside);
+        let outside_skill = outside.join("checkout/skill/SKILL.md");
+        let outside_before = fs::read(&outside_skill).unwrap();
+        let candidate_for_hook = candidate.clone();
+        let outside_for_hook = outside.clone();
+        AFTER_CACHED_MANIFEST_READ_HOOK.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                fs::rename(
+                    &candidate_for_hook,
+                    candidate_for_hook.with_file_name("held-cached-candidate"),
+                )
+                .unwrap();
+                symlink(outside_for_hook, candidate_for_hook).unwrap();
+            }));
+        });
+        let expected = read_candidate_manifest(&outside).unwrap();
+
+        let error = validate_cached_candidate(&candidate, &expected)
+            .expect_err("cached root replacement after manifest read must fail closed");
+        assert!(error.contains("identity_drift"), "{error}");
+        assert_eq!(fs::read(outside_skill).unwrap(), outside_before);
+    }
+
+    #[test]
+    fn held_stage_replacement_before_backend_never_writes_outside() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let context = context(&temp);
+        let candidates_root = context.runtime_home.join("candidates");
+        let outside = temp.path().join("outside-before-backend");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("sentinel"), b"outside unchanged").unwrap();
+        let candidates_for_hook = candidates_root.clone();
+        let outside_for_hook = outside.clone();
+        AFTER_HELD_STAGE_REVALIDATE_HOOK.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                let stage = fs::read_dir(&candidates_for_hook)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path())
+                    .find(|path| {
+                        path.file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .starts_with(".stage-")
+                    })
+                    .unwrap();
+                fs::rename(
+                    &stage,
+                    candidates_for_hook.join("held-stage-after-revalidate"),
+                )
+                .unwrap();
+                symlink(outside_for_hook, stage).unwrap();
+            }));
+        });
+
+        let result = acquire_remote_candidate_with_backend(&context, &source(), &FixtureBackend);
+        assert!(result.is_err(), "stage replacement was accepted");
+        assert_eq!(
+            fs::read(outside.join("sentinel")).unwrap(),
+            b"outside unchanged"
+        );
+        assert!(!outside.join("checkout/skill/SKILL.md").exists());
+        assert!(!candidates_root.join(candidate_name_for(&source())).exists());
+    }
+
+    #[test]
+    fn stage_replacement_after_manifest_write_is_not_published() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let context = context(&temp);
+        let candidates_root = context.runtime_home.join("candidates");
+        let outside = temp.path().join("outside-before-publish");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("sentinel"), b"outside unchanged").unwrap();
+        let candidates_for_hook = candidates_root.clone();
+        let outside_for_hook = outside.clone();
+        AFTER_CANDIDATE_MANIFEST_WRITE_HOOK.with(|slot| {
+            *slot.borrow_mut() = Some(Box::new(move || {
+                let stage = fs::read_dir(&candidates_for_hook)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path())
+                    .find(|path| {
+                        path.file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .starts_with(".stage-")
+                    })
+                    .unwrap();
+                fs::rename(
+                    &stage,
+                    candidates_for_hook.join("held-stage-after-manifest"),
+                )
+                .unwrap();
+                symlink(outside_for_hook, stage).unwrap();
+            }));
+        });
+
+        let result = acquire_remote_candidate_with_backend(&context, &source(), &FixtureBackend);
+        assert!(result.is_err(), "replaced stage was published");
+        assert_eq!(
+            fs::read(outside.join("sentinel")).unwrap(),
+            b"outside unchanged"
+        );
+        assert!(!candidates_root.join(candidate_name_for(&source())).exists());
+    }
+
+    fn candidate_name_for(source: &SourceSpec) -> String {
+        let SourceSpec::Git { url, subdir, .. } = source else {
+            unreachable!()
+        };
+        ags_platform::sha256(
+            serde_json::to_vec(&(
+                CANDIDATE_MANIFEST_SCHEMA,
+                url,
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                subdir.as_deref().unwrap_or_default(),
+            ))
+            .unwrap(),
+        )
+        .trim_start_matches("sha256:")
+        .to_string()
+    }
 }
 
 fn validate_commit(commit: &str) -> Result<(), String> {
@@ -906,21 +1974,19 @@ impl GitBackend for SystemGitBackend {
         &self,
         repository_url: &str,
         resolved_commit: &str,
-        destination: &Path,
+        destination: &HeldCheckout,
     ) -> Result<Option<Vec<RemoteTreeEntry>>, String> {
         init_git_repository(repository_url, destination)?;
         fetch_git_commit(destination, resolved_commit)?;
-        let output = run_git(
+        let output = run_git_held(
+            destination,
             &[
-                "-C".to_string(),
-                destination.to_string_lossy().into_owned(),
                 "ls-tree".to_string(),
                 "-r".to_string(),
                 "-l".to_string(),
                 "-z".to_string(),
                 resolved_commit.to_string(),
             ],
-            None,
         )?;
         parse_tree_metadata(&output)
     }
@@ -929,19 +1995,17 @@ impl GitBackend for SystemGitBackend {
         &self,
         _repository_url: &str,
         resolved_commit: &str,
-        destination: &Path,
+        destination: &HeldCheckout,
         subdir: &str,
         license_paths: &[String],
     ) -> Result<(), String> {
-        run_git(
+        run_git_held(
+            destination,
             &[
-                "-C".to_string(),
-                destination.to_string_lossy().into_owned(),
                 "sparse-checkout".to_string(),
                 "init".to_string(),
                 "--no-cone".to_string(),
             ],
-            None,
         )?;
         let mut patterns = Vec::new();
         if subdir.is_empty() {
@@ -955,40 +2019,34 @@ impl GitBackend for SystemGitBackend {
         }
         patterns.extend(license_paths.iter().map(|path| format!("/{path}")));
         let mut sparse_args = vec![
-            "-C".to_string(),
-            destination.to_string_lossy().into_owned(),
             "sparse-checkout".to_string(),
             "set".to_string(),
             "--no-cone".to_string(),
             "--".to_string(),
         ];
         sparse_args.extend(patterns);
-        run_git(&sparse_args, None)?;
-        run_git(
+        run_git_held(destination, &sparse_args)?;
+        run_git_held(
+            destination,
             &[
-                "-C".to_string(),
-                destination.to_string_lossy().into_owned(),
                 "checkout".to_string(),
                 "--detach".to_string(),
                 "--force".to_string(),
                 resolved_commit.to_string(),
             ],
-            None,
         )?;
         Ok(())
     }
 
-    fn validate_checkout(&self, destination: &Path) -> Result<(), String> {
-        let output = run_git(
+    fn validate_checkout(&self, destination: &HeldCheckout) -> Result<(), String> {
+        let output = run_git_held(
+            destination,
             &[
-                "-C".to_string(),
-                destination.to_string_lossy().into_owned(),
                 "ls-tree".to_string(),
                 "-r".to_string(),
                 "-z".to_string(),
                 "HEAD".to_string(),
             ],
-            None,
         )?;
         for entry in output.as_bytes().split(|byte| *byte == 0) {
             if entry.is_empty() {
@@ -1021,34 +2079,27 @@ impl GitBackend for SystemGitBackend {
     }
 }
 
-fn init_git_repository(repository_url: &str, destination: &Path) -> Result<(), String> {
-    run_git(
-        &[
-            "init".to_string(),
-            "--quiet".to_string(),
-            destination.to_string_lossy().into_owned(),
-        ],
-        None,
+fn init_git_repository(repository_url: &str, destination: &HeldCheckout) -> Result<(), String> {
+    run_git_held(
+        destination,
+        &["init".to_string(), "--quiet".to_string(), ".".to_string()],
     )?;
-    run_git(
+    run_git_held(
+        destination,
         &[
-            "-C".to_string(),
-            destination.to_string_lossy().into_owned(),
             "remote".to_string(),
             "add".to_string(),
             "origin".to_string(),
             repository_url.to_string(),
         ],
-        None,
     )?;
     Ok(())
 }
 
-fn fetch_git_commit(destination: &Path, resolved_commit: &str) -> Result<(), String> {
-    run_git(
+fn fetch_git_commit(destination: &HeldCheckout, resolved_commit: &str) -> Result<(), String> {
+    run_git_held(
+        destination,
         &[
-            "-C".to_string(),
-            destination.to_string_lossy().into_owned(),
             "fetch".to_string(),
             "--filter=blob:none".to_string(),
             "--no-tags".to_string(),
@@ -1057,7 +2108,6 @@ fn fetch_git_commit(destination: &Path, resolved_commit: &str) -> Result<(), Str
             "origin".to_string(),
             resolved_commit.to_string(),
         ],
-        None,
     )?;
     Ok(())
 }
@@ -1108,7 +2158,7 @@ fn run_git(args: &[String], current_dir: Option<&Path>) -> Result<String, String
     if let Some(current_dir) = current_dir {
         command.current_dir(current_dir);
     }
-    let output = command
+    command
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", no_hooks_path)
@@ -1118,30 +2168,223 @@ fn run_git(args: &[String], current_dir: Option<&Path>) -> Result<String, String
         .env_remove("GIT_ASKPASS")
         .env_remove("GIT_SSH")
         .env_remove("GIT_SSH_COMMAND")
-        .env_remove("GIT_PROXY_COMMAND")
-        .output()
-        .map_err(|error| format!("cannot start system git: {error}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        .env_remove("GIT_PROXY_COMMAND");
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        unsafe {
+            command.pre_exec(|| {
+                rustix::process::setsid()
+                    .map(|_| ())
+                    .map_err(std::io::Error::from)
+            });
+        }
+    }
+    let (status, stdout, stderr) =
+        run_bounded_git_process(&mut command, "system git", GIT_PROCESS_TIMEOUT)?;
+    if !status.success() {
+        let stderr = String::from_utf8_lossy(&stderr);
+        return Err(format!("system git failed ({}): {}", status, stderr.trim()));
+    }
+    Ok(String::from_utf8_lossy(&stdout).into_owned())
+}
+
+#[cfg(unix)]
+fn run_git_held(destination: &HeldCheckout, args: &[String]) -> Result<String, String> {
+    use std::os::unix::process::CommandExt as _;
+
+    let no_hooks_path = "/dev/null";
+    let held = rustix::io::dup(destination.root.descriptor())
+        .map_err(|error| format!("cannot duplicate held checkout for git: {error}"))?;
+    let mut command = Command::new("git");
+    command
+        .arg("-c")
+        .arg(format!("core.hooksPath={no_hooks_path}"))
+        .args(args);
+    unsafe {
+        command.pre_exec(move || {
+            rustix::process::fchdir(&held).map_err(std::io::Error::from)?;
+            rustix::process::setsid()
+                .map(|_| ())
+                .map_err(std::io::Error::from)
+        });
+    }
+    command
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", no_hooks_path)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .env_remove("GIT_CONFIG_PARAMETERS")
+        .env_remove("GIT_CONFIG_COUNT")
+        .env_remove("GIT_ASKPASS")
+        .env_remove("GIT_SSH")
+        .env_remove("GIT_SSH_COMMAND")
+        .env_remove("GIT_PROXY_COMMAND");
+    let (status, stdout, stderr) = run_bounded_git_process(
+        &mut command,
+        "system git in held checkout",
+        GIT_PROCESS_TIMEOUT,
+    )?;
+    if !status.success() {
         return Err(format!(
             "system git failed ({}): {}",
-            output.status,
-            stderr.trim()
+            status,
+            String::from_utf8_lossy(&stderr).trim()
         ));
     }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    Ok(String::from_utf8_lossy(&stdout).into_owned())
 }
 
-trait EmptyText {
-    fn if_empty<'a>(&'a self, fallback: &'a str) -> &'a str;
-}
-
-impl EmptyText for str {
-    fn if_empty<'a>(&'a self, fallback: &'a str) -> &'a str {
-        if self.is_empty() {
-            fallback
-        } else {
-            self
+fn run_bounded_git_process(
+    command: &mut Command,
+    label: &str,
+    timeout: Duration,
+) -> Result<(ExitStatus, Vec<u8>, Vec<u8>), String> {
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("cannot start {label}: {error}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("{label} stdout pipe is unavailable"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| format!("{label} stderr pipe is unavailable"))?;
+    let stdout_reader = std::thread::spawn(move || drain_bounded_git_output(stdout));
+    let stderr_reader = std::thread::spawn(move || drain_bounded_git_output(stderr));
+    let started = Instant::now();
+    let (status, timed_out) = loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("cannot poll {label}: {error}"))?
+        {
+            break (status, false);
         }
+        if started.elapsed() >= timeout {
+            terminate_git_process(&mut child)?;
+            let status = child
+                .wait()
+                .map_err(|error| format!("cannot reap timed-out {label}: {error}"))?;
+            break (status, true);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let (stdout, stdout_overflow) = stdout_reader
+        .join()
+        .map_err(|_| format!("{label} stdout reader panicked"))??;
+    let (stderr, stderr_overflow) = stderr_reader
+        .join()
+        .map_err(|_| format!("{label} stderr reader panicked"))??;
+    if timed_out {
+        return Err(format!("{label} exceeded {} ms", timeout.as_millis()));
+    }
+    if stdout_overflow || stderr_overflow {
+        return Err(format!(
+            "{label} output exceeded {MAX_GIT_PROCESS_OUTPUT_BYTES} bytes"
+        ));
+    }
+    Ok((status, stdout, stderr))
+}
+
+fn drain_bounded_git_output(mut reader: impl Read) -> Result<(Vec<u8>, bool), String> {
+    let mut bytes = Vec::new();
+    let mut overflow = false;
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|error| format!("cannot read system git output: {error}"))?;
+        if read == 0 {
+            break;
+        }
+        let remaining = MAX_GIT_PROCESS_OUTPUT_BYTES.saturating_sub(bytes.len());
+        bytes.extend_from_slice(&buffer[..read.min(remaining)]);
+        overflow |= read > remaining;
+    }
+    Ok((bytes, overflow))
+}
+
+#[cfg(unix)]
+fn terminate_git_process(child: &mut std::process::Child) -> Result<(), String> {
+    let pid = rustix::process::Pid::from_raw(child.id() as _)
+        .ok_or_else(|| "system git returned an invalid process id".to_string())?;
+    match rustix::process::kill_process_group(pid, rustix::process::Signal::KILL) {
+        Ok(()) | Err(rustix::io::Errno::SRCH) => Ok(()),
+        Err(error) => Err(format!("cannot terminate timed-out system git: {error}")),
+    }
+}
+
+#[cfg(not(unix))]
+fn terminate_git_process(child: &mut std::process::Child) -> Result<(), String> {
+    child
+        .kill()
+        .map_err(|error| format!("cannot terminate timed-out system git: {error}"))
+}
+
+#[cfg(not(unix))]
+fn run_git_held(_destination: &HeldCheckout, _args: &[String]) -> Result<String, String> {
+    Err("descriptor_semantics_unavailable_for_held_git_checkout".to_string())
+}
+
+#[cfg(all(test, unix))]
+mod bounded_process_tests {
+    use super::*;
+
+    #[test]
+    fn git_process_timeout_terminates_the_dedicated_process_group() {
+        use std::os::unix::process::CommandExt as _;
+
+        let mut command = Command::new("/bin/sleep");
+        command.arg("5");
+        unsafe {
+            command.pre_exec(|| {
+                rustix::process::setsid()
+                    .map(|_| ())
+                    .map_err(std::io::Error::from)
+            });
+        }
+        let error =
+            run_bounded_git_process(&mut command, "timeout fixture", Duration::from_millis(50))
+                .unwrap_err();
+        assert!(error.contains("exceeded 50 ms"), "{error}");
+    }
+
+    #[test]
+    fn git_process_output_is_drained_but_rejected_over_budget() {
+        let temp = tempfile::tempdir().unwrap();
+        assert!(Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(temp.path())
+            .status()
+            .unwrap()
+            .success());
+        let large = temp.path().join("large.bin");
+        std::fs::write(&large, vec![b'x'; MAX_GIT_PROCESS_OUTPUT_BYTES + 1]).unwrap();
+        let hash = Command::new("git")
+            .args(["hash-object", "-w", "large.bin"])
+            .current_dir(temp.path())
+            .output()
+            .unwrap();
+        assert!(hash.status.success());
+        let hash = String::from_utf8(hash.stdout).unwrap();
+        let mut command = Command::new("git");
+        command
+            .args(["cat-file", "blob", hash.trim()])
+            .current_dir(temp.path());
+        use std::os::unix::process::CommandExt as _;
+        unsafe {
+            command.pre_exec(|| {
+                rustix::process::setsid()
+                    .map(|_| ())
+                    .map_err(std::io::Error::from)
+            });
+        }
+        let error = run_bounded_git_process(&mut command, "output fixture", Duration::from_secs(5))
+            .unwrap_err();
+        assert!(error.contains("output exceeded"), "{error}");
     }
 }

@@ -99,7 +99,7 @@ pub fn validate(input: &str) -> Vec<String> {
     errors
 }
 
-// ── Output-shape helpers (shared with `ags gate output`) ────────────────
+// ── Canonical output-shape helpers ─────────────────────────────────────
 
 /// The first non-empty line of `input` with any trailing `\r` stripped, or
 /// `None` when the input has no non-empty line.
@@ -112,7 +112,7 @@ pub fn first_nonempty_line(input: &str) -> Option<&str> {
 
 /// Frontstage output-shape gate: `true` iff the first non-empty line is exactly
 /// `## 任务卡`. This is the canonical task-card foreground-output discriminator,
-/// shared by the validator (Rule 1 above) and the `ags gate output` check so the
+/// shared by the validator (Rule 1 above) and the contract-v2 gate so the
 /// two never drift.
 pub fn output_is_canonical_header(input: &str) -> bool {
     first_nonempty_line(input) == Some("## 任务卡")

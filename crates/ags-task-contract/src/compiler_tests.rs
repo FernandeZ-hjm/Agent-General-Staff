@@ -52,7 +52,7 @@ fn omp_is_a_first_class_executor() {
 fn untyped_or_unknown_input_fails_closed() {
     for input in [
         "任务：旧的宽松编译输入",
-        r#"{"schema_version":"0.3.6-handoff-contract","task_level":"Medium","task":"x","unknown":true}"#,
+        r#"{"schema_version":"ags://schema/contract/v2/handoff-contract","task_level":"Medium","task":"x","unknown":true}"#,
         r#"{"schema_version":"0.2.0","task_level":"Medium","task":"x"}"#,
     ] {
         let (card, report) = compile_with_contract(input, Path::new("."), false, true, true);

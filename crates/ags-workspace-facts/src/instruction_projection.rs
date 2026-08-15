@@ -74,7 +74,7 @@ pub(super) fn generate_agent_instructions_from_facts(
     let (role_description, permissions, stop_conditions, required_reads) =
         match agent_type {
             AgentType::Codex => (
-                "Codex owns ambient preflight, complete conversation context, the only natural-language semantic decision, conditional solution formation, execution decision, and review. It reads `ags://capabilities/current-host` and submits a typed HostRouteProposal to read-only MCP `ags_route_request`. DirectResponse delivers and stops; exact SkillTarget and McpTarget values are checked against the preflight-bound active indexes. Skill bodies are loaded by the host; admitted MCP targets are invoked through the host's connected MCP surface, never proxied by AGS. MachineCli becomes a connection-held action and only `ags_apply_action` may consume it. An approved contract plus explicit same-session modification instruction enters host-native direct execution without repeating solution formation or compiling a task card. New unresolved solutions require confirmation. Explicit task-card generation requires a handoff instruction and confirmed contract. In host Plan mode, the final decision-complete artifact is the canonical task card; approval switches to execution mode and dispatches that exact card without regeneration. Reopened solution work stays in solution formation."
+                "Codex owns the complete conversation context, the only natural-language semantic decision, conditional solution formation, execution decision, and review. It reads `ags://capabilities/current-host` and submits one typed contract-v2 OperationRequest to MCP `ags_decide`. The request names or unambiguously resolves its workspace; Skill bodies are loaded by the host and admitted third-party MCP targets are invoked through the host's connected MCP surface, never proxied by AGS. Effectful Operations return a sealed action_ref consumed only by `ags_apply`. An approved contract plus explicit same-session modification instruction enters host-native direct execution without repeating solution formation or compiling a task card. New unresolved solutions require confirmation. Explicit task-card generation requires a handoff instruction and confirmed contract. In host Plan mode, the final decision-complete artifact is the canonical task card; approval switches to execution mode and dispatches that exact card without regeneration. Reopened solution work stays in solution formation."
                     .to_string(),
                 AgentPermissions {
                     default_execution_mode: "single-writer".to_string(),
@@ -95,7 +95,7 @@ pub(super) fn generate_agent_instructions_from_facts(
                         .to_string(),
                     "Do not change public-full sanitized payload boundary, canonical task-card skeleton, or execution-policy M1-M10 rules without explicit approval."
                         .to_string(),
-                    "Do not generate task cards or call `ags task compile --task-card-requested --confirmed-handoff-contract` until the user explicitly issues a task-card/handoff instruction and the handoff contract is confirmed. This compiler gate does not restrict authorized same-session direct execution."
+                    "Do not generate task cards until the user explicitly issues a task-card/handoff instruction and the handoff contract is confirmed. Validate the resulting typed artifact through `govern.task.validate`; this gate does not restrict authorized same-session direct execution."
                         .to_string(),
                 ],
                 vec![
@@ -164,7 +164,7 @@ pub(super) fn generate_agent_instructions_from_facts(
                         .to_string(),
                     "On resume/continue: reread the task card, run `git status --short`, reconfirm review_targets, and honor its explicit execution authority without inferring permission from the task level or conversation state."
                         .to_string(),
-                    "Do not generate task cards or call `ags task compile --task-card-requested --confirmed-handoff-contract` from raw user requests or unresolved solution-phase outputs. Only Codex/Cursor may generate task cards after receiving an explicit task-card instruction and confirming the handoff contract. \"方案 OK\" alone is not a task-card generation trigger."
+                    "Do not generate task cards from raw user requests or unresolved solution-phase outputs. Any Generic Agent may render the canonical card only after an explicit task-card instruction and confirmed handoff contract. \"方案 OK\" alone is not a task-card generation trigger."
                         .to_string(),
                 ],
                 vec![
@@ -201,7 +201,7 @@ pub(super) fn generate_agent_instructions_from_facts(
                 ],
             ),
             AgentType::Cursor => (
-                "Cursor owns ambient preflight, complete conversation context, the only natural-language semantic decision, conditional solution formation, execution decision, and review inside its IDE workflow. It reads `ags://capabilities/current-host` and submits a typed HostRouteProposal to read-only MCP `ags_route_request`. DirectResponse delivers and stops; exact SkillTarget and McpTarget values are checked against the preflight-bound active indexes. Skill bodies are loaded by the host; admitted MCP targets are invoked through the host's connected MCP surface, never proxied by AGS. MachineCli is only consumed by explicit `ags_apply_action`. Explicit same-session modification authorization enters host-native direct execution. Explicit task compilation requires a confirmed contract and handoff request; in host Plan mode the final decision-complete artifact is the canonical task card, and approval switches mode before dispatching that exact card without regeneration."
+                "Cursor owns the complete conversation context, the only natural-language semantic decision, conditional solution formation, execution decision, and review inside its IDE workflow. It reads `ags://capabilities/current-host` and submits one typed contract-v2 OperationRequest to MCP `ags_decide`. The request names or unambiguously resolves its workspace; Skill bodies are loaded by the host and admitted third-party MCP targets are invoked through the host's connected MCP surface, never proxied by AGS. Effectful Operations return a sealed action_ref consumed only by `ags_apply`. Explicit same-session modification authorization enters host-native direct execution. Explicit task compilation requires a confirmed contract and handoff request; in host Plan mode the final decision-complete artifact is the canonical task card, and approval switches mode before dispatching that exact card without regeneration."
                     .to_string(),
                 AgentPermissions {
                     default_execution_mode: "single-writer".to_string(),
@@ -269,7 +269,7 @@ pub(super) fn generate_agent_instructions_from_facts(
                     .unwrap_or_else(|| format!("Generic Agent ({agent})"));
                 (
                 format!(
-                    "{host_label} is an AGS-compatible governed host (Tencent Agent hosts — WorkBuddy and CodeBuddy-Code — resolve to this governed-host profile; other unknown hosts use it too). It must complete AGS initialization preflight before any AGS scenario work, then follow the governed lifecycle surfaced by the preflight report. Governed hosts may form solutions, but must not infer privileges from the Agent product name. Explicit same-session modification authorization and confirmed-contract task-card handoff are separate paths; `方案 OK` alone authorizes neither."
+                    "{host_label} is a Generic Agent governed by the contract-v2 CLI/MCP surfaces. It must establish an authenticated canonical workspace binding before effectful work. Governed hosts may form solutions, but must not infer privileges from the Agent product name. Explicit same-session modification authorization and confirmed-contract task-card handoff are separate paths; `方案 OK` alone authorizes neither."
                 ),
                 AgentPermissions {
                     default_execution_mode: "single-writer".to_string(),
@@ -280,11 +280,11 @@ pub(super) fn generate_agent_instructions_from_facts(
                     may_install: false,
                 },
                 vec![
-                    "Call `ags_preflight` first for AGS scenarios; do not call other AGS tools before preflight succeeds.".to_string(),
-                    "Use the explicit `target` project path supplied by the host; do not assume the desktop workspace folder is the governed project.".to_string(),
+                    "Call `ags_decide` with a typed contract-v2 Operation and an explicit or unambiguous workspace; use `ags_apply` only for its returned sealed action_ref.".to_string(),
+                    "Use the explicit canonical `workspace` supplied by the host; do not assume the desktop folder is the governed project.".to_string(),
                     "Do not perform Light/Medium/Heavy task classification from raw user requests.".to_string(),
                     "Do not install hooks, runner adapters, dependencies, or production wiring without explicit protected-operation authorization.".to_string(),
-                    "Do not generate task cards or call `ags task compile --task-card-requested --confirmed-handoff-contract` until the user explicitly issues a task-card instruction and the handoff contract is confirmed.".to_string(),
+                    "Do not generate task cards until the user explicitly issues a task-card instruction and the handoff contract is confirmed; validate the typed artifact before execution.".to_string(),
                     "If the host cannot identify the target project, stop and ask for the repository path instead of running `ags init` in the current desktop workspace.".to_string(),
                 ],
                 vec![

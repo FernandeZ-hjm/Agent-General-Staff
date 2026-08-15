@@ -1,6 +1,6 @@
 use crate::{inspect_host_mcp, CrossPlatformInitPlan, HostProbeStatus};
 
-/// One row of `ags agents scan`: a detected host + AGS-MCP registration probe.
+/// One row of `ags agent probe`: a detected host + AGS-MCP registration probe.
 #[derive(Debug, Clone)]
 pub struct AgentScanRow {
     pub id: String,
@@ -46,17 +46,12 @@ pub fn agents_scan_rows(
         .collect()
 }
 /// The governance chain a host enters once AGS MCP is reachable. Success of
-/// `ags agents govern` is the host being able to call `ags_preflight` and then
-/// flow through these gates — not AGS writing host config.
+/// The contract-v2 chain starts with a typed decision and consumes only its
+/// connection-bound action reference; AGS does not write third-party config.
 pub fn agents_governance_chain() -> Vec<&'static str> {
     vec![
-        "ags_preflight (host initialization gate)",
-        "ags://capabilities/current-host (preflight-bound catalog)",
-        "ags_route_request (read-only typed RouteResolution)",
-        "ags_apply_action (one-shot held action)",
-        "ags_task_validate (task-card format gate)",
-        "ags_policy_resolve (execution policy)",
-        "review gate + verification gate (delivery)",
+        "ags_decide (contract-v2 typed decision)",
+        "ags_apply (connection-bound action_ref consumption)",
     ]
 }
 
@@ -64,16 +59,7 @@ pub fn agents_governance_chain() -> Vec<&'static str> {
 /// `ags` MCP server in a host. Registration happens at server granularity; this
 /// list makes the included tools explicit before the operator acts.
 pub fn ags_mcp_tool_surface() -> Vec<&'static str> {
-    vec![
-        "ags_preflight",
-        "ags_protocol_status",
-        "ags_agent_instructions",
-        "ags_onboarding_plan",
-        "ags_task_validate",
-        "ags_policy_resolve",
-        "ags_route_request",
-        "ags_apply_action",
-    ]
+    vec!["ags_decide", "ags_apply"]
 }
 /// Production probe through the one host-adapter engine. Each host supplies
 /// only its communication protocol.

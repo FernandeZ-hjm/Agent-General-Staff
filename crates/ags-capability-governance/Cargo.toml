@@ -12,6 +12,7 @@ serde_yaml = "0.9"
 ags-governance-decision = { path = "../ags-governance-decision" }
 ags-host-integration = { path = "../ags-host-integration" }
 ags-platform = { path = "../ags-platform" }
+rustix = { version = "1.1.4", features = ["fs", "process"] }
 
 [dev-dependencies]
 serde_json = "1"

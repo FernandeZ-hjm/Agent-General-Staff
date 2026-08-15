@@ -115,7 +115,7 @@ pub struct ReceiptPlan {
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
-pub const SCHEMA_VERSION: &str = "0.3.6-launch-plan";
+pub const SCHEMA_VERSION: &str = "ags://schema/contract/v2/launch-plan";
 
 /// Compute the stable hash of a launch-plan JSON value. The hash field is
 /// removed before serialization, avoiding self-reference.
@@ -355,7 +355,7 @@ pub fn run_task_card_inner(
     // the runtime gate (3): the live machine snapshot must judge each trailing
     // `[skill: …]` tag Available for the active host (enrolled + canonical
     // present + auth satisfied + host-visible + healthy). It runs automatically
-    // on every `ags run` launch-plan path, not a manual side command. A
+    // on every contract-v2 task-plan path, not a manual side command. A
     // rejected tag is a launch blocker: deterministic and fail-closed.
     let active_host = host_for_adapter(&policy.runtime_adapter);
     let skill_tags = crate::validator::extract_skill_tags(&content);
@@ -404,7 +404,7 @@ pub fn run_task_card_inner(
             "cargo fmt --check".to_string(),
             "RUSTFLAGS=\"-D warnings\" cargo test".to_string(),
             "cargo build --release".to_string(),
-            "ags verify --scope local --format json".to_string(),
+            "ags check governance --workspace . --format json".to_string(),
         ],
         generated: false,
     };

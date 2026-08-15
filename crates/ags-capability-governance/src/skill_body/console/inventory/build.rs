@@ -1,6 +1,14 @@
 use super::*;
 
 pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventoryResult {
+    build_inventory_with_skill_overlay(ctx, hosts, None)
+}
+
+pub(crate) fn build_inventory_with_skill_overlay(
+    ctx: &ConsoleContext,
+    hosts: &[&str],
+    skill_overlay: Option<&crate::skill_adoption::SkillPostStateOverlay>,
+) -> ManagedInventoryResult {
     let hosts: Vec<String> = if hosts.is_empty() {
         supported_skill_hosts()
             .into_iter()
@@ -78,7 +86,10 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
     // 1.4. User-installed Skill bodies. InstalledSkillIndex is the machine
     // truth; filesystem coincidence and catalog membership never create an
     // installed or routable capability.
-    match crate::skill_adoption::load_installed_skills(&ctx.runtime_home) {
+    let installed_index = skill_overlay
+        .map(|overlay| Ok(overlay.installed_skills.clone()))
+        .unwrap_or_else(|| crate::skill_adoption::load_installed_skills(&ctx.runtime_home));
+    match installed_index {
         Ok(index) => {
             for record in index.skills.values() {
                 if known_skill_names
@@ -89,10 +100,15 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
                 }
                 known_skill_names.push(record.skill_id.clone());
                 let body = crate::skill_adoption::body_path(&ctx.runtime_home, record);
-                let body_present = body.join("SKILL.md").is_file();
-                let body_hash_matches = body_present
-                    && crate::hash_skill_source(&body)
-                        .is_ok_and(|actual| actual == record.source_hash);
+                let overlay_match = skill_overlay
+                    .filter(|overlay| overlay.target_skill_id == record.skill_id)
+                    .map(|overlay| overlay.target_body_hash_matches);
+                let body_present = overlay_match.unwrap_or_else(|| body.join("SKILL.md").is_file());
+                let body_hash_matches = overlay_match.unwrap_or_else(|| {
+                    body_present
+                        && crate::hash_skill_source(&body)
+                            .is_ok_and(|actual| actual == record.source_hash)
+                });
                 let mut risk_notes = vec![
                     "Installed Skill; AGS owns its immutable body, provenance, host indexes and snapshot activation."
                         .to_string(),
@@ -151,6 +167,17 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
         Err(error) => routing_meta
             .parse_failures
             .push(format!("installed-skill-index: {error}")),
+    }
+
+    // A removal's pre-state host link must not reappear as an unmanaged
+    // discovered Skill while compiling the virtual post-state.
+    if let Some(overlay) = skill_overlay {
+        if !known_skill_names
+            .iter()
+            .any(|name| name == &overlay.target_skill_id)
+        {
+            known_skill_names.push(overlay.target_skill_id.clone());
+        }
     }
 
     // 1.5. Registry-governed external skill bodies. The external manager owns
@@ -409,6 +436,40 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
                     external_shared,
                     probe,
                 ));
+                if let Some(overlay) = skill_overlay.filter(|overlay| {
+                    overlay.target_skill_id == cap.name
+                        && matches!(cap.managed_status, ManagedStatus::Governed)
+                }) {
+                    let visible = overlay.target_visible_hosts.contains(host)
+                        && overlay.target_body_hash_matches;
+                    let body = cap.source.as_deref().unwrap_or_default();
+                    let skill_md = Path::new(body).join("SKILL.md");
+                    let projected = cap.host_visibility.last_mut().expect("just pushed");
+                    projected.supported = true;
+                    projected.status = if visible {
+                        HostVisibilityStatus::Visible
+                    } else {
+                        HostVisibilityStatus::NotVisible
+                    };
+                    projected.evidence = if visible {
+                        vec![
+                            format!(
+                                "skill dir is a symlink with a resolving target: {}",
+                                host_index_path_for_inventory(ctx, host, &cap.name).display()
+                            ),
+                            format!("thin index resolves to AGS canonical body: {body}"),
+                            format!(
+                                "SKILL.md present and front-matter name matches: {}",
+                                skill_md.display()
+                            ),
+                        ]
+                    } else {
+                        vec![format!(
+                            "not found under {}",
+                            host_index_path_for_inventory(ctx, host, &cap.name).display()
+                        )]
+                    };
+                }
             }
         }
         cap.health_status = derive_health(
@@ -502,6 +563,12 @@ pub fn build_inventory(ctx: &ConsoleContext, hosts: &[&str]) -> ManagedInventory
         note: "Read-only inventory. Third-party capabilities are opt-in; AGS never silently bundles or installs. Add or update a reviewed source only through an explicit release/setup workflow, then refresh the host's single static snapshot and verify it.".to_string(),
         routing_parse_failures: routing_meta.parse_failures,
     }
+}
+
+fn host_index_path_for_inventory(ctx: &ConsoleContext, host: &str, name: &str) -> PathBuf {
+    host_skills_subdir(host)
+        .map(|subdir| ctx.home.join(subdir).join(name))
+        .unwrap_or_else(|| ctx.home.join(".unsupported-skills-host").join(name))
 }
 
 #[cfg(test)]

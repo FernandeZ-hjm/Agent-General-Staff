@@ -23,7 +23,11 @@ pub use host_adapter::{
     inspect_host_mcp, inspect_host_mcp_at, HostAdapter, HostMcpReport, HostProbeExecution,
     HostProbeRunner, HostProbeStatus, SystemHostProbeRunner,
 };
-pub use host_identity::{recognized_host_display, AgentType};
+pub use host_identity::{
+    recognized_host_display, AgentSurface, AgentType, GenericAgent, GovernedOperation, HostId,
+    HostRegistration, GOVERNED_OPERATIONS, HOST_REGISTRATION_CONTRACT_VERSION,
+    HOST_REGISTRATION_SCHEMA_VERSION,
+};
 pub use lifecycle_codec::{
     lifecycle_body_contains_owned, lifecycle_command_is_owned, lifecycle_config_drift_markers,
     lifecycle_owned_event_counts, remove_owned_lifecycle_entries, HostLifecycleCodec,
@@ -35,8 +39,8 @@ pub use mcp_probe::{
     mcp_server_line, mcp_server_line_at, parse_mcp_list, McpServerRegistration,
 };
 pub use memory_lifecycle::{
-    compute_memory_lifecycle_at_for_host, compute_memory_lifecycle_for_host, extract_profile_slug,
-    project_memory_dir_at, resolve_project_slug, MemoryLifecycle,
+    compute_memory_lifecycle_at_for_host, compute_memory_lifecycle_for_host, project_memory_dir_at,
+    project_memory_key, MemoryLifecycle,
 };
 pub use platforms::{
     cross_platform_init_plan, cross_platform_init_plan_with_detectors, lifecycle_specs,

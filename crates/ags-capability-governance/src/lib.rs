@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 mod authority;
 mod catalog;
 mod hashing;
+mod shared_skill_source;
 pub mod skill_adoption;
 /// Skill-body inventory, host probes, mutation plans and transactions.
 pub mod skill_body;
@@ -21,5 +22,6 @@ pub mod third_party_manifest;
 
 pub use authority::*;
 pub use catalog::*;
+pub use hashing::snapshot_input_set_hash;
 pub use snapshot_compiler::*;
 pub use snapshot_validation::*;

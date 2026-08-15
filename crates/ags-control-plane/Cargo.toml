@@ -1,0 +1,24 @@
+[package]
+name = "ags-control-plane"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Unified AGS contract v2 operation control plane"
+
+[dependencies]
+ags-capability-governance = { path = "../ags-capability-governance" }
+ags-host-integration = { path = "../ags-host-integration" }
+ags-platform = { path = "../ags-platform" }
+ags-workspace-facts = { path = "../ags-workspace-facts" }
+ags-evidence = { path = "../ags-evidence" }
+ags-governance-decision = { path = "../ags-governance-decision" }
+ags-task-contract = { path = "../ags-task-contract" }
+ags-verification = { path = "../ags-verification" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+getrandom = "0.4.2"
+blake3 = "1"
+schemars = "1"
+rustix = { version = "1.1.4", features = ["fs", "process"] }
+tempfile = "3"

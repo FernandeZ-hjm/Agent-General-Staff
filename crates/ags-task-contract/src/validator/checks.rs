@@ -133,7 +133,7 @@ fn active_task_card_skill_tags() -> Vec<String> {
 
 /// Extract the trailing `[skill: <tag>]` tags from a task card, in document
 /// order. The SAME parser the offline static gate uses, exposed so the runtime
-/// availability gate (`ags gate skill-tags`) checks exactly the tags the
+/// capability availability gate checks exactly the tags the
 /// validator recognizes — no second, drifting parser.
 pub fn extract_skill_tags(content: &str) -> Vec<String> {
     let lines: Vec<&str> = content.lines().collect();

@@ -38,7 +38,7 @@ pub struct CompileReport {
     pub assumptions: Vec<String>,
     /// `typed` for a valid [`HandoffContract`], otherwise `typed_invalid`.
     pub contract_format: String,
-    /// Whether the compiled card passes `ags task validate`.
+    /// Whether the compiled card passes the contract-v2 task validation Operation.
     pub validation_passed: bool,
     /// Validation errors, if any.
     pub validation_errors: Vec<String>,
@@ -528,7 +528,7 @@ fn compile_parsed_contract(
     if !has_field(&fields, "交付：") {
         let delivery = "- 按 protocol/agent-task-protocol.md 输出交付报告\n\
 - 报告必须回填本卡 Contract ID、LaunchPlan task_card_hash，并逐项闭环 G-*/AC-*/V-*；未闭环项不得隐藏\n\
-- 报告落盘后运行 `ags task close <task-card> <launch-plan> <delivery-report> --receipt-out <receipt.json>`，通过后再归档 receipt"
+- 报告落盘后由 contract v2 `govern.task.close` 生成密封 plan，再由 `ags apply` 原子生成 receipt 与 closure pointer"
             .to_string();
         fields.insert("交付：".to_string(), delivery.clone());
         slot_sources.push(SlotEntry {

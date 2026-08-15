@@ -25,39 +25,17 @@ pub(crate) fn source_hash(manifest_root: &Path, capability: &ManagedCapability) 
     let Some(path) = capability_source_path(manifest_root, capability) else {
         return ags_platform::sha256(capability.name.as_bytes());
     };
-    let mut canonical = b"ags-skill-source-v1\n".to_vec();
-    let hashed = if path.is_dir() {
-        append_source_directory(&path, &path, &mut canonical)
-    } else {
-        append_source_node(
-            path.parent().unwrap_or_else(|| Path::new(".")),
-            &path,
-            &mut canonical,
-        )
-    };
-    if hashed {
-        ags_platform::sha256(&canonical)
-    } else {
+    hash_skill_source(&path).unwrap_or_else(|_| {
         ags_platform::sha256(format!("unreadable-skill-source\n{}", capability.name).as_bytes())
-    }
+    })
 }
 
 pub fn hash_skill_source(path: &Path) -> Result<String, String> {
-    let mut canonical = b"ags-skill-source-v1\n".to_vec();
-    let hashed = if path.is_dir() {
-        append_source_directory(path, path, &mut canonical)
-    } else {
-        append_source_node(
-            path.parent().unwrap_or_else(|| Path::new(".")),
-            path,
-            &mut canonical,
-        )
-    };
-    if hashed {
-        Ok(ags_platform::sha256(&canonical))
-    } else {
-        Err(format!("cannot hash skill source {}", path.display()))
-    }
+    crate::shared_skill_source::observe_skill_source(
+        path,
+        crate::shared_skill_source::SourcePolicy::Generic,
+    )
+    .map(|source| source.source_hash)
 }
 
 /// Hash a Skill body that consists of exactly one regular file using the same
@@ -75,66 +53,9 @@ pub fn hash_single_file_skill_source(file_name: &str, bytes: &[u8]) -> Result<St
     {
         return Err("single-file Skill source requires one safe file name".to_string());
     }
-    let mut canonical = b"ags-skill-source-v1\n".to_vec();
+    let mut canonical = crate::shared_skill_source::SKILL_SOURCE_HASH_DOMAIN.to_vec();
     append_source_file_bytes(file_name, bytes, &mut canonical);
     Ok(ags_platform::sha256(&canonical))
-}
-
-/// Hash the complete skill body without timestamps or absolute paths. This
-/// catches changes in referenced scripts/assets as well as `SKILL.md`. Symlinks
-/// are represented by their link target and are never followed, avoiding
-/// cycles or accidental traversal outside the skill body.
-pub(super) fn append_source_directory(
-    root: &Path,
-    directory: &Path,
-    canonical: &mut Vec<u8>,
-) -> bool {
-    let Ok(entries) = std::fs::read_dir(directory) else {
-        return false;
-    };
-    let mut paths = entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .collect::<Vec<_>>();
-    paths.sort();
-    paths
-        .iter()
-        .all(|path| append_source_node(root, path, canonical))
-}
-
-pub(super) fn append_source_node(root: &Path, path: &Path, canonical: &mut Vec<u8>) -> bool {
-    let Ok(metadata) = std::fs::symlink_metadata(path) else {
-        return false;
-    };
-    let relative = path
-        .strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/");
-    if metadata.file_type().is_symlink() {
-        let Ok(target) = std::fs::read_link(path) else {
-            return false;
-        };
-        canonical.extend_from_slice(b"L\0");
-        canonical.extend_from_slice(relative.as_bytes());
-        canonical.push(0);
-        canonical.extend_from_slice(target.to_string_lossy().as_bytes());
-        canonical.push(0);
-        true
-    } else if metadata.is_dir() {
-        canonical.extend_from_slice(b"D\0");
-        canonical.extend_from_slice(relative.as_bytes());
-        canonical.push(0);
-        append_source_directory(root, path, canonical)
-    } else if metadata.is_file() {
-        let Ok(bytes) = std::fs::read(path) else {
-            return false;
-        };
-        append_source_file_bytes(&relative, &bytes, canonical);
-        true
-    } else {
-        false
-    }
 }
 
 fn append_source_file_bytes(relative: &str, bytes: &[u8], canonical: &mut Vec<u8>) {
@@ -160,5 +81,89 @@ mod tests {
         );
         assert!(hash_single_file_skill_source("nested/SKILL.md", body).is_err());
         assert!(hash_single_file_skill_source("../SKILL.md", body).is_err());
+    }
+
+    #[test]
+    fn generic_hash_accepts_a_regular_file_input() {
+        let root = tempfile::tempdir().unwrap();
+        let body = b"---\nname: fixture\n---\n";
+        let file = root.path().join("SKILL.md");
+        std::fs::write(&file, body).unwrap();
+        assert_eq!(
+            hash_skill_source(&file).unwrap(),
+            hash_single_file_skill_source("SKILL.md", body).unwrap()
+        );
+    }
+
+    #[test]
+    fn legacy_single_file_digest_is_byte_compatible_with_the_v1_domain() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("SKILL.md"), b"x").unwrap();
+        assert_eq!(
+            hash_skill_source(root.path()).unwrap(),
+            "sha256:742468b49ce73260c9c3c8e18a18bf17e313464853846ee2bd834281082da2a4"
+        );
+        assert_eq!(
+            hash_single_file_skill_source("SKILL.md", b"x").unwrap(),
+            "sha256:742468b49ce73260c9c3c8e18a18bf17e313464853846ee2bd834281082da2a4"
+        );
+    }
+
+    #[test]
+    fn legacy_nested_preorder_digest_is_byte_compatible() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("a")).unwrap();
+        std::fs::write(root.path().join("a/z"), b"y").unwrap();
+        std::fs::write(root.path().join("b"), b"x").unwrap();
+        assert_eq!(
+            hash_skill_source(root.path()).unwrap(),
+            "sha256:5a263dd9ad335e62ce9d5ce7ffebcebe3783f88db34b31d5c78bbbe6bc7757dc"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn generic_hash_encodes_a_symlink_target_without_following_it() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        symlink("outside-target", root.path().join("reference")).unwrap();
+        let mut canonical = crate::shared_skill_source::SKILL_SOURCE_HASH_DOMAIN.to_vec();
+        canonical.extend_from_slice(b"L\0reference\0outside-target\0");
+        assert_eq!(
+            hash_skill_source(root.path()).unwrap(),
+            ags_platform::sha256(canonical)
+        );
+    }
+
+    #[test]
+    fn legacy_hash_entrypoint_rejects_oversize_and_excess_entries_before_collection() {
+        let oversized = tempfile::tempdir().unwrap();
+        std::fs::write(
+            oversized.path().join("SKILL.md"),
+            vec![0_u8; 2 * 1024 * 1024 + 1],
+        )
+        .unwrap();
+        assert!(
+            hash_skill_source(oversized.path()).is_err(),
+            "generic hash accepted a file beyond the shared byte budget"
+        );
+
+        let crowded = tempfile::tempdir().unwrap();
+        for index in 0..=512 {
+            std::fs::write(crowded.path().join(format!("member-{index:04}")), b"x").unwrap();
+        }
+        assert!(
+            hash_skill_source(crowded.path()).is_err(),
+            "generic hash collected more entries than the shared member budget"
+        );
+    }
+
+    #[test]
+    fn legacy_hash_source_has_no_second_pathname_walker() {
+        let source = include_str!("source.rs");
+        assert!(!source.contains(concat!("std::fs::", "read_dir")));
+        assert!(!source.contains(concat!("std::fs::", "read(path)")));
+        assert!(!source.contains(concat!("append_source_", "directory")));
     }
 }

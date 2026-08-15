@@ -250,7 +250,7 @@ fn verified_catalog_resolution_at(root: &Path) -> Result<ManifestResolution, Str
         .content_hash
         .strip_prefix("sha256:")
         .map(|hash| format!("third-party-capabilities-{hash}.yaml"));
-    if marker.schema_version != "0.4.15-verified-catalog"
+    if marker.schema_version != "ags://schema/contract/v2/verified-catalog"
         || marker.release.trim().is_empty()
         || !ags_platform::is_sha256(&marker.content_hash)
         || expected_catalog_file.as_deref() != Some(marker.catalog_file.as_str())
@@ -803,8 +803,8 @@ capabilities:
         std::fs::write(
             temp.path().join("current.json"),
             serde_json::to_vec(&serde_json::json!({
-                "schema_version": "0.4.15-verified-catalog",
-                "release": "0.4.15",
+                "schema_version": "ags://schema/contract/v2/verified-catalog",
+                "release": "0.4.20",
                 "content_hash": hash,
                 "catalog_file": catalog_file.clone()
             }))
@@ -812,7 +812,7 @@ capabilities:
         )
         .unwrap();
         let resolved = verified_catalog_resolution_at(temp.path()).unwrap();
-        assert_eq!(resolved.release.as_deref(), Some("0.4.15"));
+        assert_eq!(resolved.release.as_deref(), Some("0.4.20"));
         assert_eq!(resolved.content_hash, ags_platform::sha256(catalog));
 
         std::fs::write(

@@ -4,7 +4,7 @@
 use serde::Serialize;
 use std::collections::BTreeSet;
 
-pub const SCHEMA_VERSION: &str = "0.3.6-delivery-closure";
+pub const SCHEMA_VERSION: &str = "ags://schema/contract/v2/delivery-closure";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ClosureCheck {
@@ -601,7 +601,7 @@ Verification gate:\n- commands:\n  - V-01 -> AC-01: cargo test\n- expected evide
 
     fn launch_plan(card: &str) -> String {
         let mut value = serde_json::json!({
-            "schema_version": "0.3.6-launch-plan",
+            "schema_version": "ags://schema/contract/v2/launch-plan",
             "task_card_hash": crate::sha256_hex(card.as_bytes()),
             "launch_plan_hash": "",
             "effective_execution_mode": "single-writer",

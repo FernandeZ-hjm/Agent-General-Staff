@@ -5,13 +5,13 @@ registry:
   installation_authority: machine-local InstalledSkillRecord
   activation_authority: machine-local ActivatedCapability after exact route verification
 skills:
-- name: ags-agents
+- name: ags-agent
   profile: required
-  local_path: templates/command-skills/ags-agents
+  local_path: templates/command-skills/ags-agent
   routing:
     route_state: not-routable
     routing_surface: host_command
-    invoke_hint: ags agents scan
+    invoke_hint: ags agent probe --host <host> --surface <cli|mcp|hybrid> --workspace .
     intent_tags:
     - ags-host-management
     - ags-agent-scan
@@ -29,7 +29,7 @@ skills:
   routing:
     route_state: not-routable
     routing_surface: host_command
-    invoke_hint: ags doctor --target .
+    invoke_hint: ags doctor --workspace . --format json
     intent_tags:
     - ags-doctor
     - ags-health-check
@@ -47,7 +47,7 @@ skills:
   routing:
     route_state: not-routable
     routing_surface: host_command
-    invoke_hint: ags init --target .
+    invoke_hint: ags init --workspace . --format json
     intent_tags:
     - ags-project-init
     - ags-project-onboarding
@@ -65,7 +65,7 @@ skills:
   routing:
     route_state: not-routable
     routing_surface: host_command
-    invoke_hint: ags setup --yes --force
+    invoke_hint: ags setup --format json
     intent_tags:
     - ags-machine-setup
     - ags-runtime-upgrade
@@ -77,9 +77,9 @@ skills:
       - 初始化或升级本机 AGS runtime
       negative:
       - 初始化当前项目的 AGS 协议文件
-- name: ags-skill
+- name: ags-govern
   profile: required
-  local_path: templates/command-skills/ags-skill
+  local_path: templates/command-skills/ags-govern
   routing:
     route_state: routable
     routing_surface: skill_target
@@ -100,7 +100,7 @@ skills:
     mutation_surface: local-write
     requires_auth: false
     cost_class: free
-    invoke_hint: '[skill: ags-skill]'
+    invoke_hint: ags govern --help
     route_priority: 70
     capability_group:
     - ags-governance-ops

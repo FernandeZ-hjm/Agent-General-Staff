@@ -44,8 +44,8 @@ jobs:
         shell: bash
         run: |
           local_report="$RUNNER_TEMP/public-verification-evidence/local-report.json"
-          if ! cargo run -q --locked -p ags-cli -- verify \
-            --scope local \
+          if ! cargo run -q --locked -p ags-cli -- check governance \
+            --workspace . \
             --format json > "$local_report"; then
             cat "$local_report"
             exit 1
@@ -68,8 +68,8 @@ jobs:
         shell: bash
         run: |
           release_report="$RUNNER_TEMP/public-verification-evidence/release-report.json"
-          if ! cargo run -q --locked -p ags-cli -- verify \
-            --scope release \
+          if ! cargo run -q --locked -p ags-cli -- check release \
+            --workspace . \
             --format json > "$release_report"; then
             cat "$release_report"
             exit 1
@@ -77,25 +77,24 @@ jobs:
       - name: Freeze canonical public release plan
         shell: bash
         run: |
-          cargo run -q --locked -p ags-cli -- release package \
-            --profile public-full \
-            --dry-run \
+          cargo run -q --locked -p ags-cli -- check release \
+            --workspace . \
             --format json > "$RUNNER_TEMP/public-verification-evidence/public-release-plan.json"
       - name: Create exact-input VerificationBundle
         shell: bash
         run: |
           cargo build -q --locked -p ags-cli
           cp target/debug/ags "$RUNNER_TEMP/public-verification-evidence/ags-verifier"
-          "$RUNNER_TEMP/public-verification-evidence/ags-verifier" verify bundle create \
+          "$RUNNER_TEMP/public-verification-evidence/ags-verifier" check bundle create \
             --target . \
-            --source-scope public-full \
+            --source public-full \
             --report "$RUNNER_TEMP/public-verification-evidence/release-report.json" \
             --command 'cargo clippy --locked --all-targets --all-features -- -D warnings' \
-            --command 'ags verify --scope local --format json' \
+            --command 'ags check governance --workspace . --format json' \
             --command 'node --test launcher suites' \
             --command 'cargo deny check' \
-            --command 'ags verify --scope release --format json' \
-            --command 'ags release package --profile public-full --dry-run --format json' \
+            --command 'ags check release --workspace . --format json' \
+            --command 'ags check release --workspace . --format json' \
             --test-id public::clippy \
             --test-id public::local-verification \
             --test-id public::npm-entrypoints \
@@ -108,9 +107,9 @@ jobs:
             --artifact "cargo-deny-version=$RUNNER_TEMP/public-verification-evidence/cargo-deny-version.txt" \
             --artifact "ags-verifier=$RUNNER_TEMP/public-verification-evidence/ags-verifier" \
             --output "$RUNNER_TEMP/public-verification-evidence/verification-bundle.json"
-          "$RUNNER_TEMP/public-verification-evidence/ags-verifier" verify bundle validate \
+          "$RUNNER_TEMP/public-verification-evidence/ags-verifier" check bundle validate \
             --target . \
-            --source-scope public-full \
+            --source public-full \
             --bundle "$RUNNER_TEMP/public-verification-evidence/verification-bundle.json" \
             --format json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

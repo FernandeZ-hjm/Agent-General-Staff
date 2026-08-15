@@ -1,94 +1,59 @@
-# Agent Task Routing
+# AGS contract v2 Operation routing
 
-> AGS 0.3.6 的需求治理协议。自然语言语义判断属于宿主；AGS 只校验 typed proposal 和确定性准入。
+AGS exposes one typed Operation registry. Every public Operation is declared
+once with its request type, `deny_unknown_fields` schema, kind, policy metadata,
+handler, help text, and verification contract. Human CLI, Machine CLI, MCP,
+schema, help, and documentation projections consume that registry; adapters do
+not maintain parallel routing tables.
 
-## 唯一链路
-
-```text
-preflight
-→ 读取 ags://capabilities/current-host（按 snapshot_hash 缓存薄目录）
-→ 宿主结合完整对话做语义判断
-→ HostRouteProposal
-→ ags_route_request（严格只读）
-→ RouteResolution
-→ DirectResponse | 精确 SkillSelection | HostNativeDirectEdit | ServerHeldAction
-→ 若且仅若存在 ServerHeldAction：ags_apply_action(lease_id, action_id)
-```
-
-AGS 0.3.6 没有原始文本关键词路由。`ags_route_request` 不接受 `{request: ...}`，不启动进程、不写文件，也不在失败时回退到 substring、BM25、embedding、`SkillDemand` 或第二套路由器。
-
-## HostRouteProposal
-
-宿主提交的 proposal 必须显式包含：
-
-- `schema_version`
-- `request_fingerprint`（非原始提示词）
-- `phase`
-- `solution_state`
-- `execution_authority`
-- `scope_hash`
-- `targets`
-
-`targets` 只有两类合法组合：
-
-1. 独占的 `DirectResponse`；
-2. 至多一个精确 `SkillTarget`、一个精确 `McpTarget`，再加至多一个 `MachineCliTarget`。
-
-`SkillTarget` 只含 `skill_id`、可选 `entrypoint` 与 `snapshot_hash`。`McpTarget` 只含 canonical `mcp_id`、可选已登记 `tool` 与 `snapshot_hash`。`MachineCliTarget` 只含闭集 `CliCapabilityId` 与 `TypedCliInput`。三者都不接受自然语言。
-
-`HostCapabilitySnapshot.catalog` 还会列出 `routing_surface=host_command` 的宿主
-前台命令技能。这些条目用于让宿主直接调用静态 `routing_hint`，不属于 proposal
-target。安装、可见或被宿主选中都不会把它们转换成 `SkillTarget`；误提交时
-route 返回 `skill_target_kind_mismatch`。
-
-## 阶段与授权
-
-- `direct_response`：`solution_state=not_required`、`execution_authority=none`，直接交付并停止。
-- `solution_formation`：`solution_state=open`、无执行授权；可以选精确方法技能或只读 MCP，但不能申请机器动作。
-- `execution + direct_edit`：必须是已确认方案与同会话明确修改授权；返回宿主原生动作，不编译任务卡、不经 MCP 代写仓库、不重复规划。
-- `execution + task_card_handoff`：仅用于明确交接；编译仍要求 task-card request 与 confirmed handoff contract 双门槛。
-- 首个非空行是 `## 任务卡`：先 validate；合法卡进入 policy/gate/LaunchPlan，非法卡停止，绝不回落到需求路由或任务卡生成。
-
-“方案 OK”只确认设计，不单独授权修改或交接。已经确认的方案不得因为出现“架构”“实现”等词再次进入 brainstorming、writing-plans 或任务卡生成。
-
-## 精确能力解析
-
-宿主从 `HostCapabilitySnapshot.catalog` 与 `mcp_catalog` 读取薄卡片，按完整语义选择精确能力。AGS Resolver 仅校验：
+## Control-plane flow
 
 ```text
-skill_id + entrypoint + snapshot_hash → ActiveSkill
-mcp_id + tool + snapshot_hash → ActiveMcp
+open typed Operation
+  -> resolve immutable WorkspaceBinding
+  -> decide policy
+  -> blocked | no-change | sealed plan
+  -> explicit apply when effectful
+  -> automatic verify
+  -> receipt | recover | risk-escalated
 ```
 
-缺失、歧义、entrypoint/tool 不允许或快照 stale 均 fail closed；不做关键词、相似度、候选 fallback、旧分类迁移或自动替代。MCP 解析结果只要求宿主通过自身已连接的 MCP surface 调用；AGS 不持有第三方连接、不代理工具调用。
+Operation kinds are `ReadOnly`, `Transaction`, `LocalExecution`, and
+`HostDelegated`. Canonical states are `blocked`, `no-change`, `planned`,
+`applying`, `verifying`, `receipted`, `recovering`, and `risk-escalated`.
 
-## DecisionLease 与显式 Apply
+- `ReadOnly` performs zero protected writes and returns closed evidence
+  directly. For an external child, zero-write means zero declared workspace or
+  host-state writable roots: the canonical workspace, Git/AGS/project state,
+  host configuration, credentials, registry, caches, and every other
+  pre-existing filesystem object remain non-writable. A fresh isolated scratch
+  directory may exist only for process-internal temporary bytes and is destroyed
+  before closure. Before/after snapshots are audit evidence, not enforcement.
+- `Transaction` reaches apply, verify, receipt, or recover with an explicit
+  terminal state.
+- `LocalExecution` executes one structured `CommandSpec`. A non-zero project
+  test is a closed failure receipt and never triggers source rollback;
+  unexpected writes escalate risk.
+- `HostDelegated` closes only after a binding-valid typed outcome is submitted.
 
-机器动作内容保存在当前 MCP 连接中。`ags_route_request` 只返回 `action_id` 与绑定证据；调用方只能提交 `lease_id`、`action_id` 和可选 outcome，不能重传 capability、input、argv 或路径。
+## Execution authority
 
-租约绑定 host、target、proposal、scope、静态 snapshot 内封存的 registry hash、
-snapshot hash 与 policy hash。route/apply 不读取现场 registry、overlay、PATH 或
-宿主目录。新 preflight、新 route、连接重置、显式快照替换后的 daemon 重启，或
-一次成功/失败消费都会使旧租约失效。租约没有 TTL；重放、跨连接、篡改和
-host/target 冲突一律 fail closed。
+A confirmed task card's explicit `Execution mode`, `Execution topology`, and
+`Delegation planning` fields are authoritative. Task level only selects review
+risk. Skills, adapters, defaults, and model effort cannot rewrite the tuple.
+No-commit, no-push, write ownership, and protected-path constraints remain
+binding through fanout, integration, review, and closure.
 
-不与 MachineCli 共存的精确 SkillTarget 同时得到一个受控 outcome action。宿主只能通过 apply 写入 `succeeded|failed|abandoned`；若用户纠正了技能选择，先把旧 decision 记为 `abandoned`，再提交同一 `request_fingerprint` 的新 proposal。该关联只进入离线质量评估，不触发在线改路由。
+## Capability state
 
-## Machine CLI
+A missing or stale capability snapshot blocks only exact Skill or third-party
+MCP selection. It does not block the core setup, init, doctor, check, or test
+Operations. AGS core never interprets raw natural language and never brokers a
+third-party MCP connection.
 
-`TaskPrepareExecution` 是唯一执行准备 capability。`ags run` 仅执行 validate → policy → gate → LaunchPlan，并返回 `HOST_EXECUTION_REQUIRED`；真实执行、验证和收据由宿主完成。
+## Hard cut
 
-## 任务级别与权限
-
-需求路由不从原始文本直接推断 Light / Medium / Heavy。先确定或复用方案，再由结构化任务卡的显式字段进入 Policy/Gate：
-
-- Light：边界小，执行权限仍取自显式 authority tuple；
-- Medium：跨文件或集成验证，执行权限仍取自显式 authority tuple；
-- Heavy：要求独立 review，不能覆盖或推断执行权限。
-
-技能不能改变 task level、execution mode/topology/delegation、review gate、
-verification gate 或安全 stop condition。
-
-## Handoff Compiler
-
-typed `HandoffContract` 必须显式给出 `task_level`；缺失即拒绝。Compiler 不重新解释原始聊天，也不选择技能。
+Contract v2 has no aliases, redirects, deprecated parser branches, removed-
+command handler, compatibility wire, or translation layer. Unknown commands,
+options, fields, Operations, and schema identifiers receive the standard
+structured unknown/invalid response.

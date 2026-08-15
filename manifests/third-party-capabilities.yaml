@@ -152,7 +152,7 @@ capabilities:
       manager: bundled
       bundled_path: skill-packs/optional/ags-superpowers-adapter
       revision: "44c9b2d6e889982ac18c27d05a19fefe335194e1"
-      integrity: "sha256:cf95cd5c3e8ba8798480ddca0c81c283a5f2d6fa2ade4d2d26aa5b995ac11abf"
+      integrity: "sha256:2d3fe21c3e051885b740e17c271b514dc271e697beb403772ea9994571fc7989"
       repository: "https://github.com/obra/superpowers"
       license: MIT
     install:

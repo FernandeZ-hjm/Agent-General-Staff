@@ -2,13 +2,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-pub const INSTALLED_SKILL_INDEX_SCHEMA: &str = "0.4.13-installed-skill-index";
-pub const TRANSACTION_JOURNAL_SCHEMA: &str = "0.1.0-skill-adoption-transaction-journal";
+pub const INSTALLED_SKILL_INDEX_SCHEMA: &str = "ags://schema/contract/v2/installed-skill-index";
 
 #[derive(Debug, Clone)]
 pub struct AdoptionContext {
     pub authority_root: PathBuf,
     pub runtime_home: PathBuf,
+    /// Disposable authority used to observe remote candidates while sealing
+    /// a plan. Production never points this at the installed runtime.
+    pub candidate_home: PathBuf,
     pub host_home: PathBuf,
     pub snapshot_discovery: SnapshotDiscovery,
 }
@@ -410,51 +412,6 @@ impl BodyRevision {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TransactionPhase {
-    Prepared,
-    BodyInstalled,
-    LinksApplied,
-    RegistryApplied,
-    SnapshotsApplied,
-    Committed,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct JournalFileState {
-    pub path: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bytes: Option<Vec<u8>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct JournalLinkState {
-    pub path: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub previous_target: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TransactionJournal {
-    pub schema_version: String,
-    pub transaction_id: String,
-    pub operation: String,
-    pub phase: TransactionPhase,
-    pub body_path: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expected_body_hash: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub previous_body_hash: Option<String>,
-    pub body_preexisting: bool,
-    pub registry: JournalFileState,
-    pub links: Vec<JournalLinkState>,
-    pub snapshots: Vec<JournalFileState>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InstalledSkillIndex {
@@ -475,17 +432,24 @@ impl Default for InstalledSkillIndex {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PreparedSkillChangeContract {
+    #[serde(rename = "ags-prepared-skill-change-v2")]
+    V2,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PreparedSkillChange {
+    pub contract_schema: PreparedSkillChangeContract,
     pub operation: String,
     pub skill_id: String,
     pub source: String,
     pub source_hash: String,
     pub license_path: String,
     pub license_hash: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub routing_metadata_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub routing_metadata_hash: Option<String>,
     pub body_path: String,
     pub installed_skill_index_path: String,
@@ -493,55 +457,228 @@ pub struct PreparedSkillChange {
     pub host_indexes: Vec<String>,
     /// Obsolete AGS-owned indexes in other roots read by the same Host. They
     /// are removed in the same WAL transaction before snapshot activation.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub retired_host_indexes: Vec<String>,
     pub planned_writes: Vec<String>,
     pub warnings: Vec<String>,
-    #[serde(default)]
     pub source_spec: SourceSpec,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub resolved_source: Option<ResolvedSource>,
-    #[serde(default)]
     pub body_hash: String,
-    #[serde(default)]
     pub candidate_identity: String,
-    #[serde(default)]
     pub update_policy: UpdatePolicy,
-    #[serde(default)]
     pub catalog_review: CatalogReviewStatus,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub risk_findings: Vec<RiskFinding>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub candidate_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub previous_body_revision: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub rollback_revision: Option<String>,
     /// Registry revision and complete previous identity form a compare-and-
     /// swap binding.  They are checked again while holding the transaction
     /// lock immediately before mutation.
-    #[serde(default)]
     pub registry_revision: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Descriptor-bound registry observation used by both planning and
+    /// materialization. Absence is a first-class seal, not an unchecked
+    /// `exists()` branch.
+    #[serde(deserialize_with = "deserialize_required_option")]
+    pub registry_read_input: Option<ReadInputSeal>,
+    pub registry_semantic_hash: String,
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub previous_record: Option<InstalledSkillRecord>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub previous_record_hash: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub previous_body_hash: Option<String>,
+    /// Complete target registry record computed during planning. Apply-time
+    /// materialization never re-audits or rereads candidate paths to rebuild
+    /// this value.
+    #[serde(deserialize_with = "deserialize_required_option")]
+    pub target_record: Option<InstalledSkillRecord>,
+    /// Descriptor-relevant identities of every object in the candidate tree
+    /// as observed while the plan was prepared. Materialization must validate
+    /// these after reading the bounded tree so same-size rewrites and inode
+    /// replacement cannot reuse an older plan.
+    pub candidate_read_inputs: Vec<ReadInputSeal>,
+    /// Exact raw target bytes (or absence) of every host index observed while
+    /// planning. Materialization is a byte-exact compare-and-swap.
+    pub expected_link_targets: BTreeMap<String, Option<Vec<u8>>>,
+}
+
+fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadInputKind {
+    Absent,
+    Directory,
+    RegularFile,
+    Symlink,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SkillMutationResult {
+pub struct ReadInputIdentity {
+    pub device: u64,
+    pub inode: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReadInputSeal {
+    pub root: String,
+    pub relative_path: String,
+    pub kind: ReadInputKind,
+    pub mode: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<ReadInputIdentity>,
+    pub digest: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MaterializedBodyNode {
+    Directory {
+        relative_path: String,
+        mode: u32,
+    },
+    RegularFile {
+        relative_path: String,
+        bytes: Vec<u8>,
+        mode: u32,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaterializedBodyTree {
+    pub root: String,
+    pub root_mode: u32,
+    pub parent_directories: Vec<MaterializedDirectory>,
+    pub nodes: Vec<MaterializedBodyNode>,
+    pub manifest_hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaterializedDirectory {
+    pub path: String,
+    pub mode: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "disposition", rename_all = "snake_case")]
+pub enum MaterializedBodyDisposition {
+    CreateExact(MaterializedBodyTree),
+    AlreadyExact { root: String, manifest_hash: String },
+    UnchangedRetained { root: String, manifest_hash: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaterializedRegularFile {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pre_bytes: Option<Vec<u8>>,
+    pub post_bytes: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pre_mode: Option<u32>,
+    pub post_mode: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaterializedSymlink {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_target: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_target: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaterializedSnapshot {
+    pub host: String,
+    pub snapshot_hash: String,
+    pub file: MaterializedRegularFile,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaterializedSkillChange {
     pub operation: String,
-    /// Identity of the sole MaintenancePlan authorizing this mutation.
-    pub transaction_id: String,
     pub skill_id: String,
     pub registry_revision: u64,
-    pub body_path: String,
-    pub host_indexes: Vec<String>,
-    pub snapshot_hashes: BTreeMap<String, String>,
-    pub requires_repreflight: bool,
+    pub registry: MaterializedRegularFile,
+    /// Every directory which is absent at materialization time and may be
+    /// created by applying this sealed change, across all artifact families.
+    pub parent_directories: Vec<MaterializedDirectory>,
+    pub body: MaterializedBodyDisposition,
+    pub links: Vec<MaterializedSymlink>,
+    pub snapshots: Vec<MaterializedSnapshot>,
+    pub read_inputs: Vec<ReadInputSeal>,
+    pub materialization_hash: String,
+}
+
+/// In-memory view of the installed registry, immutable body and host indexes
+/// after one materialized Skill change. Snapshot compilation consumes this
+/// value instead of rereading paths which have deliberately not been written.
+#[derive(Debug, Clone)]
+pub(crate) struct SkillPostStateOverlay {
+    pub target_skill_id: String,
+    pub installed_skills: InstalledSkillIndex,
+    pub target_body_hash_matches: bool,
+    pub target_visible_hosts: BTreeSet<String>,
+}
+
+impl MaterializedSkillChange {
+    pub fn write_paths(&self) -> Vec<String> {
+        let mut paths = vec![self.registry.path.clone()];
+        paths.extend(
+            self.parent_directories
+                .iter()
+                .map(|directory| directory.path.clone()),
+        );
+        if let MaterializedBodyDisposition::CreateExact(body) = &self.body {
+            paths.extend(
+                body.parent_directories
+                    .iter()
+                    .map(|directory| directory.path.clone()),
+            );
+            paths.push(body.root.clone());
+            paths.extend(body.nodes.iter().map(|node| {
+                let relative = match node {
+                    MaterializedBodyNode::Directory { relative_path, .. }
+                    | MaterializedBodyNode::RegularFile { relative_path, .. } => relative_path,
+                };
+                std::path::Path::new(&body.root)
+                    .join(relative)
+                    .to_string_lossy()
+                    .into_owned()
+            }));
+        }
+        paths.extend(
+            self.links
+                .iter()
+                .filter(|link| link.previous_target != link.post_target)
+                .map(|link| link.path.clone()),
+        );
+        paths.extend(
+            self.snapshots
+                .iter()
+                .map(|snapshot| snapshot.file.path.clone()),
+        );
+        paths.sort();
+        paths.dedup();
+        paths
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -106,7 +106,7 @@ impl TaskPolicyInput {
     /// guardrail). `approve_writes` may still act as the M9 generic-adapter capability
     /// override. The stronger source wins when both are set. This is the single
     /// canonical mapping shared by the CLI gate and the AGS MCP
-    /// `ags_policy_resolve` tool, so CLI and MCP hosts resolve identical policy.
+    /// `ags_decide` tool, so CLI and MCP hosts resolve identical policy.
     pub fn from_fields_with_approval(
         fields: &HashMap<String, String>,
         approve_writes: bool,
