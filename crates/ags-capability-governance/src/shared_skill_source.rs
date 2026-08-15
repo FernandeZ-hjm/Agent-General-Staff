@@ -2,6 +2,7 @@
 //! source identity consumer in this crate.
 
 #![cfg_attr(not(unix), allow(dead_code))]
+#![allow(clippy::unnecessary_cast)] // stat field widths differ per platform
 
 use std::path::{Path, PathBuf};
 

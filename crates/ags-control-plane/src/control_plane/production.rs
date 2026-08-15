@@ -2892,8 +2892,9 @@ impl ProductionEffectAdapter {
         };
         let report = match &request.public_root {
             Some(public_root) => {
-                let mut options = ags_verification::VerificationOptions::default();
-                options.public_root = Some(std::path::PathBuf::from(public_root));
+                let options = ags_verification::VerificationOptions {
+                    public_root: Some(std::path::PathBuf::from(public_root)),
+                };
                 ags_verification::run_verify_with_options(
                     scope,
                     binding.canonical_workspace(),
