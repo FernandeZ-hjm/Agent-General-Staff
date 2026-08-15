@@ -1,0 +1,53 @@
+schema_version: ags://schema/contract/v2/project-profile
+project:
+  name: fixture
+  slug: fixture
+  type: test
+  primary_languages: [rust]
+  primary_runtime: cargo
+defaults:
+  executor: fixture
+  runtime_adapter: fixture
+  execution_surface: local-workspace
+  execution_mode: single-writer
+  execution_topology: single
+  delegation_planning: no
+verification:
+  project_tests:
+    smoke:
+      program: cargo
+      argv: [test, -p, fixture, --lib]
+      cwd: .
+      env: {}
+      timeout_ms: 30000
+      allowed_write_paths: [target]
+    standard:
+      program: cargo
+      argv: [test, --workspace]
+      cwd: .
+      env: {}
+      timeout_ms: 60000
+      allowed_write_paths: [target]
+    full:
+      program: cargo
+      argv: [test, --workspace, --all-features]
+      cwd: .
+      env: {}
+      timeout_ms: 120000
+      allowed_write_paths: [target]
+  evidence_required: []
+risk:
+  high_risk_paths: []
+  protected_paths: []
+  destructive_actions_require_confirmation: true
+  heavy_triggers: []
+  stop_conditions: []
+workflow:
+  governance_docs: []
+  memory_uri: ags-memory://projects/fixture
+  default_review_policy: fixture
+  delivery_report: protocol/agent-task-protocol.md
+user_preferences:
+  interaction_style: concise
+  ask_before: []
+  do_not_do: []
