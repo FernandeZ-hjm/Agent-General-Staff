@@ -1,3 +1,4 @@
+#![allow(clippy::unnecessary_cast, clippy::useless_conversion)] // stat field widths differ per platform
 use super::model::{
     AdoptionContext, MaterializedBodyNode, MaterializedSkillChange, PreparedSkillChange,
     ReadInputSeal, RiskAcknowledgements,

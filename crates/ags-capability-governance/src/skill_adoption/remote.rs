@@ -1,3 +1,4 @@
+#![allow(clippy::unnecessary_cast, clippy::useless_conversion)] // stat field widths differ per platform
 #![cfg_attr(not(unix), allow(dead_code))]
 
 use super::model::{
