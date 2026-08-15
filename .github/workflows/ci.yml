@@ -40,6 +40,8 @@ jobs:
         run: mkdir -p "$RUNNER_TEMP/public-verification-evidence"
       - name: Clippy once
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: Build MCP companion
+        run: cargo build -q --locked -p ags-mcp
       - name: Verify source semantics once
         shell: bash
         run: |
