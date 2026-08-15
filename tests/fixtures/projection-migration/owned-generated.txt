@@ -1,0 +1,2 @@
+<!-- AGS managed entry v2 -->
+Read the project AGENTS.md and bind the canonical workspace.

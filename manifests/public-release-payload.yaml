@@ -95,6 +95,7 @@ shared_files:
   - protocol/entrypoint-guidelines.md
   - protocol/mcp-server.md
   - protocol/project-profile.md
+  - protocol/project-projection.md
   - protocol/runtime-adapters.md
   - protocol/skill-governance.md
   - protocol/task-card-template.md
@@ -115,6 +116,10 @@ shared_files:
   - tests/fixtures/receipt-non-compliant.json
   - tests/fixtures/receipt-valid.json
   - tests/fixtures/removed-compact.md
+  - tests/fixtures/projection-migration/unowned-user.txt
+  - tests/fixtures/projection-migration/pristine-generated.txt
+  - tests/fixtures/projection-migration/owned-generated.txt
+  - tests/fixtures/projection-migration/modified-user.txt
   - tests/fixtures/valid-full.md
 
 # Closed outputs of the typed public capability projection. These bytes are
