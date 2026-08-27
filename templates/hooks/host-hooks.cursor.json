@@ -1,0 +1,26 @@
+{
+  "_ags_managed": true,
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          { "command": "ags-policy --host cursor", "timeout": 5, "type": "command" }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          { "command": "ags-policy --host cursor", "timeout": 5, "type": "command" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          { "command": "ags-policy --host cursor", "timeout": 5, "type": "command" }
+        ]
+      }
+    ]
+  }
+}

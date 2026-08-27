@@ -1,0 +1,7 @@
+interface:
+  display_name: "AGS Setup"
+  short_description: "初始化本机 AGS 环境"
+  default_prompt: "用 $ags-setup 初始化本机 AGS 环境。"
+
+policy:
+  allow_implicit_invocation: true

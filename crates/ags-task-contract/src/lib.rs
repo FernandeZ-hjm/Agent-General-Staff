@@ -1,32 +1,16 @@
-//! Deterministic compilation and validation of AGS task contracts.
+//! ags-task-contract — the contract-v3 task surface.
 //!
-//! The crate root is intentionally a facade. Wire models, project context,
-//! compilation, and rendering have one implementation each in their named
-//! modules; validator and runner retain their established public modules.
+//! Owns the canonical ≤13-field card skeleton, its validator, the structured
+//! command runner (no shell interpolation), and the `ags run` orchestration
+//! (prepare → execute → verify → close). It depends inward on `ags-kernel`
+//! and owns no policy.
 
-mod compile;
-mod context;
-mod fields;
-mod intent;
-mod render;
-
-/// Gate-first launch-plan preparation. This module never executes a host.
+pub mod authority;
+pub mod command;
 pub mod runner;
-/// Canonical task-card parser and validator.
+pub mod template;
 pub mod validator;
 
-pub use compile::{
-    compile_simple_with_contract, compile_typed_handoff_contract,
-    compile_typed_handoff_contract_with_source, compile_with_contract, compile_with_handoff_source,
-    CompileReport, SlotEntry,
-};
-pub use context::{gather_project_context, ProjectContext, SlotSource};
-pub use intent::{
-    HandoffContract, HandoffSource, TaskLevel, HANDOFF_CONTRACT_SCHEMA_VERSION, SCHEMA_VERSION,
-};
-pub use render::{render_card_text, render_report_json, render_report_text};
-
-#[cfg(test)]
-use std::path::Path;
-#[cfg(test)]
-mod compiler_tests;
+pub use authority::{derive_authority, derive_state, TaskAuthority};
+pub use runner::{run_close, run_prepare, run_verify};
+pub use validator::{validate_file, ValidationError, ValidationResult};

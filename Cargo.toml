@@ -1,25 +1,31 @@
 [workspace]
 members = [
-    "crates/ags-platform",
-    "crates/ags-workspace-facts",
-    "crates/ags-host-integration",
-    "crates/ags-capability-governance",
+    "crates/ags-kernel",
     "crates/ags-task-contract",
-    "crates/ags-governance-decision",
-    "crates/ags-session",
-    "crates/ags-evidence",
-    "crates/ags-verification",
-    "crates/ags-control-plane",
     "crates/ags-cli",
     "crates/ags-mcp",
+    "crates/ags-release",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.4.20"
+version = "0.4.21"
 edition = "2021"
 license = "GPL-3.0-only"
 rust-version = "1.96.0"
+
+[workspace.dependencies]
+ags-kernel = { path = "crates/ags-kernel" }
+ags-task-contract = { path = "crates/ags-task-contract" }
+blake3 = "1"
+clap = { version = "4", features = ["derive"] }
+flate2 = "1"
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+toml = "0.8"
 
 [profile.release]
 lto = "thin"

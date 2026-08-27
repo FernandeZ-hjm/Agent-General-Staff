@@ -1,2 +1,0 @@
-<!-- AGS managed entry v2 -->
-Read the project AGENTS.md and also preserve this user amendment.

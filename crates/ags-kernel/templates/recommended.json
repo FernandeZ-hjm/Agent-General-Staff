@@ -1,0 +1,115 @@
+{
+  "schema_version": "ags://schema/contract/v3/recommended-skills",
+  "skills": [
+    {
+      "id": "claude-delivery-report",
+      "source": "https://github.com/anthropics/skills",
+      "description": "Close an AGS execution contract after a governed Agent finishes a task."
+    },
+    {
+      "id": "code-review",
+      "source": "https://github.com/anthropics/skills",
+      "description": "Review changes since a fixed point along Standards and Spec axes."
+    },
+    {
+      "id": "codebase-design",
+      "source": "https://github.com/anthropics/skills",
+      "description": "Shared vocabulary for designing deep modules."
+    },
+    {
+      "id": "codex-luna-max-team",
+      "source": "https://github.com/anthropics/skills",
+      "description": "Coordinates a Sol Lead with Luna Max explorer, worker, and test lanes."
+    },
+    {
+      "id": "database-migration",
+      "source": "https://github.com/anthropics/skills",
+      "description": "Execute database migrations across ORMs with zero-downtime strategies."
+    },
+    {
+      "id": "diagnosing-bugs",
+      "source": "https://github.com/anthropics/skills",
+      "description": "Diagnosis loop for hard bugs and performance regressions."
+    },
+    {
+      "id": "domain-modeling",
+      "source": "https://github.com/anthropics/skills",
+      "description": "Build and sharpen a project's domain model."
+    },
+    {
+      "id": "graphify",
+      "source": "https://github.com/anthropics/skills",
+      "description": "Build or update a Graphify knowledge graph and structured project map."
+    },
+    {
+      "id": "grill-with-docs",
+      "source": "https://github.com/anthropics/skills",
+      "description": "Relentless interview that also creates docs (ADR and glossary) as it goes."
+    },
+    {
+      "id": "grilling",
+      "source": "https://github.com/anthropics/skills",
+      "description": "Grill the user relentlessly about a plan, decision, or idea."
+    },
+    {
+      "id": "handoff",
+      "source": "https://github.com/anthropics/skills",
+      "description": "Compact the current conversation into a handoff document for another agent."
+    },
+    {
+      "id": "improve-codebase-architecture",
+      "source": "https://github.com/anthropics/skills",
+      "description": "Scan a codebase for deepening opportunities and grill through the pick."
+    },
+    {
+      "id": "prototype",
+      "source": "https://github.com/anthropics/skills",
+      "description": "Build a throwaway prototype to answer a design question."
+    },
+    {
+      "id": "resolving-merge-conflicts",
+      "source": "https://github.com/anthropics/skills",
+      "description": "Resolve an in-progress git merge/rebase conflict."
+    },
+    {
+      "id": "superpowers",
+      "source": "https://github.com/obra/superpowers",
+      "description": "Internal engineering workflow parent with narrowest-matching playbooks."
+    },
+    {
+      "id": "supply-chain-risk-auditor",
+      "source": "https://github.com/anthropics/skills",
+      "description": "Identifies dependencies at heightened risk of exploitation or takeover."
+    },
+    {
+      "id": "to-spec",
+      "source": "https://github.com/anthropics/skills",
+      "description": "Turn the current conversation into a spec published to the issue tracker."
+    },
+    {
+      "id": "to-tickets",
+      "source": "https://github.com/anthropics/skills",
+      "description": "Break a plan into tracer-bullet tickets with blocking edges."
+    },
+    {
+      "id": "triage",
+      "source": "https://github.com/anthropics/skills",
+      "description": "Move issues and external PRs through a state machine of triage roles."
+    },
+    {
+      "id": "wayfinder",
+      "source": "https://github.com/anthropics/skills",
+      "description": "Plan huge work as a shared map of decision tickets on the issue tracker."
+    },
+    {
+      "id": "webapp-testing",
+      "source": "https://github.com/anthropics/skills",
+      "description": "Interact with and test local web applications using Playwright."
+    },
+    {
+      "id": "writing-for-agents",
+      "source": "https://github.com/anthropics/skills",
+      "description": "Write documents for agents — skills, AGENTS.md, CLAUDE.md."
+    }
+  ]
+}

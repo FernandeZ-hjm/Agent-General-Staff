@@ -3,7 +3,7 @@ name = "ags-mcp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "AGS MCP Server — governance kernel exposed as MCP tools/resources/prompts over stdio"
+description = "Thin AGS MCP adapter (contract v3): two tools — ags_decide / ags_apply — over stdio JSON-RPC, plus the ags-host lifecycle executable"
 
 [[bin]]
 name = "ags-mcp"
@@ -14,16 +14,9 @@ name = "ags-host"
 path = "src/bin/ags-host.rs"
 
 [dependencies]
-ags-host-integration = { path = "../ags-host-integration" }
-ags-control-plane = { path = "../ags-control-plane" }
-ags-session = { path = "../ags-session" }
-ags-platform = { path = "../ags-platform" }
-ags-verification = { path = "../ags-verification" }
-libc = "0.2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+ags-kernel.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
-ags-cli = { path = "../ags-cli" }
-clap = { version = "4", features = ["derive"] }
-tempfile = "3"
+tempfile.workspace = true

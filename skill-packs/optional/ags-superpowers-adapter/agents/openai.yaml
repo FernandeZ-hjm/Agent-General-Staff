@@ -1,7 +1,0 @@
-interface:
-  display_name: "AGS Superpowers Adapter"
-  short_description: "Optional AGS-modified Superpowers workflow parent"
-  default_prompt: "Use the explicitly selected AGS Superpowers Adapter playbook."
-
-policy:
-  allow_implicit_invocation: false

@@ -14,7 +14,7 @@ export const RELEASE_REPOSITORY = "FernandeZ-hjm/Agent-General-Staff";
 export const MAX_DOWNLOAD_BYTES = 128 * 1024 * 1024;
 export const DOWNLOAD_TIMEOUT_MS = 30_000;
 export const UPDATE_CHECK_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
-export const UPDATE_CHECK_STATE_SCHEMA = "ags://schema/contract/v2/update-check-state";
+export const UPDATE_CHECK_STATE_SCHEMA = "ags://schema/contract/v3/update-check-state";
 export const UPDATE_STATE_FILE = "update-check.json";
 export const UPDATE_PLAN_SCHEMA = "1.1-launcher-update-plan";
 export const UPDATE_RECEIPT_SCHEMA = "1.1-launcher-update-receipt";
@@ -41,10 +41,16 @@ const APPROVED_RELEASE_HOSTS = new Set([
   "release-assets.githubusercontent.com"
 ]);
 const REQUIRED_RUNTIME_FILES = Object.freeze([
-  "manifests/suite.yaml",
-  "manifests/skills-registry.yaml",
-  "manifests/mcp-registry.yaml",
-  "protocol/agent-task-protocol.md"
+  "ags-skills/ags-agent/SKILL.md",
+  "ags-skills/ags-agent/agents/openai.yaml",
+  "ags-skills/ags-doctor/SKILL.md",
+  "ags-skills/ags-doctor/agents/openai.yaml",
+  "ags-skills/ags-govern/SKILL.md",
+  "ags-skills/ags-govern/agents/openai.yaml",
+  "ags-skills/ags-init/SKILL.md",
+  "ags-skills/ags-init/agents/openai.yaml",
+  "ags-skills/ags-setup/SKILL.md",
+  "ags-skills/ags-setup/agents/openai.yaml"
 ]);
 const TAR_TYPE_REGULAR = "0".charCodeAt(0);
 const TAR_TYPE_DIRECTORY = "5".charCodeAt(0);
@@ -170,13 +176,15 @@ export async function launch(options = {}) {
   if (!isRegularFile(executablePath)) {
     throw new Error(`verified release does not contain ${executableName}`);
   }
-  const child = (options.spawnImpl || nodeSpawn)(executablePath, [...args], {
+  const runtimeArgs = args[0] === "setup" && !args.includes("--source-root")
+    ? [...args, "--source-root", artifact.runtimeRoot]
+    : [...args];
+  const child = (options.spawnImpl || nodeSpawn)(executablePath, runtimeArgs, {
     stdio: options.stdio || "inherit",
     windowsHide: true,
     shell: false,
     env: {
       ...env,
-      AGS_SOURCE_ROOT: artifact.runtimeRoot,
       AGS_RUNTIME_HOME: runtimeHome,
       AGS_HOME: runtimeHome
     }
@@ -221,29 +229,28 @@ export async function recoverPrevious(options = {}) {
       throw new Error("active core update receipt identity mismatch");
     }
     if (receipt.runtime_setup?.required === true) {
-      const result = await runRuntimeCommand(
-        active,
-        [
-          "setup",
-          "--recover-plan-hash",
-          receipt.runtime_setup.plan_hash,
-          "--target",
-          runtimeHome,
-          "--format",
-          "json"
-        ],
+      const recoveryUnsigned = {
+        required: true,
+        contract: "v3",
+        install_kind: "contract-v3",
+        source_root_hash: ags_platformHashPath(recovered.runtimeRoot),
+        runtime_sha256: recovered.runtimeSha256
+      };
+      const recoveryPlan = {
+        ...recoveryUnsigned,
+        plan_hash: hashCanonical(recoveryUnsigned)
+      };
+      const recoveredSetup = await applyRuntimeSetup(
+        recovered,
         runtimeHome,
+        recoveryPlan,
         options
       );
-      const document = parseRuntimeJson(result, "runtime setup recovery");
-      if (document.phase !== "recover" || document.status !== "recovered") {
-        throw new Error("runtime setup recovery did not return a recovered MaintenanceReceipt");
-      }
       runtimeRecovery = {
         required: true,
         recovered: true,
-        plan_hash: document.plan_hash,
-        receipt_id: document.receipt_id
+        plan_hash: recoveredSetup.plan_hash,
+        receipt_hash: recoveredSetup.receipt_hash
       };
     }
   }
@@ -251,7 +258,19 @@ export async function recoverPrevious(options = {}) {
     atomicWriteJson(paths.currentPath, previous);
   } catch (error) {
     if (runtimeRecovery.required && active) {
-      await applyRuntimeSetup(active, runtimeHome, { required: true }, options).catch(() => undefined);
+      const restoreUnsigned = {
+        required: true,
+        contract: "v3",
+        install_kind: "contract-v3",
+        source_root_hash: ags_platformHashPath(active.runtimeRoot),
+        runtime_sha256: active.runtimeSha256
+      };
+      await applyRuntimeSetup(
+        active,
+        runtimeHome,
+        { ...restoreUnsigned, plan_hash: hashCanonical(restoreUnsigned) },
+        options
+      ).catch(() => undefined);
     }
     throw error;
   }
@@ -471,7 +490,7 @@ export function statusUpdate(planHash, options = {}) {
   }
   const receipt = readJsonIfPresent(receiptPath);
   return {
-    schema_version: "ags://schema/contract/v2/core-update-status",
+    schema_version: "ags://schema/contract/v3/core-update-status",
     plan,
     receipt,
     active: readJsonIfPresent(paths.currentPath)
@@ -509,7 +528,7 @@ export async function verifyUpdate(planHash, options = {}) {
   const runtimeHome = resolveRuntimeHome(paths, env, options);
   await verifyRuntimeSetup(active, runtimeHome, receipt.runtime_setup, options);
   return {
-    schema_version: "ags://schema/contract/v2/core-update-verification",
+    schema_version: "ags://schema/contract/v3/core-update-verification",
     status: "verified",
     plan_hash: planHash,
     active_version: active.version,
@@ -628,53 +647,77 @@ function ags_platformHashPath(value) {
 }
 
 async function planRuntimeSetup(identity, runtimeHome, options) {
-  const installManifest = path.join(runtimeHome, "install-manifest.json");
-  if (!isRegularFile(installManifest)) {
+  const env = options.env || process.env;
+  const machineHome = path.resolve(env.HOME || env.USERPROFILE || os.homedir());
+  const v3Install = path.join(machineHome, ".ags", "v3", "install.json");
+  const legacyInstall = path.join(runtimeHome, "install-manifest.json");
+  const installKind = isRegularFile(v3Install)
+    ? "contract-v3"
+    : isRegularFile(legacyInstall)
+      ? "legacy-runtime"
+      : null;
+  if (!installKind) {
     return Object.freeze({ required: false, reason: "runtime-not-initialized" });
   }
-  const result = await runRuntimeCommand(
-    identity,
-    ["setup", "--dry-run", "--target", runtimeHome, "--format", "json"],
-    runtimeHome,
-    options
-  );
-  const document = parseRuntimeJson(result, "candidate runtime setup plan");
-  return Object.freeze({
+  const unsigned = {
     required: true,
-    preview_hash: hashCanonical(document),
-    approved_lifecycle_hosts: document.lifecycle_approval?.approved_hosts || []
-  });
+    contract: "v3",
+    install_kind: installKind,
+    source_root_hash: ags_platformHashPath(identity.runtimeRoot),
+    runtime_sha256: identity.runtimeSha256
+  };
+  return Object.freeze({ ...unsigned, plan_hash: hashCanonical(unsigned) });
 }
 
 async function verifyRuntimeSetupPlan(identity, runtimeHome, approved, options) {
   if (approved?.required !== true) return;
   const observed = await planRuntimeSetup(identity, runtimeHome, options);
-  if (observed.required !== true || observed.preview_hash !== approved.preview_hash) {
+  if (observed.required !== true || hashCanonical(observed) !== hashCanonical(approved)) {
     throw new Error("runtime setup facts changed after the approved update plan");
   }
 }
 
 async function applyRuntimeSetup(identity, runtimeHome, approved, options) {
   if (approved?.required !== true) return { required: false, verified: true };
+  const unsigned = {
+    required: true,
+    contract: "v3",
+    install_kind: approved.install_kind,
+    source_root_hash: ags_platformHashPath(identity.runtimeRoot),
+    runtime_sha256: identity.runtimeSha256
+  };
+  if (
+    approved.contract !== "v3" ||
+    approved.source_root_hash !== unsigned.source_root_hash ||
+    approved.runtime_sha256 !== unsigned.runtime_sha256 ||
+    approved.plan_hash !== hashCanonical(unsigned)
+  ) {
+    throw new Error("candidate runtime setup does not match the approved v3 plan");
+  }
   const result = await runRuntimeCommand(
     identity,
-    ["setup", "--yes", "--force", "--target", runtimeHome, "--format", "json"],
+    ["setup", "--source-root", identity.runtimeRoot],
     runtimeHome,
     options
   );
   const document = parseRuntimeJson(result, "candidate runtime setup apply");
-  const closure = document.result;
-  const verified = Array.isArray(closure?.maintenance_receipts) &&
-    closure.maintenance_receipts.some((receipt) => receipt.phase === "verify" && receipt.status === "verified");
-  if (!verified || !closure?.maintenance_plan?.plan_hash) {
-    throw new Error("candidate runtime setup did not return a verified MaintenanceReceipt");
+  if (
+    document.installed !== true ||
+    path.resolve(document.source_root || "") !== path.resolve(identity.runtimeRoot) ||
+    !Array.isArray(document.writes)
+  ) {
+    throw new Error("candidate runtime setup did not return a valid v3 install receipt");
   }
+  const inventory = await verifyRuntimeSetup(identity, runtimeHome, approved, options);
   return {
     required: true,
     verified: true,
-    plan_hash: closure.maintenance_plan.plan_hash,
-    receipt_hash: hashCanonical(closure.maintenance_receipts),
-    report_hash: hashCanonical(closure.report)
+    contract: "v3",
+    plan_hash: approved.plan_hash,
+    source_root_hash: approved.source_root_hash,
+    runtime_sha256: approved.runtime_sha256,
+    official_skills: inventory.official_skills,
+    receipt_hash: hashCanonical(document)
   };
 }
 
@@ -682,17 +725,22 @@ async function verifyRuntimeSetup(identity, runtimeHome, applied, options) {
   if (applied?.required !== true) return;
   const result = await runRuntimeCommand(
     identity,
-    ["doctor", "--format", "json"],
+    ["skill", "list"],
     runtimeHome,
     options
   );
-  parseRuntimeJson(result, "updated AGS runtime verification");
+  const document = parseRuntimeJson(result, "updated AGS runtime verification");
+  const required = ["ags-agent", "ags-doctor", "ags-govern", "ags-init", "ags-setup"];
+  const ids = new Set(Array.isArray(document.skills) ? document.skills.map((skill) => skill.id) : []);
+  if (!required.every((id) => ids.has(id))) {
+    throw new Error("updated AGS runtime is missing an official v3 skill");
+  }
+  return { official_skills: required };
 }
 
 async function runRuntimeCommand(identity, args, runtimeHome, options) {
   const env = {
     ...(options.env || process.env),
-    AGS_SOURCE_ROOT: identity.runtimeRoot,
     AGS_RUNTIME_HOME: runtimeHome,
     AGS_HOME: runtimeHome
   };
@@ -768,8 +816,8 @@ function archiveOutputOrThrow(destination, entryName, binaryName) {
     throw new Error(`unsafe archive path: ${entryName}`);
   }
   const executableNames = binaryName.endsWith(".exe")
-    ? new Set(["ags.exe", "ags-mcp.exe", "ags-host.exe"])
-    : new Set(["ags", "ags-mcp", "ags-host"]);
+    ? new Set(["ags.exe", "ags-mcp.exe", "ags-host.exe", "ags-policy.exe", "ags-release.exe"])
+    : new Set(["ags", "ags-mcp", "ags-host", "ags-policy", "ags-release"]);
   if (executableNames.has(normalized)) return path.join(destination, normalized);
   if (normalized !== "runtime" && !normalized.startsWith("runtime/")) {
     throw new Error(`unsafe archive path: ${entryName}`);
@@ -1344,8 +1392,8 @@ function parseMarker(text) {
 
 function executableBundleSha256(versionDir, binaryName) {
   const names = binaryName.endsWith(".exe")
-    ? ["ags.exe", "ags-host.exe", "ags-mcp.exe"]
-    : ["ags", "ags-host", "ags-mcp"];
+    ? ["ags.exe", "ags-host.exe", "ags-mcp.exe", "ags-policy.exe", "ags-release.exe"]
+    : ["ags", "ags-host", "ags-mcp", "ags-policy", "ags-release"];
   const hash = crypto.createHash("sha256");
   let found = 0;
   for (const name of names) {
@@ -1959,8 +2007,8 @@ function timingSafeHexEqual(left, right) {
 
 function writeArchiveFile(output, content, binaryName) {
   const executableNames = binaryName.endsWith(".exe")
-    ? new Set(["ags.exe", "ags-mcp.exe", "ags-host.exe"])
-    : new Set(["ags", "ags-mcp", "ags-host"]);
+    ? new Set(["ags.exe", "ags-mcp.exe", "ags-host.exe", "ags-policy.exe", "ags-release.exe"])
+    : new Set(["ags", "ags-mcp", "ags-host", "ags-policy", "ags-release"]);
   fs.mkdirSync(path.dirname(output), { recursive: true, mode: 0o700 });
   fs.writeFileSync(output, content, {
     flag: "wx",

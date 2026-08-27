@@ -1,0 +1,28 @@
+hosts = []
+[workspace]
+slug = "ai-dev-env-bootstrap"
+role = "B"
+
+[boundaries]
+allowed_write_paths = ["."]
+deny_paths = [".git", ".ags", ".ags-local"]
+
+[permissions]
+allow = ["read:file", "edit:file", "write:file-new", "bash:readonly", "git:status", "git:diff", "git:log", "mcp:readonly"]
+ask = ["bash:mutate", "git:add", "git:commit", "git:branch", "git:checkout", "git:merge", "git:stash", "git:restore", "mcp:network", "mcp:mutate"]
+deny = ["write:deny_paths", "git:push", "git:tag", "remote:*", "credential:*"]
+
+[sealed]
+ops = ["govern.skill.install", "govern.skill.remove", "govern.host_projection", "update"]
+
+[verify]
+commands = ["cargo fmt --check", "cargo clippy --all-targets --all-features -- -D warnings", "RUSTFLAGS=\"-D warnings\" cargo test --workspace", "cargo build --release"]
+profile = "full"
+
+[review]
+escalate_to_medium = ["ask-hit", "fanout", "boundary-crossing"]
+escalate_to_heavy = ["sealed", "promotion", "release"]
+
+
+[capabilities]
+sources = []

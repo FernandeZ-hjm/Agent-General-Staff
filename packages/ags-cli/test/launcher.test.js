@@ -48,7 +48,6 @@ test("publishes the ags bin and exact shared launcher dependency version", () =>
   const packageJson = JSON.parse(
     fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")
   );
-  assert.equal(packageJson.version, "0.4.20");
   assert.equal(packageJson.bin.ags, "bin/ags.js");
   assert.equal(packageJson.dependencies["@agent-governance-suite/launcher"], packageJson.version);
   assert.match(
@@ -157,10 +156,14 @@ test("MCP and CLI entrances share one verified installer and cache", async () =>
     const metadata = releaseMetadata();
     const archive = tarGz([
       { name: "ags", body: "#!/bin/sh\n" },
-      { name: "runtime/manifests/suite.yaml", body: "schema_version: 2\n" },
-      { name: "runtime/manifests/skills-registry.yaml", body: "schema_version: 1\n" },
-      { name: "runtime/manifests/mcp-registry.yaml", body: "schema_version: 1\n" },
-      { name: "runtime/protocol/agent-task-protocol.md", body: "# AGS\n" }
+      { name: "ags-mcp", body: "#!/bin/sh\n" },
+      { name: "ags-host", body: "#!/bin/sh\n" },
+      { name: "ags-policy", body: "#!/bin/sh\n" },
+      { name: "ags-release", body: "#!/bin/sh\n" },
+      ...["ags-agent", "ags-doctor", "ags-govern", "ags-init", "ags-setup"].flatMap((id) => [
+        { name: `runtime/ags-skills/${id}/SKILL.md`, body: `---\nname: ${id}\ndescription: v3 runtime\n---\n` },
+        { name: `runtime/ags-skills/${id}/agents/openai.yaml`, body: `interface:\n  display_name: ${id}\n` }
+      ])
     ]);
     const archivePath = path.join(root, "artifact.tar.gz");
     fs.writeFileSync(archivePath, archive);

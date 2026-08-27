@@ -6,14 +6,16 @@ Run the local Agent Governance Suite MCP host adapter without a Rust toolchain:
 npx -y @agent-governance-suite/mcp
 ```
 
-Run without arguments to serve contract-v2 MCP over stdio. The adapter exposes
+Run without arguments to serve contract-v3 MCP over stdio. The adapter exposes
 exactly `ags_decide` and `ags_apply`; setup and update use the `ags` CLI and its
 plan/apply control plane, not JavaScript subcommands.
 
 The launcher maps the current OS/architecture to the matching versioned GitHub
 Release asset, verifies the pinned Ed25519-signed release index and exact asset
 hash before a fresh install is activated, and executes
-the standalone `ags-mcp` executable directly (`shell: false`). The MCP and CLI
+the standalone `ags-mcp` executable directly (`shell: false`). The signed
+payload also contains `ags-policy`, `ags-release`, and the public contract-v3
+official Skills used by `ags setup`. The MCP and CLI
 packages share the immutable `~/.ags/versions/<version>/<triple>/` cache and
 atomic `~/.ags/launcher-state/current.json` pointer (or the corresponding
 `AGS_CACHE_DIR` root), so installing both does not redownload the artifact.

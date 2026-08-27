@@ -69,16 +69,22 @@ function tarGz(entries) {
   return zlib.gzipSync(Buffer.concat(blocks));
 }
 
+function v3RuntimeEntries(label = "public v3 runtime") {
+  return ["ags-agent", "ags-doctor", "ags-govern", "ags-init", "ags-setup"].flatMap((id) => [
+    { name: `runtime/ags-skills/${id}/SKILL.md`, body: `---\nname: ${id}\ndescription: ${label}\n---\n` },
+    { name: `runtime/ags-skills/${id}/agents/openai.yaml`, body: `interface:\n  display_name: ${id}\n` }
+  ]);
+}
+
 function releaseArchive(binaryName = "ags") {
   const suffix = binaryName.endsWith(".exe") ? ".exe" : "";
   return tarGz([
     { name: binaryName, body: "#!/bin/sh\nexit 0\n" },
     { name: `ags-mcp${suffix}`, body: "#!/bin/sh\nexit 0\n" },
     { name: `ags-host${suffix}`, body: "#!/bin/sh\nexit 0\n" },
-    { name: "runtime/manifests/suite.yaml", body: "schema_version: 2\n" },
-    { name: "runtime/manifests/skills-registry.yaml", body: "schema_version: 1\n" },
-    { name: "runtime/manifests/mcp-registry.yaml", body: "schema_version: 1\n" },
-    { name: "runtime/protocol/agent-task-protocol.md", body: "# AGS\n" },
+    { name: `ags-policy${suffix}`, body: "#!/bin/sh\nexit 0\n" },
+    { name: `ags-release${suffix}`, body: "#!/bin/sh\nexit 0\n" },
+    ...v3RuntimeEntries(),
     { name: "runtime/extra.txt", body: "content identity\n" }
   ]);
 }
@@ -187,11 +193,22 @@ test("standalone adapters and CLI share one immutable verified download", async 
       verifyReleaseIndex,
       checkForUpdates: false
     });
+    await launch({
+      cacheRoot: root,
+      metadata,
+      args: ["setup"],
+      fetchImpl,
+      spawnImpl,
+      verifyReleaseIndex,
+      checkForUpdates: false
+    });
 
     assert.equal(calls.length, 3, "signed index, signature and artifact are downloaded once");
     assert.deepEqual(spawned[0].args, MCP_ARGS);
     assert.equal(path.basename(spawned[0].file), adapterName);
     assert.deepEqual(spawned[1].args, ["--version", "--json"]);
+    assert.deepEqual(spawned[2].args, ["setup", "--source-root", cachePaths(root, metadata).runtimeRoot]);
+    assert.equal(spawned[1].options.env.AGS_SOURCE_ROOT, undefined);
     assert.equal(spawned[0].options.shell, false);
     const paths = cachePaths(root, metadata);
     assert.equal(paths.versionDir, path.join(root, "versions", metadata.version, metadata.triple));
@@ -216,10 +233,11 @@ test("switching versions writes previous pointer and never overwrites old conten
     const firstArchive = releaseArchive();
     const secondArchive = tarGz([
       { name: "ags", body: "second binary\n" },
-      { name: "runtime/manifests/suite.yaml", body: "second suite\n" },
-      { name: "runtime/manifests/skills-registry.yaml", body: "second skills\n" },
-      { name: "runtime/manifests/mcp-registry.yaml", body: "second mcp\n" },
-      { name: "runtime/protocol/agent-task-protocol.md", body: "second protocol\n" }
+      { name: "ags-mcp", body: "second mcp\n" },
+      { name: "ags-host", body: "second host\n" },
+      { name: "ags-policy", body: "second policy\n" },
+      { name: "ags-release", body: "second release\n" },
+      ...v3RuntimeEntries("second runtime")
     ]);
     const calls = [];
     const fetchImpl = async (url, options) => {
@@ -373,10 +391,11 @@ test("explicitly recovers a verified previous pointer when current is invalid", 
     const firstArchive = releaseArchive();
     const secondArchive = tarGz([
       { name: "ags", body: "second binary\n" },
-      { name: "runtime/manifests/suite.yaml", body: "second suite\n" },
-      { name: "runtime/manifests/skills-registry.yaml", body: "second skills\n" },
-      { name: "runtime/manifests/mcp-registry.yaml", body: "second mcp\n" },
-      { name: "runtime/protocol/agent-task-protocol.md", body: "second protocol\n" }
+      { name: "ags-mcp", body: "second mcp\n" },
+      { name: "ags-host", body: "second host\n" },
+      { name: "ags-policy", body: "second policy\n" },
+      { name: "ags-release", body: "second release\n" },
+      ...v3RuntimeEntries("second runtime")
     ]);
     const calls = [];
     const fetchImpl = async (url, options) => {
@@ -434,10 +453,11 @@ test("older package invocation keeps a newer compatible current pointer", async 
     const olderArchive = releaseArchive();
     const newerArchive = tarGz([
       { name: "ags", body: "newer binary\n" },
-      { name: "runtime/manifests/suite.yaml", body: "newer suite\n" },
-      { name: "runtime/manifests/skills-registry.yaml", body: "newer skills\n" },
-      { name: "runtime/manifests/mcp-registry.yaml", body: "newer mcp\n" },
-      { name: "runtime/protocol/agent-task-protocol.md", body: "newer protocol\n" }
+      { name: "ags-mcp", body: "newer mcp\n" },
+      { name: "ags-host", body: "newer host\n" },
+      { name: "ags-policy", body: "newer policy\n" },
+      { name: "ags-release", body: "newer release\n" },
+      ...v3RuntimeEntries("newer runtime")
     ]);
     const calls = [];
     const fetchImpl = async (url, options) => {
@@ -476,10 +496,11 @@ test("core update plan binds signed source and apply switches only after verific
     const firstArchive = releaseArchive();
     const secondArchive = tarGz([
       { name: "ags", body: "#!/bin/sh\nexit 0\n" },
-      { name: "runtime/manifests/suite.yaml", body: "second suite\n" },
-      { name: "runtime/manifests/skills-registry.yaml", body: "second skills\n" },
-      { name: "runtime/manifests/mcp-registry.yaml", body: "second mcp\n" },
-      { name: "runtime/protocol/agent-task-protocol.md", body: "second protocol\n" }
+      { name: "ags-mcp", body: "second mcp\n" },
+      { name: "ags-host", body: "second host\n" },
+      { name: "ags-policy", body: "second policy\n" },
+      { name: "ags-release", body: "second release\n" },
+      ...v3RuntimeEntries("second runtime")
     ]);
     const indexFor = (metadata, archive) => Buffer.from(JSON.stringify({
       schema_version: "1.0-signed-release-index",
@@ -505,49 +526,38 @@ test("core update plan binds signed source and apply switches only after verific
       throw new Error(`unexpected URL: ${url}`);
     };
     const runtimeHome = path.join(root, "runtime-home");
+    const machineHome = path.join(root, "machine-home");
     fs.mkdirSync(runtimeHome, { recursive: true });
+    fs.mkdirSync(machineHome, { recursive: true });
     fs.writeFileSync(path.join(runtimeHome, "install-manifest.json"), "{}\n");
     const runtimeCommands = [];
     let failRuntimeApply = true;
-    const runRuntimeCommand = async (_identity, args) => {
+    const runRuntimeCommand = async (identity, args) => {
       runtimeCommands.push(args.join(" "));
-      if (args[0] === "doctor") {
-        return { status: 0, stdout: JSON.stringify({ status: "healthy" }), stderr: "" };
-      }
-      if (args.includes("--recover-plan-hash")) {
+      if (args[0] === "skill") {
         return {
           status: 0,
           stdout: JSON.stringify({
-            phase: "recover",
-            status: "recovered",
-            plan_hash: "f".repeat(64),
-            receipt_id: "mr-recovered"
+            count: 5,
+            skills: ["ags-agent", "ags-doctor", "ags-govern", "ags-init", "ags-setup"]
+              .map((id) => ({ id }))
           }),
           stderr: ""
         };
       }
-      if (args.includes("--yes")) {
+      if (args[0] === "setup") {
         if (failRuntimeApply) return { status: 1, stdout: "", stderr: "injected setup failure" };
         return {
           status: 0,
           stdout: JSON.stringify({
-            result: {
-              maintenance_plan: { plan_hash: "f".repeat(64) },
-              maintenance_receipts: [
-                { phase: "apply", status: "applied" },
-                { phase: "verify", status: "verified" }
-              ],
-              report: { status: "pass" }
-            }
+            installed: true,
+            source_root: identity.runtimeRoot,
+            writes: ["skill:ags-agent", "machine-capabilities:5 bodies"]
           }),
           stderr: ""
         };
       }
-      return {
-        status: 0,
-        stdout: JSON.stringify({ lifecycle_approval: { approved_hosts: ["codex"] } }),
-        stderr: ""
-      };
+      return { status: 1, stdout: "", stderr: `unexpected runtime command: ${args.join(" ")}` };
     };
     const common = {
       cacheRoot: root,
@@ -556,6 +566,7 @@ test("core update plan binds signed source and apply switches only after verific
       updateFetch: fetchImpl,
       verifyReleaseIndex: async () => true,
       runtimeHome,
+      env: { ...process.env, HOME: machineHome },
       runRuntimeCommand,
       checkForUpdates: false
     };
@@ -565,7 +576,9 @@ test("core update plan binds signed source and apply switches only after verific
     assert.equal(plan.target_version, "0.4.20");
     assert.equal(plan.asset_name, second.assetName);
     assert.equal(plan.runtime_setup.required, true);
-    assert.deepEqual(plan.runtime_setup.approved_lifecycle_hosts, ["codex"]);
+    assert.equal(plan.runtime_setup.contract, "v3");
+    assert.equal(plan.runtime_setup.install_kind, "legacy-runtime");
+    assert.match(plan.runtime_setup.plan_hash, /^[a-f0-9]{64}$/u);
     assert.match(plan.plan_hash, /^[a-f0-9]{64}$/u);
 
     await assert.rejects(
@@ -584,7 +597,7 @@ test("core update plan binds signed source and apply switches only after verific
     assert.equal(receipt.active_version, "0.4.20");
     assert.equal(receipt.verified, true);
     assert.equal(receipt.runtime_setup.verified, true);
-    assert.equal(receipt.runtime_setup.plan_hash, "f".repeat(64));
+    assert.equal(receipt.runtime_setup.plan_hash, plan.runtime_setup.plan_hash);
     const paths = cachePaths(root, first);
     assert.equal(JSON.parse(fs.readFileSync(paths.currentPath, "utf8")).version, "0.4.20");
     assert.equal(JSON.parse(fs.readFileSync(paths.previousPath, "utf8")).version, "0.4.12");
@@ -599,9 +612,9 @@ test("core update plan binds signed source and apply switches only after verific
     assert.equal(verification.status, "verified");
     assert.equal(verification.runtime_setup_verified, true);
     assert.equal(verification.reconnect_required, true);
-    assert.ok(runtimeCommands.some((command) => command.startsWith("setup --dry-run")));
-    assert.ok(runtimeCommands.some((command) => command.startsWith("setup --yes")));
-    assert.ok(runtimeCommands.some((command) => command.startsWith("doctor --format json")));
+    assert.ok(runtimeCommands.some((command) => command.startsWith("setup --source-root")));
+    assert.ok(runtimeCommands.some((command) => command === "skill list"));
+    assert.equal(runtimeCommands.some((command) => command.includes("--format")), false);
     const handled = await handleCoreMaintenanceCommand(
       ["update", "status", "--plan-hash", plan.plan_hash],
       common
@@ -612,7 +625,7 @@ test("core update plan binds signed source and apply switches only after verific
     assert.equal(recovered.result.version, "0.4.12");
     assert.equal(recovered.result.runtime_recovery.recovered, true);
     assert.equal(JSON.parse(fs.readFileSync(paths.currentPath, "utf8")).version, "0.4.12");
-    assert.ok(runtimeCommands.some((command) => command.includes("--recover-plan-hash")));
+    assert.ok(runtimeCommands.filter((command) => command.startsWith("setup --source-root")).length >= 3);
   } finally {
     removeTemporaryRoot(root);
   }

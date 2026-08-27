@@ -9,11 +9,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  AGS_WORKSPACE_IDLE_MS: "1000"
 
 jobs:
   public-gate:
-    name: Unique public source and release gate
+    name: Unique public gate (contract v3, five crates)
     runs-on: ubuntu-latest
 
     steps:
@@ -22,7 +21,7 @@ jobs:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          toolchain: 1.96.0
+          toolchain: stable
           components: clippy
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
@@ -35,21 +34,17 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
-      - name: Prepare evidence directory
-        shell: bash
-        run: mkdir -p "$RUNNER_TEMP/public-verification-evidence"
       - name: Clippy once
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
-      - name: Build MCP companion
-        run: cargo build -q --locked -p ags-mcp
-      - name: Verify source semantics once
+      - name: Tests once
+        run: RUSTFLAGS="-D warnings" cargo test --locked --workspace
+      - name: Governance check once (v3)
         shell: bash
         run: |
-          local_report="$RUNNER_TEMP/public-verification-evidence/local-report.json"
+          report="$RUNNER_TEMP/governance.json"
           if ! cargo run -q --locked -p ags-cli -- check governance \
-            --workspace . \
-            --format json > "$local_report"; then
-            cat "$local_report"
+            --workspace . --format json > "$report"; then
+            cat "$report"
             exit 1
           fi
       - name: Test all npm entrypoints once
@@ -63,35 +58,16 @@ jobs:
           if ! command -v cargo-deny >/dev/null 2>&1; then
             cargo install cargo-deny --locked
           fi
-          cargo deny --version | tee "$RUNNER_TEMP/public-verification-evidence/cargo-deny-version.txt"
       - name: Supply-chain audit once
         run: cargo deny check
-      - name: Verify public release boundary once
+      - name: Release build once
+        run: cargo build --locked --release -p ags-cli -p ags-mcp -p ags-kernel -p ags-release
+      - name: Structured verify commands once (v3)
         shell: bash
         run: |
-          release_report="$RUNNER_TEMP/public-verification-evidence/release-report.json"
-          if ! cargo run -q --locked -p ags-cli -- check release \
-            --workspace . \
-            --format json > "$release_report"; then
-            cat "$release_report"
+          report="$RUNNER_TEMP/test-full.json"
+          if ! cargo run -q --locked -p ags-cli -- test full \
+            --workspace . > "$report"; then
+            cat "$report"
             exit 1
           fi
-      - name: Freeze canonical public release plan
-        shell: bash
-        run: |
-          cargo run -q --locked -p ags-cli -- release plan \
-            --source . \
-            > "$RUNNER_TEMP/public-verification-evidence/public-release-plan.json"
-      - name: Build verifier artifact
-        shell: bash
-        run: |
-          cargo build -q --locked -p ags-cli
-          cargo build -q --locked -p ags-mcp
-          cp target/debug/ags "$RUNNER_TEMP/public-verification-evidence/ags-verifier"
-          cp target/debug/ags-mcp "$RUNNER_TEMP/public-verification-evidence/ags-mcp"
-          cp target/debug/ags-host "$RUNNER_TEMP/public-verification-evidence/ags-host"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: public-verification-evidence
-          path: ${{ runner.temp }}/public-verification-evidence/
-          if-no-files-found: error

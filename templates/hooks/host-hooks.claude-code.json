@@ -1,0 +1,33 @@
+{
+  "_ags_managed": true,
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "ags-policy --host claude-code --probe", "timeout": 5 }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "ags-policy --host claude-code", "timeout": 5 }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          { "type": "command", "command": "ags-policy --host claude-code", "timeout": 5 }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "ags-policy --host claude-code", "timeout": 5 }
+        ]
+      }
+    ]
+  }
+}

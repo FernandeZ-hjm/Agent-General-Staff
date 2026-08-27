@@ -1,778 +1,427 @@
-//! AGS runner — gate-first task-card execution preparer.
+//! `ags run` orchestration (contract v3 §7.4).
 //!
-//! The runner orchestrates validate → policy → gate → adapter resolve →
-//! launch plan. It ONLY consumes the resolved execution policy from
-//! `ags_governance_decision::policy` — it never reads raw task-card fields to decide
-//! permissions, execution_topology, or launch args. It never launches an executor,
-//! writes a receipt, runs verification, or claims that the task completed.
-//!
-//! ## Modes
-//!
-//! - `check_only`: validate + gate check, exit with decision code.
-//! - `dry_run`: full pipeline, output structured `LaunchPlan`, no execution.
-//! - default (no flags): prepare execution and return `host_execution_required`.
-//!
-//! ## Adapter support
-//!
-//! - `claude-code`: produces a fixed command preview from resolved policy.
-//! - `codex-local`: structured host handoff preview.
-//! - `cursor`: structured host handoff preview.
-//! - `omp`: structured native-host handoff preview.
-//! - `generic`: capped at plan-only, requires human handoff.
+//! One command, three phases: `prepare` (validate + matrix verdict + review
+//! escalation + evidence event), `verify` (structured command execution +
+//! governance check + test evidence), `close` (evidence-chain closure +
+//! memory pointer). Execution itself happens host-side between prepare and
+//! verify; AGS never launches an agent.
 
-use ags_capability_governance::SkillTagGate;
-use ags_governance_decision::policy::{GateCheckOutput, ResolvedExecutionPolicy};
-use ags_governance_decision::GovernanceStatus;
 use std::path::Path;
 
-// ── Public types ──────────────────────────────────────────────────────────
+use serde_json::{json, Value};
 
-/// The result of running a task card through the full gate-first pipeline.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct LaunchPlan {
-    pub schema_version: String,
-    /// Hash of the exact canonical task-card bytes consumed by the runner.
-    pub task_card_hash: String,
-    /// SHA-256 of the canonical JSON plan body with this field removed.
-    pub launch_plan_hash: String,
-    /// Effective authority duplicated at the envelope for closure consumers.
-    pub effective_execution_mode: String,
-    pub effective_execution_topology: String,
-    pub delegation_planning: bool,
-    pub task_card_path: String,
-    pub mode: String,
-    pub governance_status: GovernanceStatus,
-    /// True only when policy and runtime gates accepted the card and the host
-    /// must perform the actual execution outside this crate.
-    pub host_execution_required: bool,
-    /// Always false: the runner is a launch-plan preparer, not an executor.
-    pub execution_performed: bool,
-    /// Always false: verification belongs to the host after execution.
-    pub verification_performed: bool,
+use ags_kernel::capabilities::CapabilitiesLock;
+use ags_kernel::config::Config;
+use ags_kernel::error::{Error, Result};
+use ags_kernel::evidence::EvidenceLog;
+use ags_kernel::workspace::WorkspaceBinding;
 
-    // Validation
-    pub validation_passed: bool,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub validation_errors: Vec<String>,
+use crate::command::{parse_command, run, TestReceipt};
+use crate::validator::{card_hash, validate_body, validate_file, ValidationError};
 
-    // Gate
-    pub gate_decision: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub gate_error_kind: Option<String>,
-
-    // Resolved policy (the sole authority for execution decisions)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub resolved_policy: Option<ResolvedExecutionPolicy>,
-
-    // Adapter plan
-    pub adapter: AdapterPlan,
-
-    // Runtime skill-tag availability gate (the third gate). `None` when the card
-    // carries no trailing `[skill: …]` tags or the runner stopped before the
-    // launch-plan phase (read/validation failure, check-only). Present on the
-    // launch-plan path; a non-`all_accepted` gate forces `gate_decision = stop`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub skill_tags_gate: Option<SkillTagGate>,
-
-    // Receipt / verification / delivery report planning
-    pub receipt_plan: ReceiptPlan,
-    pub verification_log_refs: Vec<String>,
-    pub delivery_report_ref: String,
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ReviewLevel {
+    Light,
+    Medium,
+    Heavy,
 }
 
-/// Adapter-specific launch plan.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct AdapterPlan {
-    /// Runtime adapter: claude-code, codex-local, cursor, omp, generic
-    pub adapter: String,
-    /// Human-readable launch command description
-    pub launch_command: String,
-    /// Arguments from resolved policy (verbatim, never from raw fields)
-    pub launch_args: Vec<String>,
-    /// Whether this adapter is a stub (true for codex-local, cursor, omp)
-    pub is_stub: bool,
-    /// Why this adapter is a stub
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stub_reason: Option<String>,
-    /// Expected executor binary
-    pub executor_binary: String,
-    /// Always false. The host owns process launch after consuming this plan.
-    pub dispatched: bool,
-}
+impl ReviewLevel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ReviewLevel::Light => "light",
+            ReviewLevel::Medium => "medium",
+            ReviewLevel::Heavy => "heavy",
+        }
+    }
 
-/// Plan for receipt generation after execution.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct ReceiptPlan {
-    /// Whether the host should generate a receipt after real execution.
-    pub host_should_generate: bool,
-    pub receipt_id_prefix: String,
-    pub task_card_hash: String,
-    pub gate_result_for_receipt: String,
-    pub suggested_verification_commands: Vec<String>,
-    /// Always false. This structure describes a future host obligation.
-    pub generated: bool,
-}
-
-// ── Constants ─────────────────────────────────────────────────────────────
-
-pub const SCHEMA_VERSION: &str = "ags://schema/contract/v2/launch-plan";
-
-/// Compute the stable hash of a launch-plan JSON value. The hash field is
-/// removed before serialization, avoiding self-reference.
-pub fn canonical_launch_plan_hash(value: &serde_json::Value) -> Result<String, String> {
-    let mut body = value.clone();
-    let object = body
-        .as_object_mut()
-        .ok_or_else(|| "launch plan must be a JSON object".to_string())?;
-    object.remove("launch_plan_hash");
-    let bytes = serde_json::to_vec(&body)
-        .map_err(|error| format!("cannot canonicalize launch plan: {error}"))?;
-    Ok(ags_platform::sha256_hex(&bytes))
-}
-
-fn seal_launch_plan(mut plan: LaunchPlan) -> LaunchPlan {
-    let value = serde_json::to_value(&plan).expect("LaunchPlan serialization is infallible");
-    plan.launch_plan_hash =
-        canonical_launch_plan_hash(&value).expect("LaunchPlan canonicalization is infallible");
-    plan
-}
-
-// ── Main entry point ──────────────────────────────────────────────────────
-
-/// Run a task card through the gate-first pipeline.
-///
-/// `check_only` — stop after gate check, don't build full launch plan.
-/// `dry_run` — full pipeline, mark as dry run.
-/// `approve_writes` — pass the write-approval audit/hint signal to the resolver
-/// (may act as the M9 generic-adapter capability override).
-/// `current_task_approval` — pass the host-detected, current-task execution
-/// instruction to the resolver as an audit/hint signal. Task level does not
-/// downgrade the execution mode, so neither signal is a Heavy execution unlock.
-///
-/// Returns a `LaunchPlan`; no branch launches a process or performs task work.
-/// The caller checks `governance_status` and `host_execution_required` before
-/// deciding whether the host should execute the prepared plan.
-pub fn run_task_card(
-    task_card_path: &str,
-    check_only: bool,
-    dry_run: bool,
-    approve_writes: bool,
-    current_task_approval: bool,
-) -> LaunchPlan {
-    let runtime_home = ags_platform::runtime_home();
-    run_task_card_inner(
-        task_card_path,
-        check_only,
-        dry_run,
-        approve_writes,
-        current_task_approval,
-        &runtime_home,
-    )
-}
-
-/// Map a resolved runtime adapter to the host identifier the runtime skill-tag
-/// gate probes. `generic` / unknown → host-agnostic (`""`), which is fail-closed
-/// conservative: with no positive host visibility evidence, any `[skill: …]` tag
-/// reads as not-available and the launch stops.
-fn host_for_adapter(adapter: &str) -> &str {
-    match adapter {
-        "claude-code" => "claude-code",
-        "codex-local" => "codex",
-        "cursor" => "cursor",
-        "omp" => "omp",
-        _ => "",
+    fn from_card(level: &str) -> ReviewLevel {
+        match level {
+            "Heavy" => ReviewLevel::Heavy,
+            "Medium" => ReviewLevel::Medium,
+            _ => ReviewLevel::Light,
+        }
     }
 }
 
-/// Core of [`run_task_card`] with the skill-tag gate's static snapshot runtime
-/// home injected (hermetic in tests; machine runtime home in production via the
-/// public wrapper). The runtime skill-tag availability gate
-/// (the third gate) runs on the launch-plan path only — read/validation failures
-/// and check-only return before it, so the offline policy gate stays static.
-#[allow(clippy::too_many_arguments)]
-pub fn run_task_card_inner(
-    task_card_path: &str,
-    check_only: bool,
-    dry_run: bool,
-    approve_writes: bool,
-    current_task_approval: bool,
-    runtime_home: &Path,
-) -> LaunchPlan {
-    let mode = if check_only {
-        "check-only"
-    } else if dry_run {
-        "dry-run"
-    } else {
-        "prepare-execution"
-    };
-
-    let display_path = if task_card_path == "-" {
-        "(stdin)".to_string()
-    } else {
-        task_card_path.to_string()
-    };
-
-    // ── Phase 1: Read task card ────────────────────────────────────────
-    let content = match read_input(task_card_path) {
-        Ok(c) => c,
-        Err(e) => {
-            return seal_launch_plan(LaunchPlan {
-                schema_version: SCHEMA_VERSION.to_string(),
-                task_card_hash: String::new(),
-                launch_plan_hash: String::new(),
-                effective_execution_mode: String::new(),
-                effective_execution_topology: String::new(),
-                delegation_planning: false,
-                task_card_path: display_path,
-                mode: mode.to_string(),
-                governance_status: GovernanceStatus::BlockedByPolicy,
-                host_execution_required: false,
-                execution_performed: false,
-                verification_performed: false,
-                validation_passed: false,
-                validation_errors: vec![e],
-                gate_decision: "stop".to_string(),
-                gate_error_kind: Some("read_error".to_string()),
-                resolved_policy: None,
-                adapter: stub_adapter("generic", "read error — cannot resolve adapter"),
-                skill_tags_gate: None,
-                receipt_plan: empty_receipt_plan(""),
-                verification_log_refs: vec![],
-                delivery_report_ref: String::new(),
-            });
-        }
-    };
-
-    let task_card_hash = receipt_hash(content.as_bytes());
-
-    // ── Phase 2: Validate ──────────────────────────────────────────────
-    let card = match crate::validator::parse_validated(&content) {
-        Ok(c) => c,
-        Err(errors) => {
-            return seal_launch_plan(LaunchPlan {
-                schema_version: SCHEMA_VERSION.to_string(),
-                task_card_hash: task_card_hash.clone(),
-                launch_plan_hash: String::new(),
-                effective_execution_mode: String::new(),
-                effective_execution_topology: String::new(),
-                delegation_planning: false,
-                task_card_path: display_path,
-                mode: mode.to_string(),
-                governance_status: GovernanceStatus::BlockedByPolicy,
-                host_execution_required: false,
-                execution_performed: false,
-                verification_performed: false,
-                validation_passed: false,
-                validation_errors: errors.clone(),
-                gate_decision: "stop".to_string(),
-                gate_error_kind: Some("validation_failed".to_string()),
-                resolved_policy: None,
-                adapter: stub_adapter("generic", "validation failed — cannot resolve adapter"),
-                skill_tags_gate: None,
-                receipt_plan: empty_receipt_plan(&task_card_hash),
-                verification_log_refs: vec![],
-                delivery_report_ref: String::new(),
-            });
-        }
-    };
-
-    // ── Phase 3: Build policy input ────────────────────────────────────
-    // IMPORTANT: the runner builds TaskPolicyInput from validated fields
-    // but NEVER reads raw fields directly for launch decisions. All
-    // execution parameters come from the resolved policy.
-    // Use the canonical approval builder shared with the CLI gate and the AGS
-    // MCP. `--current-task-approval` is structured live-request evidence from
-    // the host/operator; it is never read from task-card prose and is an
-    // audit/hint signal only — task level does not downgrade the execution mode.
-    let input = ags_governance_decision::policy::TaskPolicyInput::from_fields_with_approval(
-        &card.fields,
-        approve_writes,
-        current_task_approval,
-    );
-
-    // ── Phase 4: Gate check (validate + resolve + decide) ──────────────
-    let gate_output: GateCheckOutput = ags_governance_decision::policy::gate_check(&input);
-    let decision_str = gate_output.decision.to_string().to_lowercase();
-    let policy = gate_output.resolved_policy;
-
-    // ── Phase 5: If check_only, stop here ──────────────────────────────
-    if check_only {
-        let gate_result_for_receipt = decision_str.clone();
-        let governance_status = if policy.stop_before_launch {
-            GovernanceStatus::BlockedByPolicy
-        } else {
-            GovernanceStatus::AdvisoryNoMutation
-        };
-        return seal_launch_plan(LaunchPlan {
-            schema_version: SCHEMA_VERSION.to_string(),
-            task_card_hash: task_card_hash.clone(),
-            launch_plan_hash: String::new(),
-            effective_execution_mode: policy.effective_execution_mode.to_string(),
-            effective_execution_topology: policy.effective_execution_topology.to_string(),
-            delegation_planning: policy.delegation_planning,
-            task_card_path: display_path,
-            mode: mode.to_string(),
-            governance_status,
-            host_execution_required: false,
-            execution_performed: false,
-            verification_performed: false,
-            validation_passed: true,
-            validation_errors: vec![],
-            gate_decision: decision_str,
-            gate_error_kind: None,
-            resolved_policy: Some(policy),
-            adapter: AdapterPlan {
-                adapter: "check-only".to_string(),
-                launch_command: String::new(),
-                launch_args: vec![],
-                is_stub: true,
-                stub_reason: Some("check-only mode — no adapter resolved".to_string()),
-                executor_binary: String::new(),
-                dispatched: false,
-            },
-            // check-only stops at the offline policy gate; the runtime skill-tag
-            // gate belongs to the launch-plan path (dry-run / plan) below.
-            skill_tags_gate: None,
-            receipt_plan: ReceiptPlan {
-                host_should_generate: false,
-                receipt_id_prefix: format!(
-                    "receipt-{}",
-                    &task_card_hash[..12.min(task_card_hash.len())]
-                ),
-                task_card_hash,
-                gate_result_for_receipt,
-                suggested_verification_commands: vec![],
-                generated: false,
-            },
-            verification_log_refs: vec![],
-            delivery_report_ref: String::new(),
-        });
+/// Derive the effective review level from the card fields plus the
+/// `ags.toml` escalation table. Shared by prepare and close so the caller
+/// can never downgrade the gate. Sealed-op detection is word-bounded and
+/// understands `prefix:*` entries.
+pub fn derive_review_level(
+    config: &Config,
+    body: &str,
+    card_level: &str,
+    topology: &str,
+) -> (ReviewLevel, Vec<String>) {
+    let mut effective = ReviewLevel::from_card(card_level);
+    let mut escalation_reasons: Vec<String> = Vec::new();
+    if topology == "parallel" {
+        effective = effective.max(ReviewLevel::Medium);
+        escalation_reasons.push("fanout".to_string());
     }
+    let boundary = field_value(body, "写边界：").unwrap_or_else(|| "仓库内".to_string());
+    if boundary != "仓库内" && boundary != "in-repo" {
+        effective = effective.max(ReviewLevel::Medium);
+        escalation_reasons.push("boundary-crossing".to_string());
+    }
+    if sealed_mention(config, body) {
+        effective = ReviewLevel::Heavy;
+        escalation_reasons.push("sealed".to_string());
+    }
+    (effective, escalation_reasons)
+}
 
-    // ── Phase 5.5: Runtime skill-tag availability gate (the third gate) ──
-    // The validator already enforced the static gates offline: (1) the tag is
-    // registry-routable and (2) it has a legal `[skill: …]` invoke_hint. This is
-    // the runtime gate (3): the live machine snapshot must judge each trailing
-    // `[skill: …]` tag Available for the active host (enrolled + canonical
-    // present + auth satisfied + host-visible + healthy). It runs automatically
-    // on every contract-v2 task-plan path, not a manual side command. A
-    // rejected tag is a launch blocker: deterministic and fail-closed.
-    let active_host = host_for_adapter(&policy.runtime_adapter);
-    let skill_tags = crate::validator::extract_skill_tags(&content);
-    let skill_tags_gate: Option<SkillTagGate> = if skill_tags.is_empty() {
-        None
-    } else {
-        Some(
-            ags_capability_governance::verify_skill_tags_with_runtime_home(
-                &skill_tags,
-                active_host,
-                runtime_home,
-            ),
-        )
-    };
-    let skill_tags_blocked = skill_tags_gate
-        .as_ref()
-        .map(|g| !g.all_accepted)
-        .unwrap_or(false);
-
-    // The launch is blocked if the policy resolver stopped it OR a skill tag is
-    // unavailable at runtime. Either reason makes the card non-launchable.
-    let launch_blocked = policy.stop_before_launch || skill_tags_blocked;
-    let (decision_str, gate_error_kind) = if skill_tags_blocked {
-        (
-            "stop".to_string(),
-            Some("skill_tags_unavailable".to_string()),
-        )
-    } else {
-        (decision_str, None)
-    };
-
-    // ── Phase 6: Adapter resolution ────────────────────────────────────
-    let adapter_plan = resolve_adapter(&policy, &display_path);
-
-    // ── Phase 7: Receipt / verification / delivery planning ────────────
-    let gate_result_for_receipt = decision_str.clone();
-    let receipt_plan = ReceiptPlan {
-        host_should_generate: !launch_blocked,
-        receipt_id_prefix: format!(
-            "receipt-{}",
-            &task_card_hash[..12.min(task_card_hash.len())]
-        ),
-        task_card_hash: task_card_hash.clone(),
-        gate_result_for_receipt,
-        suggested_verification_commands: vec![
-            "cargo fmt --check".to_string(),
-            "RUSTFLAGS=\"-D warnings\" cargo test".to_string(),
-            "cargo build --release".to_string(),
-            "ags check governance --workspace . --format json".to_string(),
-        ],
-        generated: false,
-    };
-
-    let verification_log_refs = vec![
-        "verification.log".to_string(),
-        "delivery-report.md".to_string(),
-    ];
-
-    let delivery_report_ref = if skill_tags_blocked {
-        "BLOCKED — delivery report not applicable (runtime skill-tag gate rejected a tag)"
-            .to_string()
-    } else if policy.stop_before_launch {
-        "BLOCKED — delivery report not applicable (stop_before_launch=true)".to_string()
-    } else {
-        "host must generate delivery-report.md after execution and verification".to_string()
-    };
-
-    seal_launch_plan(LaunchPlan {
-        schema_version: SCHEMA_VERSION.to_string(),
-        task_card_hash: task_card_hash.clone(),
-        launch_plan_hash: String::new(),
-        effective_execution_mode: policy.effective_execution_mode.to_string(),
-        effective_execution_topology: policy.effective_execution_topology.to_string(),
-        delegation_planning: policy.delegation_planning,
-        task_card_path: display_path,
-        mode: mode.to_string(),
-        governance_status: if launch_blocked {
-            GovernanceStatus::BlockedByPolicy
+/// Does the card body mention a sealed operation? Word-bounded match for
+/// exact entries; `prefix:*` entries match `prefix:` occurrences or the
+/// standalone word. Hyphens count as boundaries (so `--update-capabilities`
+/// and `release-notes` both escalate — over-escalation is the safe side).
+fn sealed_mention(config: &Config, body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    config.sealed.ops.iter().any(|entry| {
+        let entry = entry.trim().to_ascii_lowercase();
+        if let Some(prefix) = entry.strip_suffix(":*") {
+            lower.contains(&format!("{prefix}:")) || contains_word(&lower, prefix)
         } else {
-            GovernanceStatus::HostExecutionRequired
-        },
-        host_execution_required: !launch_blocked,
-        execution_performed: false,
-        verification_performed: false,
-        validation_passed: true,
-        validation_errors: vec![],
-        gate_decision: decision_str,
-        gate_error_kind,
-        resolved_policy: Some(policy),
-        adapter: adapter_plan,
-        skill_tags_gate,
-        receipt_plan,
-        verification_log_refs,
-        delivery_report_ref,
+            contains_word(&lower, &entry)
+        }
     })
 }
 
-// ── Adapter resolution ────────────────────────────────────────────────────
+fn contains_word(text: &str, word: &str) -> bool {
+    if word.is_empty() {
+        return false;
+    }
+    let bytes = text.as_bytes();
+    let needle = word.as_bytes();
+    let mut idx = 0;
+    while let Some(rel) = text[idx..].find(word) {
+        let start = idx + rel;
+        let end = start + needle.len();
+        let before_ok = start == 0 || !is_word_byte(bytes[start - 1]);
+        let after_ok = end >= bytes.len() || !is_word_byte(bytes[end]);
+        if before_ok && after_ok {
+            return true;
+        }
+        idx = start + needle.len();
+    }
+    false
+}
 
-/// Resolve the adapter plan from the resolved policy.
-///
-/// This is the ONLY place that translates runtime_adapter to a concrete
-/// launch strategy. It reads the adapter field from the RESOLVED POLICY,
-/// never from the raw task card.
-fn resolve_adapter(policy: &ResolvedExecutionPolicy, _task_card_path: &str) -> AdapterPlan {
-    let adapter = &policy.runtime_adapter;
+fn is_word_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric()
+}
 
-    // ── Resolve permission-mode launch args ────────────────────────────
-    // These come from allowed_launch_args (already gated by the resolver).
-    // The runner just passes them through verbatim.
-    let launch_args = policy.allowed_launch_args.clone();
+/// Phase 1: validate the card, resolve the review level through the
+/// escalation matrix, and record the execution evidence event.
+pub fn run_prepare(binding: &WorkspaceBinding, card_path: &Path) -> Result<Value> {
+    let body = std::fs::read_to_string(card_path)
+        .map_err(|e| Error::new("task_card_read_failed", e.to_string()))?;
+    let errors = validate_body(&card_path.display().to_string(), &body);
+    if !errors.is_empty() {
+        return Ok(verdict(&errors, None));
+    }
+    let hash = card_hash(&body);
+    let result = validate_file(card_path);
+    let level = result.level.clone().unwrap_or_else(|| "Light".to_string());
+    let topology = result
+        .topology
+        .clone()
+        .unwrap_or_else(|| "single".to_string());
+    let config = Config::load(&binding.root)?;
+    let boundary = field_value(&body, "写边界：").unwrap_or_else(|| "仓库内".to_string());
+    let (effective, escalation_reasons) = derive_review_level(&config, &body, &level, &topology);
 
-    match adapter.as_str() {
-        "claude-code" => {
-            let binary = "claude".to_string();
-            let cmd = if launch_args.is_empty() {
-                "claude -p - < <task-card>".to_string()
-            } else {
-                format!("claude {} -p - < <task-card>", launch_args.join(" "))
-            };
+    let evidence = EvidenceLog::new(binding.evidence_dir.clone());
+    let authority = crate::authority::derive_authority(&body, &hash)
+        .map_err(|e| Error::new("authority_derive_failed", e))?;
+    let event = evidence.append(
+        "execution",
+        &binding.slug,
+        Some(&hash),
+        "local",
+        json!({
+            "phase": "prepare",
+            "level": level,
+            "effective_level": effective.as_str(),
+            "topology": topology,
+            "write_boundary": boundary,
+            "authority": authority,
+            "escalation_reasons": escalation_reasons,
+        }),
+    )?;
+    Ok(json!({
+        "validated": true,
+        "task_card_hash": hash,
+        "contract_id": result.contract_id,
+        "level": level,
+        "effective_level": effective.as_str(),
+        "topology": topology,
+        "write_boundary": boundary,
+        "authority": authority,
+        "escalation_reasons": escalation_reasons,
+        "review": effective.as_str(),
+        "verify_commands": config.verify.commands,
+        "evidence_event": event.event_id,
+        "governance_status": "HOST_EXECUTION_REQUIRED",
+    }))
+}
 
-            AdapterPlan {
-                adapter: "claude-code".to_string(),
-                launch_command: cmd,
-                launch_args,
-                is_stub: false,
-                stub_reason: None,
-                executor_binary: binary,
-                dispatched: false,
+fn verdict(errors: &[ValidationError], _hash: Option<&str>) -> Value {
+    json!({
+        "validated": false,
+        "errors": errors,
+        "governance_status": "CARD_INVALID",
+    })
+}
+
+/// Phase 2: run the governance check plus the structured verify commands.
+/// Test failure never rolls back source.
+pub fn run_verify(binding: &WorkspaceBinding, card_path: &Path, profile: &str) -> Result<Value> {
+    let body = std::fs::read_to_string(card_path)
+        .map_err(|e| Error::new("task_card_read_failed", e.to_string()))?;
+    let errors = validate_body(&card_path.display().to_string(), &body);
+    if !errors.is_empty() {
+        return Ok(verdict(&errors, None));
+    }
+    let hash = card_hash(&body);
+    let config = Config::load(&binding.root)?;
+
+    // Governance checks (read-only, project_tests_run=false).
+    let lint = config.lint();
+    let lock = CapabilitiesLock::load(binding)?;
+    let route_checks = lock.check_routes(&binding.root);
+    let all_events = EvidenceLog::new(binding.evidence_dir.clone())
+        .read_all()
+        .unwrap_or_default();
+    let chain_ok = EvidenceLog::verify_chain(&all_events).is_ok();
+
+    // Structured verify commands, profiled.
+    let selected = select_commands(&config.verify.commands, profile);
+    let mut receipts: Vec<TestReceipt> = Vec::new();
+    let mut parse_errors: Vec<String> = Vec::new();
+    for command in &selected {
+        match parse_command(command) {
+            Ok(mut spec) => {
+                spec.cwd = binding.root.clone();
+                receipts.push(run(&spec));
             }
+            Err(e) => parse_errors.push(format!("{command}: {}", e.message)),
         }
+    }
 
-        "codex-local" => AdapterPlan {
-            adapter: "codex-local".to_string(),
-            launch_command: format!(
-                "codex execute --permission {} [task-card]",
-                policy.effective_execution_mode
-            ),
-            launch_args: vec![],
-            is_stub: true,
-            stub_reason: Some(
-                "codex-local adapter is a structured stub. Full adapter wiring \
-                 requires Codex runtime integration (TBD after Codex review)."
-                    .to_string(),
-            ),
-            executor_binary: "codex".to_string(),
-            dispatched: false,
-        },
+    let evidence = EvidenceLog::new(binding.evidence_dir.clone());
+    let all_succeeded = receipts.iter().all(|r| r.status == "succeeded")
+        && parse_errors.is_empty()
+        && lint.is_empty()
+        && route_checks.iter().all(|r| r.status == "exact")
+        && chain_ok;
+    let event = evidence.append(
+        "test",
+        &binding.slug,
+        Some(&hash),
+        "local",
+        json!({
+            "phase": "verify",
+            "profile": profile,
+            "receipts": receipts,
+            "parse_errors": parse_errors,
+            "lint": lint,
+            "capability_routes": route_checks,
+            "evidence_chain_ok": chain_ok,
+            "all_succeeded": all_succeeded,
+        }),
+    )?;
+    Ok(json!({
+        "validated": true,
+        "task_card_hash": hash,
+        "project_tests_run": !receipts.is_empty(),
+        "all_succeeded": all_succeeded,
+        "receipts": receipts,
+        "lint_findings": lint,
+        "capability_routes": route_checks,
+        "evidence_chain_ok": chain_ok,
+        "evidence_event": event.event_id,
+        "governance_status": if all_succeeded { "VERIFIED" } else { "VERIFICATION_FAILED" },
+    }))
+}
 
-        "cursor" => AdapterPlan {
-            adapter: "cursor".to_string(),
-            launch_command: format!(
-                "cursor agent --mode {} [task-card]",
-                policy.effective_execution_mode
-            ),
-            launch_args: vec![],
-            is_stub: true,
-            stub_reason: Some(
-                "cursor adapter is a structured stub. Full adapter wiring \
-                 requires Cursor IDE runtime integration (TBD after Codex review)."
-                    .to_string(),
-            ),
-            executor_binary: "cursor".to_string(),
-            dispatched: false,
-        },
-
-        "omp" => AdapterPlan {
-            adapter: "omp".to_string(),
-            launch_command: "omp host-native handoff [task-card]".to_string(),
-            launch_args: vec![],
-            is_stub: true,
-            stub_reason: Some(
-                "omp adapter is a structured host handoff. OMP owns its native \
-                 session and consumes the validated task card without AGS spawning it."
-                    .to_string(),
-            ),
-            executor_binary: "omp".to_string(),
-            dispatched: false,
-        },
-
-        _ => AdapterPlan {
-            adapter: "generic".to_string(),
-            launch_command: "human handoff — no automated executor".to_string(),
-            launch_args: vec![],
-            is_stub: true,
-            stub_reason: Some(format!(
-                "Unknown or generic runtime adapter '{}'. Execution requires human handoff.",
-                adapter
-            )),
-            executor_binary: "human".to_string(),
-            dispatched: false,
-        },
+fn select_commands(commands: &[String], profile: &str) -> Vec<String> {
+    match profile {
+        "smoke" => commands.iter().take(1).cloned().collect(),
+        "standard" => commands
+            .iter()
+            .filter(|c| !c.contains("release"))
+            .cloned()
+            .collect(),
+        _ => commands.to_vec(),
     }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────
-
-fn read_input(path: &str) -> Result<String, String> {
-    if path == "-" {
-        use std::io::Read;
-        let mut buf = String::new();
-        std::io::stdin()
-            .read_to_string(&mut buf)
-            .map_err(|e| format!("Failed to read stdin: {}", e))?;
-        Ok(buf)
-    } else {
-        std::fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {}", path, e))
+/// Phase 3: evidence-chain closure. A Heavy effective level requires review
+/// evidence (a non-author reviewer + verdict) inside the report; closure
+/// fails closed without it.
+pub fn run_close(
+    binding: &WorkspaceBinding,
+    card_path: &Path,
+    report: Value,
+    instance: Option<&str>,
+) -> Result<Value> {
+    let body = std::fs::read_to_string(card_path)
+        .map_err(|e| Error::new("task_card_read_failed", e.to_string()))?;
+    let errors = validate_body(&card_path.display().to_string(), &body);
+    if !errors.is_empty() {
+        return Ok(verdict(&errors, None));
     }
-}
-
-fn receipt_hash(data: &[u8]) -> String {
-    ags_platform::sha256_hex(data)
-}
-
-fn stub_adapter(adapter: &str, reason: &str) -> AdapterPlan {
-    AdapterPlan {
-        adapter: adapter.to_string(),
-        launch_command: String::new(),
-        launch_args: vec![],
-        is_stub: true,
-        stub_reason: Some(reason.to_string()),
-        executor_binary: String::new(),
-        dispatched: false,
-    }
-}
-
-fn empty_receipt_plan(hash: &str) -> ReceiptPlan {
-    ReceiptPlan {
-        host_should_generate: false,
-        receipt_id_prefix: if hash.is_empty() {
-            String::new()
-        } else {
-            format!("receipt-{}", &hash[..12.min(hash.len())])
-        },
-        task_card_hash: hash.to_string(),
-        gate_result_for_receipt: "stop".to_string(),
-        suggested_verification_commands: vec![],
-        generated: false,
-    }
-}
-
-// ── Rendering ─────────────────────────────────────────────────────────────
-
-/// Render a LaunchPlan as human-readable text.
-pub fn render_text(plan: &LaunchPlan) -> String {
-    let mut lines: Vec<String> = Vec::new();
-
-    lines.push("AGS Runner — Launch Plan".to_string());
-    lines.push("=========================".to_string());
-    lines.push(format!("Schema version:  {}", plan.schema_version));
-    lines.push(format!("Task-card hash:  {}", plan.task_card_hash));
-    lines.push(format!("Launch-plan hash: {}", plan.launch_plan_hash));
-    lines.push(format!("Task card:       {}", plan.task_card_path));
-    lines.push(format!("Mode:            {}", plan.mode));
-    lines.push(format!(
-        "Governance:      {}",
-        plan.governance_status.as_str()
-    ));
-    lines.push(format!("Host execution:  {}", plan.host_execution_required));
-    lines.push("Execution done:  false".to_string());
-    lines.push("Verification done: false".to_string());
-    lines.push(String::new());
-
-    // Validation
-    lines.push("─ Validation ─".to_string());
-    lines.push(format!("  Passed:  {}", plan.validation_passed));
-    if !plan.validation_errors.is_empty() {
-        lines.push("  Errors:".to_string());
-        for err in &plan.validation_errors {
-            lines.push(format!("    - {}", err));
-        }
-    }
-    lines.push(String::new());
-
-    // Gate
-    lines.push("─ Gate Decision ─".to_string());
-    lines.push(format!("  Decision:  {}", plan.gate_decision));
-    if let Some(ref kind) = plan.gate_error_kind {
-        lines.push(format!("  Error:     {}", kind));
-    }
-    lines.push(String::new());
-
-    // Resolved policy
-    if let Some(ref policy) = plan.resolved_policy {
-        lines.push("─ Resolved Policy ─".to_string());
-        lines.push(format!("  Executor:          {}", policy.executor));
-        lines.push(format!("  Runtime adapter:   {}", policy.runtime_adapter));
-        lines.push(format!(
-            "  Execution mode:   {}",
-            policy.effective_execution_mode
-        ));
-        lines.push(format!(
-            "  Execution topology: {}",
-            policy.effective_execution_topology
-        ));
-        lines.push(format!(
-            "  Delegation planning: {}",
-            if policy.delegation_planning {
-                "yes"
-            } else {
-                "no"
-            }
-        ));
-        lines.push(format!(
-            "  Exec surface:      {}",
-            policy.effective_execution_surface
-        ));
-        lines.push(format!("  Execution effort:  {}", policy.execution_effort));
-        lines.push(format!(
-            "  Stop before launch: {}",
-            policy.stop_before_launch
-        ));
-        if !policy.stop_reasons.is_empty() {
-            lines.push("  Stop reasons:".to_string());
-            for reason in &policy.stop_reasons {
-                lines.push(format!("    - {}", reason));
-            }
-        }
-        if policy.was_downgraded {
-            lines.push("  Downgrades:".to_string());
-            for reason in &policy.downgrade_reasons {
-                lines.push(format!("    - {}", reason));
-            }
-        }
-        lines.push(String::new());
-    }
-
-    // Adapter
-    lines.push("─ Adapter Plan ─".to_string());
-    lines.push(format!("  Adapter:     {}", plan.adapter.adapter));
-    lines.push(format!("  Binary:      {}", plan.adapter.executor_binary));
-    lines.push(format!("  Launch cmd:  {}", plan.adapter.launch_command));
-    if !plan.adapter.launch_args.is_empty() {
-        lines.push(format!(
-            "  Launch args: {}",
-            plan.adapter.launch_args.join(" ")
-        ));
-    }
-    if plan.adapter.is_stub {
-        lines.push("  Status:      STUB — not wired for real execution".to_string());
-        if let Some(ref reason) = plan.adapter.stub_reason {
-            lines.push(format!("  Reason:      {}", reason));
-        }
-    }
-    lines.push(String::new());
-
-    // Runtime skill-tag availability gate (the third gate)
-    if let Some(ref gate) = plan.skill_tags_gate {
-        lines.push("─ Skill-Tag Gate (runtime) ─".to_string());
-        lines.push(format!("  Active host:  {}", gate.active_host));
-        lines.push(format!("  Snapshot:     {}", gate.snapshot_hash));
-        lines.push(format!("  All accepted: {}", gate.all_accepted));
-        for v in &gate.verdicts {
-            lines.push(format!(
-                "    - [skill: {}] {}{}",
-                v.tag,
-                if v.accepted { "ACCEPT" } else { "REJECT" },
-                if v.reason.is_empty() {
-                    String::new()
-                } else {
-                    format!(" ({})", v.reason)
-                },
+    let hash = card_hash(&body);
+    // The review gate is derived from the card + ags.toml, never from a
+    // caller-supplied flag: a caller cannot downgrade a heavy closure.
+    let result = validate_file(card_path);
+    let level = result.level.clone().unwrap_or_else(|| "Light".to_string());
+    let topology = result
+        .topology
+        .clone()
+        .unwrap_or_else(|| "single".to_string());
+    let config = Config::load(&binding.root)?;
+    let (effective, _escalations) = derive_review_level(&config, &body, &level, &topology);
+    if effective == ReviewLevel::Heavy {
+        let review = report.get("review").cloned().unwrap_or(Value::Null);
+        let reviewer = review
+            .get("reviewer")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if reviewer.is_empty() || reviewer == "self" {
+            return Err(Error::new(
+                "review_gate_unsatisfied",
+                "Heavy closure requires independent review evidence (non-author reviewer + verdict) in the report",
             ));
         }
-        lines.push(String::new());
     }
-
-    // Receipt plan
-    lines.push("─ Receipt / Verification / Delivery ─".to_string());
-    lines.push(format!(
-        "  Receipt:      {}",
-        if plan.receipt_plan.host_should_generate {
-            "host should generate after execution"
-        } else {
-            "skipped (stopped or check-only)"
-        }
-    ));
-    lines.push(format!(
-        "  Receipt ID:   {}",
-        plan.receipt_plan.receipt_id_prefix
-    ));
-    lines.push(format!(
-        "  Card hash:    {}",
-        plan.receipt_plan.task_card_hash
-    ));
-    lines.push("  Verification commands:".to_string());
-    for cmd in &plan.receipt_plan.suggested_verification_commands {
-        lines.push(format!("    - {}", cmd));
-    }
-    lines.push(format!("  Delivery report: {}", plan.delivery_report_ref));
-    lines.push(String::new());
-
-    // Summary
-    lines.push("─ Summary ─".to_string());
-    let verdict = match plan.gate_decision.as_str() {
-        "allow" => "HOST EXECUTION REQUIRED — launch plan prepared; runner did not execute",
-        "stop" => "STOP — blocked; runner did not execute",
-        _ => "UNKNOWN",
-    };
-    lines.push(format!("  Verdict:  {}", verdict));
-
-    if plan.gate_decision != "stop" {
-        lines.push(
-            "  NOTE: The host owns execution, verification, and receipt writing.".to_string(),
-        );
-    }
-
-    lines.join("\n")
+    let evidence = EvidenceLog::new(binding.evidence_dir.clone());
+    let closure =
+        ags_kernel::memory::close_task(&evidence, &binding.slug, &hash, report, instance)?;
+    let pointer = ags_kernel::memory::memory_pointer(&binding.slug, &hash, &closure.event_id);
+    Ok(json!({
+        "validated": true,
+        "task_card_hash": hash,
+        "effective_level": effective.as_str(),
+        "closure_event": closure.event_id,
+        "memory_pointer": pointer,
+        "governance_status": "CLOSED",
+    }))
 }
 
-/// Render a LaunchPlan as JSON string.
-pub fn render_json(plan: &LaunchPlan) -> String {
-    serde_json::to_string_pretty(plan)
-        .unwrap_or_else(|e| format!(r#"{{"error":"JSON serialization failed: {}"}}"#, e))
+fn field_value(body: &str, field: &str) -> Option<String> {
+    body.lines()
+        .find_map(|line| line.strip_prefix(field).map(|v| v.trim().to_string()))
 }
-
-// ── Tests ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+    use crate::template::skeleton;
+    use std::fs;
+
+    const CARD: &str = "## 任务卡\n\n读取并遵守：\n- AGENTS.md\n\nContract ID: tc-0123456789abcdef\n\nExecutor: Other\n\n任务级别：Light\n\n任务：\n原型验证\n\n目标：\n- G-01: 跑通\n\n验收标准：\n- AC-01 -> G-01: prepare 返回 HOST_EXECUTION_REQUIRED\n\n验证：\n- V-01 -> AC-01: echo structured\n- EV-01 -> AC-01: 输出\n\n写边界：仓库内\n\n拓扑：single\n\n停止条件：\n- 失败即停\n\n相关路径：\n- src\n\n交付方式：ags-run\n";
+
+    fn ws(tmp: &tempfile::TempDir) -> WorkspaceBinding {
+        let root = tmp.path().join("ws");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("ags.toml"),
+            "[workspace]\nslug = \"t\"\nrole = \"A\"\n\n[sealed]\nops = [\"govern.skill.install\", \"govern.skill.remove\", \"govern.host.register\", \"govern.host_projection\", \"govern.delegation.issue\", \"update\"]\n\n[verify]\ncommands = [\"echo structured\"]\nprofile = \"smoke\"\n",
+        )
+        .unwrap();
+        ags_kernel::workspace::bind(&root).unwrap()
+    }
+
+    #[test]
+    fn prepare_verify_close_e2e() {
+        let tmp = tempfile::tempdir().unwrap();
+        let binding = ws(&tmp);
+        let card = tmp.path().join("card.md");
+        fs::write(&card, CARD).unwrap();
+
+        let prep = run_prepare(&binding, &card).unwrap();
+        assert_eq!(prep["governance_status"], "HOST_EXECUTION_REQUIRED");
+        assert_eq!(prep["effective_level"], "light");
+
+        let verify = run_verify(&binding, &card, "smoke").unwrap();
+        assert_eq!(verify["governance_status"], "VERIFIED");
+        assert_eq!(verify["project_tests_run"], true);
+
+        let close = run_close(&binding, &card, json!({"status": "succeeded"}), None).unwrap();
+        assert_eq!(close["governance_status"], "CLOSED");
+        assert!(close["memory_pointer"]
+            .as_str()
+            .unwrap()
+            .starts_with("ags://memory/"));
+    }
+
+    #[test]
+    fn heavy_close_requires_independent_review() {
+        let tmp = tempfile::tempdir().unwrap();
+        let binding = ws(&tmp);
+        let card = tmp.path().join("card.md");
+        // The sealed op mention ("ags update") derives Heavy; the caller has
+        // no flag to downgrade it.
+        fs::write(&card, CARD.replace("原型验证", "原型验证 ags update")).unwrap();
+        // prepare records the task's evidence chain, which closure requires;
+        // closure also requires a successful verify event.
+        let prep = run_prepare(&binding, &card).unwrap();
+        assert_eq!(prep["effective_level"], "heavy");
+        let _verify = run_verify(&binding, &card, "smoke").unwrap();
+        let err = run_close(&binding, &card, json!({"status": "ok"}), None).unwrap_err();
+        assert_eq!(err.code, "review_gate_unsatisfied");
+        let ok = run_close(
+            &binding,
+            &card,
+            json!({"status": "ok", "review": {"reviewer": "codex", "verdict": "approved"}}),
+            None,
+        );
+        assert!(ok.is_ok());
+    }
+
+    #[test]
+    fn boundary_crossing_escalates_to_medium() {
+        let tmp = tempfile::tempdir().unwrap();
+        let binding = ws(&tmp);
+        let card = tmp.path().join("card.md");
+        fs::write(&card, CARD.replace("写边界：仓库内", "写边界：docs")).unwrap();
+        let prep = run_prepare(&binding, &card).unwrap();
+        assert_eq!(prep["effective_level"], "medium");
+        assert!(prep["escalation_reasons"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("boundary-crossing")));
+    }
+
+    #[test]
+    fn sealed_mention_is_word_bounded_and_prefix_aware() {
+        let mut config = Config::default();
+        config.sealed.ops = vec![
+            "update".to_string(),
+            "govern.skill.install".to_string(),
+            "release:*".to_string(),
+        ];
+        // exact word: yes
+        assert!(sealed_mention(&config, "运行 ags update 刷新"));
+        // substring inside another word: no
+        assert!(!sealed_mention(&config, "文档 updates 章节"));
+        // dotted op name: yes
+        assert!(sealed_mention(&config, "执行 govern.skill.install 任务"));
+        // prefix with colon: yes; standalone word: yes; hyphenated: yes
+        assert!(sealed_mention(&config, "release:project-public"));
+        assert!(sealed_mention(&config, "本次 release 需要独立授权"));
+        assert!(sealed_mention(&config, "更新 release-notes 文档"));
+        // unrelated body: no
+        assert!(!sealed_mention(&config, "写一个普通函数"));
+    }
+
+    #[test]
+    fn skeleton_is_valid() {
+        let body = skeleton();
+        let errors = validate_body("skeleton.md", &body);
+        assert!(errors.is_empty(), "{errors:?}");
+    }
+}

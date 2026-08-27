@@ -1,97 +1,79 @@
-# AGS v0.4.20 Architecture
+# AGS v3 Architecture
 
-AGS is a typed governance control plane. The host interprets natural language;
-AGS accepts an `OperationRequest`, returns a decision or sealed plan, and
-consumes the plan through one explicit apply boundary. AGS is not an Agent
-scheduler, task queue, third-party MCP broker, or natural-language router.
+Thin AGS (contract v3): governance is a thin shell at the enforcement point,
+not a process bus. Five crates; one deep module.
 
-## One operation authority
+## One kernel, three projections
 
 ```text
-human CLI / machine JSON / MCP
-              |
-              v
-       Operation registry
-              |
-              v
-     open -> decide -> apply
-              |
-              v
-     verify -> receipt/recover
+ags (CLI)        ags mcp (2 tools)        ags-policy (hook decisions)
+        \              |              /
+         +--- ags-kernel (the only deep module) ---+
+                     /         |         \
+              sealed decide/apply | evidence log | permission matrix
+              capabilities.lock   | memory closure | projection
 ```
 
-Each public operation has one typed request declared by the registry. The same
-declaration supplies adapter routing, schema, help metadata, operation kind, and
-handler selection. Adapters do not compose domain argv or run `ags` recursively.
+- `ags-kernel` owns all policy: the `ags.toml` matrix (allow/ask/deny/sealed),
+  sealed transactions (5 states), the append-only content-addressed evidence
+  log, the hash-pinned capability lock, evidence-chain memory closure, and the
+  ownership-safe projection (byte-preserving, atomic no-replace, tamper
+  detection). It also ships the `ags-policy` hook binary.
+- `ags-task-contract` owns the ≤13-field canonical card, its validator
+  (closure mapping G/AC/V/EV, protected paths), the structured command runner
+  (no shell interpolation), and `ags run` prepare/verify/close with the review
+  escalation matrix.
+- `ags` CLI / internal MCP companion translate interfaces only. They never own policy,
+  workspace identity, sealing, verification or receipts (lark-cli convention:
+  one typed core, thin adapters, risk labels per command).
+- `ags-release` owns the public projection boundary: the typed public spec,
+  sensitivity scan, content-addressed plan and transactional apply from A
+  into B, plus promotion verify (S==A, B integrity). The ags CLI keeps
+  `release:*` blocked for workspace-local tasks.
 
-Operation kinds are `ReadOnly`, `Transaction`, `LocalExecution`, and
-`HostDelegated`. ReadOnly performs no write. Effectful operations first return a
-sealed plan; `ags apply` and MCP `ags_apply` are the only product apply surfaces.
-Transactions verify and either receipt or recover. LocalExecution preserves
-source changes on test failure and escalates an unexpected write set; a host
-without provable descendant containment is blocked before spawn. HostDelegated
-work may close only after a content-addressed, binding-scoped outcome receipt is
-verified. The current A-workspace candidate keeps production HostDelegated
-apply blocked until that artifact verifier is implemented.
-
-## Authoritative modules
-
-| Module | Owns |
-|---|---|
-| `ags-platform` | paths, hashes, atomic filesystem/process primitives |
-| `ags-workspace-facts` | canonical project facts and protocol audit |
-| `ags-host-integration` | normalized Generic Agent identity and optional host probes |
-| `ags-capability-governance` | capability inventory, exact Skill resolution and snapshots |
-| `ags-task-contract` | typed task-card validation and launch contract |
-| `ags-governance-decision` | execution policy vocabulary |
-| `ags-session` | workspace resolver/router, authenticated daemon sessions |
-| `ags-evidence` | receipts and closure evidence integrity |
-| `ags-verification` | governance check and structured project-test execution |
-| `ags-control-plane` | registry, sealed plans, state machine, domain handlers |
-| `ags-cli` | ten-command human and machine adapter |
-| `ags-mcp` | standalone stdio adapter and private daemon child mode |
-
-Dependencies point inward. `ags-cli` and `ags-mcp` translate Interface values;
-they do not own policy or lifecycle orchestration. `ags-host` is the separate
-host lifecycle callback executable.
-
-## Target-routed workspace service
-
-One global stdio transport may serve many per-workspace daemons:
+## Control flow
 
 ```text
-Generic Agent connection
-  -> request context (explicit workspace | unique MCP root | adapter cwd)
-  -> canonical workspace + project facts
-  -> authenticated workspace-service handshake
-  -> immutable WorkspaceBinding
-  -> per-workspace open/decide/apply
+task card (≤13 fields)
+  -> ags run --task <card>          # prepare: validate + matrix + review level
+  -> host executes (ags-policy PreToolUse decides every tool call)
+  -> ags run --verify               # structured verify commands + governance
+  -> review (Light/Medium/Heavy escalation)
+  -> ags run --close --report ...   # evidence-chain closure + memory pointer
+
+sealed operations (init/update/govern.*)
+  -> decide seals a single-use action_ref
+  -> ags apply consumes it once     # replay/tamper/cross-binding fail closed
 ```
 
-Resolution order is fixed. HOME, daemon cwd, recent-project state, fuzzy path
-matching, and managed-project guesses are not fallbacks. Managed-project data
-may assist discovery but is not identity authority. The router keeps isolated
-authenticated sessions per canonical workspace and has no mutable global
-current binding, so A -> B -> A traffic can reuse both sessions safely.
+## Workspace identity
 
-An action reference binds connection, normalized host, canonical workspace,
-authenticated session, policy, plan, and payload. It cannot be replayed or used
-across a connection, host, workspace, daemon restart, or plan mutation.
+Single-machine: nearest ancestor `ags.toml`. Multi-root MCP: explicit
+workspace context → unique MCP root → unique bound workspace containing the
+adapter cwd → otherwise `workspace_required` / `workspace_ambiguous`. HOME,
+recent projects and fuzzy matches are never identity authorities. The binding
+hash is embedded in every action_ref.
 
-## Public Interface
+## Evidence
 
-The CLI exposes only `setup`, `init`, `agent`, `govern`, `update`, `doctor`,
-`check`, `test`, `apply`, and `schema`. MCP exposes only `ags_decide` and
-`ags_apply`. Contract v2 is a hard cut: older commands, aliases, tools, wires,
-schema identifiers, and compatibility handlers are absent.
+`.ags/evidence/events.jsonl` — append-only, one JSON object per line,
+content-addressed (sha256 over canonical fields) and chained (prev_sha256).
+Rotation by day and at 10 MiB (gzip archives kept). `ags log` / `ags status`
+derive reports; `ags run --close` verifies the chain interval for the task and
+appends the closure event, whose id is the memory pointer. Sealed receipts
+carry the same hashes, so both chains cross-check.
 
-Default successful human output is at most five lines. Default JSON is at most
-16 KiB and MCP tool schema is at most 8 KiB; larger evidence is returned through
-a `details_uri`.
+## Capability integrity
+
+`.ags/capabilities.lock` pins each body to a content hash. Exact routing
+(id + hash), no fuzzy fallback, no staleness machine. Only `ags update` /
+skill install / remove refresh the lock; drift is a hard finding in
+`ags check`, never a silent refresh.
 
 ## Workspace boundaries
 
 Workspace A is the private development authority. Stable, public, remotes,
-installed runtimes, tags, packages, and releases change only through separately
-authorized promotion or release work. A local verification pass never implies
-promotion or release completion.
+installed runtimes, tags, packages, and releases change only through
+separately authorized promotion or release work; `release:*`/`promotion:*`
+cannot be consumed from a workspace-local task. A local verification pass
+never implies promotion or release completion.

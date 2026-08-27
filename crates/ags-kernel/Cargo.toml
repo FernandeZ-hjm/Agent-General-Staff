@@ -1,0 +1,21 @@
+[package]
+name = "ags-kernel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Thin AGS deep module (contract v3): sealed transactions, evidence log, permission matrix, capability lock, memory closure"
+
+[[bin]]
+name = "ags-policy"
+path = "src/bin/ags-policy.rs"
+
+[dependencies]
+flate2.workspace = true
+libc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

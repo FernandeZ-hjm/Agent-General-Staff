@@ -13,6 +13,7 @@ test("publishes a canonical executable bin entry", () => {
     readFileSync(new URL("../package.json", import.meta.url), "utf8")
   );
   assert.equal(packageJson.bin["ags-mcp"], "bin/ags-mcp.js");
+  assert.equal(packageJson.dependencies["@agent-governance-suite/launcher"], packageJson.version);
   assert.match(
     readFileSync(new URL("../bin/ags-mcp.js", import.meta.url), "utf8"),
     /^#!\/usr\/bin\/env node\n/u
@@ -33,14 +34,16 @@ test("maps every supported release platform", () => {
   assert.throws(() => releaseTarget("freebsd", "x64"), /unsupported platform/u);
 });
 
-test("extractor accepts only the binary and runtime subtree", () => {
+test("extractor accepts exactly the five binaries and v3 runtime subtree", () => {
   const root = path.resolve("/tmp/ags-launcher-test");
   assert.equal(safeArchiveOutput(root, "ags", "ags"), path.join(root, "ags"));
   assert.equal(safeArchiveOutput(root, "ags-mcp", "ags"), path.join(root, "ags-mcp"));
   assert.equal(safeArchiveOutput(root, "ags-host", "ags"), path.join(root, "ags-host"));
+  assert.equal(safeArchiveOutput(root, "ags-policy", "ags"), path.join(root, "ags-policy"));
+  assert.equal(safeArchiveOutput(root, "ags-release", "ags"), path.join(root, "ags-release"));
   assert.equal(
-    safeArchiveOutput(root, "runtime/manifests/mcp-registry.yaml", "ags"),
-    path.join(root, "runtime/manifests/mcp-registry.yaml")
+    safeArchiveOutput(root, "runtime/ags-skills/ags-setup/SKILL.md", "ags"),
+    path.join(root, "runtime/ags-skills/ags-setup/SKILL.md")
   );
   assert.throws(() => safeArchiveOutput(root, "../../escape", "ags"), /unsafe archive path/u);
   assert.throws(() => safeArchiveOutput(root, "other/file", "ags"), /unsafe archive path/u);

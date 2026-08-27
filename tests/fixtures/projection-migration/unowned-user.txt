@@ -1,3 +1,0 @@
-# User instructions
-
-Keep this project-specific workflow unchanged.

@@ -1,0 +1,7 @@
+interface:
+  display_name: "AGS Agent"
+  short_description: "让任意 Agent 接入 AGS"
+  default_prompt: "用 $ags-agent 为指定 HostId 和 cli、mcp 或 hybrid surface 生成纳管计划。"
+
+policy:
+  allow_implicit_invocation: true

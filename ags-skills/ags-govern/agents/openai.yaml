@@ -1,0 +1,7 @@
+interface:
+  display_name: "AGS Govern"
+  short_description: "治理能力与第三方 Skill"
+  default_prompt: "用 $ags-govern 盘点或纳管能力，并通过 plan 到 apply 闭环。"
+
+policy:
+  allow_implicit_invocation: true

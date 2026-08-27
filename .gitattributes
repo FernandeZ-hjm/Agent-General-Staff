@@ -1,3 +1,0 @@
-# Normalize all text files to LF on checkout — prevents CRLF from
-# breaking include_str!() assertions and embedded template content.
-* text=auto eol=lf

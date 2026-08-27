@@ -19,17 +19,17 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-        with:
-          toolchain: 1.96.0
-      - name: Consume the exact public CI VerificationBundle
+      - name: Tag points at an exact already-gated commit; version consistency only
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          evidence_dir="$RUNNER_TEMP/ci-evidence"
-          mkdir -p "$evidence_dir"
-          run_id="$(gh run list \
+          version="${GITHUB_REF_NAME#v}"
+          git fetch origin main
+          tag_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          main_commit="$(git rev-parse "origin/main^{commit}")"
+          test "$tag_commit" = "$main_commit" || { echo "tag commit is not origin/main"; exit 1; }
+          ci_run_id="$(gh run list \
             --repo "$GITHUB_REPOSITORY" \
             --workflow ci.yml \
             --commit "$GITHUB_SHA" \
@@ -37,51 +37,24 @@ jobs:
             --limit 100 \
             --json conclusion,headSha,databaseId \
             --jq '[.[] | select(.headSha == env.GITHUB_SHA and .conclusion == "success")][0].databaseId')"
-          test -n "$run_id"
-          gh run download "$run_id" \
-            --repo "$GITHUB_REPOSITORY" \
-            --name public-verification-evidence \
-            --dir "$evidence_dir"
-          chmod +x "$evidence_dir/ags-verifier"
-          cargo build -q --locked -p ags-mcp
-          cp target/debug/ags-mcp "$evidence_dir/ags-mcp"
-          cp target/debug/ags-host "$evidence_dir/ags-host"
-          "$evidence_dir/ags-verifier" check release \
-            --workspace . \
-            --format json
-      - name: Verify one aligned version
-        shell: bash
-        run: |
-          ci_verifier="$RUNNER_TEMP/ci-evidence/ags-verifier"
-          git fetch origin main
-          tag_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
-          main_commit="$(git rev-parse "origin/main^{commit}")"
-          test "$tag_commit" = "$main_commit"
-          version="$("$ci_verifier" --version)"
-          version="${version##* }"
-          launcher_version="$(node -p "require('./packages/ags-launcher/package.json').version")"
+          test -n "$ci_run_id" || { echo "no successful CI run for tag commit"; exit 1; }
+          cargo_version="$(awk '/^\[workspace.package\]$/{p=1;next} /^\[/{p=0} p&&/^version = /{gsub(/version = |\"/,"");print;exit}' Cargo.toml)"
+          test -n "$version" && test -n "$cargo_version"
+          test "$version" = "$cargo_version" || { echo "tag v$version != Cargo version $cargo_version"; exit 1; }
           cli_version="$(node -p "require('./packages/ags-cli/package.json').version")"
           mcp_version="$(node -p "require('./packages/ags-mcp/package.json').version")"
-          test "$GITHUB_REF_NAME" = "v$version"
-          test "$launcher_version" = "$version"
-          test "$cli_version" = "$version"
-          test "$mcp_version" = "$version"
+          launcher_version="$(node -p "require('./packages/ags-launcher/package.json').version")"
+          test "$version" = "$cli_version" || { echo "CLI package version mismatch"; exit 1; }
+          test "$version" = "$mcp_version" || { echo "MCP package version mismatch"; exit 1; }
+          test "$version" = "$launcher_version" || { echo "launcher package version mismatch"; exit 1; }
           grep -Fqx "## Release $version" RELEASE_NOTES.md
-          test "$GITHUB_REPOSITORY" = "FernandeZ-hjm/Agent-General-Staff"
-          ! grep -Eq 'name: "(gep|evomap)"|evolution_asset_recall|private-runtime' manifests/mcp-registry.yaml
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: public-release-plan
-          path: ${{ runner.temp }}/ci-evidence/public-release-plan.json
-          if-no-files-found: error
 
   build:
     needs: verify
     strategy:
-      fail-fast: false
       matrix:
         include:
-          - os: macos-15
+          - os: macos-latest
             target: aarch64-apple-darwin
             archive: tar
           - os: macos-15-intel
@@ -99,44 +72,42 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          toolchain: 1.96.0
+          toolchain: stable
           targets: ${{ matrix.target }}
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
-        with:
-          name: public-release-plan
-          path: .
-      - run: cargo build --release --locked --target ${{ matrix.target }} -p ags-cli -p ags-mcp
+      - run: cargo build --release --locked --target ${{ matrix.target }} -p ags-cli -p ags-mcp -p ags-kernel -p ags-release
       - name: Package Unix asset
         if: matrix.archive == 'tar'
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
           asset="ags-v${version}-${{ matrix.target }}.tar.gz"
-          mkdir -p stage/runtime
+          mkdir -p stage
           cp "target/${{ matrix.target }}/release/ags" stage/ags
           cp "target/${{ matrix.target }}/release/ags-mcp" stage/ags-mcp
           cp "target/${{ matrix.target }}/release/ags-host" stage/ags-host
-          "target/${{ matrix.target }}/release/ags" release stage-runtime \
-            --plan public-release-plan.json \
-            --source . \
-            --target stage/runtime
-          tar -C stage -czf "$asset" ags ags-mcp ags-host runtime
+          cp "target/${{ matrix.target }}/release/ags-policy" stage/ags-policy
+          cp "target/${{ matrix.target }}/release/ags-release" stage/ags-release
+          mkdir -p stage/runtime
+          cp -R ags-skills stage/runtime/ags-skills
+          tar -C stage -czf "$asset" ags ags-mcp ags-host ags-policy ags-release runtime
       - name: Package Windows asset
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME.Substring(1)
           $asset = "ags-v$version-${{ matrix.target }}.zip"
-          New-Item -ItemType Directory -Force -Path stage/runtime | Out-Null
+          New-Item -ItemType Directory -Force -Path stage | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/ags.exe" stage/ags.exe
           Copy-Item "target/${{ matrix.target }}/release/ags-mcp.exe" stage/ags-mcp.exe
           Copy-Item "target/${{ matrix.target }}/release/ags-host.exe" stage/ags-host.exe
-          & "target/${{ matrix.target }}/release/ags.exe" release stage-runtime `
-            --plan public-release-plan.json `
-            --source . `
-            --target stage/runtime
+          Copy-Item "target/${{ matrix.target }}/release/ags-policy.exe" stage/ags-policy.exe
+          Copy-Item "target/${{ matrix.target }}/release/ags-release.exe" stage/ags-release.exe
+          New-Item -ItemType Directory -Force -Path stage/runtime | Out-Null
+          Copy-Item -Recurse ags-skills stage/runtime/ags-skills
           Compress-Archive -Path stage/* -DestinationPath $asset
       - name: Verify unpacked Unix asset and minimum user journey
         if: matrix.archive == 'tar'
@@ -147,36 +118,44 @@ jobs:
           mkdir unpacked
           tar -xzf "$asset" -C unpacked
           test -x unpacked/ags
-          test "$(unpacked/ags --version)" = "ags $version"
-          clean_home="$RUNNER_TEMP/ags-clean-home"
-          mkdir -p "$clean_home"
-          HOME="$clean_home" \
-            AGS_HOME="$clean_home/.ags/runtime" \
-            AGS_SOURCE_ROOT="$PWD/unpacked/runtime" \
-            unpacked/ags setup --format json > unpacked/setup-plan.json
-          action_ref="$(node -e 'const v=JSON.parse(require("node:fs").readFileSync("unpacked/setup-plan.json","utf8")); process.stdout.write(v.action_ref||"")')"
+          case "$(unpacked/ags --version)" in
+            "ags v${version} (build "*) ;;
+            *) echo "unpacked version smoke failed"; exit 1 ;;
+          esac
+          unpacked/ags schema --format json > unpacked/schema.json
+          unpacked/ags setup --source-root unpacked/runtime > unpacked/setup.json
+          node -e 'const v=JSON.parse(require("node:fs").readFileSync("unpacked/setup.json","utf8")); if(v.installed!==true||!Array.isArray(v.writes)) process.exit(1)'
+          # minimal v3 journey: adopt a scratch workspace, register its CI
+          # host through the sealed operation, then prove Doctor is healthy
+          scratch="$RUNNER_TEMP/ags-scratch"
+          mkdir -p "$scratch"
+          unpacked/ags init --workspace "$scratch" --slug scratch > unpacked/init.txt
+          action_ref="$(sed -n 's/.*ags apply \([0-9a-f]\{64\}\) --workspace.*/\1/p' unpacked/init.txt)"
           test -n "$action_ref"
-          HOME="$clean_home" \
-            AGS_HOME="$clean_home/.ags/runtime" \
-            AGS_SOURCE_ROOT="$PWD/unpacked/runtime" \
-            unpacked/ags apply "$action_ref" --format json > unpacked/setup-receipt.json
-          HOME="$clean_home" \
-            AGS_HOME="$clean_home/.ags/runtime" \
-            AGS_SOURCE_ROOT="$PWD/unpacked/runtime" \
-            unpacked/ags doctor runtime --format json > unpacked/doctor-runtime.json
+          unpacked/ags apply "$action_ref" --workspace "$scratch" > unpacked/apply.json
+          unpacked/ags govern host-register \
+            --id github-actions \
+            --surface cli \
+            --workspace "$scratch" > unpacked/host-register.txt
+          host_action_ref="$(sed -n 's/.*ags apply \([0-9a-f]\{64\}\) --workspace.*/\1/p' unpacked/host-register.txt)"
+          test -n "$host_action_ref"
+          unpacked/ags apply "$host_action_ref" --workspace "$scratch" > unpacked/host-apply.json
+          unpacked/ags doctor --workspace "$scratch" > unpacked/doctor.json
+          node -e 'const v=JSON.parse(require("node:fs").readFileSync("unpacked/doctor.json","utf8")); if(v.healthy!==true||v.core_healthy!==true) process.exit(1)'
       - name: Verify unpacked Windows asset and minimum user journey
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          # Windows 是 fail-closed 平台（仅 Schema 操作可用，见 production_non_unix.rs），
-          # 旅程范围 = 资产完整性 + version smoke + schema 读取。
           $version = $env:GITHUB_REF_NAME.Substring(1)
           $asset = "ags-v$version-${{ matrix.target }}.zip"
           Expand-Archive -Path $asset -DestinationPath unpacked
           $observed = & "unpacked/ags.exe" --version
-          if ($LASTEXITCODE -ne 0 -or $observed -ne "ags $version") { throw "unpacked version smoke failed" }
+          if ($LASTEXITCODE -ne 0 -or $observed -notlike "ags v$version (build *)") { throw "unpacked version smoke failed" }
           if (-not (Test-Path "unpacked/ags-mcp.exe")) { throw "unpacked ags-mcp.exe missing" }
           if (-not (Test-Path "unpacked/ags-host.exe")) { throw "unpacked ags-host.exe missing" }
+          if (-not (Test-Path "unpacked/ags-policy.exe")) { throw "unpacked ags-policy.exe missing" }
+          if (-not (Test-Path "unpacked/ags-release.exe")) { throw "unpacked ags-release.exe missing" }
+          if (-not (Test-Path "unpacked/runtime/ags-skills/ags-setup/SKILL.md")) { throw "unpacked v3 runtime profile missing" }
           $schemaJson = & "unpacked/ags.exe" schema --format json 2>&1
           if ($LASTEXITCODE -ne 0) {
             $schemaJson | ForEach-Object { Write-Host $_ }
@@ -204,14 +183,9 @@ jobs:
           pattern: ags-*
           merge-multiple: true
           path: dist
-      - name: Stage reviewed catalog asset
-        shell: bash
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          cp manifests/third-party-capabilities.yaml "dist/ags-third-party-catalog-v${version}.yaml"
       - name: Generate checksums
         working-directory: dist
-        run: sha256sum ags-v* ags-third-party-catalog-v*.yaml > SHA256SUMS
+        run: sha256sum ags-v* > SHA256SUMS
       - name: Generate and verify signed release index
         env:
           AGS_RELEASE_VERSION: ${{ github.ref_name }}
@@ -221,13 +195,12 @@ jobs:
         shell: bash
         run: |
           export AGS_RELEASE_VERSION="${AGS_RELEASE_VERSION#v}"
-          node scripts/sign-release-index.mjs dist
+          node .github/scripts/sign-release-index.mjs dist
       - name: Attest release assets
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: |
             dist/ags-v*
-            dist/ags-third-party-catalog-v*.yaml
             dist/SHA256SUMS
             dist/release-index.json
             dist/release-index.sig

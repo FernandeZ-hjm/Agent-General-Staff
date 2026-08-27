@@ -1,0 +1,40 @@
+{
+  "_ags_managed": true,
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "command": "ags-host --event session-start --workspace .", "timeout": 8, "type": "command" }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          { "command": "ags-policy --host cursor", "timeout": 5, "type": "command" }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          { "command": "ags-policy --host cursor", "timeout": 5, "type": "command" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          { "command": "ags-policy --host cursor", "timeout": 5, "type": "command" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "command": "ags-host --event session-end --workspace .", "timeout": 8, "type": "command" }
+        ]
+      }
+    ]
+  }
+}
