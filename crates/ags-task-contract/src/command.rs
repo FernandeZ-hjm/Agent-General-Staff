@@ -272,27 +272,26 @@ mod tests {
         assert!(!running, "grandchild survived the timeout kill");
     }
 
+    #[cfg(target_os = "linux")]
     fn process_is_running(pid: i32) -> bool {
-        #[cfg(target_os = "linux")]
-        {
-            let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
-                return false;
-            };
-            let Some(close) = stat.rfind(')') else {
-                return true;
-            };
-            // A killed descendant may remain as a zombie until the runner's
-            // init process reaps it. It is no longer executing and therefore
-            // is not a surviving verify-command process.
-            return stat[close + 1..]
-                .split_whitespace()
-                .next()
-                .is_some_and(|state| state != "Z");
-        }
-        #[cfg(not(target_os = "linux"))]
-        unsafe {
-            libc::kill(pid, 0) == 0
-        }
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+            return false;
+        };
+        let Some(close) = stat.rfind(')') else {
+            return true;
+        };
+        // A killed descendant may remain as a zombie until the runner's init
+        // process reaps it. It is no longer executing and therefore is not a
+        // surviving verify-command process.
+        stat[close + 1..]
+            .split_whitespace()
+            .next()
+            .is_some_and(|state| state != "Z")
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn process_is_running(pid: i32) -> bool {
+        unsafe { libc::kill(pid, 0) == 0 }
     }
 
     #[test]
