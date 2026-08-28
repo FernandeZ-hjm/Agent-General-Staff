@@ -259,8 +259,40 @@ mod tests {
             assert!(waited < 3000, "grandchild never started");
             std::thread::sleep(std::time::Duration::from_millis(50));
         };
-        let alive = unsafe { libc::kill(pid, 0) == 0 };
-        assert!(!alive, "grandchild survived the timeout kill");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while process_is_running(pid) && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        let running = process_is_running(pid);
+        if running {
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+            }
+        }
+        assert!(!running, "grandchild survived the timeout kill");
+    }
+
+    fn process_is_running(pid: i32) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+                return false;
+            };
+            let Some(close) = stat.rfind(')') else {
+                return true;
+            };
+            // A killed descendant may remain as a zombie until the runner's
+            // init process reaps it. It is no longer executing and therefore
+            // is not a surviving verify-command process.
+            return stat[close + 1..]
+                .split_whitespace()
+                .next()
+                .is_some_and(|state| state != "Z");
+        }
+        #[cfg(not(target_os = "linux"))]
+        unsafe {
+            libc::kill(pid, 0) == 0
+        }
     }
 
     #[test]
