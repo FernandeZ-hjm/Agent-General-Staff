@@ -79,6 +79,14 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.target }}
       - run: cargo build --release --locked --target ${{ matrix.target }} -p ags-cli -p ags-mcp -p ags-kernel -p ags-release
+      - name: Verify Windows runtime semantics
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          cargo test --locked --target ${{ matrix.target }} -p ags-task-contract
+          if ($LASTEXITCODE -ne 0) { throw "Windows task-contract tests failed" }
+          cargo test --locked --target ${{ matrix.target }} -p ags-kernel --test windows_links
+          if ($LASTEXITCODE -ne 0) { throw "Windows link lifecycle tests failed" }
       - name: Package Unix asset
         if: matrix.archive == 'tar'
         shell: bash
@@ -148,19 +156,55 @@ jobs:
         run: |
           $version = $env:GITHUB_REF_NAME.Substring(1)
           $asset = "ags-v$version-${{ matrix.target }}.zip"
+          $isolatedHome = Join-Path $env:RUNNER_TEMP "ags-home"
+          New-Item -ItemType Directory -Force -Path $isolatedHome | Out-Null
+          $env:HOME = $isolatedHome
+          $env:USERPROFILE = $isolatedHome
           Expand-Archive -Path $asset -DestinationPath unpacked
-          $observed = & "unpacked/ags.exe" --version
-          if ($LASTEXITCODE -ne 0 -or $observed -notlike "ags v$version (build *)") { throw "unpacked version smoke failed" }
-          if (-not (Test-Path "unpacked/ags-mcp.exe")) { throw "unpacked ags-mcp.exe missing" }
-          if (-not (Test-Path "unpacked/ags-host.exe")) { throw "unpacked ags-host.exe missing" }
-          if (-not (Test-Path "unpacked/ags-policy.exe")) { throw "unpacked ags-policy.exe missing" }
-          if (-not (Test-Path "unpacked/ags-release.exe")) { throw "unpacked ags-release.exe missing" }
+          foreach ($binary in @("ags.exe", "ags-mcp.exe", "ags-host.exe", "ags-policy.exe", "ags-release.exe")) {
+            $binaryPath = Join-Path "unpacked" $binary
+            if (-not (Test-Path $binaryPath)) { throw "unpacked $binary missing" }
+            $observed = & $binaryPath --version
+            if ($LASTEXITCODE -ne 0 -or $observed -notlike "*v$version*") { throw "unpacked $binary version smoke failed" }
+          }
           if (-not (Test-Path "unpacked/runtime/ags-skills/ags-setup/SKILL.md")) { throw "unpacked v3 runtime profile missing" }
           $schemaJson = & "unpacked/ags.exe" schema --format json 2>&1
           if ($LASTEXITCODE -ne 0) {
             $schemaJson | ForEach-Object { Write-Host $_ }
             throw "unpacked schema read failed"
           }
+          $sourceRoot = (Resolve-Path "unpacked").Path
+          $setupJson = & "unpacked/ags.exe" setup --source-root $sourceRoot 2> unpacked/setup.stderr
+          if ($LASTEXITCODE -ne 0) {
+            Get-Content unpacked/setup.stderr | ForEach-Object { Write-Host $_ }
+            throw "unpacked setup failed"
+          }
+          $setup = ($setupJson -join "`n") | ConvertFrom-Json
+          if ($setup.installed -ne $true -or $null -eq $setup.writes) { throw "unpacked setup result is invalid" }
+
+          $scratch = Join-Path $env:RUNNER_TEMP "ags-scratch"
+          New-Item -ItemType Directory -Force -Path $scratch | Out-Null
+          $initText = (& "unpacked/ags.exe" init --workspace $scratch --slug scratch 2>&1) -join "`n"
+          if ($LASTEXITCODE -ne 0) { Write-Host $initText; throw "unpacked init plan failed" }
+          $initMatch = [regex]::Match($initText, 'ags apply ([0-9a-f]{64}) --workspace')
+          if (-not $initMatch.Success) { throw "init action_ref missing" }
+          & "unpacked/ags.exe" apply $initMatch.Groups[1].Value --workspace $scratch | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "unpacked init apply failed" }
+
+          $hostText = (& "unpacked/ags.exe" govern host-register --id github-actions --surface cli --workspace $scratch 2>&1) -join "`n"
+          if ($LASTEXITCODE -ne 0) { Write-Host $hostText; throw "unpacked host registration plan failed" }
+          $hostMatch = [regex]::Match($hostText, 'ags apply ([0-9a-f]{64}) --workspace')
+          if (-not $hostMatch.Success) { throw "host registration action_ref missing" }
+          & "unpacked/ags.exe" apply $hostMatch.Groups[1].Value --workspace $scratch | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "unpacked host registration apply failed" }
+
+          $doctorJson = & "unpacked/ags.exe" doctor --workspace $scratch 2> unpacked/doctor.stderr
+          if ($LASTEXITCODE -ne 0) {
+            Get-Content unpacked/doctor.stderr | ForEach-Object { Write-Host $_ }
+            throw "unpacked doctor failed"
+          }
+          $doctor = ($doctorJson -join "`n") | ConvertFrom-Json
+          if ($doctor.healthy -ne $true -or $doctor.core_healthy -ne $true) { throw "unpacked doctor is unhealthy" }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ags-${{ matrix.target }}

@@ -1733,23 +1733,26 @@ fn extract_archive(asset: &Path, extension: &str, destination: &Path) -> Result<
     Ok(())
 }
 
+#[cfg(unix)]
 fn mark_release_executable(destination: &Path, output: &Path) -> Result<()> {
-    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+    let relative = output
+        .strip_prefix(destination)
+        .map_err(|e| Error::new("upgrade_extract_failed", e.to_string()))?;
+    if relative.components().count() == 1
+        && BINARIES
+            .iter()
+            .map(|name| executable_name(name))
+            .any(|name| relative == Path::new(&name))
     {
-        use std::os::unix::fs::PermissionsExt;
-        let relative = output
-            .strip_prefix(destination)
-            .map_err(|e| Error::new("upgrade_extract_failed", e.to_string()))?;
-        if relative.components().count() == 1
-            && BINARIES
-                .iter()
-                .map(|name| executable_name(name))
-                .any(|name| relative == Path::new(&name))
-        {
-            fs::set_permissions(output, fs::Permissions::from_mode(0o755))
-                .map_err(|e| crate::error::io("upgrade_permissions_failed", &e))?;
-        }
+        fs::set_permissions(output, fs::Permissions::from_mode(0o755))
+            .map_err(|e| crate::error::io("upgrade_permissions_failed", &e))?;
     }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn mark_release_executable(_destination: &Path, _output: &Path) -> Result<()> {
     Ok(())
 }
 

@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
@@ -474,7 +475,10 @@ fn audit_source(source: &Path) -> Result<Audit> {
             let path = entry.path();
             let metadata = fs::symlink_metadata(&path)
                 .map_err(|e| crate::error::io("skill_audit_failed", &e))?;
-            if metadata.file_type().is_symlink() {
+            if crate::sync::directory_link_target(&path)
+                .map_err(|e| crate::error::io("skill_audit_failed", &e))?
+                .is_some()
+            {
                 return Err(Error::new(
                     "skill_symlink_refused",
                     path.strip_prefix(root)
@@ -584,24 +588,35 @@ fn copy_dir(source: &Path, target: &Path) -> Result<()> {
 }
 
 fn replace_link(link: &Path, body: &Path) -> Result<()> {
-    if let Ok(metadata) = fs::symlink_metadata(link) {
-        if metadata.is_dir() && !metadata.file_type().is_symlink() {
+    if crate::sync::directory_link_target(link)
+        .map_err(|e| crate::error::io("skill_link_replace_failed", &e))?
+        .is_some()
+    {
+        crate::sync::remove_directory_link(link)
+            .map_err(|e| crate::error::io("skill_link_replace_failed", &e))?;
+    } else if let Ok(metadata) = fs::symlink_metadata(link) {
+        if metadata.is_dir() {
             return Err(Error::new(
                 "skill_body_not_managed_symlink",
                 format!("{} is a real directory", link.display()),
             ));
         }
-        fs::remove_file(link).map_err(|e| crate::error::io("skill_link_replace_failed", &e))?;
+        return Err(Error::new(
+            "skill_body_conflict",
+            format!("{} is not a managed directory link", link.display()),
+        ));
     }
-    std::os::unix::fs::symlink(body, link)
+    crate::sync::create_directory_link(body, link)
         .map_err(|e| crate::error::io("skill_link_write_failed", &e))
 }
 
 fn read_link_state(link: &Path) -> Result<Option<String>> {
+    if let Some(target) = crate::sync::directory_link_target(link)
+        .map_err(|e| crate::error::io("skill_link_read_failed", &e))?
+    {
+        return Ok(Some(target.display().to_string()));
+    }
     match fs::symlink_metadata(link) {
-        Ok(metadata) if metadata.file_type().is_symlink() => Ok(fs::read_link(link)
-            .ok()
-            .map(|path| path.display().to_string())),
         Ok(metadata) if metadata.is_dir() => Err(Error::new(
             "skill_body_not_managed_symlink",
             format!("{} is a real directory", link.display()),
@@ -647,11 +662,15 @@ fn rollback(state: RollbackState<'_>) -> Result<()> {
             let _ = fs::remove_file(state.project_lock_path);
         }
     }
-    if fs::symlink_metadata(state.link).is_ok() {
-        let _ = fs::remove_file(state.link);
+    if crate::sync::directory_link_target(state.link)
+        .map_err(|e| crate::error::io("skill_rollback_failed", &e))?
+        .is_some()
+    {
+        crate::sync::remove_directory_link(state.link)
+            .map_err(|e| crate::error::io("skill_rollback_failed", &e))?;
     }
     if let Some(previous) = state.previous_link {
-        std::os::unix::fs::symlink(previous, state.link)
+        crate::sync::create_directory_link(Path::new(previous), state.link)
             .map_err(|e| crate::error::io("skill_rollback_failed", &e))?;
     }
     if !state.body_preexisting && state.body.is_dir() {
@@ -758,6 +777,7 @@ fn read_optional(path: &Path, code: &'static str) -> Result<Option<Vec<u8>>> {
     }
 }
 
+#[cfg(unix)]
 fn harden_tree(path: &Path) -> Result<()> {
     let metadata =
         fs::symlink_metadata(path).map_err(|e| crate::error::io("skill_body_harden_failed", &e))?;
@@ -779,6 +799,25 @@ fn harden_tree(path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(windows)]
+fn harden_tree(path: &Path) -> Result<()> {
+    let metadata =
+        fs::symlink_metadata(path).map_err(|e| crate::error::io("skill_body_harden_failed", &e))?;
+    if metadata.is_dir() {
+        for entry in
+            fs::read_dir(path).map_err(|e| crate::error::io("skill_body_harden_failed", &e))?
+        {
+            let entry = entry.map_err(|e| crate::error::io("skill_body_harden_failed", &e))?;
+            harden_tree(&entry.path())?;
+        }
+    }
+    let mut permissions = metadata.permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(path, permissions)
+        .map_err(|e| crate::error::io("skill_body_harden_failed", &e))
+}
+
+#[cfg(unix)]
 fn make_tree_writable(path: &Path) -> Result<()> {
     let metadata =
         fs::symlink_metadata(path).map_err(|e| crate::error::io("skill_rollback_failed", &e))?;
@@ -794,6 +833,25 @@ fn make_tree_writable(path: &Path) -> Result<()> {
     } else {
         fs::set_permissions(path, fs::Permissions::from_mode(0o644))
             .map_err(|e| crate::error::io("skill_rollback_failed", &e))?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn make_tree_writable(path: &Path) -> Result<()> {
+    let metadata =
+        fs::symlink_metadata(path).map_err(|e| crate::error::io("skill_rollback_failed", &e))?;
+    let mut permissions = metadata.permissions();
+    permissions.set_readonly(false);
+    fs::set_permissions(path, permissions)
+        .map_err(|e| crate::error::io("skill_rollback_failed", &e))?;
+    if metadata.is_dir() {
+        for entry in
+            fs::read_dir(path).map_err(|e| crate::error::io("skill_rollback_failed", &e))?
+        {
+            let entry = entry.map_err(|e| crate::error::io("skill_rollback_failed", &e))?;
+            make_tree_writable(&entry.path())?;
+        }
     }
     Ok(())
 }
@@ -889,6 +947,7 @@ impl AdoptionLock {
     }
 }
 
+#[cfg(unix)]
 fn process_alive(pid: i32) -> bool {
     if pid <= 0 {
         return false;
@@ -896,6 +955,29 @@ fn process_alive(pid: i32) -> bool {
     // Signal 0 performs existence/permission probing without delivering a signal.
     let result = unsafe { libc::kill(pid, 0) };
     result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(windows)]
+fn process_alive(pid: i32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    if pid <= 0 {
+        return false;
+    }
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid as u32);
+        if handle.is_null() {
+            return false;
+        }
+        let mut exit_code = 0;
+        let observed =
+            GetExitCodeProcess(handle, &mut exit_code) != 0 && exit_code == STILL_ACTIVE as u32;
+        CloseHandle(handle);
+        observed
+    }
 }
 
 impl Drop for AdoptionLock {

@@ -24,5 +24,9 @@ toml.workspace = true
 ureq.workspace = true
 zip.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+junction.workspace = true
+windows-sys.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true

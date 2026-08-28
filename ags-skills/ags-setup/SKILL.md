@@ -12,7 +12,7 @@ metadata:
 
 1. 内部环境可从 stable checkout 构建；公开用户使用签名 release / npm
    launcher。CLI/MCP 统一通过 `ags` / `ags mcp`；
-2. `ags setup --source-root <checkout-or-release-runtime>`：先运行并核对同版本的
+2. `ags setup --source-root <checkout-or-release-bundle>`：先运行并核对同版本的
    `ags / ags-mcp / ags-host / ags-policy / ags-release`，再写
    `~/.ags/v3/install.json`、同步官方 Skills 与全局 rules、刷新 machine lock。
    setup 不下载、不选择版本；任何缺失或版本不一致都 fail closed，且仅在

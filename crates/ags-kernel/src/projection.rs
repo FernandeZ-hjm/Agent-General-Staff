@@ -291,12 +291,16 @@ pub(crate) fn reject_symlink_components(root: &Path, rel: &Path) -> Result<()> {
         let is_last = i + 1 == components.len();
         let name = component.as_os_str();
         cursor.push(name);
-        if let Ok(meta) = fs::symlink_metadata(&cursor) {
-            if meta.file_type().is_symlink() && !is_last {
+        match crate::sync::directory_link_target(&cursor) {
+            Ok(Some(_)) if !is_last => {
                 return Err(Error::new(
                     "projection_parent_symlink_rejected",
                     format!("parent component is a symlink: {}", cursor.display()),
                 ));
+            }
+            Ok(_) => {}
+            Err(error) => {
+                return Err(crate::error::io("projection_path_inspect_failed", &error));
             }
         }
     }
@@ -318,15 +322,14 @@ pub(crate) fn reject_symlink_path(root: &Path, rel: &Path) -> Result<()> {
     let mut cursor = root.to_path_buf();
     for component in rel.components() {
         cursor.push(component.as_os_str());
-        match fs::symlink_metadata(&cursor) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
+        match crate::sync::directory_link_target(&cursor) {
+            Ok(Some(_)) => {
                 return Err(Error::new(
                     "projection_symlink_rejected",
                     format!("symlink component: {}", cursor.display()),
                 ));
             }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(None) => {}
             Err(error) => return Err(crate::error::io("projection_path_inspect_failed", &error)),
         }
     }

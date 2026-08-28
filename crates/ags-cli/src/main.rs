@@ -979,7 +979,7 @@ fn cmd_setup(source_root: Option<PathBuf>) -> Result<i32> {
         .ok_or_else(|| {
             ags_kernel::error::Error::new(
                 "setup_source_required",
-                "pass --source-root <checkout-or-release-runtime>",
+                "pass --source-root <checkout-or-release-bundle>",
             )
         })?;
     let inventory = ags_kernel::upgrade::inspect_setup_bundle(&source_root)?;

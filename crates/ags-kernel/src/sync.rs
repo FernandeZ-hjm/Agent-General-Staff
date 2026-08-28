@@ -419,7 +419,12 @@ fn official_skill_owned(target: &Path, name: &str) -> bool {
 fn remove_tree_entry(path: &Path) -> Result<()> {
     let meta =
         fs::symlink_metadata(path).map_err(|e| crate::error::io("skill_replace_failed", &e))?;
-    if meta.file_type().is_symlink() || !meta.is_dir() {
+    if directory_link_target(path)
+        .map_err(|e| crate::error::io("skill_replace_failed", &e))?
+        .is_some()
+    {
+        remove_directory_link(path).map_err(|e| crate::error::io("skill_replace_failed", &e))
+    } else if !meta.is_dir() {
         fs::remove_file(path).map_err(|e| crate::error::io("skill_replace_failed", &e))
     } else {
         fs::remove_dir_all(path).map_err(|e| crate::error::io("skill_replace_failed", &e))
@@ -457,11 +462,14 @@ pub fn sync_skills(source_root: &Path) -> Result<Vec<String>> {
         }
         validate_skill_source(&name, &from)?;
         let target = dst.join(&name);
-        if let Ok(meta) = fs::symlink_metadata(&target) {
-            if meta.file_type().is_symlink() && fs::canonicalize(&target).is_err() {
+        if fs::symlink_metadata(&target).is_ok() {
+            let is_link = directory_link_target(&target)
+                .map_err(|e| crate::error::io("skill_symlink_repair_failed", &e))?
+                .is_some();
+            if is_link && fs::canonicalize(&target).is_err() {
                 // A dangling link contains no body to preserve and cannot
                 // prove ownership; repair it like third-party reinstall does.
-                fs::remove_file(&target)
+                remove_directory_link(&target)
                     .map_err(|e| crate::error::io("skill_symlink_repair_failed", &e))?;
             } else if !official_skill_owned(&target, &name) {
                 return Err(Error::new(
@@ -500,6 +508,18 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
         let entry = entry.map_err(|e| crate::error::io("skill_scan_failed", &e))?;
         let src = entry.path();
         let dst = to.join(entry.file_name());
+        if directory_link_target(&src)
+            .map_err(|e| crate::error::io("skill_scan_failed", &e))?
+            .is_some()
+        {
+            return Err(Error::new(
+                "skill_symlink_refused",
+                format!(
+                    "official skill source contains a directory link: {}",
+                    src.display()
+                ),
+            ));
+        }
         if entry
             .file_type()
             .map_err(|e| crate::error::io("skill_scan_failed", &e))?
@@ -525,6 +545,12 @@ fn source_tree_matches(from: &Path, to: &Path) -> bool {
         let Ok(kind) = entry.file_type() else {
             return false;
         };
+        if directory_link_target(&src)
+            .map(|target| target.is_some())
+            .unwrap_or(true)
+        {
+            return false;
+        }
         if kind.is_dir() {
             if !source_tree_matches(&src, &dst) {
                 return false;
@@ -756,7 +782,9 @@ pub fn sync_bodies() -> Result<(MachineLock, Vec<String>)> {
             let entry = entry.map_err(|e| crate::error::io("skills_scan_failed", &e))?;
             let name = entry.file_name().to_string_lossy().to_string();
             let path = entry.path();
-            let is_symlink = entry.file_type().map(|ft| ft.is_symlink()).unwrap_or(false);
+            let is_symlink = directory_link_target(&path)
+                .map(|target| target.is_some())
+                .unwrap_or(false);
             let resolved = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
             if !resolved.is_dir() {
                 if is_symlink {
@@ -924,9 +952,12 @@ pub fn install_skill_body(id: &str, source: &Path) -> Result<SkillRouting> {
     let skills = skills_dir()?;
     fs::create_dir_all(&skills).map_err(|e| crate::error::io("skills_dir_failed", &e))?;
     let target = skills.join(id);
-    if let Ok(meta) = fs::symlink_metadata(&target) {
-        if meta.file_type().is_symlink() && fs::canonicalize(&target).is_err() {
-            fs::remove_file(&target)
+    if fs::symlink_metadata(&target).is_ok() {
+        let is_link = directory_link_target(&target)
+            .map_err(|e| crate::error::io("skill_symlink_repair_failed", &e))?
+            .is_some();
+        if is_link && fs::canonicalize(&target).is_err() {
+            remove_directory_link(&target)
                 .map_err(|e| crate::error::io("skill_symlink_repair_failed", &e))?;
         } else {
             let current_source = fs::canonicalize(&target)
@@ -947,21 +978,85 @@ pub fn install_skill_body(id: &str, source: &Path) -> Result<SkillRouting> {
             return Ok(routing);
         }
     }
-    std::os::unix::fs::symlink(&canonical, &target)
+    create_directory_link(&canonical, &target)
         .map_err(|e| crate::error::io("skill_symlink_failed", &e))?;
     sync_bodies()?;
     Ok(routing)
+}
+
+#[cfg(unix)]
+pub(crate) fn directory_link_target(path: &Path) -> std::io::Result<Option<PathBuf>> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => fs::read_link(path).map(Some),
+        Ok(_) => Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(windows)]
+pub(crate) fn directory_link_target(path: &Path) -> std::io::Result<Option<PathBuf>> {
+    use std::os::windows::fs::MetadataExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => fs::read_link(path).map(Some),
+        Ok(metadata) if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 => {
+            junction::get_target(path).map(Some)
+        }
+        Ok(_) => Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(unix)]
+pub(crate) fn create_directory_link(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(windows)]
+pub(crate) fn create_directory_link(target: &Path, link: &Path) -> std::io::Result<()> {
+    junction::create(target, link)
+}
+
+#[cfg(unix)]
+pub(crate) fn remove_directory_link(link: &Path) -> std::io::Result<()> {
+    fs::remove_file(link)
+}
+
+#[cfg(windows)]
+pub(crate) fn remove_directory_link(link: &Path) -> std::io::Result<()> {
+    use std::os::windows::fs::MetadataExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+
+    let metadata = fs::symlink_metadata(link)?;
+    if metadata.file_type().is_symlink() {
+        fs::remove_dir(link)
+    } else if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        junction::get_target(link)?;
+        junction::delete(link)?;
+        fs::remove_dir(link)
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("refusing to remove unmanaged directory: {}", link.display()),
+        ))
+    }
 }
 
 /// Uninstall one AGS-managed third-party body. Product-owned and unmanaged
 /// real directories are never recursively deleted by this command.
 pub fn remove_skill_body(id: &str) -> Result<bool> {
     let target = skills_dir()?.join(id);
-    let Ok(meta) = fs::symlink_metadata(&target) else {
+    if fs::symlink_metadata(&target).is_err() {
         sync_bodies()?;
         return Ok(false);
-    };
-    if !meta.file_type().is_symlink() {
+    }
+    if directory_link_target(&target)
+        .map_err(|e| crate::error::io("skill_remove_failed", &e))?
+        .is_none()
+    {
         return Err(Error::new(
             "skill_body_not_managed_symlink",
             format!(
@@ -969,7 +1064,7 @@ pub fn remove_skill_body(id: &str) -> Result<bool> {
             ),
         ));
     }
-    fs::remove_file(&target).map_err(|e| crate::error::io("skill_remove_failed", &e))?;
+    remove_directory_link(&target).map_err(|e| crate::error::io("skill_remove_failed", &e))?;
     sync_bodies()?;
     Ok(true)
 }

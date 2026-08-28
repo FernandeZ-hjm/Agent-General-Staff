@@ -192,13 +192,36 @@ impl EvidenceLog {
 
     /// Exclusive advisory lock on the log file; makes the
     /// read-prev → write-event sequence a critical section across threads and
-    /// processes (flock). Fails closed: append refuses without the lock.
+    /// processes (`flock` on Unix, `LockFileEx` on Windows). Fails closed:
+    /// append refuses without the lock.
     fn lock_exclusive(f: &File) -> Result<()> {
         #[cfg(unix)]
         {
             use std::os::unix::io::AsRawFd;
             let rc = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) };
             if rc != 0 {
+                return Err(Error::new(
+                    "evidence_lock_failed",
+                    "could not acquire the evidence log lock",
+                ));
+            }
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawHandle;
+            use windows_sys::Win32::Storage::FileSystem::{LockFileEx, LOCKFILE_EXCLUSIVE_LOCK};
+            let mut overlapped = windows_sys::Win32::System::IO::OVERLAPPED::default();
+            let locked = unsafe {
+                LockFileEx(
+                    f.as_raw_handle() as windows_sys::Win32::Foundation::HANDLE,
+                    LOCKFILE_EXCLUSIVE_LOCK,
+                    0,
+                    u32::MAX,
+                    u32::MAX,
+                    &mut overlapped,
+                )
+            };
+            if locked == 0 {
                 return Err(Error::new(
                     "evidence_lock_failed",
                     "could not acquire the evidence log lock",
@@ -216,10 +239,25 @@ impl EvidenceLog {
                 let _ = libc::flock(f.as_raw_fd(), libc::LOCK_UN);
             }
         }
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawHandle;
+            use windows_sys::Win32::Storage::FileSystem::UnlockFileEx;
+            let mut overlapped = windows_sys::Win32::System::IO::OVERLAPPED::default();
+            unsafe {
+                let _ = UnlockFileEx(
+                    f.as_raw_handle() as windows_sys::Win32::Foundation::HANDLE,
+                    0,
+                    u32::MAX,
+                    u32::MAX,
+                    &mut overlapped,
+                );
+            }
+        }
     }
 
     /// Append one event. The prev-link read and the single O_APPEND write run
-    /// under an exclusive flock, so concurrent appenders produce a strictly
+    /// under an exclusive file lock, so concurrent appenders produce a strictly
     /// linear chain. Rotation happens after the lock is released (size/day
     /// based, best-effort). Returns the sealed event.
     pub fn append(
