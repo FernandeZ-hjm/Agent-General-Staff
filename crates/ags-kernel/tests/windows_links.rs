@@ -31,7 +31,7 @@ fn managed_directory_link_install_repair_and_remove_lifecycle() {
     ags_kernel::sync::install_skill_body("demo", &replacement).unwrap();
     assert!(junction::exists(&link).unwrap());
     assert_eq!(
-        junction::get_target(&link).unwrap(),
+        junction::get_target(&link).unwrap().canonicalize().unwrap(),
         replacement.canonicalize().unwrap()
     );
 
