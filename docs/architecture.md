@@ -41,10 +41,14 @@ task card (≤13 fields)
   -> review (Light/Medium/Heavy escalation)
   -> ags run --close --report ...   # evidence-chain closure + memory pointer
 
-sealed operations (init/update/govern.*)
+sealed operations (init/upgrade/update/govern.*)
   -> decide seals a single-use action_ref
   -> ags apply consumes it once     # replay/tamper/cross-binding fail closed
 ```
+
+`upgrade` binds the full machine/cache/target environment. Native five-binary
+activation is journaled, switches the user-facing `ags` executable last, and
+restores the previous verified set when an unreceipted journal is observed.
 
 ## Workspace identity
 

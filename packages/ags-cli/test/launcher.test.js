@@ -74,80 +74,38 @@ test("CLI forwards process arguments to the shared launcher core", async () => {
   assert.deepEqual(cliArgs(["node", "ags", "test", "full"]), ["test", "full"]);
 });
 
-test("CLI update recover switches through the shared recovery core without launching Rust", async () => {
-  let launched = false;
-  const originalWrite = process.stdout.write;
-  let output = "";
-  process.stdout.write = (chunk) => {
-    output += String(chunk);
-    return true;
-  };
-  try {
-    const exitCode = await launch({
-      argv: ["node", "ags", "update", "recover"],
-      coreModule: {
-        handleCoreMaintenanceCommand: async () => ({
-          handled: true,
-          result: { status: "recovered", version: "0.4.11" }
-        }),
-        launch: async () => {
-          launched = true;
-          return 9;
-        }
+test("CLI delegates legacy update syntax to Rust for the canonical migration error", async () => {
+  let received;
+  const exitCode = await launch({
+    argv: ["node", "ags", "update", "recover"],
+    coreModule: {
+      launch: async (options) => {
+        received = options.args;
+        return 2;
       }
-    });
-    assert.equal(exitCode, 0);
-    assert.equal(launched, false);
-    assert.equal(JSON.parse(output).status, "recovered");
-  } finally {
-    process.stdout.write = originalWrite;
-  }
+    }
+  });
+  assert.equal(exitCode, 2);
+  assert.deepEqual(received, ["update", "recover"]);
 });
 
-test("CLI core update plan and apply stay in the shared launcher transaction", async () => {
-  let launched = false;
-  let appliedHash;
+test("CLI delegates upgrade plan and apply to the Rust contract", async () => {
+  const calls = [];
   const coreModule = {
-    handleCoreMaintenanceCommand: async (args) => {
-      if (args[1] === "plan") {
-        return {
-          handled: true,
-          result: { plan_hash: "a".repeat(64), target_version: "0.4.20" }
-        };
-      }
-      appliedHash = args[args.indexOf("--plan-hash") + 1];
-      return { handled: true, result: { verified: true, active_version: "0.4.20" } };
-    },
-    launch: async () => {
-      launched = true;
-      return 9;
+    launch: async (options) => {
+      calls.push(options.args);
+      return 0;
     }
   };
-  const originalWrite = process.stdout.write;
-  let output = "";
-  process.stdout.write = (chunk) => {
-    output += String(chunk);
-    return true;
-  };
-  try {
-    const planExit = await launch({
-      argv: ["node", "ags", "update", "plan"],
-      coreModule
-    });
-    assert.equal(planExit, 0);
-    assert.equal(JSON.parse(output).target_version, "0.4.20");
-    output = "";
-    const applyExit = await launch({
-      argv: ["node", "ags", "update", "apply", "--plan-hash", "a".repeat(64)],
-      coreModule
-    });
-    assert.equal(applyExit, 0);
-    assert.equal(appliedHash, "a".repeat(64));
-    assert.equal(JSON.parse(output).verified, true);
-    assert.equal(launched, false);
-  } finally {
-    process.stdout.write = originalWrite;
-  }
+  assert.equal(await launch({ argv: ["node", "ags", "upgrade", "plan"], coreModule }), 0);
+  assert.equal(
+    await launch({ argv: ["node", "ags", "apply", "a".repeat(64)], coreModule }),
+    0
+  );
+  assert.deepEqual(calls, [
+    ["upgrade", "plan"],
+    ["apply", "a".repeat(64)]
+  ]);
 });
 
 test("MCP and CLI entrances share one verified installer and cache", async () => {

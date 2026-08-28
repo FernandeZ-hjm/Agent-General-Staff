@@ -19,6 +19,7 @@ pub const CANONICAL_SEALED_OPS: &[&str] = &[
     "govern.host.register",
     "govern.host_projection",
     "govern.delegation.issue",
+    "upgrade",
     "update",
 ];
 

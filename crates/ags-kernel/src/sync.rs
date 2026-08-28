@@ -84,7 +84,7 @@ surfaces; they do not expand authority or replace host judgment.\n\n\
 ## Governance entry (contract v3)\n\n\
 - The host interprets natural language once; AGS consumes typed Operations and\n\
   validated task cards. Do not send raw prose to AGS.\n\
-- CLI: `ags init|run|apply|check|test|log|status|doctor|setup|update|skill|route|govern|schema`.\n\
+- CLI: `ags init|run|apply|check|test|log|status|doctor|setup|upgrade|update|skill|route|govern|schema`.\n\
 - Policy: `ags.toml` (allow/ask/deny matrix, write boundaries, sealed ops).\n\
 - Skill selection: a skill already selected by the host wins. Only when the\n\
   host has no clear match, call `ags route <need>` once and use a unique\n\
@@ -194,10 +194,6 @@ pub fn setup(source_root: &Path) -> Result<Vec<String>> {
             ),
         ));
     }
-    save_install_info(&InstallInfo {
-        schema_version: "ags://schema/contract/v3/install".to_string(),
-        source_root: canonical.clone(),
-    })?;
     let mut wrote = sync_rules()?;
     wrote.extend(sync_skills(&canonical)?);
     let (lock, problems) = sync_bodies()?;
@@ -208,6 +204,13 @@ pub fn setup(source_root: &Path) -> Result<Vec<String>> {
     for problem in problems {
         wrote.push(format!("machine-capabilities-problem:{problem}"));
     }
+    // The install record is the setup commit marker. Write it only after every
+    // required machine artifact has converged, so a partial setup never claims
+    // that the runtime is installed.
+    save_install_info(&InstallInfo {
+        schema_version: "ags://schema/contract/v3/install".to_string(),
+        source_root: canonical,
+    })?;
     Ok(wrote)
 }
 

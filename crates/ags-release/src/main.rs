@@ -15,6 +15,10 @@ use std::path::PathBuf;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.as_slice() == ["--version"] {
+        println!("ags-release v{}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     let code = match run(args) {
         Ok(code) => code,
         Err(e) => {

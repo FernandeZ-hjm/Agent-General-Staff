@@ -19,7 +19,7 @@ design contract; it is not part of the public payload.
   rollback-journaled and routed through the shared machine lock.
 - **Public first-install closure**: every signed platform asset carries all
   five binaries plus the validated public `ags-skills/` runtime profile;
-  `ags setup --source-root <runtime>` establishes the v3 install record and
+  `ags setup --source-root <runtime>` verifies the complete five-binary bundle and establishes the v3 install record and
   machine lock before workspace adoption.
 
 - **5 crates instead of 12**: `ags-kernel` (sealed decide/apply, evidence

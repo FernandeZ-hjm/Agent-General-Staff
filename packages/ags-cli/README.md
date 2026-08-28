@@ -16,9 +16,23 @@ pinned Ed25519-signed release index and the exact platform artifact hash.
 
 The signed archive carries the five binaries plus the public contract-v3
 `ags-skills/` runtime profile. The launcher supplies that immutable profile to
-`ags setup`, which writes the normal `~/.ags/v3/install.json` record and machine
-lock. Core updates are plan-bound to the current pointer and exact candidate
-content; when a runtime is initialized, apply converges and verifies the five
-official Skills before activation. Recovery converges the previous profile and
-restores the previous pointer. Workspace entry projection remains an explicit
-sealed `ags update --workspace <path>` followed by `ags apply`.
+`ags setup`, which verifies the complete binary inventory before writing the
+normal `~/.ags/v3/install.json` record and machine lock.
+
+Runtime versions are owned by the Rust command surface:
+
+~~~bash
+ags upgrade check
+ags upgrade plan --workspace /path/to/project
+ags apply <ACTION_REF> --workspace /path/to/project
+ags upgrade verify <ACTION_REF> --workspace /path/to/project
+~~~
+
+The npm process does not intercept `update` or implement its own notifier.
+`ags update --workspace <path>` remains the separate sealed capability and
+project-projection convergence operation.
+
+Native activation keeps a crash-recovery journal and switches `ags` last.
+Launcher and native plans bind the install kind, install source, machine root,
+cache root, launcher state root (when applicable), and target root; apply
+rejects drift before changing the runtime.

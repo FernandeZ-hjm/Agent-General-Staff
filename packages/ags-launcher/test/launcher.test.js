@@ -7,26 +7,19 @@ import path from "node:path";
 import test from "node:test";
 import zlib from "node:zlib";
 import {
-  UPDATE_CHECK_STATE_SCHEMA,
-  UPDATE_CHECK_INTERVAL_MS,
-  UPDATE_STATE_FILE,
   MCP_ARGS,
   cachePaths,
   download,
   extractArchive,
   handleCoreMaintenanceCommand,
-  ignoreVersion,
   applyUpdate,
   launch,
   maybeCheckForUpdate,
   planUpdate,
-  readUpdateState,
   releaseMetadata,
   sha256File,
-  snoozeUpdates,
   statusUpdate,
-  verifyUpdate,
-  writeUpdateState
+  verifyUpdate
 } from "../src/launcher.js";
 
 function temporaryRoot() {
@@ -207,7 +200,11 @@ test("standalone adapters and CLI share one immutable verified download", async 
     assert.deepEqual(spawned[0].args, MCP_ARGS);
     assert.equal(path.basename(spawned[0].file), adapterName);
     assert.deepEqual(spawned[1].args, ["--version", "--json"]);
-    assert.deepEqual(spawned[2].args, ["setup", "--source-root", cachePaths(root, metadata).runtimeRoot]);
+    assert.deepEqual(spawned[2].args, [
+      "setup",
+      "--source-root",
+      path.dirname(cachePaths(root, metadata).binaryPath)
+    ]);
     assert.equal(spawned[1].options.env.AGS_SOURCE_ROOT, undefined);
     assert.equal(spawned[0].options.shell, false);
     const paths = cachePaths(root, metadata);
@@ -220,6 +217,22 @@ test("standalone adapters and CLI share one immutable verified download", async 
     assert.equal(current.binary_sha256, sha256File(paths.binaryPath));
     assert.match(current.release_index_sha256, /^[a-f0-9]{64}$/u);
     assert.match(fs.readFileSync(paths.markerPath, "utf8"), /\n[a-f0-9]{64}\n$/u);
+    const marker = fs.readFileSync(paths.markerPath, "utf8").trim().split(/\r?\n/u);
+    fs.writeFileSync(paths.currentPath, `${JSON.stringify({
+      ...current,
+      executables_sha256: marker[3],
+      runtime_root: paths.runtimeRoot,
+      activated_at_unix: 1_787_000_000
+    }, null, 2)}\n`);
+    await launch({
+      cacheRoot: root,
+      metadata,
+      fetchImpl: () => { throw new Error("Rust pointer must reuse verified cache"); },
+      spawnImpl,
+      verifyReleaseIndex,
+      checkForUpdates: false
+    });
+    assert.equal(calls.length, 3, "Rust pointer fields remain Node-compatible");
   } finally {
     removeTemporaryRoot(root);
   }
@@ -488,147 +501,13 @@ test("older package invocation keeps a newer compatible current pointer", async 
   }
 });
 
-test("core update plan binds signed source and apply switches only after verification", async () => {
-  const root = temporaryRoot();
-  try {
-    const first = releaseMetadata({ version: "0.4.12" });
-    const second = releaseMetadata({ version: "0.4.20" });
-    const firstArchive = releaseArchive();
-    const secondArchive = tarGz([
-      { name: "ags", body: "#!/bin/sh\nexit 0\n" },
-      { name: "ags-mcp", body: "second mcp\n" },
-      { name: "ags-host", body: "second host\n" },
-      { name: "ags-policy", body: "second policy\n" },
-      { name: "ags-release", body: "second release\n" },
-      ...v3RuntimeEntries("second runtime")
-    ]);
-    const indexFor = (metadata, archive) => Buffer.from(JSON.stringify({
-      schema_version: "1.0-signed-release-index",
-      version: metadata.version,
-      channel: "stable",
-      repository: "FernandeZ-hjm/Agent-General-Staff",
-      tag: `v${metadata.version}`,
-      commit: "a".repeat(40),
-      assets: [{ name: metadata.assetName, sha256: sha256Buffer(archive) }]
-    }));
-    const firstIndex = indexFor(first, firstArchive);
-    const secondIndex = indexFor(second, secondArchive);
-    const fetchImpl = async (url) => {
-      if (url.includes("/latest/download/release-index.json")) return response(secondIndex);
-      if (url.includes("/latest/download/release-index.sig")) return response("test-signature");
-      const useSecond = url.includes("/v0.4.20/");
-      const metadata = useSecond ? second : first;
-      const archive = useSecond ? secondArchive : firstArchive;
-      const index = useSecond ? secondIndex : firstIndex;
-      if (url.endsWith("/release-index.json")) return response(index);
-      if (url.endsWith("/release-index.sig")) return response("test-signature");
-      if (url.endsWith(`/${metadata.assetName}`)) return response(archive);
-      throw new Error(`unexpected URL: ${url}`);
-    };
-    const runtimeHome = path.join(root, "runtime-home");
-    const machineHome = path.join(root, "machine-home");
-    fs.mkdirSync(runtimeHome, { recursive: true });
-    fs.mkdirSync(machineHome, { recursive: true });
-    fs.writeFileSync(path.join(runtimeHome, "install-manifest.json"), "{}\n");
-    const runtimeCommands = [];
-    let failRuntimeApply = true;
-    const runRuntimeCommand = async (identity, args) => {
-      runtimeCommands.push(args.join(" "));
-      if (args[0] === "skill") {
-        return {
-          status: 0,
-          stdout: JSON.stringify({
-            count: 5,
-            skills: ["ags-agent", "ags-doctor", "ags-govern", "ags-init", "ags-setup"]
-              .map((id) => ({ id }))
-          }),
-          stderr: ""
-        };
-      }
-      if (args[0] === "setup") {
-        if (failRuntimeApply) return { status: 1, stdout: "", stderr: "injected setup failure" };
-        return {
-          status: 0,
-          stdout: JSON.stringify({
-            installed: true,
-            source_root: identity.runtimeRoot,
-            writes: ["skill:ags-agent", "machine-capabilities:5 bodies"]
-          }),
-          stderr: ""
-        };
-      }
-      return { status: 1, stdout: "", stderr: `unexpected runtime command: ${args.join(" ")}` };
-    };
-    const common = {
-      cacheRoot: root,
-      metadata: first,
-      fetchImpl,
-      updateFetch: fetchImpl,
-      verifyReleaseIndex: async () => true,
-      runtimeHome,
-      env: { ...process.env, HOME: machineHome },
-      runRuntimeCommand,
-      checkForUpdates: false
-    };
-    await launch({ ...common, spawnImpl: () => fakeChild() });
-    const plan = await planUpdate(common);
-    assert.equal(plan.current_version, "0.4.12");
-    assert.equal(plan.target_version, "0.4.20");
-    assert.equal(plan.asset_name, second.assetName);
-    assert.equal(plan.runtime_setup.required, true);
-    assert.equal(plan.runtime_setup.contract, "v3");
-    assert.equal(plan.runtime_setup.install_kind, "legacy-runtime");
-    assert.match(plan.runtime_setup.plan_hash, /^[a-f0-9]{64}$/u);
-    assert.match(plan.plan_hash, /^[a-f0-9]{64}$/u);
-
-    await assert.rejects(
-      () => applyUpdate(plan.plan_hash, { ...common, verifyArtifact: async () => true }),
-      /runtime setup activation failed; core pointer restored/u
-    );
-    assert.equal(
-      JSON.parse(fs.readFileSync(cachePaths(root, first).currentPath, "utf8")).version,
-      "0.4.12"
-    );
-    failRuntimeApply = false;
-    const receipt = await applyUpdate(plan.plan_hash, {
-      ...common,
-      verifyArtifact: async () => true
-    });
-    assert.equal(receipt.active_version, "0.4.20");
-    assert.equal(receipt.verified, true);
-    assert.equal(receipt.runtime_setup.verified, true);
-    assert.equal(receipt.runtime_setup.plan_hash, plan.runtime_setup.plan_hash);
-    const paths = cachePaths(root, first);
-    assert.equal(JSON.parse(fs.readFileSync(paths.currentPath, "utf8")).version, "0.4.20");
-    assert.equal(JSON.parse(fs.readFileSync(paths.previousPath, "utf8")).version, "0.4.12");
-    assert.ok(fs.existsSync(receipt.receipt_path));
-    const status = statusUpdate(plan.plan_hash, common);
-    assert.equal(status.plan.plan_hash, plan.plan_hash);
-    assert.equal(status.receipt.receipt_hash, receipt.receipt_hash);
-    const verification = await verifyUpdate(plan.plan_hash, {
-      ...common,
-      verifyArtifact: async () => true
-    });
-    assert.equal(verification.status, "verified");
-    assert.equal(verification.runtime_setup_verified, true);
-    assert.equal(verification.reconnect_required, true);
-    assert.ok(runtimeCommands.some((command) => command.startsWith("setup --source-root")));
-    assert.ok(runtimeCommands.some((command) => command === "skill list"));
-    assert.equal(runtimeCommands.some((command) => command.includes("--format")), false);
-    const handled = await handleCoreMaintenanceCommand(
-      ["update", "status", "--plan-hash", plan.plan_hash],
-      common
-    );
-    assert.equal(handled.handled, true);
-    assert.equal(handled.result.plan.plan_hash, plan.plan_hash);
-    const recovered = await handleCoreMaintenanceCommand(["update", "recover"], common);
-    assert.equal(recovered.result.version, "0.4.12");
-    assert.equal(recovered.result.runtime_recovery.recovered, true);
-    assert.equal(JSON.parse(fs.readFileSync(paths.currentPath, "utf8")).version, "0.4.12");
-    assert.ok(runtimeCommands.filter((command) => command.startsWith("setup --source-root")).length >= 3);
-  } finally {
-    removeTemporaryRoot(root);
-  }
+test("launcher never intercepts core maintenance and legacy helpers hard-cut to Rust", async () => {
+  assert.deepEqual(await handleCoreMaintenanceCommand(["update", "plan"]), { handled: false });
+  await assert.rejects(() => planUpdate(), /moved to the Rust contract/u);
+  await assert.rejects(() => applyUpdate(), /moved to the Rust contract/u);
+  assert.throws(() => statusUpdate(), /moved to the Rust contract/u);
+  await assert.rejects(() => verifyUpdate(), /moved to the Rust contract/u);
+  assert.deepEqual(await maybeCheckForUpdate(), { checked: false, skipped: "rust-owned" });
 });
 
 test("tar and zip unsafe, symlink, special, and mismatched entries hard-fail", async () => {
@@ -712,143 +591,6 @@ test("tar and zip unsafe, symlink, special, and mismatched entries hard-fail", a
   }
 });
 
-test("update state is shared-schema, lazy, offline-safe, and signature fail-closed", async () => {
-  const root = temporaryRoot();
-  try {
-    const now = Date.parse("2026-08-05T00:00:00Z");
-    const payload = signedIndex();
-    let fetches = 0;
-    const fetchImpl = async (url) => {
-      fetches += 1;
-      return response(url.endsWith(".sig") ? "invalid-signature" : payload);
-    };
-    const first = await maybeCheckForUpdate({
-      stateRoot: root,
-      currentVersion: "0.4.12",
-      clock: () => now,
-      fetchImpl
-    });
-    assert.equal(first.unavailable, true);
-    assert.equal(first.available, null);
-    assert.equal(fetches, 2);
-    const statePath = path.join(root, UPDATE_STATE_FILE);
-    const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
-    assert.equal(state.schema_version, UPDATE_CHECK_STATE_SCHEMA);
-    assert.equal(state.enabled, true);
-    assert.equal(state.last_checked_at_unix, Math.floor(now / 1000));
-    assert.equal(state.latest_version, null);
-    assert.equal(state.last_error, "unavailable");
-    assert.match(state.release_index_hash, /^[a-f0-9]{64}$/u);
-
-    const fresh = await maybeCheckForUpdate({
-      stateRoot: root,
-      currentVersion: "0.4.12",
-      clock: () => now + UPDATE_CHECK_INTERVAL_MS - 1,
-      fetchImpl: async () => { throw new Error("must not fetch while fresh"); }
-    });
-    assert.equal(fresh.skipped, "fresh");
-    assert.equal(fetches, 2);
-
-    writeUpdateState(root, { ...readUpdateState(root), last_checked_at_unix: null, last_error: null });
-    ignoreVersion(root, "0.4.20");
-    const ignored = await maybeCheckForUpdate({
-      stateRoot: root,
-      currentVersion: "0.4.12",
-      clock: () => now + UPDATE_CHECK_INTERVAL_MS,
-      fetchImpl,
-      verifyReleaseIndex: async () => true
-    });
-    assert.equal(ignored.available, null);
-    assert.equal(ignored.state.latest_version, "0.4.20");
-    assert.deepEqual(ignored.state.ignored_versions, ["0.4.20"]);
-
-    snoozeUpdates(root, now + 60 * 60 * 1000);
-    const snoozed = await maybeCheckForUpdate({
-      stateRoot: root,
-      currentVersion: "0.4.12",
-      clock: () => now + 30 * 60 * 1000,
-      fetchImpl: async () => { throw new Error("must not fetch while snoozed"); }
-    });
-    assert.equal(snoozed.skipped, "snoozed");
-  } finally {
-    removeTemporaryRoot(root);
-  }
-});
-
-test("update check records offline without blocking", async () => {
-  const root = temporaryRoot();
-  try {
-    const result = await maybeCheckForUpdate({
-      stateRoot: root,
-      currentVersion: "0.4.12",
-      clock: () => Date.parse("2026-08-05T00:00:00Z"),
-      fetchImpl: async () => { throw new Error("offline"); }
-    });
-    assert.equal(result.offline, true);
-    assert.equal(result.available, null);
-    assert.equal(readUpdateState(root).last_error, "offline");
-  } finally {
-    removeTemporaryRoot(root);
-  }
-});
-
-test("signed update check atomically caches only the hash-bound catalog", async () => {
-  const root = temporaryRoot();
-  try {
-    const version = "0.4.20";
-    const catalog = Buffer.from("schema_version: \"1.0\"\nprinciple: fixture\ncapabilities: []\n");
-    const catalogName = `ags-third-party-catalog-v${version}.yaml`;
-    const index = Buffer.from(JSON.stringify({
-      schema_version: "1.0-signed-release-index",
-      version,
-      channel: "stable",
-      repository: "FernandeZ-hjm/Agent-General-Staff",
-      tag: `v${version}`,
-      commit: "a".repeat(40),
-      assets: [{ name: "ags-v0.4.20-test.tar.gz", sha256: "b".repeat(64) }],
-      catalog: {
-        name: catalogName,
-        sha256: sha256Buffer(catalog)
-      }
-    }));
-    const fetchImpl = async (url) => {
-      if (url.endsWith("release-index.json")) return response(index);
-      if (url.endsWith("release-index.sig")) return response("test-signature");
-      if (url.endsWith(catalogName)) return response(catalog);
-      throw new Error(`unexpected URL: ${url}`);
-    };
-    const result = await maybeCheckForUpdate({
-      stateRoot: root,
-      currentVersion: "0.4.20",
-      force: true,
-      fetchImpl,
-      verifyReleaseIndex: async () => true
-    });
-    assert.equal(result.state.catalog_release, version);
-    assert.equal(result.state.catalog_hash, sha256Buffer(catalog));
-    const marker = JSON.parse(fs.readFileSync(path.join(root, "catalog/current.json"), "utf8"));
-    assert.equal(marker.schema_version, "ags://schema/contract/v2/verified-catalog");
-    assert.equal(marker.content_hash, `sha256:${sha256Buffer(catalog)}`);
-    assert.deepEqual(
-      fs.readFileSync(path.join(root, `catalog/${marker.catalog_file}`)),
-      catalog
-    );
-
-    const rejectedRoot = path.join(root, "rejected");
-    const rejected = await maybeCheckForUpdate({
-      stateRoot: rejectedRoot,
-      currentVersion: "0.4.20",
-      force: true,
-      fetchImpl: async (url) => url.endsWith(catalogName) ? response("tampered") : fetchImpl(url),
-      verifyReleaseIndex: async () => true
-    });
-    assert.equal(rejected.offline, true);
-    assert.equal(fs.existsSync(path.join(rejectedRoot, "catalog/current.json")), false);
-  } finally {
-    removeTemporaryRoot(root);
-  }
-});
-
 test("download follows bounded redirects and enforces size", async () => {
   const root = temporaryRoot();
   try {
@@ -909,22 +651,8 @@ test("release URLs and redirects require HTTPS approved GitHub hosts", async () 
       }),
       /approved GitHub/u
     );
-    let updateFetches = 0;
-    const update = await maybeCheckForUpdate({
-      stateRoot: path.join(root, "update-state"),
-      endpoint: metadata.updateEndpoint,
-      clock: () => Date.parse("2026-08-05T00:00:00Z"),
-      fetchImpl: async () => {
-        updateFetches += 1;
-        return {
-          status: 302,
-          headers: new Headers({ location: "https://evil.example/releases" })
-        };
-      }
-    });
-    assert.equal(update.offline, true);
-    assert.equal(update.available, null);
-    assert.equal(updateFetches, 1);
+    const update = await maybeCheckForUpdate();
+    assert.deepEqual(update, { checked: false, skipped: "rust-owned" });
   } finally {
     removeTemporaryRoot(root);
   }

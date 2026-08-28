@@ -19,6 +19,10 @@ use serde_json::{json, Value};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.as_slice() == ["--version"] {
+        println!("ags-policy v{}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     let mut host = String::new();
     let mut workspace_arg: Option<PathBuf> = None;
     let mut probe = false;

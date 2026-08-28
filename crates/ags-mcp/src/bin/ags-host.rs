@@ -17,7 +17,19 @@ const TASK_MEMORY_LIMIT: usize = 8_000;
 const CLOSURE_REPORT_LIMIT: usize = 4_000;
 
 fn main() {
+    if let Err(error) = ags_kernel::upgrade::recover_interrupted_activation() {
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.as_slice() == ["--version"] {
+        println!(
+            "ags-host {} (build {})",
+            env!("AGS_PRODUCT_VERSION"),
+            env!("AGS_BUILD_ID")
+        );
+        return;
+    }
     let mut event = String::new();
     let mut workspace_arg: Option<PathBuf> = None;
     let mut i = 0;

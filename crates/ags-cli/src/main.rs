@@ -16,9 +16,19 @@ use ags_kernel::seal::SealStore;
 use ags_kernel::workspace::{self, WorkspaceBinding};
 
 fn main() {
+    if let Err(error) = ags_kernel::upgrade::recover_interrupted_activation() {
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
     let cli = Cli::parse();
+    let notify = !matches!(&cli.command, Command::Mcp { .. } | Command::Upgrade { .. });
     let code = match run(cli) {
-        Ok(exit) => exit,
+        Ok(exit) => {
+            if notify {
+                ags_kernel::upgrade::maybe_notify(env!("AGS_PRODUCT_VERSION"));
+            }
+            exit
+        }
         Err(e) => {
             eprintln!("{e}");
             1
@@ -135,8 +145,15 @@ enum Command {
         #[arg(long)]
         source_root: Option<PathBuf>,
     },
+    /// [read/write] Canonical machine-runtime lifecycle; mutations are sealed and committed by `ags apply`.
+    Upgrade {
+        #[command(subcommand)]
+        action: UpgradeAction,
+    },
     /// [write] Sealed capability-lock refresh (the only hash-pin refresh entry).
     Update {
+        #[arg(value_name = "LEGACY_CORE_ACTION")]
+        legacy_action: Option<String>,
         #[arg(long)]
         workspace: Option<PathBuf>,
         #[arg(long)]
@@ -270,6 +287,49 @@ enum EntryFilterAction {
 }
 
 #[derive(Subcommand)]
+enum UpgradeAction {
+    /// Force one signed stable-channel update check.
+    Check,
+    /// Configure the non-blocking seven-day reminder.
+    Config {
+        #[arg(long)]
+        enabled: Option<bool>,
+        #[arg(long)]
+        ignore_version: Option<String>,
+        #[arg(long)]
+        snooze_until_unix: Option<i64>,
+        #[arg(long)]
+        reset: bool,
+    },
+    /// Prepare and seal an exact upgrade plan; omit --source-root for signed stable.
+    Plan {
+        #[arg(long)]
+        source_root: Option<PathBuf>,
+        #[arg(long, default_value = "stable")]
+        channel: String,
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+    },
+    /// Read one sealed plan, receipt and active/previous pointers.
+    Status {
+        action_ref: String,
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+    },
+    /// Verify the active runtime against an applied receipt.
+    Verify {
+        action_ref: String,
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+    },
+    /// Seal recovery to the previous verified runtime.
+    Recover {
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
 enum SkillReadAction {
     /// List bodies currently present under ~/.agents/skills.
     List,
@@ -342,7 +402,12 @@ fn run(cli: Cli) -> Result<i32> {
         } => cmd_log(r#type, task, scope, workspace),
         Command::Status { workspace } => cmd_status(workspace),
         Command::Doctor { workspace } => cmd_doctor(workspace),
-        Command::Update { workspace, sources } => cmd_update(workspace, sources),
+        Command::Upgrade { action } => cmd_upgrade(action),
+        Command::Update {
+            legacy_action,
+            workspace,
+            sources,
+        } => cmd_update(legacy_action, workspace, sources),
         Command::Govern { action } => match action {
             GovernAction::Skill { action } => match action {
                 SkillAction::Install {
@@ -917,10 +982,16 @@ fn cmd_setup(source_root: Option<PathBuf>) -> Result<i32> {
                 "pass --source-root <checkout-or-release-runtime>",
             )
         })?;
-    let wrote = ags_kernel::sync::setup(&source_root)?;
+    let inventory = ags_kernel::upgrade::inspect_setup_bundle(&source_root)?;
+    let wrote = ags_kernel::sync::setup(&inventory.runtime_root)?;
     print_json(&serde_json::json!({
         "installed": true,
-        "source_root": source_root,
+        "source_root": inventory.runtime_root,
+        "version": inventory.version,
+        "triple": inventory.triple,
+        "executables": inventory.binaries,
+        "executables_sha256": inventory.executables_sha256,
+        "runtime_sha256": inventory.runtime_sha256,
         "writes": wrote,
     }));
     Ok(0)
@@ -947,7 +1018,124 @@ fn cmd_skill_recommend(query: Option<String>) -> Result<i32> {
 
 // ── update / govern (sealed) ─────────────────────────────────────────────
 
-fn cmd_update(workspace: Option<PathBuf>, sources: Vec<String>) -> Result<i32> {
+fn cmd_upgrade(action: UpgradeAction) -> Result<i32> {
+    match action {
+        UpgradeAction::Check => {
+            print_json(&ags_kernel::upgrade::check(
+                env!("AGS_PRODUCT_VERSION"),
+                true,
+            ));
+            Ok(0)
+        }
+        UpgradeAction::Config {
+            enabled,
+            ignore_version,
+            snooze_until_unix,
+            reset,
+        } => {
+            let out = ags_kernel::upgrade::configure(
+                enabled,
+                ignore_version.as_deref(),
+                snooze_until_unix,
+                reset,
+            )?;
+            print_json(&out);
+            Ok(0)
+        }
+        UpgradeAction::Plan {
+            source_root,
+            channel,
+            workspace,
+        } => {
+            if channel != "stable" {
+                return Err(Error::new(
+                    "upgrade_channel_invalid",
+                    "only the signed stable channel is supported",
+                ));
+            }
+            let root = resolve_root(workspace)?;
+            let binding = workspace::bind(&root)?;
+            let request = serde_json::json!({
+                "action": "activate",
+                "source_root": source_root,
+                "channel": channel,
+            });
+            let payload = ags_kernel::upgrade::prepare_plan(&binding, &request)?;
+            let sealed = SealStore::new(&binding).seal_plan("upgrade", &payload, &binding)?;
+            print_json(&serde_json::json!({
+                "schema_version": "ags://schema/contract/v3/upgrade-plan-envelope",
+                "operation": "upgrade",
+                "state": "planned",
+                "action_ref": sealed.token,
+                "plan_hash": sealed.plan_hash,
+                "plan": payload,
+            }));
+            Ok(0)
+        }
+        UpgradeAction::Status {
+            action_ref,
+            workspace,
+        } => {
+            let root = resolve_root(workspace)?;
+            let binding = workspace::bind(&root)?;
+            print_json(&ags_kernel::upgrade::status(&action_ref, &binding)?);
+            Ok(0)
+        }
+        UpgradeAction::Verify {
+            action_ref,
+            workspace,
+        } => {
+            let root = resolve_root(workspace)?;
+            let binding = workspace::bind(&root)?;
+            print_json(&ags_kernel::upgrade::verify(&action_ref, &binding)?);
+            Ok(0)
+        }
+        UpgradeAction::Recover { workspace } => {
+            let root = resolve_root(workspace)?;
+            let binding = workspace::bind(&root)?;
+            let payload = ags_kernel::upgrade::prepare_plan(
+                &binding,
+                &serde_json::json!({"action": "recover"}),
+            )?;
+            let sealed = SealStore::new(&binding).seal_plan("upgrade", &payload, &binding)?;
+            print_json(&serde_json::json!({
+                "schema_version": "ags://schema/contract/v3/upgrade-plan-envelope",
+                "operation": "upgrade",
+                "state": "planned",
+                "action_ref": sealed.token,
+                "plan_hash": sealed.plan_hash,
+                "plan": payload,
+            }));
+            Ok(0)
+        }
+    }
+}
+
+fn cmd_update(
+    legacy_action: Option<String>,
+    workspace: Option<PathBuf>,
+    sources: Vec<String>,
+) -> Result<i32> {
+    if let Some(action) = legacy_action {
+        if matches!(
+            action.as_str(),
+            "check" | "config" | "plan" | "apply" | "status" | "verify" | "recover"
+        ) {
+            let replacement = if action == "apply" {
+                "ags apply <ACTION_REF>".to_string()
+            } else {
+                format!("ags upgrade {action}")
+            };
+            return Err(Error::new(
+                "update_command_moved",
+                format!("core runtime update moved to `{replacement}`; `ags update` only refreshes sealed capability state"),
+            ));
+        }
+        return Err(Error::new(
+            "update_argument_invalid",
+            format!("unexpected update argument `{action}`"),
+        ));
+    }
     let root = resolve_root(workspace)?;
     let binding = workspace::bind(&root)?;
     let payload = serde_json::json!({ "sources": sources });
@@ -1177,6 +1365,11 @@ const OPERATION_SHAPES: &[(&str, &str, &str)] = &[
         r#"{"root": "<absolute path>", "slug": "<id>", "ags_toml": "<toml text>"}"#,
     ),
     (
+        "upgrade",
+        "Activate or recover the five-binary machine runtime from one content-bound plan.",
+        r#"{"action": "activate|recover", "candidate": {"version": "0.4.21", "executables_sha256": "<hash>"}, "expires_at_unix": 0}"#,
+    ),
+    (
         "update",
         "Refresh project audit leaves, official skills, rules, entries, and the machine lock.",
         r#"{"sources": ["ags-skills"]}"#,
@@ -1229,7 +1422,7 @@ fn cmd_schema(operation: Option<String>, format: Option<String>) -> Result<i32> 
         },
         None => serde_json::json!({
             "contract": "v3",
-            "commands": ["init", "run", "apply", "check", "test", "log", "status", "doctor", "update", "govern", "schema"],
+            "commands": ["mcp", "init", "apply", "run", "check", "test", "log", "status", "doctor", "setup", "upgrade", "update", "govern", "skill", "delegation", "entry-filter", "route", "schema"],
             "sealed_operations": ags_kernel::config::CANONICAL_SEALED_OPS,
             "seal_states": ags_kernel::seal::SEAL_STATES,
             "hooks": {
@@ -1262,6 +1455,7 @@ mod tests {
                 "govern.host.register",
                 "govern.host_projection",
                 "govern.delegation.issue",
+                "upgrade",
                 "update"
             ]
         );
@@ -1274,7 +1468,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(
             root.join("ags.toml"),
-            "[workspace]\nslug = \"t\"\nrole = \"A\"\n\n[sealed]\nops = [\"govern.skill.install\", \"govern.skill.remove\", \"govern.host.register\", \"govern.host_projection\", \"govern.delegation.issue\", \"update\"]\n",
+            "[workspace]\nslug = \"t\"\nrole = \"A\"\n\n[sealed]\nops = [\"govern.skill.install\", \"govern.skill.remove\", \"govern.host.register\", \"govern.host_projection\", \"govern.delegation.issue\", \"upgrade\", \"update\"]\n",
         )
         .unwrap();
         let mut config = Config::load(&root).unwrap();
@@ -1358,7 +1552,7 @@ mod tests {
         std::fs::write(root.join("ags-skills/demo/SKILL.md"), "# Demo\n").unwrap();
         std::fs::write(
             root.join("ags.toml"),
-            "[workspace]\nslug = \"t\"\nrole = \"A\"\n\n[sealed]\nops = [\"govern.skill.install\", \"govern.skill.remove\", \"govern.host.register\", \"govern.host_projection\", \"govern.delegation.issue\", \"update\"]\n\n[verify]\nprofile = \"smoke\"\n",
+            "[workspace]\nslug = \"t\"\nrole = \"A\"\n\n[sealed]\nops = [\"govern.skill.install\", \"govern.skill.remove\", \"govern.host.register\", \"govern.host_projection\", \"govern.delegation.issue\", \"upgrade\", \"update\"]\n\n[verify]\nprofile = \"smoke\"\n",
         )
         .unwrap();
         // update now requires a machine install record; mirror `ags setup`.

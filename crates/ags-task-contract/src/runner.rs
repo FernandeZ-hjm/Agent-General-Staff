@@ -329,7 +329,7 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         fs::write(
             root.join("ags.toml"),
-            "[workspace]\nslug = \"t\"\nrole = \"A\"\n\n[sealed]\nops = [\"govern.skill.install\", \"govern.skill.remove\", \"govern.host.register\", \"govern.host_projection\", \"govern.delegation.issue\", \"update\"]\n\n[verify]\ncommands = [\"echo structured\"]\nprofile = \"smoke\"\n",
+            "[workspace]\nslug = \"t\"\nrole = \"A\"\n\n[sealed]\nops = [\"govern.skill.install\", \"govern.skill.remove\", \"govern.host.register\", \"govern.host_projection\", \"govern.delegation.issue\", \"upgrade\", \"update\"]\n\n[verify]\ncommands = [\"echo structured\"]\nprofile = \"smoke\"\n",
         )
         .unwrap();
         ags_kernel::workspace::bind(&root).unwrap()

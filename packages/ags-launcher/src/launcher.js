@@ -13,11 +13,6 @@ const packageJson = require("../package.json");
 export const RELEASE_REPOSITORY = "FernandeZ-hjm/Agent-General-Staff";
 export const MAX_DOWNLOAD_BYTES = 128 * 1024 * 1024;
 export const DOWNLOAD_TIMEOUT_MS = 30_000;
-export const UPDATE_CHECK_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
-export const UPDATE_CHECK_STATE_SCHEMA = "ags://schema/contract/v3/update-check-state";
-export const UPDATE_STATE_FILE = "update-check.json";
-export const UPDATE_PLAN_SCHEMA = "1.1-launcher-update-plan";
-export const UPDATE_RECEIPT_SCHEMA = "1.1-launcher-update-receipt";
 export const VERIFIED_CATALOG_SCHEMA = "ags://schema/contract/v2/verified-catalog";
 export const MCP_ARGS = Object.freeze([]);
 export function mcpRuntimeArgs(args) {
@@ -32,7 +27,6 @@ export const RELEASE_SIGNING_PUBLIC_KEY_PEM = fs.readFileSync(
 const VERSION_PATTERN = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
 const TRIPLE_PATTERN = /^[A-Za-z0-9._-]+$/u;
 const HASH_PATTERN = /^[a-f0-9]{64}$/u;
-const CHANNELS = new Set(["stable", "beta", "nightly"]);
 const APPROVED_RELEASE_HOSTS = new Set([
   "github.com",
   "api.github.com",
@@ -89,15 +83,11 @@ export function releaseMetadata({
     assetName,
     releaseBase: `https://github.com/${repository}/releases/download/v${version}`,
     releaseIndexEndpoint: `https://github.com/${repository}/releases/download/v${version}/release-index.json`,
-    releaseSignatureEndpoint: `https://github.com/${repository}/releases/download/v${version}/release-index.sig`,
-    updateEndpoint: `https://github.com/${repository}/releases/latest/download/release-index.json`,
-    updateSignatureEndpoint: `https://github.com/${repository}/releases/latest/download/release-index.sig`
+    releaseSignatureEndpoint: `https://github.com/${repository}/releases/download/v${version}/release-index.sig`
   };
   assertReleaseBaseUrl(metadata.releaseBase, version);
   assertVersionedReleaseIndexUrl(metadata.releaseIndexEndpoint, metadata.releaseBase, "release index");
   assertVersionedReleaseIndexUrl(metadata.releaseSignatureEndpoint, metadata.releaseBase, "release signature");
-  assertUpdateEndpointUrl(metadata.updateEndpoint);
-  assertUpdateEndpointUrl(metadata.updateSignatureEndpoint, "release signature");
   return Object.freeze(metadata);
 }
 
@@ -143,22 +133,6 @@ export async function launch(options = {}) {
   const paths = cachePaths(options.cacheRoot ?? env.AGS_CACHE_DIR, metadata, env);
   const artifact = await prepareArtifact(metadata, paths, options);
 
-  if (options.checkForUpdates !== false) {
-    await maybeCheckForUpdate({
-      stateRoot: paths.stateRoot,
-      currentVersion: artifact.version || metadata.version,
-      channel: options.channel || "stable",
-      enabled: options.updateChecksEnabled,
-      fetchImpl: options.updateFetch || options.fetchImpl || globalThis.fetch,
-      clock: options.clock,
-      timeoutMs: options.updateTimeoutMs,
-      endpoint: metadata.updateEndpoint,
-      signatureEndpoint: metadata.updateSignatureEndpoint,
-      verifyReleaseIndex: options.verifyReleaseIndex,
-      onUpdate: options.onUpdate
-    });
-  }
-
   const args = options.args === undefined ? [...MCP_ARGS] : options.args;
   if (!Array.isArray(args) || args.some((arg) => typeof arg !== "string")) {
     throw new TypeError("launcher args must be an array of strings");
@@ -177,7 +151,7 @@ export async function launch(options = {}) {
     throw new Error(`verified release does not contain ${executableName}`);
   }
   const runtimeArgs = args[0] === "setup" && !args.includes("--source-root")
-    ? [...args, "--source-root", artifact.runtimeRoot]
+    ? [...args, "--source-root", path.dirname(artifact.binaryPath)]
     : [...args];
   const child = (options.spawnImpl || nodeSpawn)(executablePath, runtimeArgs, {
     stdio: options.stdio || "inherit",
@@ -186,586 +160,15 @@ export async function launch(options = {}) {
     env: {
       ...env,
       AGS_RUNTIME_HOME: runtimeHome,
-      AGS_HOME: runtimeHome
+      AGS_HOME: runtimeHome,
+      AGS_INSTALL_KIND: "launcher",
+      AGS_LAUNCHER_STATE_ROOT: paths.stateRoot,
+      AGS_VERSIONS_ROOT: paths.versionsRoot,
+      AGS_ACTIVE_RUNTIME_ROOT: artifact.runtimeRoot,
+      AGS_ACTIVE_BINARY_ROOT: path.dirname(artifact.binaryPath)
     }
   });
   return waitForChild(child);
-}
-
-/** Explicitly switch the shared launcher pointer back to the last verified
- * healthy version. This is invoked only by the user-facing `ags update
- * recover` command; ordinary startup recovery remains limited to an invalid
- * or missing current pointer. */
-export async function recoverPrevious(options = {}) {
-  const env = options.env || process.env;
-  const metadata = normalizeMetadata(options.metadata);
-  const paths = cachePaths(options.cacheRoot ?? env.AGS_CACHE_DIR, metadata, env);
-  ensureCacheDirectories(paths);
-  const current = readPointer(paths.currentPath);
-  const previous = readPointer(paths.previousPath);
-  if (!previous) throw new Error("previous launcher pointer is missing");
-  const recovered = validatePointer(previous, paths);
-  const active = current ? validatePointer(current, paths) : null;
-  if (
-    options.expectedPlanHash &&
-    current?.update_plan_hash !== options.expectedPlanHash
-  ) {
-    throw new Error("active core pointer does not belong to the requested recovery plan");
-  }
-  const runtimeHome = resolveRuntimeHome(paths, env, options);
-  let runtimeRecovery = { required: false, recovered: true };
-  if (active && HASH_PATTERN.test(current.update_plan_hash || "")) {
-    const receiptPath = path.join(
-      paths.stateRoot,
-      "update-receipts",
-      `${current.update_plan_hash}.json`
-    );
-    const receipt = readJsonIfPresent(receiptPath);
-    if (!receipt || receipt.schema_version !== UPDATE_RECEIPT_SCHEMA) {
-      throw new Error("active core update receipt is missing; runtime recovery refused");
-    }
-    const { receipt_hash: storedHash, ...unsigned } = receipt;
-    if (storedHash !== hashCanonical(unsigned) || receipt.plan_hash !== current.update_plan_hash) {
-      throw new Error("active core update receipt identity mismatch");
-    }
-    if (receipt.runtime_setup?.required === true) {
-      const recoveryUnsigned = {
-        required: true,
-        contract: "v3",
-        install_kind: "contract-v3",
-        source_root_hash: ags_platformHashPath(recovered.runtimeRoot),
-        runtime_sha256: recovered.runtimeSha256
-      };
-      const recoveryPlan = {
-        ...recoveryUnsigned,
-        plan_hash: hashCanonical(recoveryUnsigned)
-      };
-      const recoveredSetup = await applyRuntimeSetup(
-        recovered,
-        runtimeHome,
-        recoveryPlan,
-        options
-      );
-      runtimeRecovery = {
-        required: true,
-        recovered: true,
-        plan_hash: recoveredSetup.plan_hash,
-        receipt_hash: recoveredSetup.receipt_hash
-      };
-    }
-  }
-  try {
-    atomicWriteJson(paths.currentPath, previous);
-  } catch (error) {
-    if (runtimeRecovery.required && active) {
-      const restoreUnsigned = {
-        required: true,
-        contract: "v3",
-        install_kind: "contract-v3",
-        source_root_hash: ags_platformHashPath(active.runtimeRoot),
-        runtime_sha256: active.runtimeSha256
-      };
-      await applyRuntimeSetup(
-        active,
-        runtimeHome,
-        { ...restoreUnsigned, plan_hash: hashCanonical(restoreUnsigned) },
-        options
-      ).catch(() => undefined);
-    }
-    throw error;
-  }
-  if (current && !sameIdentity(current, previous)) {
-    atomicWriteJson(paths.previousPath, current);
-  }
-  return {
-    status: "recovered",
-    version: recovered.version,
-    triple: recovered.triple,
-    binaryPath: recovered.binaryPath,
-    runtimeRoot: recovered.runtimeRoot,
-    runtime_recovery: runtimeRecovery
-  };
-}
-
-/** Fetch, authenticate and persist one immutable core update plan. The plan is
- * bound to the current verified pointer and the exact signed index bytes. */
-export async function planUpdate(options = {}) {
-  const env = options.env || process.env;
-  const metadata = normalizeMetadata(options.metadata);
-  const paths = cachePaths(options.cacheRoot ?? env.AGS_CACHE_DIR, metadata, env);
-  ensureCacheDirectories(paths);
-  await prepareArtifact(metadata, paths, options);
-  const current = readPointer(paths.currentPath);
-  const active = validatePointer(current, paths);
-  const channel = normalizeChannel(options.channel || "stable");
-  if (channel !== "stable") {
-    throw new Error(`signed release channel is not available: ${channel}`);
-  }
-  const fetchImpl = options.updateFetch || options.fetchImpl || globalThis.fetch;
-  const timeoutMs = options.updateTimeoutMs || 2_000;
-  const indexBytes = await fetchReleaseIndexBytes(metadata.updateEndpoint, {
-    fetchImpl,
-    timeoutMs,
-    label: "release index"
-  });
-  const signatureBytes = await fetchReleaseIndexBytes(metadata.updateSignatureEndpoint, {
-    fetchImpl,
-    timeoutMs,
-    label: "release signature"
-  });
-  const verified = typeof options.verifyReleaseIndex === "function"
-    ? await options.verifyReleaseIndex(indexBytes, signatureBytes, {
-      currentVersion: current.version,
-      channel
-    })
-    : verifySignedReleaseIndex(indexBytes, signatureBytes);
-  if (verified !== true && verified?.verified !== true) {
-    throw new Error("release signature verification failed");
-  }
-  const index = parseSignedReleaseIndex(indexBytes, channel);
-  if (compareVersions(parseVersion(index.version), parseVersion(current.version)) <= 0) {
-    throw new Error("no_update_available");
-  }
-  const targetMetadata = releaseMetadata({
-    version: index.version,
-    platform: metadata.platform,
-    arch: metadata.arch,
-    repository: RELEASE_REPOSITORY
-  });
-  const asset = index.assets.find((candidate) => candidate.name === targetMetadata.assetName);
-  if (!asset) {
-    throw new Error(`signed release index has no entry for ${targetMetadata.assetName}`);
-  }
-  const targetPaths = cachePaths(paths.cacheRoot, targetMetadata, env);
-  const targetIdentity = await installOrReuse(targetMetadata, targetPaths, {
-    ...options,
-    expectedReleaseIndexSha256: crypto.createHash("sha256").update(indexBytes).digest("hex")
-  });
-  if (targetIdentity.assetSha256 !== asset.sha256) {
-    throw new Error("installed candidate does not match signed update plan source");
-  }
-  await verifyExecutable(targetIdentity, targetMetadata, options, "candidate AGS executable");
-  const runtimeHome = resolveRuntimeHome(paths, env, options);
-  const runtimeSetup = await planRuntimeSetup(targetIdentity, runtimeHome, options);
-  const now = nowMillis(options.clock);
-  const unsigned = {
-    schema_version: UPDATE_PLAN_SCHEMA,
-    current_pointer_hash: hashCanonical(current),
-    current_version: active.version,
-    target_version: index.version,
-    channel,
-    triple: metadata.triple,
-    asset_name: asset.name,
-    asset_sha256: asset.sha256,
-    release_index_sha256: crypto.createHash("sha256").update(indexBytes).digest("hex"),
-    release_index_url: targetMetadata.releaseIndexEndpoint,
-    release_signature_url: targetMetadata.releaseSignatureEndpoint,
-    candidate_binary_sha256: targetIdentity.binarySha256,
-    candidate_runtime_sha256: targetIdentity.runtimeSha256,
-    runtime_home_hash: ags_platformHashPath(runtimeHome),
-    runtime_setup: runtimeSetup,
-    created_at_unix: Math.floor(now / 1000),
-    expires_at_unix: Math.floor(now / 1000) + (options.planTtlSeconds || 30 * 60)
-  };
-  const plan = { ...unsigned, plan_hash: hashCanonical(unsigned) };
-  const planPath = path.join(paths.stateRoot, "update-plans", `${plan.plan_hash}.json`);
-  fs.mkdirSync(path.dirname(planPath), { recursive: true, mode: 0o700 });
-  assertDirectory(path.dirname(planPath), "update plan directory");
-  atomicWriteJson(planPath, plan);
-  return plan;
-}
-
-/** Apply an exact persisted plan, verify the new executable starts, then
- * atomically switch current/previous. Any source, pointer or time drift
- * requires a new plan. */
-export async function applyUpdate(planHash, options = {}) {
-  if (!HASH_PATTERN.test(planHash || "")) throw new Error("update plan hash is invalid");
-  const env = options.env || process.env;
-  const metadata = normalizeMetadata(options.metadata);
-  const paths = cachePaths(options.cacheRoot ?? env.AGS_CACHE_DIR, metadata, env);
-  ensureCacheDirectories(paths);
-  const planPath = path.join(paths.stateRoot, "update-plans", `${planHash}.json`);
-  const plan = readJsonIfPresent(planPath);
-  if (!plan || plan.schema_version !== UPDATE_PLAN_SCHEMA) {
-    throw new Error("update plan is missing or has an unsupported schema");
-  }
-  const { plan_hash: storedHash, ...unsigned } = plan;
-  if (storedHash !== planHash || hashCanonical(unsigned) !== planHash) {
-    throw new Error("update plan hash mismatch");
-  }
-  const nowUnix = Math.floor(nowMillis(options.clock) / 1000);
-  if (plan.expires_at_unix < nowUnix) throw new Error("update plan expired");
-  if (plan.triple !== metadata.triple || plan.channel !== "stable") {
-    throw new Error("update plan platform or channel mismatch");
-  }
-  const current = readPointer(paths.currentPath);
-  validatePointer(current, paths);
-  if (hashCanonical(current) !== plan.current_pointer_hash) {
-    throw new Error("update plan current pointer changed; re-plan");
-  }
-  const targetMetadata = releaseMetadata({
-    version: plan.target_version,
-    platform: metadata.platform,
-    arch: metadata.arch,
-    repository: RELEASE_REPOSITORY
-  });
-  if (
-    plan.asset_name !== targetMetadata.assetName ||
-    plan.release_index_url !== targetMetadata.releaseIndexEndpoint ||
-    plan.release_signature_url !== targetMetadata.releaseSignatureEndpoint
-  ) {
-    throw new Error("update plan release identity mismatch");
-  }
-  const runtimeHome = resolveRuntimeHome(paths, env, options);
-  if (plan.runtime_home_hash !== ags_platformHashPath(runtimeHome)) {
-    throw new Error("update plan runtime home changed; re-plan");
-  }
-  const targetPaths = cachePaths(paths.cacheRoot, targetMetadata, env);
-  const identity = await installOrReuse(targetMetadata, targetPaths, {
-    ...options,
-    expectedReleaseIndexSha256: plan.release_index_sha256
-  });
-  if (identity.assetSha256 !== plan.asset_sha256) {
-    throw new Error("installed asset does not match approved update plan");
-  }
-  if (
-    identity.binarySha256 !== plan.candidate_binary_sha256 ||
-    identity.runtimeSha256 !== plan.candidate_runtime_sha256
-  ) {
-    throw new Error("installed candidate content differs from the approved update plan");
-  }
-  await verifyExecutable(identity, targetMetadata, options, "updated AGS executable");
-  await verifyRuntimeSetupPlan(identity, runtimeHome, plan.runtime_setup, options);
-  const observedCurrent = readPointer(paths.currentPath);
-  if (hashCanonical(observedCurrent) !== plan.current_pointer_hash) {
-    throw new Error("update plan current pointer changed during apply; activation refused");
-  }
-  const next = { ...pointerFor(targetMetadata, identity, options.clock), update_plan_hash: planHash };
-  atomicWriteJson(paths.previousPath, observedCurrent);
-  atomicWriteJson(paths.currentPath, next);
-  let runtimeSetupReceipt;
-  try {
-    runtimeSetupReceipt = await applyRuntimeSetup(identity, runtimeHome, plan.runtime_setup, options);
-  } catch (error) {
-    atomicWriteJson(paths.currentPath, observedCurrent);
-    throw new Error(`runtime setup activation failed; core pointer restored: ${error.message}`);
-  }
-  const receiptWithoutHash = {
-    schema_version: UPDATE_RECEIPT_SCHEMA,
-    plan_hash: planHash,
-    previous_version: observedCurrent.version,
-    active_version: next.version,
-    triple: next.triple,
-    asset_sha256: next.asset_sha256,
-    release_index_sha256: next.release_index_sha256,
-    runtime_setup: runtimeSetupReceipt,
-    verified: true,
-    applied_at_unix: nowUnix
-  };
-  const receipt = {
-    ...receiptWithoutHash,
-    receipt_hash: hashCanonical(receiptWithoutHash)
-  };
-  const receiptPath = path.join(paths.stateRoot, "update-receipts", `${planHash}.json`);
-  fs.mkdirSync(path.dirname(receiptPath), { recursive: true, mode: 0o700 });
-  assertDirectory(path.dirname(receiptPath), "update receipt directory");
-  atomicWriteJson(receiptPath, receipt);
-  return { ...receipt, receipt_path: receiptPath };
-}
-
-export function statusUpdate(planHash, options = {}) {
-  if (!HASH_PATTERN.test(planHash || "")) throw new Error("update plan hash is invalid");
-  const env = options.env || process.env;
-  const metadata = normalizeMetadata(options.metadata);
-  const paths = cachePaths(options.cacheRoot ?? env.AGS_CACHE_DIR, metadata, env);
-  const planPath = path.join(paths.stateRoot, "update-plans", `${planHash}.json`);
-  const receiptPath = path.join(paths.stateRoot, "update-receipts", `${planHash}.json`);
-  const plan = readJsonIfPresent(planPath);
-  if (!plan || plan.schema_version !== UPDATE_PLAN_SCHEMA || plan.plan_hash !== planHash) {
-    throw new Error("update plan is missing or has an unsupported schema");
-  }
-  const { plan_hash: storedHash, ...unsigned } = plan;
-  if (storedHash !== planHash || hashCanonical(unsigned) !== planHash) {
-    throw new Error("update plan hash mismatch");
-  }
-  const receipt = readJsonIfPresent(receiptPath);
-  return {
-    schema_version: "ags://schema/contract/v3/core-update-status",
-    plan,
-    receipt,
-    active: readJsonIfPresent(paths.currentPath)
-  };
-}
-
-export async function verifyUpdate(planHash, options = {}) {
-  const status = statusUpdate(planHash, options);
-  const receipt = status.receipt;
-  if (!receipt || receipt.schema_version !== UPDATE_RECEIPT_SCHEMA || receipt.plan_hash !== planHash) {
-    throw new Error("core update has no applied receipt");
-  }
-  const { receipt_hash: storedHash, ...unsigned } = receipt;
-  if (storedHash !== hashCanonical(unsigned)) throw new Error("core update receipt hash mismatch");
-  const activePointer = status.active;
-  if (
-    !activePointer ||
-    activePointer.version !== receipt.active_version ||
-    activePointer.asset_sha256 !== receipt.asset_sha256 ||
-    activePointer.release_index_sha256 !== receipt.release_index_sha256
-  ) {
-    throw new Error("core update active pointer does not match the receipt");
-  }
-  const env = options.env || process.env;
-  const metadata = normalizeMetadata(options.metadata);
-  const paths = cachePaths(options.cacheRoot ?? env.AGS_CACHE_DIR, metadata, env);
-  const active = validatePointer(activePointer, paths);
-  const activeMetadata = releaseMetadata({
-    version: active.version,
-    platform: metadata.platform,
-    arch: metadata.arch,
-    repository: RELEASE_REPOSITORY
-  });
-  await verifyExecutable(active, activeMetadata, options, "core update active binary");
-  const runtimeHome = resolveRuntimeHome(paths, env, options);
-  await verifyRuntimeSetup(active, runtimeHome, receipt.runtime_setup, options);
-  return {
-    schema_version: "ags://schema/contract/v3/core-update-verification",
-    status: "verified",
-    plan_hash: planHash,
-    active_version: active.version,
-    asset_sha256: active.asset_sha256,
-    runtime_setup_verified: receipt.runtime_setup?.required !== true || receipt.runtime_setup?.verified === true,
-    reconnect_required: true
-  };
-}
-
-/** Shared transport adapter for CLI and MCP bins. The caller only renders the
- * structured result; all update planning and mutation remains in this module. */
-export async function handleCoreMaintenanceCommand(args, options = {}) {
-  if (args?.[0] !== "update") return { handled: false };
-  const action = args[1];
-  if (action === "check") {
-    const metadata = normalizeMetadata(options.metadata);
-    const env = options.env || process.env;
-    const paths = cachePaths(options.cacheRoot ?? env.AGS_CACHE_DIR, metadata, env);
-    return {
-      handled: true,
-      result: await maybeCheckForUpdate({
-        stateRoot: paths.stateRoot,
-        currentVersion: metadata.version,
-        channel: options.channel || "stable",
-        fetchImpl: options.updateFetch || options.fetchImpl || globalThis.fetch,
-        clock: options.clock,
-        timeoutMs: options.updateTimeoutMs,
-        endpoint: metadata.updateEndpoint,
-        signatureEndpoint: metadata.updateSignatureEndpoint,
-        verifyReleaseIndex: options.verifyReleaseIndex,
-        onUpdate: options.onUpdate,
-        force: true
-      })
-    };
-  }
-  if (action === "config") {
-    const metadata = normalizeMetadata(options.metadata);
-    const env = options.env || process.env;
-    const paths = cachePaths(options.cacheRoot ?? env.AGS_CACHE_DIR, metadata, env);
-    let state = readUpdateState(paths.stateRoot);
-    const enabled = optionValue(args, "--enabled");
-    if (enabled !== undefined) {
-      if (!["true", "false"].includes(enabled)) throw new Error("--enabled must be true or false");
-      state = { ...state, enabled: enabled === "true" };
-    }
-    const ignored = optionValue(args, "--ignore-version");
-    if (ignored !== undefined) {
-      assertVersion(ignored, "ignored version");
-      state = { ...state, ignored_versions: [...new Set([...state.ignored_versions, ignored])] };
-    }
-    const snoozed = optionValue(args, "--snooze-until-unix");
-    if (snoozed !== undefined) {
-      const until = Number(snoozed);
-      if (!Number.isSafeInteger(until) || until < 0) throw new Error("--snooze-until-unix must be a non-negative integer");
-      state = { ...state, snoozed_until_unix: until };
-    }
-    return { handled: true, result: writeUpdateState(paths.stateRoot, state) };
-  }
-  if (action === "plan") {
-    return { handled: true, result: await planUpdate(options) };
-  }
-  if (["apply", "status", "verify"].includes(action)) {
-    const planHash = optionValue(args, "--plan-hash");
-    if (!planHash) throw new Error(`core update ${action} requires --plan-hash <hash>`);
-    const result = action === "apply"
-      ? await applyUpdate(planHash, options)
-      : action === "status"
-        ? statusUpdate(planHash, options)
-        : await verifyUpdate(planHash, options);
-    return { handled: true, result };
-  }
-  if (action === "recover") {
-    const expectedPlanHash = optionValue(args, "--plan-hash");
-    return {
-      handled: true,
-      result: await recoverPrevious({ ...options, expectedPlanHash })
-    };
-  }
-  return { handled: false };
-}
-
-function optionValue(args, name) {
-  const index = args.indexOf(name);
-  return index >= 0 ? args[index + 1] : undefined;
-}
-
-async function verifyExecutable(identity, metadata, options, label) {
-  const result = typeof options.verifyArtifact === "function"
-    ? await options.verifyArtifact(identity, metadata)
-    : nodeSpawnSync(identity.binaryPath, ["--version"], {
-      encoding: "utf8",
-      shell: false,
-      windowsHide: true,
-      timeout: options.verifyTimeoutMs || 10_000
-    });
-  if (
-    result !== true &&
-    result?.verified !== true &&
-    (result?.status !== 0 || result?.error)
-  ) {
-    throw new Error(`${label} failed verification${result?.error ? `: ${result.error.message}` : ""}`);
-  }
-}
-
-function resolveRuntimeHome(paths, env, options) {
-  return path.resolve(
-    options.runtimeHome ||
-    env.AGS_RUNTIME_HOME ||
-    env.AGS_HOME ||
-    path.join(paths.cacheRoot, "private-runtime")
-  );
-}
-
-function ags_platformHashPath(value) {
-  return crypto.createHash("sha256").update(path.resolve(value)).digest("hex");
-}
-
-async function planRuntimeSetup(identity, runtimeHome, options) {
-  const env = options.env || process.env;
-  const machineHome = path.resolve(env.HOME || env.USERPROFILE || os.homedir());
-  const v3Install = path.join(machineHome, ".ags", "v3", "install.json");
-  const legacyInstall = path.join(runtimeHome, "install-manifest.json");
-  const installKind = isRegularFile(v3Install)
-    ? "contract-v3"
-    : isRegularFile(legacyInstall)
-      ? "legacy-runtime"
-      : null;
-  if (!installKind) {
-    return Object.freeze({ required: false, reason: "runtime-not-initialized" });
-  }
-  const unsigned = {
-    required: true,
-    contract: "v3",
-    install_kind: installKind,
-    source_root_hash: ags_platformHashPath(identity.runtimeRoot),
-    runtime_sha256: identity.runtimeSha256
-  };
-  return Object.freeze({ ...unsigned, plan_hash: hashCanonical(unsigned) });
-}
-
-async function verifyRuntimeSetupPlan(identity, runtimeHome, approved, options) {
-  if (approved?.required !== true) return;
-  const observed = await planRuntimeSetup(identity, runtimeHome, options);
-  if (observed.required !== true || hashCanonical(observed) !== hashCanonical(approved)) {
-    throw new Error("runtime setup facts changed after the approved update plan");
-  }
-}
-
-async function applyRuntimeSetup(identity, runtimeHome, approved, options) {
-  if (approved?.required !== true) return { required: false, verified: true };
-  const unsigned = {
-    required: true,
-    contract: "v3",
-    install_kind: approved.install_kind,
-    source_root_hash: ags_platformHashPath(identity.runtimeRoot),
-    runtime_sha256: identity.runtimeSha256
-  };
-  if (
-    approved.contract !== "v3" ||
-    approved.source_root_hash !== unsigned.source_root_hash ||
-    approved.runtime_sha256 !== unsigned.runtime_sha256 ||
-    approved.plan_hash !== hashCanonical(unsigned)
-  ) {
-    throw new Error("candidate runtime setup does not match the approved v3 plan");
-  }
-  const result = await runRuntimeCommand(
-    identity,
-    ["setup", "--source-root", identity.runtimeRoot],
-    runtimeHome,
-    options
-  );
-  const document = parseRuntimeJson(result, "candidate runtime setup apply");
-  if (
-    document.installed !== true ||
-    path.resolve(document.source_root || "") !== path.resolve(identity.runtimeRoot) ||
-    !Array.isArray(document.writes)
-  ) {
-    throw new Error("candidate runtime setup did not return a valid v3 install receipt");
-  }
-  const inventory = await verifyRuntimeSetup(identity, runtimeHome, approved, options);
-  return {
-    required: true,
-    verified: true,
-    contract: "v3",
-    plan_hash: approved.plan_hash,
-    source_root_hash: approved.source_root_hash,
-    runtime_sha256: approved.runtime_sha256,
-    official_skills: inventory.official_skills,
-    receipt_hash: hashCanonical(document)
-  };
-}
-
-async function verifyRuntimeSetup(identity, runtimeHome, applied, options) {
-  if (applied?.required !== true) return;
-  const result = await runRuntimeCommand(
-    identity,
-    ["skill", "list"],
-    runtimeHome,
-    options
-  );
-  const document = parseRuntimeJson(result, "updated AGS runtime verification");
-  const required = ["ags-agent", "ags-doctor", "ags-govern", "ags-init", "ags-setup"];
-  const ids = new Set(Array.isArray(document.skills) ? document.skills.map((skill) => skill.id) : []);
-  if (!required.every((id) => ids.has(id))) {
-    throw new Error("updated AGS runtime is missing an official v3 skill");
-  }
-  return { official_skills: required };
-}
-
-async function runRuntimeCommand(identity, args, runtimeHome, options) {
-  const env = {
-    ...(options.env || process.env),
-    AGS_RUNTIME_HOME: runtimeHome,
-    AGS_HOME: runtimeHome
-  };
-  if (typeof options.runRuntimeCommand === "function") {
-    return options.runRuntimeCommand(identity, args, { env, runtimeHome });
-  }
-  return nodeSpawnSync(identity.binaryPath, args, {
-    encoding: "utf8",
-    shell: false,
-    windowsHide: true,
-    env,
-    timeout: options.runtimeSetupTimeoutMs || 120_000
-  });
-}
-
-function parseRuntimeJson(result, label) {
-  if (result?.status !== 0 || result?.error) {
-    const detail = result?.stderr?.trim?.() || result?.error?.message || "unknown error";
-    throw new Error(`${label} failed: ${detail}`);
-  }
-  try {
-    return JSON.parse(result.stdout);
-  } catch (error) {
-    throw new Error(`${label} returned invalid JSON: ${error.message}`);
-  }
 }
 
 export function cachePaths(cacheRoot, metadata = releaseMetadata(), env = process.env) {
@@ -905,151 +308,38 @@ export async function download(
   throw new Error(`too many redirects downloading ${url}`);
 }
 
-export async function maybeCheckForUpdate({
-  stateRoot,
-  cacheRoot,
-  currentVersion = packageJson.version,
-  channel = "stable",
-  enabled,
-  fetchImpl = globalThis.fetch,
-  clock = Date.now,
-  timeoutMs = 2_000,
-  endpoint = releaseMetadata().updateEndpoint,
-  signatureEndpoint = releaseMetadata().updateSignatureEndpoint,
-  verifyReleaseIndex,
-  onUpdate = defaultUpdateNotice,
-  force = false
-} = {}) {
-  const resolvedStateRoot = stateRoot || path.join(resolveCacheRoot(cacheRoot), "launcher-state");
-  const now = nowMillis(clock);
-  let state = readUpdateState(resolvedStateRoot);
-  const normalizedChannel = normalizeChannel(channel);
-
-  if (typeof enabled === "boolean") state = { ...state, enabled };
-  if (state.channel !== normalizedChannel) {
-    state = { ...state, channel: normalizedChannel, last_checked_at_unix: null };
-  }
-  const nowUnix = Math.floor(now / 1000);
-  if (state.snoozed_until_unix !== null && state.snoozed_until_unix <= nowUnix) {
-    state = { ...state, snoozed_until_unix: null };
-  }
-  if (!force && !state.enabled) {
-    writeUpdateStateBestEffort(resolvedStateRoot, state);
-    return { checked: false, skipped: "disabled", state };
-  }
-  const snoozed = state.snoozed_until_unix !== null && state.snoozed_until_unix > nowUnix;
-  const lastChecked =
-    state.last_checked_at_unix === null ? Number.NaN : state.last_checked_at_unix * 1000;
-  if (!force && snoozed) {
-    writeUpdateStateBestEffort(resolvedStateRoot, state);
-    return { checked: false, skipped: "snoozed", state };
-  }
-  if (!force && Number.isFinite(lastChecked) && now - lastChecked < UPDATE_CHECK_INTERVAL_MS) {
-    writeUpdateStateBestEffort(resolvedStateRoot, state);
-    return { checked: false, skipped: "fresh", state };
-  }
-
-  state = { ...state, last_checked_at_unix: nowUnix, last_error: null };
-  writeUpdateStateBestEffort(resolvedStateRoot, state);
-  try {
-    if (normalizedChannel !== "stable") throw new Error(`signed release channel is not available: ${normalizedChannel}`);
-    const indexBytes = await fetchReleaseIndexBytes(endpoint, { fetchImpl, timeoutMs, label: "release index" });
-    const signatureBytes = await fetchReleaseIndexBytes(signatureEndpoint, {
-      fetchImpl,
-      timeoutMs,
-      label: "release signature"
-    });
-    const releaseIndexHash = crypto.createHash("sha256").update(indexBytes).digest("hex");
-    state = { ...state, release_index_hash: releaseIndexHash };
-    let verified = false;
-    try {
-      verified = typeof verifyReleaseIndex === "function"
-        ? await verifyReleaseIndex(indexBytes, signatureBytes, { currentVersion, channel: normalizedChannel })
-        : verifySignedReleaseIndex(indexBytes, signatureBytes);
-    } catch {
-      verified = false;
-    }
-    if (!verified) {
-      state = { ...state, latest_version: null, last_error: "unavailable" };
-      writeUpdateStateBestEffort(resolvedStateRoot, state);
-      return { checked: true, unavailable: true, available: null, state };
-    }
-    const payload = parseSignedReleaseIndex(indexBytes, normalizedChannel);
-    const catalog = await refreshVerifiedCatalog({
-      payload,
-      indexEndpoint: endpoint,
-      stateRoot: resolvedStateRoot,
-      fetchImpl,
-      timeoutMs
-    });
-    const latest = { version: payload.version, url: `https://github.com/${payload.repository}/releases/tag/${payload.tag}` };
-    const available =
-      latest && compareVersions(parseVersion(latest.version), parseVersion(currentVersion)) > 0
-        ? latest
-        : null;
-    state = {
-      ...state,
-      latest_version: latest?.version || null,
-      catalog_release: catalog?.release || state.catalog_release || null,
-      catalog_hash: catalog?.content_hash?.replace(/^sha256:/u, "") || state.catalog_hash || null,
-      last_error: null
-    };
-    writeUpdateStateBestEffort(resolvedStateRoot, state);
-    if (!available || state.ignored_versions.includes(available.version)) {
-      return { checked: true, available: null, state };
-    }
-    const update = {
-      ...available,
-      current_version: currentVersion,
-      channel: normalizedChannel
-    };
-    try {
-      onUpdate?.(update);
-    } catch {
-      // A notification hook is advisory and must not break launcher startup.
-    }
-    return { checked: true, available: update, state };
-  } catch (error) {
-    state = { ...state, latest_version: null, last_error: "offline" };
-    writeUpdateStateBestEffort(resolvedStateRoot, state);
-    return { checked: true, offline: true, error, available: null, state };
-  }
+function coreMaintenanceMoved(action) {
+  throw new Error(
+    `core runtime maintenance moved to the Rust contract; run ags upgrade ${action}`
+  );
 }
 
-export function readUpdateState(stateRootOrPath) {
-  const statePath = updateStatePath(stateRootOrPath);
-  const raw = readJsonIfPresent(statePath);
-  return normalizeUpdateState(raw);
+export async function recoverPrevious() {
+  return coreMaintenanceMoved("recover");
 }
 
-export function writeUpdateState(stateRootOrPath, state) {
-  const statePath = updateStatePath(stateRootOrPath);
-  const normalized = normalizeUpdateState(state);
-  fs.mkdirSync(path.dirname(statePath), { recursive: true, mode: 0o700 });
-  assertDirectory(path.dirname(statePath), "update state directory");
-  atomicWriteJson(statePath, normalized);
-  return normalized;
+export async function planUpdate() {
+  return coreMaintenanceMoved("plan");
 }
 
-export function ignoreVersion(stateRootOrPath, version) {
-  assertVersion(version, "ignored version");
-  const state = readUpdateState(stateRootOrPath);
-  return writeUpdateState(stateRootOrPath, {
-    ...state,
-    ignored_versions: [...new Set([...state.ignored_versions, version])]
-  });
+export async function applyUpdate() {
+  return coreMaintenanceMoved("plan, then ags apply <ACTION_REF>");
 }
 
-export function snoozeUpdates(stateRootOrPath, until) {
-  const input = until instanceof Date ? until.getTime() : Number(until);
-  const millis = input < 1_000_000_000_000 ? input * 1000 : input;
-  if (!Number.isFinite(millis)) {
-    throw new TypeError("snooze time must be a Date or millisecond timestamp");
-  }
-  return writeUpdateState(stateRootOrPath, {
-    ...readUpdateState(stateRootOrPath),
-    snoozed_until_unix: Math.floor(millis / 1000)
-  });
+export function statusUpdate() {
+  return coreMaintenanceMoved("status <ACTION_REF>");
+}
+
+export async function verifyUpdate() {
+  return coreMaintenanceMoved("verify <ACTION_REF>");
+}
+
+export async function handleCoreMaintenanceCommand() {
+  return { handled: false };
+}
+
+export async function maybeCheckForUpdate() {
+  return { checked: false, skipped: "rust-owned" };
 }
 
 export async function extractArchive(archivePath, extension, destination, binaryName) {
@@ -1552,18 +842,11 @@ function normalizeMetadata(input) {
     releaseBase,
     "release signature"
   );
-  const updateEndpoint = assertUpdateEndpointUrl(metadata.updateEndpoint, "release index");
-  const updateSignatureEndpoint = assertUpdateEndpointUrl(
-    metadata.updateSignatureEndpoint,
-    "release signature"
-  );
   return Object.freeze({
     ...metadata,
     releaseBase,
     releaseIndexEndpoint,
-    releaseSignatureEndpoint,
-    updateEndpoint,
-    updateSignatureEndpoint
+    releaseSignatureEndpoint
   });
 }
 
@@ -1615,26 +898,6 @@ function assertVersionedReleaseIndexUrl(value, releaseBase, label) {
   return url.toString();
 }
 
-function assertUpdateEndpointUrl(value, label = "release index") {
-  const url = approvedGitHubUrl(value, label);
-  const parts = url.pathname.split("/").filter(Boolean);
-  const expectedFile = label === "release signature" ? "release-index.sig" : "release-index.json";
-  if (
-    url.hostname.toLowerCase() !== "github.com" ||
-    parts.length !== 6 ||
-    parts[0] !== "FernandeZ-hjm" ||
-    parts[1] !== "Agent-General-Staff" ||
-    parts[2] !== "releases" ||
-    parts[3] !== "latest" ||
-    parts[4] !== "download" ||
-    parts[5] !== expectedFile ||
-    url.search
-  ) {
-    throw new Error(`${label} must be the approved GitHub latest-release asset URL`);
-  }
-  return url.toString();
-}
-
 function assertVersion(value, label) {
   if (typeof value !== "string" || !VERSION_PATTERN.test(value)) {
     throw new Error(`${label} is invalid`);
@@ -1643,102 +906,6 @@ function assertVersion(value, label) {
 
 function resolveCacheRoot(cacheRoot) {
   return path.resolve(cacheRoot || path.join(os.homedir(), ".ags"));
-}
-
-function updateStatePath(stateRootOrPath) {
-  const value = stateRootOrPath || path.join(os.homedir(), ".ags", "launcher-state");
-  return [UPDATE_STATE_FILE, "update-state.json"].includes(path.basename(value))
-    ? path.resolve(value)
-    : path.join(path.resolve(value), UPDATE_STATE_FILE);
-}
-
-function normalizeUpdateState(raw) {
-  const ignored = Array.isArray(raw?.ignored_versions)
-    ? [...new Set(raw.ignored_versions.filter((version) => typeof version === "string" && VERSION_PATTERN.test(version)))]
-    : [];
-  const snoozed = unixSeconds(raw?.snoozed_until_unix);
-  const lastChecked = unixSeconds(raw?.last_checked_at_unix);
-  return {
-    schema_version: UPDATE_CHECK_STATE_SCHEMA,
-    enabled: typeof raw?.enabled === "boolean" ? raw.enabled : true,
-    last_checked_at_unix: lastChecked,
-    ignored_versions: ignored,
-    snoozed_until_unix: snoozed,
-    channel: normalizeChannel(raw?.channel),
-    latest_version:
-      typeof raw?.latest_version === "string" && VERSION_PATTERN.test(raw.latest_version)
-        ? raw.latest_version
-        : null,
-    release_index_hash: HASH_PATTERN.test(raw?.release_index_hash || "")
-      ? raw.release_index_hash
-      : null,
-    catalog_release:
-      typeof raw?.catalog_release === "string" && VERSION_PATTERN.test(raw.catalog_release)
-        ? raw.catalog_release
-        : null,
-    catalog_hash: HASH_PATTERN.test(raw?.catalog_hash || "") ? raw.catalog_hash : null,
-    last_error: typeof raw?.last_error === "string" ? raw.last_error : null
-  };
-}
-
-function normalizeChannel(channel) {
-  return CHANNELS.has(channel) ? channel : "stable";
-}
-
-function unixSeconds(value) {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return null;
-  return value;
-}
-
-function writeUpdateStateBestEffort(stateRoot, state) {
-  try {
-    writeUpdateState(stateRoot, state);
-  } catch {
-    // Update state is advisory. A read-only or full disk home must not stop AGS.
-  }
-}
-
-async function fetchReleaseIndexBytes(url, { fetchImpl, timeoutMs, label }) {
-  if (typeof fetchImpl !== "function") throw new Error("fetch is unavailable");
-  let currentUrl = assertUpdateEndpointUrl(url, label);
-  for (let redirects = 0; redirects <= 5; redirects += 1) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    timer.unref?.();
-    try {
-      const response = await fetchImpl(currentUrl, {
-        redirect: "manual",
-        headers: {
-          accept: "application/octet-stream",
-          "user-agent": `@agent-governance-suite/mcp/${packageJson.version}`
-        },
-        signal: controller.signal
-      });
-      const status = Number(response?.status);
-      if (status >= 300 && status < 400) {
-        const location = response.headers?.get?.("location") || response.headers?.location;
-        if (!location) throw new Error(`update check redirect has no location: ${currentUrl}`);
-        if (redirects === 5) throw new Error(`too many redirects checking ${url}`);
-        currentUrl = approvedGitHubUrl(
-          new URL(location, currentUrl).toString(),
-          "update redirect URL"
-        ).toString();
-        continue;
-      }
-      if (status !== 200) {
-        throw new Error(`update check failed (${status})`);
-      }
-      const body = response.arrayBuffer ? Buffer.from(await response.arrayBuffer()) : await readResponseBody(response);
-      if (body.length > 256 * 1024) throw new Error(`${label} exceeds 256 KiB`);
-      return body;
-    } catch (error) {
-      if (controller.signal.aborted) throw new Error("update check timed out");
-      throw error;
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  throw new Error(`too many redirects checking ${url}`);
 }
 
 async function fetchApprovedAssetBytes(url, { fetchImpl, timeoutMs, label, maxBytes }) {
@@ -1885,13 +1052,6 @@ function compareVersions(left, right) {
   if (left.prerelease.length === 0 && right.prerelease.length > 0) return 1;
   if (left.prerelease.length > 0 && right.prerelease.length === 0) return -1;
   return left.prerelease.join(".").localeCompare(right.prerelease.join("."));
-}
-
-function defaultUpdateNotice(update) {
-  const suffix = update.url ? `: ${update.url}` : "";
-  process.stderr.write(
-    `ags: update available ${update.current_version} -> ${update.version} (${update.channel})${suffix}\n`
-  );
 }
 
 function collectDirectoryRecords(directory, relative, records) {

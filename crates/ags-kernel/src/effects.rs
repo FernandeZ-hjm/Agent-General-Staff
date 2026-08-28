@@ -18,6 +18,7 @@ use crate::workspace::WorkspaceBinding;
 /// write set (paths relative to the workspace root).
 pub fn run(operation: &str, payload: &Value, binding: &WorkspaceBinding) -> Result<ApplyOutput> {
     match operation {
+        "upgrade" => crate::upgrade::apply(payload, binding),
         "update" => update(payload, binding).map(Into::into),
         "govern.skill.install" => skill_install(payload, binding).map(Into::into),
         "govern.skill.remove" => skill_remove(payload, binding).map(Into::into),

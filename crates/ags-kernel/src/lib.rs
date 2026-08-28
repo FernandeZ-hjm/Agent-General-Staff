@@ -25,6 +25,7 @@ pub mod seal;
 pub mod skill_adoption;
 pub mod skills;
 pub mod sync;
+pub mod upgrade;
 pub mod workspace;
 
 pub use error::{Error, Result};

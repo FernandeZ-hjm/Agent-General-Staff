@@ -11,7 +11,19 @@ use std::path::PathBuf;
 use serde_json::{json, Value};
 
 fn main() {
+    if let Err(error) = ags_kernel::upgrade::recover_interrupted_activation() {
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.as_slice() == ["--version"] {
+        println!(
+            "ags-mcp {} (build {})",
+            env!("AGS_PRODUCT_VERSION"),
+            env!("AGS_BUILD_ID")
+        );
+        return;
+    }
     let mut workspace_flag: Option<PathBuf> = None;
     let mut roots: Vec<PathBuf> = Vec::new();
     let mut i = 0;
@@ -397,6 +409,9 @@ fn decide(
                         }));
                     }
                 }
+                if other == "upgrade" {
+                    payload = ags_kernel::upgrade::prepare_plan(&binding, &payload)?;
+                }
                 let action = store.seal_plan(other, &payload, &binding)?;
                 Ok(json!({
                     "operation": other,
@@ -459,7 +474,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(
             root.join("ags.toml"),
-            "[workspace]\nslug = \"t\"\nrole = \"A\"\n\n[sealed]\nops = [\"govern.skill.install\", \"govern.skill.remove\", \"govern.host_projection\", \"govern.delegation.issue\", \"update\"]\n",
+            "[workspace]\nslug = \"t\"\nrole = \"A\"\n\n[sealed]\nops = [\"govern.skill.install\", \"govern.skill.remove\", \"govern.host_projection\", \"govern.delegation.issue\", \"upgrade\", \"update\"]\n",
         )
         .unwrap();
         let request = json!({

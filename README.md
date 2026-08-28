@@ -15,7 +15,7 @@ ags run --task card.md --close --report report.json --effective heavy
                                 # 证据链闭包 + 记忆指针
 ```
 
-危险操作走封条：`ags update` 等 sealed 命令先出 `action_ref`，
+危险操作走封条：`ags upgrade`、`ags update` 等 sealed 命令先出 `action_ref`，
 `ags apply <ref>` 单次消费，防重放、防篡改、跨绑定 fail-closed。
 
 ## 三个文件认识 AGS
@@ -37,7 +37,7 @@ ags run --task card.md --close --report report.json --effective heavy
 | 层 | 命令 |
 |---|---|
 | 快捷层（+shortcut） | `ags run`（一条命令的任务流）、`ags init`、`ags doctor` |
-| 类型化命令 | `ags mcp`、`ags check`、`ags test`、`ags log`、`ags status`、`ags govern skill install/remove`、`ags update`、`ags schema` |
+| 类型化命令 | `ags mcp`、`ags check`、`ags test`、`ags log`、`ags status`、`ags setup`、`ags upgrade`、`ags update`、`ags govern skill install/remove`、`ags schema` |
 | 封条逃生舱 | `ags apply <ACTION_REF>`（唯一 mutation 面） |
 
 风险标注：`read`（零写入）/ `write`（封条计划 + apply）/
@@ -62,13 +62,20 @@ hook 失效 fail-open 回落到宿主默认（D5），`ags doctor` 监控健康�
 
 ```bash
 cargo build --release
-ags setup --source-root .                   # 安装公开 v3 Skills + machine lock
+ags setup --source-root .                   # 验证五二进制并初始化 v3 Skills + machine lock
+ags upgrade check                           # 强制检查签名 stable 发行索引
+ags upgrade plan --workspace .              # 返回 sealed action_ref
+ags apply <ACTION_REF> --workspace .         # 原子激活并保留 previous
+ags upgrade verify <ACTION_REF> --workspace .
 ags init --workspace . --slug my-project     # 密封计划
 ags apply <ACTION_REF> --workspace .         # 单次消费
 ags govern host-register --id my-host --surface cli --workspace .
 ags apply <ACTION_REF> --workspace .         # 消费宿主注册计划
 ags doctor --workspace .                     # 体检
 ```
+
+A→S 之后的宿主 Skill 迁移顺序见
+[`docs/ags-public-private-update-handoff.md`](docs/ags-public-private-update-handoff.md)。
 
 ## 公开契约
 

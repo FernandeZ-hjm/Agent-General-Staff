@@ -16,7 +16,7 @@ ags run --task card.md --close --report report.json --effective heavy
                                 # evidence-chain closure + memory pointer
 ```
 
-Dangerous operations stay sealed: `ags update` and the other sealed commands
+Dangerous operations stay sealed: `ags upgrade`, `ags update`, and the other sealed commands
 emit a single-use `action_ref`; `ags apply <ref>` consumes it exactly once
 (replay / tamper / cross-binding fail closed).
 
@@ -36,7 +36,7 @@ emit a single-use `action_ref`; `ags apply <ref>` consumes it exactly once
 | Layer | Commands |
 |---|---|
 | Shortcuts | `ags run` (the one task command), `ags init`, `ags doctor` |
-| Typed commands | `ags check`, `ags test`, `ags log`, `ags status`, `ags govern skill install/remove`, `ags update`, `ags schema` |
+| Typed commands | `ags check`, `ags test`, `ags log`, `ags status`, `ags setup`, `ags upgrade`, `ags update`, `ags govern skill install/remove`, `ags schema` |
 | Sealed escape hatch | `ags apply <ACTION_REF>` (the only mutation surface) |
 
 Risk labels: `read` (zero writes) / `write` (sealed plan + apply) /
@@ -63,13 +63,20 @@ no parallel domain logic.
 
 ```bash
 cargo build --release
-ags setup --source-root .                   # public v3 Skills + machine lock
+ags setup --source-root .                   # verify five binaries + initialize v3 Skills/lock
+ags upgrade check                           # signed stable release check
+ags upgrade plan --workspace .              # sealed runtime plan
+ags apply <ACTION_REF> --workspace .         # atomic activation
+ags upgrade verify <ACTION_REF> --workspace .
 ags init --workspace . --slug my-project     # sealed plan
 ags apply <ACTION_REF> --workspace .         # consume once
 ags govern host-register --id my-host --surface cli --workspace .
 ags apply <ACTION_REF> --workspace .         # consume host registration
 ags doctor --workspace .                     # health
 ```
+
+The host-Skill migration sequence after A-to-S promotion is captured in
+[`docs/ags-public-private-update-handoff.md`](docs/ags-public-private-update-handoff.md).
 
 ## Public contract
 
