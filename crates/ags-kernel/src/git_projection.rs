@@ -328,25 +328,13 @@ mod tests {
     fn installs_repository_local_filter_and_excludes() {
         let tmp = tempfile::tempdir().unwrap();
         git(tmp.path(), &["init", "-q"]);
-        install(tmp.path()).unwrap();
-
-        let attributes =
-            fs::read_to_string(git_path(tmp.path(), "info/attributes").unwrap()).unwrap();
-        assert!(attributes.contains("/AGENTS.md filter=ags-entry"));
-        assert!(attributes.contains("/codebuddy.md filter=ags-entry"));
         fs::create_dir_all(tmp.path().join("nested")).unwrap();
         fs::write(tmp.path().join("nested/AGENTS.md"), "nested\n").unwrap();
-        assert_eq!(
-            git_output(
-                tmp.path(),
-                &["check-attr", "filter", "--", "nested/AGENTS.md"]
-            )
-            .unwrap()
-            .trim(),
-            "nested/AGENTS.md: filter: unspecified"
-        );
-
         fs::write(tmp.path().join("AGENTS.md"), "root\n").unwrap();
+        // Establish the tracked baseline before installing the required
+        // filter. The product intentionally fails closed when `ags` is not on
+        // PATH, while a library unit test must not depend on a globally
+        // installed CLI being present on the CI runner.
         git(tmp.path(), &["add", "-f", "AGENTS.md"]);
         git(
             tmp.path(),
@@ -360,6 +348,22 @@ mod tests {
                 "baseline",
             ],
         );
+        install(tmp.path()).unwrap();
+
+        let attributes =
+            fs::read_to_string(git_path(tmp.path(), "info/attributes").unwrap()).unwrap();
+        assert!(attributes.contains("/AGENTS.md filter=ags-entry"));
+        assert!(attributes.contains("/codebuddy.md filter=ags-entry"));
+        assert_eq!(
+            git_output(
+                tmp.path(),
+                &["check-attr", "filter", "--", "nested/AGENTS.md"]
+            )
+            .unwrap()
+            .trim(),
+            "nested/AGENTS.md: filter: unspecified"
+        );
+
         git(
             tmp.path(),
             &["update-index", "--skip-worktree", "--", "AGENTS.md"],

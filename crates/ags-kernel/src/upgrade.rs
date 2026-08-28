@@ -880,23 +880,24 @@ fn inspect_source(
 }
 
 fn materialize_candidate(candidate: &Candidate) -> Result<Candidate> {
-    let destination = versions_root()?
+    let base = versions_root()?
         .join(&candidate.version)
         .join(&candidate.triple);
+    let destination = if base.is_dir() {
+        let cached = inspect_verified_cache(&base)?;
+        if cache_binding_matches(&cached, candidate) {
+            return Ok(cached);
+        }
+        base.join("variants").join(cache_binding_id(candidate))
+    } else {
+        base
+    };
     if destination.is_dir() {
-        let cached = inspect_source(
-            &destination,
-            candidate.signed,
-            Some(&candidate.asset_name),
-            Some((&candidate.asset_sha256, &candidate.release_index_sha256)),
-        )?;
-        verify_cache_marker(&destination, &cached)?;
-        if cached.executables_sha256 != candidate.executables_sha256
-            || cached.runtime_sha256 != candidate.runtime_sha256
-        {
+        let cached = inspect_verified_cache(&destination)?;
+        if !cache_binding_matches(&cached, candidate) {
             return Err(Error::new(
                 "upgrade_cache_collision",
-                "immutable version cache contains different content",
+                "content-addressed runtime cache contains different content",
             ));
         }
         return Ok(cached);
@@ -918,6 +919,59 @@ fn materialize_candidate(candidate: &Candidate) -> Result<Candidate> {
         candidate.signed,
         Some(&candidate.asset_name),
         Some((&candidate.asset_sha256, &candidate.release_index_sha256)),
+    )
+}
+
+fn inspect_verified_cache(root: &Path) -> Result<Candidate> {
+    let marker_path = root.join(".verified-sha256");
+    let text = fs::read_to_string(&marker_path)
+        .map_err(|e| crate::error::io("upgrade_cache_marker_missing", &e))?;
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.len() != 6 {
+        return Err(Error::new(
+            "upgrade_cache_marker_mismatch",
+            format!(
+                "verified cache marker does not match runtime content at {}",
+                root.display()
+            ),
+        ));
+    }
+    let candidate = inspect_source(
+        root,
+        lines[1] != lines[5],
+        Some(lines[0]),
+        Some((lines[1], lines[5])),
+    )?;
+    verify_cache_marker(root, &candidate)?;
+    Ok(candidate)
+}
+
+fn cache_binding_matches(left: &Candidate, right: &Candidate) -> bool {
+    left.version == right.version
+        && left.triple == right.triple
+        && left.binaries == right.binaries
+        && left.executables_sha256 == right.executables_sha256
+        && left.runtime_sha256 == right.runtime_sha256
+        && left.asset_name == right.asset_name
+        && left.asset_sha256 == right.asset_sha256
+        && left.release_index_sha256 == right.release_index_sha256
+        && left.signed == right.signed
+}
+
+fn cache_binding_id(candidate: &Candidate) -> String {
+    sha256_bytes(
+        format!(
+            "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
+            candidate.version,
+            candidate.triple,
+            candidate.executables_sha256,
+            candidate.runtime_sha256,
+            candidate.asset_name,
+            candidate.asset_sha256,
+            candidate.release_index_sha256,
+            candidate.signed
+        )
+        .as_bytes(),
     )
 }
 
@@ -1294,9 +1348,31 @@ fn inspect_source_with_roots(source: &Path, binaries: &Path, runtime: &Path) -> 
 }
 
 fn inspect_cached_pointer(pointer: &RuntimePointer) -> Result<Candidate> {
-    let root = versions_root()?
+    let base = versions_root()?
         .join(&pointer.version)
-        .join(&pointer.triple);
+        .join(&pointer.triple)
+        .canonicalize()
+        .map_err(|e| crate::error::io("upgrade_cache_missing", &e))?;
+    let root = if pointer.runtime_root.as_os_str().is_empty() {
+        base.clone()
+    } else {
+        let root = pointer.runtime_root.parent().ok_or_else(|| {
+            Error::new(
+                "upgrade_pointer_drift",
+                "cached runtime pointer has no cache root",
+            )
+        })?;
+        let variants = base.join("variants");
+        if pointer.runtime_root != root.join("runtime")
+            || (root != base && root.parent() != Some(variants.as_path()))
+        {
+            return Err(Error::new(
+                "upgrade_pointer_drift",
+                "cached runtime pointer is outside its version cache",
+            ));
+        }
+        root.to_path_buf()
+    };
     let candidate = inspect_source(
         &root,
         pointer.release_index_sha256 != pointer.asset_sha256,
@@ -2249,6 +2325,52 @@ mod tests {
         assert_eq!(
             sha256_runtime(&root.path().join("ags-skills")).unwrap(),
             format!("{:x}", expected.finalize())
+        );
+    }
+
+    #[test]
+    fn same_version_source_builds_use_verified_content_variants() {
+        let _guard = crate::sync::HOME_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        let work = tempfile::tempdir().unwrap();
+        std::env::set_var("HOME", home.path());
+
+        let first_root = work.path().join("first");
+        let second_root = work.path().join("second");
+        write_fixture_runtime(&first_root, "0.4.21", "first-build");
+        write_fixture_runtime(&second_root, "0.4.21", "second-build");
+        let first = inspect_source(&first_root, false, None, None).unwrap();
+        let second = inspect_source(&second_root, false, None, None).unwrap();
+
+        let cached_first = materialize_candidate(&first).unwrap();
+        let cached_second = materialize_candidate(&second).unwrap();
+        assert_ne!(cached_first.binary_root, cached_second.binary_root);
+        assert_eq!(
+            cached_second
+                .binary_root
+                .parent()
+                .unwrap()
+                .file_name()
+                .unwrap(),
+            "variants"
+        );
+        assert_eq!(
+            inspect_cached_pointer(&pointer_from_candidate(&cached_first))
+                .unwrap()
+                .executables_sha256,
+            first.executables_sha256
+        );
+        assert_eq!(
+            inspect_cached_pointer(&pointer_from_candidate(&cached_second))
+                .unwrap()
+                .executables_sha256,
+            second.executables_sha256
+        );
+        assert_eq!(
+            materialize_candidate(&second).unwrap().binary_root,
+            cached_second.binary_root
         );
     }
 
