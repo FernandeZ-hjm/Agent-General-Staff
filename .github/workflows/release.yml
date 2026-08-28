@@ -123,7 +123,7 @@ jobs:
             *) echo "unpacked version smoke failed"; exit 1 ;;
           esac
           unpacked/ags schema --format json > unpacked/schema.json
-          unpacked/ags setup --source-root unpacked/runtime > unpacked/setup.json
+          unpacked/ags setup --source-root unpacked > unpacked/setup.json
           node -e 'const v=JSON.parse(require("node:fs").readFileSync("unpacked/setup.json","utf8")); if(v.installed!==true||!Array.isArray(v.writes)) process.exit(1)'
           # minimal v3 journey: adopt a scratch workspace, register its CI
           # host through the sealed operation, then prove Doctor is healthy
