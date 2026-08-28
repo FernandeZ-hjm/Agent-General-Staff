@@ -314,6 +314,17 @@ fn write_local_block(path: &Path, begin: &str, end: &str, body: &str) -> Result<
 mod tests {
     use super::*;
 
+    struct PathRestore(Option<std::ffi::OsString>);
+
+    impl Drop for PathRestore {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(path) => std::env::set_var("PATH", path),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+    }
+
     fn git(root: &Path, args: &[&str]) {
         assert!(Command::new("git")
             .arg("-C")
@@ -324,17 +335,38 @@ mod tests {
             .success());
     }
 
+    #[cfg(unix)]
     #[test]
     fn installs_repository_local_filter_and_excludes() {
+        let _guard = crate::sync::HOME_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let ags = bin.join("ags");
+        use std::os::unix::fs::PermissionsExt;
+        fs::write(
+            &ags,
+            "#!/bin/sh\nif [ \"$1\" = \"entry-filter\" ]; then cat; exit 0; fi\nexit 1\n",
+        )
+        .unwrap();
+        fs::set_permissions(&ags, fs::Permissions::from_mode(0o755)).unwrap();
+        let old_path = std::env::var_os("PATH");
+        let _path_restore = PathRestore(old_path.clone());
+        let mut paths = vec![bin];
+        paths.extend(std::env::split_paths(
+            old_path.as_deref().unwrap_or_default(),
+        ));
+        std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+
         git(tmp.path(), &["init", "-q"]);
         fs::create_dir_all(tmp.path().join("nested")).unwrap();
         fs::write(tmp.path().join("nested/AGENTS.md"), "nested\n").unwrap();
         fs::write(tmp.path().join("AGENTS.md"), "root\n").unwrap();
-        // Establish the tracked baseline before installing the required
-        // filter. The product intentionally fails closed when `ags` is not on
-        // PATH, while a library unit test must not depend on a globally
-        // installed CLI being present on the CI runner.
+        // Establish the tracked baseline, then provide a controlled pass-through
+        // entry-filter. The product intentionally fails closed when `ags` is
+        // absent, while the unit test must not depend on a host installation.
         git(tmp.path(), &["add", "-f", "AGENTS.md"]);
         git(
             tmp.path(),
