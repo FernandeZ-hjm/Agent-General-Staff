@@ -83,7 +83,7 @@ jobs:
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          cargo test --locked --target ${{ matrix.target }} -p ags-task-contract
+          cargo test --locked --target ${{ matrix.target }} -p ags-task-contract -- --test-threads=1
           if ($LASTEXITCODE -ne 0) { throw "Windows task-contract tests failed" }
           cargo test --locked --target ${{ matrix.target }} -p ags-kernel --test windows_links
           if ($LASTEXITCODE -ne 0) { throw "Windows link lifecycle tests failed" }
