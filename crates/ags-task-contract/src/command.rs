@@ -719,10 +719,15 @@ mod tests {
             argv: vec!["-NoProfile".to_string(), "-Command".to_string(), script],
             cwd: tmp.path().to_path_buf(),
             env: vec![],
-            timeout_ms: 1_500,
+            // Nested PowerShell startup can exceed 1.5s when the Windows test
+            // suite is running in parallel on a loaded hosted runner. Keep a
+            // bounded timeout while giving the child enough time to publish
+            // the PID that makes the process-tree assertion observable.
+            timeout_ms: 5_000,
         };
         let receipt = run(&spec);
         assert_eq!(receipt.status, "timeout");
+        assert!(receipt.duration_ms < 10_000, "timeout must remain bounded");
         let pid: u32 = std::fs::read_to_string(&pidfile)
             .expect("grandchild pid was written")
             .trim()
