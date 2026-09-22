@@ -1,5 +1,24 @@
 # Agent Governance Suite Release Notes
 
+## Release 0.4.22
+
+This patch release fixes lifecycle hook output for Claude Code and updates
+the TLS dependency to address RUSTSEC-2026-0285.
+
+- Stop, SessionEnd and stop-guard callbacks now emit an empty JSON object on
+  success, including when no workspace is bound. SessionStart emits only its
+  supported startup context. Session evidence and verified closure projection
+  remain intact.
+- Real-binary regression tests cover lifecycle output, startup context and
+  session evidence persistence.
+- Host readiness checks follow the running product version instead of a
+  hard-coded release, so upgrades do not report a false MCP readiness failure.
+- Rustls is updated from 0.23.43 to 0.23.45, which fixes TLS 1.3 handshake
+  messages being accepted across encryption-level boundaries.
+
+Contract v3 and the CLI/MCP interfaces are unchanged. The three npm packages
+and all five platform bundles are published together as 0.4.22.
+
 ## Release 0.4.21
 
 0.4.21 is the contract-v3 hard cut — the "Thin AGS" restructure. Governance

@@ -228,7 +228,7 @@ fn claude_mcp_ready() -> bool {
         .output()
         .ok()
         .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).contains("v0.4.21"))
+        .map(|output| is_current_cli_version(&output.stdout))
         .unwrap_or(false);
     command_ok && args_ok && version_ok
 }
@@ -275,9 +275,15 @@ fn codex_mcp_ready() -> bool {
     let version_ok = registered_command
         .and_then(|command| Command::new(command).arg("--version").output().ok())
         .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).contains("v0.4.21"))
+        .map(|output| is_current_cli_version(&output.stdout))
         .unwrap_or(false);
     command_ok && args_ok && version_ok
+}
+
+fn is_current_cli_version(stdout: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(stdout);
+    let mut fields = text.split_whitespace();
+    fields.next() == Some("ags") && fields.next() == Some(crate::sync::AGS_VERSION)
 }
 
 fn merge_hooks(mut root: Value, host: &str, stop_event: &str) -> Result<Value> {
@@ -762,6 +768,17 @@ fn write_file_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cli_readiness_requires_the_current_product_version() {
+        let current = format!("ags {} (build abcdef123456)\n", crate::sync::AGS_VERSION);
+        assert!(super::is_current_cli_version(current.as_bytes()));
+        assert!(!super::is_current_cli_version(b"ags v0.0.0 (build old)\n"));
+        let prefixed = format!("ags {}0 (build other)\n", crate::sync::AGS_VERSION);
+        assert!(!super::is_current_cli_version(prefixed.as_bytes()));
+        let wrong_binary = format!("other {}\n", crate::sync::AGS_VERSION);
+        assert!(!super::is_current_cli_version(wrong_binary.as_bytes()));
+    }
+
     use super::*;
 
     #[test]

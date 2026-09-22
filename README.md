@@ -29,7 +29,7 @@ ags run --task card.md --close --report report.json --effective heavy
   无 staleness 状态机，只有 `ags update` / install / remove 刷新。
 - **本地入口投影**：`AGENTS.md` 等工作树文件包含 AGS managed block；
   repository-local clean/smudge filter 保证该区块不进入 Git。
-- **可核验构建**：所有用户表面报告 `v0.4.21`，Doctor 单列
+- **可核验构建**：所有用户表面报告 `v0.4.22`，Doctor 单列
   `build=<commit>[.dirty]`，区分同版本的具体构建。
 
 ## 命令面（lark-cli 三层风格，每条命令带风险级）

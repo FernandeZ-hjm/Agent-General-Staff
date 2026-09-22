@@ -2,10 +2,10 @@
 name: ags-init
 description: Attach exactly one project with the contract-v3 projection, install absent hook templates, register it for sync-on-update, and preserve user files. Idempotent on re-run.
 metadata:
-  ags_version: "v0.4.21"
+  ags_version: "v0.4.22"
 ---
 
-# AGS Init (v0.4.21, contract v3)
+# AGS Init (v0.4.22, contract v3)
 
 采用一个 workspace（sealed 两段式）：
 

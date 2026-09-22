@@ -2,10 +2,10 @@
 name: ags-govern
 description: Use the sealed operation registry (skill install/remove, host projection, update) with decide→apply semantics. The registry is exactly the sealed subset in contract v3.
 metadata:
-  ags_version: "v0.4.21"
+  ags_version: "v0.4.22"
 ---
 
-# AGS Govern (v0.4.21, contract v3)
+# AGS Govern (v0.4.22, contract v3)
 
 v3 注册表只含封条子集，全部两段式（seal → `ags apply` 单次消费）：
 

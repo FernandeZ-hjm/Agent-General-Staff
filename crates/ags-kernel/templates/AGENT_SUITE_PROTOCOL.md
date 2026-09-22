@@ -1,6 +1,6 @@
 # Agent Governance Suite Protocol
 
-Current product version: **v0.4.21**. The public control contract is
+Current product version: **v0.4.22**. The public control contract is
 **contract v3** — the "Thin AGS" hard cut.
 
 ## Core model

@@ -702,7 +702,9 @@ mod tests {
         )
         .unwrap();
         assert!(sync_protocol_copy(tmp.path()).unwrap());
-        assert!(fs::read_to_string(&owned).unwrap().contains("**v0.4.21**"));
+        assert!(fs::read_to_string(&owned)
+            .unwrap()
+            .contains(&format!("**{AGS_VERSION}**")));
 
         fs::write(
             &owned,
@@ -710,7 +712,9 @@ mod tests {
         )
         .unwrap();
         assert!(sync_protocol_copy(tmp.path()).unwrap());
-        assert!(fs::read_to_string(&owned).unwrap().contains("**v0.4.21**"));
+        assert!(fs::read_to_string(&owned)
+            .unwrap()
+            .contains(&format!("**{AGS_VERSION}**")));
         let user = tmp.path().join("user.md");
         fs::write(&user, "# Not AGS\n").unwrap();
         fs::write(tmp.path().join("AGENT_SUITE_PROTOCOL.md"), "# User Doc\n").unwrap();

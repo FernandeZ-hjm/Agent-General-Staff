@@ -10,7 +10,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "ags-cli"
-version = "0.4.21"
+version = "0.4.22"
 dependencies = [
  "ags-kernel",
  "ags-task-contract",
@@ -23,7 +23,7 @@ dependencies = [
 
 [[package]]
 name = "ags-kernel"
-version = "0.4.21"
+version = "0.4.22"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -44,7 +44,7 @@ dependencies = [
 
 [[package]]
 name = "ags-mcp"
-version = "0.4.21"
+version = "0.4.22"
 dependencies = [
  "ags-kernel",
  "serde",
@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "ags-release"
-version = "0.4.21"
+version = "0.4.22"
 dependencies = [
  "serde",
  "serde_json",
@@ -64,7 +64,7 @@ dependencies = [
 
 [[package]]
 name = "ags-task-contract"
-version = "0.4.21"
+version = "0.4.22"
 dependencies = [
  "ags-kernel",
  "libc",

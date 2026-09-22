@@ -2,10 +2,10 @@
 name: ags-setup
 description: "Initialize an already obtained AGS runtime, or use the canonical sealed upgrade flow; verify five binaries, converge official skills and the machine lock, then run Doctor."
 metadata:
-  ags_version: "v0.4.21"
+  ags_version: "v0.4.22"
 ---
 
-# AGS Setup and Upgrade (v0.4.21, contract v3)
+# AGS Setup and Upgrade (v0.4.22, contract v3)
 
 先区分四个入口：安装器取得可信运行时；`setup` 初始化机器内容；`upgrade`
 迁移运行时版本；`update` 只收敛能力锁与项目投影；`init` 只采用项目。

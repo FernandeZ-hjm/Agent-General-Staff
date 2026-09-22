@@ -2,10 +2,10 @@
 name: ags-agent
 description: Govern any normalized Generic Agent (claude-code, codex, cursor, codebuddy, omp, dsh, ...) via ags.toml [hosts] and doctor health; no admission allowlist.
 metadata:
-  ags_version: "v0.4.21"
+  ags_version: "v0.4.22"
 ---
 
-# AGS Agent (v0.4.21, contract v3)
+# AGS Agent (v0.4.22, contract v3)
 
 任意新宿主无需源码适配。能执行命令时走通用 CLI 注册；支持 MCP 时通过
 `ags_decide` 注册。注册入口决定 transport，native hooks 仅是已知宿主的

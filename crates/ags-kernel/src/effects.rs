@@ -330,7 +330,7 @@ fn host_projection(payload: &Value, binding: &WorkspaceBinding) -> Result<ApplyO
     if lifecycle != "full" {
         return Err(Error::new(
             "host_lifecycle_invalid",
-            "v0.4.21 requires lifecycle=full",
+            "contract v3 requires lifecycle=full",
         ));
     }
     if let Some(host) = host.as_deref() {
