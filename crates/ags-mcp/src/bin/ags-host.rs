@@ -63,15 +63,12 @@ fn main() {
     let binding = match workspace::bind(&root) {
         Ok(binding) => binding,
         Err(_) => {
-            println!(
-                "{}",
-                json!({"decision": "allow", "reason": "workspace-unbound-noop"})
-            );
+            println!("{{}}");
             return;
         }
     };
     let log = EvidenceLog::new(binding.evidence_dir.clone());
-    let event_record = log.append(
+    let _ = log.append(
         "session",
         &binding.slug,
         None,
@@ -86,32 +83,24 @@ fn main() {
         .unwrap_or_else(|| default_hook_event(&event).to_string());
     let memory_root = default_memory_root();
 
-    let (additional_context, projected) = match event.as_str() {
-        "session-start" => (
-            build_start_context(&binding, &memory_root).unwrap_or_default(),
-            0,
-        ),
-        "session-end" => (
-            String::new(),
-            project_closures(&binding, &log, &memory_root).unwrap_or(0),
-        ),
-        _ => (String::new(), 0),
-    };
-    let event_id = event_record.ok().map(|record| record.event_id);
-    println!(
-        "{}",
-        json!({
-            "decision": "allow",
-            "version": env!("AGS_PRODUCT_VERSION"),
-            "build": env!("AGS_BUILD_ID"),
+    // Lifecycle stdout is a host protocol, not an AGS diagnostic envelope.
+    // Stop allows completion by omitting decision; additionalContext would
+    // ask Claude to continue. Only SessionStart injects project memory.
+    let output = match event.as_str() {
+        "session-start" => json!({
             "hookSpecificOutput": {
                 "hookEventName": hook_event_name,
-                "additionalContext": additional_context,
-                "eventId": event_id,
-                "projectedClosures": projected,
+                "additionalContext": build_start_context(&binding, &memory_root)
+                    .unwrap_or_default(),
             }
-        })
-    );
+        }),
+        "session-end" => {
+            let _ = project_closures(&binding, &log, &memory_root);
+            json!({})
+        }
+        _ => json!({}),
+    };
+    println!("{output}");
 }
 
 fn read_hook_input() -> Value {
